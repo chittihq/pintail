@@ -13,9 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rust 2024 Cargo workspace and SQLite WAL-mode control plane.
 - Complete version 1 metadata schema, transactional migrations, and
   insert-once settings.
+- Bun-managed Nuxt 4 + shadcn-vue dashboard source with a generated Badge
+  component and responsive M0 shell.
 
 ### Verification
 
 - Migration tests verify every required control-plane table and idempotent
   reopen.
 - Settings tests verify insert-once secret persistence.
+- Bun type checking and static generation verify the dashboard source.
