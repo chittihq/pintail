@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Dependency-free typed schema, scalar value, composite-key, and versioned-row
+  model shared by Pintail's data-path modules.
+
+### Verification
+
+- Public-interface tests verify well-typed rows and reject nullability or type
+  mismatches before ingestion.
+
 ## [M0] - 2026-07-30
 
 ### Added
