@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   benchmark boundaries for every planned component.
 - `pintail-api` Axum `/health` route and build-time embedding of freshly
   generated dashboard assets.
+- Single `pintail` executable with TOML, `PINTAIL_*`, and CLI configuration.
+- First-boot JWT and DSN-encryption secrets, displayed only when created; the
+  JWT is insert-once SQLite metadata and the DSN key uses an owner-only Unix
+  boot-secret file.
 
 ### Verification
 
@@ -27,3 +31,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Settings tests verify insert-once secret persistence.
 - Bun type checking and static generation verify the dashboard source.
 - Dashboard HTTP tests verify embedded HTML and the JSON health response.
+- Binary boot/restart tests verify SQLite initialization, `/health`, and
+  one-time secret display.
