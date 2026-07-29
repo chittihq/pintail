@@ -34,4 +34,9 @@ impl Memtable {
     pub(crate) fn estimated_bytes(&self) -> usize {
         self.estimated_bytes
     }
+
+    pub(crate) fn clear(&mut self) {
+        self.rows = Arc::new(BTreeMap::new());
+        self.estimated_bytes = 0;
+    }
 }

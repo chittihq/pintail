@@ -8,7 +8,13 @@ use std::{
 use fs2::FileExt;
 use pintail_types::{PrimaryKey, StoredRow, TableSchema};
 
-use crate::{StoreError, memtable::Memtable, wal::Wal};
+use crate::{
+    StoreError,
+    manifest::{self, Manifest},
+    memtable::Memtable,
+    segment,
+    wal::Wal,
+};
 
 const WAL_FILE: &str = "table.wal";
 const WRITER_LOCK_FILE: &str = ".writer.lock";
@@ -83,6 +89,27 @@ impl IngestOutcome {
     }
 }
 
+/// Result of publishing the current memtable as an immutable segment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlushOutcome {
+    row_count: usize,
+    segment_path: Option<PathBuf>,
+}
+
+impl FlushOutcome {
+    /// Returns the number of latest row versions written to the segment.
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns the published segment, or `None` when the memtable was empty.
+    #[must_use]
+    pub fn segment_path(&self) -> Option<&Path> {
+        self.segment_path.as_deref()
+    }
+}
+
 /// The single-writer handle for one physical table.
 pub struct TableStore {
     _writer_lock: File,
@@ -91,6 +118,7 @@ pub struct TableStore {
     options: StoreOptions,
     wal: Wal,
     memtable: Memtable,
+    manifest: Arc<Manifest>,
     last_sequence: u64,
 }
 
@@ -119,9 +147,13 @@ impl TableStore {
             }
         })?;
 
+        let manifest = Arc::new(manifest::load(&directory, &schema)?);
         let (wal, recovery) = Wal::open(&directory.join(WAL_FILE), options.wal_sync)?;
         let mut memtable = Memtable::default();
-        for (_, rows) in recovery.batches {
+        for (sequence, rows) in recovery.batches {
+            if sequence <= manifest.flushed_sequence {
+                continue;
+            }
             for row in rows {
                 schema.validate_row(&row)?;
                 memtable.apply(&row);
@@ -135,7 +167,8 @@ impl TableStore {
             options,
             wal,
             memtable,
-            last_sequence: recovery.last_sequence,
+            last_sequence: recovery.last_sequence.max(manifest.flushed_sequence),
+            manifest,
         })
     }
 
@@ -190,11 +223,72 @@ impl TableStore {
         self.wal.sync()
     }
 
+    /// Publishes the current memtable as a checksummed immutable PTSEG file.
+    ///
+    /// The segment is synchronized before an atomic manifest swap. Only after
+    /// that durable publication does Pintail clear memory and truncate the
+    /// flushed WAL. Recovery therefore sees either the old WAL state or the
+    /// new manifest state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when segment encoding or durable publication fails.
+    pub fn flush(&mut self) -> Result<FlushOutcome, StoreError> {
+        let rows = self
+            .memtable
+            .snapshot()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return Ok(FlushOutcome {
+                row_count: 0,
+                segment_path: None,
+            });
+        }
+
+        let segment = segment::write(
+            &self.directory,
+            self.manifest.next_segment_id,
+            &self.schema,
+            &rows,
+            self.options.block_rows,
+        )?;
+        let segment_path = self.directory.join(&segment.file_name);
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = next_manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.flushed_sequence = self.last_sequence;
+        next_manifest.next_segment_id = next_manifest
+            .next_segment_id
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.segments.push(segment);
+        manifest::publish(&self.directory, &next_manifest)?;
+
+        self.manifest = Arc::new(next_manifest);
+        self.memtable.clear();
+        self.wal.reset()?;
+        Ok(FlushOutcome {
+            row_count: rows.len(),
+            segment_path: Some(segment_path),
+        })
+    }
+
     /// Pins an immutable view of rows currently visible to readers.
     #[must_use]
     pub fn snapshot(&self) -> TableSnapshot {
         TableSnapshot {
             memtable: self.memtable.snapshot(),
+            manifest: Arc::clone(&self.manifest),
+            directory: self.directory.clone(),
+            schema: self.schema.clone(),
         }
     }
 
@@ -208,6 +302,9 @@ impl TableStore {
 /// A reader-owned immutable table view.
 pub struct TableSnapshot {
     memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    manifest: Arc<Manifest>,
+    directory: PathBuf,
+    schema: TableSchema,
 }
 
 impl TableSnapshot {
@@ -215,15 +312,29 @@ impl TableSnapshot {
     ///
     /// # Errors
     ///
-    /// This initial in-memory implementation is infallible; the result type
-    /// preserves the interface used when immutable segments are attached.
     pub fn scan(&self) -> Result<Vec<StoredRow>, StoreError> {
-        Ok(self
-            .memtable
-            .values()
+        let mut latest = BTreeMap::new();
+        for segment_meta in &self.manifest.segments {
+            for row in segment::read(&self.directory, segment_meta, &self.schema)? {
+                apply_latest(&mut latest, row);
+            }
+        }
+        for row in self.memtable.values() {
+            apply_latest(&mut latest, row.clone());
+        }
+        Ok(latest
+            .into_values()
             .filter(|row| !row.is_deleted())
-            .cloned()
             .collect())
+    }
+}
+
+fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
+    if rows
+        .get(row.key())
+        .is_none_or(|current| row.version() >= current.version())
+    {
+        rows.insert(row.key().clone(), row);
     }
 }
 

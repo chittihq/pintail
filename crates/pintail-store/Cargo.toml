@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 fs2.workspace = true
+lz4_flex.workspace = true
 pintail-types.workspace = true
 xxhash-rust.workspace = true
 

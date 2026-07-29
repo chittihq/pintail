@@ -6,9 +6,11 @@
 
 mod codec;
 mod error;
+mod manifest;
 mod memtable;
+mod segment;
 mod store;
 mod wal;
 
 pub use error::StoreError;
-pub use store::{IngestOutcome, StoreOptions, TableSnapshot, TableStore, WalSync};
+pub use store::{FlushOutcome, IngestOutcome, StoreOptions, TableSnapshot, TableStore, WalSync};

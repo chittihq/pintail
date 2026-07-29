@@ -40,6 +40,18 @@ impl Encoder {
         Ok(())
     }
 
+    pub(crate) fn raw(&mut self, value: &[u8]) {
+        self.bytes.extend_from_slice(value);
+    }
+
+    pub(crate) fn position(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
     pub(crate) fn finish(self) -> Vec<u8> {
         self.bytes
     }
@@ -96,7 +108,11 @@ impl<'a> Decoder<'a> {
         }
     }
 
-    fn take(&mut self, length: usize) -> Result<&'a [u8], String> {
+    pub(crate) fn position(&self) -> usize {
+        self.position
+    }
+
+    pub(crate) fn take(&mut self, length: usize) -> Result<&'a [u8], String> {
         let end = self
             .position
             .checked_add(length)
@@ -116,9 +132,9 @@ impl<'a> Decoder<'a> {
     }
 }
 
-pub(crate) fn encode_row(encoder: &mut Encoder, row: &StoredRow) -> Result<(), StoreError> {
-    encoder.length(row.key().parts().len(), "primary-key component count")?;
-    for part in row.key().parts() {
+pub(crate) fn encode_key(encoder: &mut Encoder, key: &PrimaryKey) -> Result<(), StoreError> {
+    encoder.length(key.parts().len(), "primary-key component count")?;
+    for part in key.parts() {
         match part {
             KeyPart::Int64(value) => {
                 encoder.u8(0);
@@ -138,17 +154,10 @@ pub(crate) fn encode_row(encoder: &mut Encoder, row: &StoredRow) -> Result<(), S
             }
         }
     }
-
-    encoder.length(row.values().len(), "row value count")?;
-    for value in row.values() {
-        encode_value(encoder, value)?;
-    }
-    encoder.u64(row.version());
-    encoder.u8(u8::from(row.is_deleted()));
     Ok(())
 }
 
-pub(crate) fn decode_row(decoder: &mut Decoder<'_>) -> Result<StoredRow, String> {
+pub(crate) fn decode_key(decoder: &mut Decoder<'_>) -> Result<PrimaryKey, String> {
     let key_count = decoder.u32()?;
     let mut key = Vec::with_capacity(key_count as usize);
     for _ in 0..key_count {
@@ -160,7 +169,23 @@ pub(crate) fn decode_row(decoder: &mut Decoder<'_>) -> Result<StoredRow, String>
             tag => return Err(format!("unknown key type tag {tag}")),
         });
     }
-    let key = PrimaryKey::new(key).map_err(|error| error.to_string())?;
+    PrimaryKey::new(key).map_err(|error| error.to_string())
+}
+
+pub(crate) fn encode_row(encoder: &mut Encoder, row: &StoredRow) -> Result<(), StoreError> {
+    encode_key(encoder, row.key())?;
+
+    encoder.length(row.values().len(), "row value count")?;
+    for value in row.values() {
+        encode_value(encoder, value)?;
+    }
+    encoder.u64(row.version());
+    encoder.u8(u8::from(row.is_deleted()));
+    Ok(())
+}
+
+pub(crate) fn decode_row(decoder: &mut Decoder<'_>) -> Result<StoredRow, String> {
+    let key = decode_key(decoder)?;
 
     let value_count = decoder.u32()?;
     let mut values = Vec::with_capacity(value_count as usize);

@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   xxh3 checksums.
 - WAL recovery that discards a torn final record while rejecting checksum or
   sequence corruption with the failing byte offset.
+- Immutable version-1 `PTSEG` files with independently checksummed,
+  LZ4-compressed column blocks, null bitmaps, block statistics, sparse
+  primary-key indexes, bloom filters, and checksummed footers.
+- Atomic, checksummed table manifests that publish flushed segments before WAL
+  truncation and pin reader snapshots by reference-counted generation.
 
 ### Verification
 
@@ -23,6 +28,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reopen tests verify checkpoint recovery, pinned reader snapshots,
   last-version-wins tombstones, pre-WAL validation, torn-tail repair, and
   precise checksum failures.
+- Segment tests cover every scalar and null representation, multi-block
+  reopen, pre-flush snapshots, max-version merge-on-read across segments and
+  WAL recovery, and precise block-checksum corruption.
 
 ## [M0] - 2026-07-30
 

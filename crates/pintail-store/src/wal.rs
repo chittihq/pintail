@@ -82,6 +82,19 @@ impl Wal {
         }
         Ok(())
     }
+
+    pub(crate) fn reset(&mut self) -> Result<(), StoreError> {
+        self.file
+            .set_len(HEADER_LENGTH as u64)
+            .and_then(|()| self.file.seek(SeekFrom::Start(HEADER_LENGTH as u64)))
+            .map_err(|error| StoreError::io("truncate flushed WAL", error))?;
+        if self.sync_policy != WalSync::Off {
+            self.file
+                .sync_all()
+                .map_err(|error| StoreError::io("sync truncated WAL", error))?;
+        }
+        Ok(())
+    }
 }
 
 fn encode_batch(sequence: u64, rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {
