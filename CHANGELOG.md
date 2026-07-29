@@ -34,6 +34,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stable column IDs embedded in every WAL batch so reordered, inserted, and
   dropped columns recover without positional value shifts; schemas also
   reject IDs reserved for physical storage metadata.
+- Explicit primary, UNIQUE-fallback, and append-rowid table modes; append mode
+  generates durable monotonic storage keys and deliberately performs no
+  source-key deduplication.
+- Enforced memtable bounds: a threshold-crossing batch performs one bounded
+  flush, compaction, and obsolete-file maintenance step.
+- Manifest-resident primary-key bounds and bloom filters with pruned point and
+  inclusive range reads that skip unrelated segment block decoding.
 
 ### Verification
 

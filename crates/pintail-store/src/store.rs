@@ -6,7 +6,7 @@ use std::{
 };
 
 use fs2::FileExt;
-use pintail_types::{PrimaryKey, StoredRow, TableSchema};
+use pintail_types::{KeyMode, KeyPart, PrimaryKey, StoredRow, TableSchema};
 
 use crate::{
     StoreError,
@@ -187,6 +187,7 @@ pub struct TableStore {
     manifest: Arc<Manifest>,
     retired: Vec<RetiredGeneration>,
     last_sequence: u64,
+    next_append_row_id: u64,
 }
 
 impl TableStore {
@@ -268,6 +269,8 @@ impl TableStore {
             manifest.schema_fingerprint = segment::schema_fingerprint(&schema);
             manifest::publish(&directory, &manifest)?;
         }
+        let next_append_row_id =
+            find_next_append_row_id(&directory, &manifest, &schema, &memtable)?;
         let manifest = Arc::new(manifest);
 
         Ok(Self {
@@ -280,6 +283,7 @@ impl TableStore {
             last_sequence: recovery_last_sequence.max(manifest.flushed_sequence),
             manifest,
             retired: Vec::new(),
+            next_append_row_id,
         })
     }
 
@@ -291,7 +295,7 @@ impl TableStore {
     /// # Errors
     ///
     /// Returns an error when validation, encoding, or WAL I/O fails.
-    pub fn ingest(&mut self, rows: Vec<StoredRow>) -> Result<IngestOutcome, StoreError> {
+    pub fn ingest(&mut self, mut rows: Vec<StoredRow>) -> Result<IngestOutcome, StoreError> {
         for row in &rows {
             self.schema.validate_row(row)?;
         }
@@ -302,6 +306,22 @@ impl TableStore {
                 visible_rows: 0,
                 should_flush: false,
             });
+        }
+        if self.schema.key_mode() == KeyMode::AppendRowId {
+            for row in &mut rows {
+                let row_id = self.next_append_row_id;
+                self.next_append_row_id = self
+                    .next_append_row_id
+                    .checked_add(1)
+                    .ok_or(StoreError::SequenceOverflow)?;
+                let storage_key = PrimaryKey::new(vec![KeyPart::UInt64(row_id)])?;
+                *row = StoredRow::new(
+                    storage_key,
+                    row.values().to_vec(),
+                    row.version(),
+                    row.is_deleted(),
+                );
+            }
         }
 
         let sequence = self
@@ -316,12 +336,20 @@ impl TableStore {
             .filter(|row| self.memtable.apply(row))
             .count();
         self.last_sequence = sequence;
+        let should_flush = self.memtable.estimated_bytes() >= self.options.memtable_bytes;
+        if should_flush {
+            self.flush()?;
+            if self.manifest.segments.len() >= self.options.compaction_fan_in {
+                self.compact()?;
+            }
+            self.reclaim_obsolete_segments()?;
+        }
 
         Ok(IngestOutcome {
             sequence,
             accepted_rows,
             visible_rows,
-            should_flush: self.memtable.estimated_bytes() >= self.options.memtable_bytes,
+            should_flush,
         })
     }
 
@@ -562,18 +590,14 @@ impl TableStore {
         }
         let mut candidates = Vec::with_capacity(self.manifest.segments.len());
         for (index, meta) in self.manifest.segments.iter().enumerate() {
-            let rows = segment::read(&self.directory, meta, &self.schema)?;
-            let Some(first) = rows.first() else {
-                continue;
-            };
             let size = std::fs::metadata(self.directory.join(&meta.file_name))
                 .map_err(|error| StoreError::io("inspect segment for compaction", error))?
                 .len();
             candidates.push(CompactionCandidate {
                 index,
                 size,
-                minimum: first.key().clone(),
-                maximum: rows.last().expect("non-empty segment").key().clone(),
+                minimum: meta.min_key.clone(),
+                maximum: meta.max_key.clone(),
             });
         }
         candidates.sort_by_key(|candidate| (candidate.size, candidate.index));
@@ -650,6 +674,66 @@ impl TableSnapshot {
             .filter(|row| !row.is_deleted())
             .collect())
     }
+
+    /// Returns one visible primary/unique key using footer range and bloom
+    /// pruning before any segment block is decoded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise segment corruption or filesystem error.
+    pub fn get(&self, key: &PrimaryKey) -> Result<Option<StoredRow>, StoreError> {
+        let mut latest = None;
+        for segment_meta in &self.manifest.segments {
+            if !segment::might_contain_key(&self.directory, segment_meta, &self.schema, key)? {
+                continue;
+            }
+            let rows = segment::read(&self.directory, segment_meta, &self.schema)?;
+            if let Ok(index) = rows.binary_search_by(|row| row.key().cmp(key)) {
+                apply_latest_option(&mut latest, rows[index].clone());
+            }
+        }
+        if let Some(row) = self.memtable.get(key) {
+            apply_latest_option(&mut latest, row.clone());
+        }
+        Ok(latest.filter(|row| !row.is_deleted()))
+    }
+
+    /// Returns visible rows in one inclusive key range, pruning disjoint
+    /// segments by footer key bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reversed range, corrupt segment, or filesystem
+    /// failure.
+    pub fn scan_range(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+    ) -> Result<Vec<StoredRow>, StoreError> {
+        if start > end {
+            return Err(StoreError::FormatLimit(
+                "scan range start follows its end".into(),
+            ));
+        }
+        let mut latest = BTreeMap::new();
+        for segment_meta in &self.manifest.segments {
+            if !segment::overlaps_key_range(segment_meta, start, end) {
+                continue;
+            }
+            for row in segment::read(&self.directory, segment_meta, &self.schema)? {
+                if row.key() >= start && row.key() <= end {
+                    apply_latest(&mut latest, row);
+                }
+            }
+        }
+        for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
+            apply_latest(&mut latest, row.clone());
+        }
+        Ok(latest
+            .into_values()
+            .filter(|row| !row.is_deleted())
+            .collect())
+    }
 }
 
 fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
@@ -658,6 +742,15 @@ fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
         .is_none_or(|current| row.version() >= current.version())
     {
         rows.insert(row.key().clone(), row);
+    }
+}
+
+fn apply_latest_option(current: &mut Option<StoredRow>, row: StoredRow) {
+    if current
+        .as_ref()
+        .is_none_or(|current| row.version() >= current.version())
+    {
+        *current = Some(row);
     }
 }
 
@@ -743,4 +836,34 @@ fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), S
         segment::sync_directory(directory)?;
     }
     Ok(())
+}
+
+fn find_next_append_row_id(
+    directory: &Path,
+    manifest: &Manifest,
+    schema: &TableSchema,
+    memtable: &Memtable,
+) -> Result<u64, StoreError> {
+    if schema.key_mode() != KeyMode::AppendRowId {
+        return Ok(1);
+    }
+    let mut maximum = 0;
+    for row in memtable.snapshot().values() {
+        maximum = maximum.max(append_row_id(row.key())?);
+    }
+    for meta in &manifest.segments {
+        for row in segment::read(directory, meta, schema)? {
+            maximum = maximum.max(append_row_id(row.key())?);
+        }
+    }
+    maximum.checked_add(1).ok_or(StoreError::SequenceOverflow)
+}
+
+fn append_row_id(key: &PrimaryKey) -> Result<u64, StoreError> {
+    match key.parts() {
+        [KeyPart::UInt64(row_id)] => Ok(*row_id),
+        _ => Err(StoreError::IncompatibleSchema(
+            "append-rowid table contains a non-generated storage key".into(),
+        )),
+    }
 }

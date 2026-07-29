@@ -2,6 +2,18 @@ use std::{collections::HashSet, fmt};
 
 use crate::{DataType, StoredRow};
 
+/// Physical sort-key and duplicate-resolution mode selected by the catalog.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum KeyMode {
+    /// Use the source table's primary key.
+    #[default]
+    Primary,
+    /// Use the first source unique index when no primary key exists.
+    Unique,
+    /// Generate a monotonically increasing row ID and retain every row.
+    AppendRowId,
+}
+
 /// A stable table column definition.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Column {
@@ -53,6 +65,7 @@ impl Column {
 pub struct TableSchema {
     version: u32,
     columns: Vec<Column>,
+    key_mode: KeyMode,
 }
 
 impl TableSchema {
@@ -63,6 +76,19 @@ impl TableSchema {
     /// Returns an error for an empty schema, empty or duplicate names, or
     /// duplicate stable identifiers.
     pub fn new(version: u32, columns: Vec<Column>) -> Result<Self, SchemaError> {
+        Self::with_key_mode(version, columns, KeyMode::Primary)
+    }
+
+    /// Constructs a schema with an explicit catalog-selected key fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same structural errors as [`Self::new`].
+    pub fn with_key_mode(
+        version: u32,
+        columns: Vec<Column>,
+        key_mode: KeyMode,
+    ) -> Result<Self, SchemaError> {
         if columns.is_empty() {
             return Err(SchemaError::EmptySchema);
         }
@@ -84,7 +110,11 @@ impl TableSchema {
             }
         }
 
-        Ok(Self { version, columns })
+        Ok(Self {
+            version,
+            columns,
+            key_mode,
+        })
     }
 
     /// Returns the schema version embedded in segments.
@@ -97,6 +127,12 @@ impl TableSchema {
     #[must_use]
     pub fn columns(&self) -> &[Column] {
         &self.columns
+    }
+
+    /// Returns how storage keys and duplicate resolution are selected.
+    #[must_use]
+    pub fn key_mode(&self) -> KeyMode {
+        self.key_mode
     }
 
     /// Validates a row against column arity, nullability, and types.

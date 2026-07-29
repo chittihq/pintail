@@ -183,6 +183,46 @@ fn scan_reports_the_corrupt_segment_and_block_offset() {
     }
 }
 
+#[test]
+fn point_and_range_reads_prune_disjoint_corrupt_segments_before_block_decode() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let corrupt_path = {
+        let mut table =
+            TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
+        table.ingest(vec![row(1, "corrupt", 1)]).expect("ingest");
+        let path = table
+            .flush()
+            .expect("first flush")
+            .segment_path()
+            .expect("first segment")
+            .to_path_buf();
+        table.ingest(vec![row(100, "target", 2)]).expect("ingest");
+        table.flush().expect("second flush");
+        path
+    };
+    let mut bytes = std::fs::read(&corrupt_path).expect("segment bytes");
+    bytes[62] ^= 0xff;
+    std::fs::write(&corrupt_path, bytes).expect("corrupt block");
+
+    let table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("reopen");
+    assert_eq!(
+        table.snapshot().get(&key(100)).expect("point lookup"),
+        Some(row(100, "target", 2))
+    );
+    assert_eq!(
+        table
+            .snapshot()
+            .scan_range(&key(100), &key(100))
+            .expect("range scan"),
+        vec![row(100, "target", 2)]
+    );
+    assert!(
+        table.snapshot().scan().is_err(),
+        "a full scan still visits the corrupt segment"
+    );
+}
+
 fn schema() -> TableSchema {
     TableSchema::new(
         3,

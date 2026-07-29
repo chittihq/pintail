@@ -1,11 +1,11 @@
 use std::{fs::OpenOptions, io::Write, path::Path};
 
-use pintail_types::TableSchema;
+use pintail_types::{KeyMode, TableSchema};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
     StoreError,
-    codec::{Decoder, Encoder},
+    codec::{Decoder, Encoder, decode_key, encode_key},
     segment::{SegmentMeta, schema_fingerprint, sync_directory},
 };
 
@@ -18,6 +18,7 @@ pub(crate) struct Manifest {
     pub(crate) generation: u64,
     pub(crate) schema_version: u32,
     pub(crate) schema_fingerprint: u64,
+    pub(crate) key_mode: KeyMode,
     pub(crate) flushed_sequence: u64,
     pub(crate) next_segment_id: u64,
     pub(crate) epoch: u64,
@@ -30,6 +31,7 @@ impl Manifest {
             generation: 0,
             schema_version: schema.version(),
             schema_fingerprint: schema_fingerprint(schema),
+            key_mode: schema.key_mode(),
             flushed_sequence: 0,
             next_segment_id: 1,
             epoch: 0,
@@ -93,6 +95,12 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
     let stored_fingerprint = decoder
         .u64()
         .map_err(|reason| corrupt_here(&decoder, reason))?;
+    let key_mode = decode_key_mode(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(&decoder, reason))?,
+    )
+    .map_err(|reason| corrupt_here(&decoder, reason))?;
     let flushed_sequence = decoder
         .u64()
         .map_err(|reason| corrupt_here(&decoder, reason))?;
@@ -129,6 +137,12 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         let segment_fingerprint = decoder
             .u64()
             .map_err(|reason| corrupt_here(&decoder, reason))?;
+        let min_key = decode_key(&mut decoder).map_err(|reason| corrupt_here(&decoder, reason))?;
+        let max_key = decode_key(&mut decoder).map_err(|reason| corrupt_here(&decoder, reason))?;
+        let bloom = decoder
+            .bytes()
+            .map_err(|reason| corrupt_here(&decoder, reason))?
+            .to_vec();
         segments.push(SegmentMeta {
             id,
             file_name,
@@ -136,6 +150,9 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
             min_version,
             max_version,
             schema_fingerprint: segment_fingerprint,
+            min_key,
+            max_key,
+            bloom,
         });
     }
     decoder
@@ -155,6 +172,11 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
             actual: stored_fingerprint,
         });
     }
+    if key_mode != schema.key_mode() {
+        return Err(StoreError::IncompatibleSchema(
+            "table key mode cannot change after data is created".into(),
+        ));
+    }
     if next_segment_id == 0 || segments.iter().any(|segment| segment.id >= next_segment_id) {
         return Err(StoreError::corrupt_manifest(
             0,
@@ -166,6 +188,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         generation,
         schema_version,
         schema_fingerprint: stored_fingerprint,
+        key_mode,
         flushed_sequence,
         next_segment_id,
         epoch,
@@ -180,6 +203,7 @@ pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), Store
     encoder.u64(manifest.generation);
     encoder.u32(manifest.schema_version);
     encoder.u64(manifest.schema_fingerprint);
+    encoder.u8(encode_key_mode(manifest.key_mode));
     encoder.u64(manifest.flushed_sequence);
     encoder.u64(manifest.next_segment_id);
     encoder.u64(manifest.epoch);
@@ -191,6 +215,9 @@ pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), Store
         encoder.u64(segment.min_version);
         encoder.u64(segment.max_version);
         encoder.u64(segment.schema_fingerprint);
+        encode_key(&mut encoder, &segment.min_key)?;
+        encode_key(&mut encoder, &segment.max_key)?;
+        encoder.bytes(&segment.bloom, "segment primary-key bloom")?;
     }
     let checksum = xxh3_64(encoder.as_slice());
     encoder.u64(checksum);
@@ -213,4 +240,21 @@ pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), Store
 
 fn corrupt_here(decoder: &Decoder<'_>, reason: impl Into<String>) -> StoreError {
     StoreError::corrupt_manifest(decoder.position(), reason)
+}
+
+fn encode_key_mode(key_mode: KeyMode) -> u8 {
+    match key_mode {
+        KeyMode::Primary => 0,
+        KeyMode::Unique => 1,
+        KeyMode::AppendRowId => 2,
+    }
+}
+
+fn decode_key_mode(tag: u8) -> Result<KeyMode, String> {
+    match tag {
+        0 => Ok(KeyMode::Primary),
+        1 => Ok(KeyMode::Unique),
+        2 => Ok(KeyMode::AppendRowId),
+        _ => Err(format!("unknown table key mode {tag}")),
+    }
 }

@@ -7,7 +7,7 @@ use std::{
 };
 
 use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
-use pintail_types::{DataType, PrimaryKey, StoredRow, TableSchema, Value};
+use pintail_types::{DataType, KeyMode, PrimaryKey, StoredRow, TableSchema, Value};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
@@ -31,6 +31,9 @@ pub(crate) struct SegmentMeta {
     pub(crate) min_version: u64,
     pub(crate) max_version: u64,
     pub(crate) schema_fingerprint: u64,
+    pub(crate) min_key: PrimaryKey,
+    pub(crate) max_key: PrimaryKey,
+    pub(crate) bloom: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -124,6 +127,7 @@ struct ColumnSpec {
 pub(crate) fn schema_fingerprint(schema: &TableSchema) -> u64 {
     let mut encoder = Encoder::new();
     encoder.u32(schema.version());
+    encoder.u8(key_mode_tag(schema.key_mode()));
     encoder.u32(u32::try_from(schema.columns().len()).unwrap_or(u32::MAX));
     for column in schema.columns() {
         encoder.u32(column.id());
@@ -133,6 +137,14 @@ pub(crate) fn schema_fingerprint(schema: &TableSchema) -> u64 {
         encoder.u8(0);
     }
     xxh3_64(&encoder.finish())
+}
+
+fn key_mode_tag(key_mode: KeyMode) -> u8 {
+    match key_mode {
+        KeyMode::Primary => 0,
+        KeyMode::Unique => 1,
+        KeyMode::AppendRowId => 2,
+    }
 }
 
 pub(crate) fn write(
@@ -157,6 +169,9 @@ pub(crate) fn write(
     let fingerprint = schema_fingerprint(schema);
     let min_version = rows.iter().map(StoredRow::version).min().unwrap_or(0);
     let max_version = rows.iter().map(StoredRow::version).max().unwrap_or(0);
+    let min_key = rows.first().expect("non-empty rows").key().clone();
+    let max_key = rows.last().expect("non-empty rows").key().clone();
+    let bloom = build_bloom(rows)?;
     let specs = column_specs(schema);
     let mut encoder = Encoder::new();
     encoder.raw(MAGIC);
@@ -181,8 +196,8 @@ pub(crate) fn write(
     encoder.u64(max_version);
     encoder.u64(fingerprint);
     encoder.u64(rows.len() as u64);
-    encode_key(&mut encoder, rows.first().expect("non-empty rows").key())?;
-    encode_key(&mut encoder, rows.last().expect("non-empty rows").key())?;
+    encode_key(&mut encoder, &min_key)?;
+    encode_key(&mut encoder, &max_key)?;
     encoder.length(column_offsets.len(), "footer column count")?;
     for offset in column_offsets {
         encoder.u64(offset);
@@ -194,7 +209,7 @@ pub(crate) fn write(
         encoder.u64(row_index as u64);
         encode_key(&mut encoder, rows[row_index].key())?;
     }
-    encoder.bytes(&build_bloom(rows)?, "primary-key bloom filter")?;
+    encoder.bytes(&bloom, "primary-key bloom filter")?;
 
     let footer_checksum = xxh3_64(&encoder.as_slice()[footer_start..]);
     encoder.u64(footer_checksum);
@@ -212,6 +227,9 @@ pub(crate) fn write(
         min_version,
         max_version,
         schema_fingerprint: fingerprint,
+        min_key,
+        max_key,
+        bloom,
     })
 }
 
@@ -417,6 +435,24 @@ pub(crate) fn verify(
     let bytes = std::fs::read(&path)
         .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
     validate_footer(&path, &bytes, meta, schema)
+}
+
+pub(crate) fn might_contain_key(
+    _directory: &Path,
+    meta: &SegmentMeta,
+    _schema: &TableSchema,
+    key: &PrimaryKey,
+) -> Result<bool, StoreError> {
+    if key < &meta.min_key || key > &meta.max_key {
+        return Ok(false);
+    }
+    let mut encoder = Encoder::new();
+    encode_key(&mut encoder, key)?;
+    Ok(bloom_might_contain(&meta.bloom, xxh3_64(&encoder.finish())))
+}
+
+pub(crate) fn overlaps_key_range(meta: &SegmentMeta, start: &PrimaryKey, end: &PrimaryKey) -> bool {
+    meta.min_key <= *end && meta.max_key >= *start
 }
 
 fn column_specs(schema: &TableSchema) -> Vec<ColumnSpec> {
@@ -1304,8 +1340,9 @@ fn validate_footer_body(
             "footer metadata does not match the manifest",
         ));
     }
-    decode_key(&mut decoder)
-        .and_then(|_| decode_key(&mut decoder))
+    let first_key = decode_key(&mut decoder)
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let last_key = decode_key(&mut decoder)
         .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
     let column_count = decoder
         .u32()
@@ -1334,9 +1371,17 @@ fn validate_footer_body(
             "invalid primary-key bloom filter length",
         ));
     }
+    if first_key != meta.min_key || last_key != meta.max_key || bloom != meta.bloom {
+        return Err(corrupt(
+            path,
+            footer_offset,
+            "footer key index does not match the manifest",
+        ));
+    }
     decoder
         .finish()
-        .map_err(|reason| corrupt(path, footer_offset, reason))
+        .map_err(|reason| corrupt(path, footer_offset, reason))?;
+    Ok(())
 }
 
 fn build_bloom(rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {
@@ -1345,13 +1390,26 @@ fn build_bloom(rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {
         let mut encoder = Encoder::new();
         encode_key(&mut encoder, row.key())?;
         let hash = xxh3_64(&encoder.finish());
-        for shift in [0, 21, 42] {
-            let bit = usize::try_from((hash >> shift) % (BLOOM_BYTES * 8) as u64)
-                .map_err(|_| StoreError::FormatLimit("bloom position does not fit usize".into()))?;
-            bloom[bit / 8] |= 1 << (bit % 8);
-        }
+        set_bloom_bits(&mut bloom, hash)?;
     }
     Ok(bloom)
+}
+
+fn set_bloom_bits(bloom: &mut [u8], hash: u64) -> Result<(), StoreError> {
+    for shift in [0, 21, 42] {
+        let bit = usize::try_from((hash >> shift) % (bloom.len() * 8) as u64)
+            .map_err(|_| StoreError::FormatLimit("bloom position does not fit usize".into()))?;
+        bloom[bit / 8] |= 1 << (bit % 8);
+    }
+    Ok(())
+}
+
+fn bloom_might_contain(bloom: &[u8], hash: u64) -> bool {
+    [0, 21, 42].into_iter().all(|shift| {
+        let bit = usize::try_from((hash >> shift) % (bloom.len() * 8) as u64)
+            .expect("bloom bit index is bounded by the fixed bloom length");
+        bloom[bit / 8] & (1 << (bit % 8)) != 0
+    })
 }
 
 fn write_atomic(temporary: &Path, destination: &Path, bytes: &[u8]) -> Result<(), StoreError> {

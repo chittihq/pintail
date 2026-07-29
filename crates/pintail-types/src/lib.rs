@@ -9,5 +9,5 @@ mod schema;
 mod value;
 
 pub use row::{KeyPart, PrimaryKey, StoredRow};
-pub use schema::{Column, SchemaError, TableSchema};
+pub use schema::{Column, KeyMode, SchemaError, TableSchema};
 pub use value::{DataType, Float64, Value};

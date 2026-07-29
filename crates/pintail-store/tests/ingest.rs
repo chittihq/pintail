@@ -68,6 +68,38 @@ fn an_invalid_batch_is_rejected_before_it_reaches_the_wal() {
     assert!(reopened.snapshot().scan().expect("scan").is_empty());
 }
 
+#[test]
+fn reaching_the_memtable_budget_flushes_and_runs_one_bounded_maintenance_step() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        memtable_bytes: 1,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open table");
+
+    let outcome = table
+        .ingest(vec![row("automatically flushed", 1, false)])
+        .expect("ingest");
+    assert!(
+        outcome.should_flush(),
+        "batch crossed the configured budget"
+    );
+    assert_eq!(
+        std::fs::metadata(directory.path().join("table.wal"))
+            .expect("WAL metadata")
+            .len(),
+        6
+    );
+    assert_eq!(
+        table.compaction_status().expect("status").segment_count(),
+        1
+    );
+    assert_eq!(
+        table.snapshot().scan().expect("scan"),
+        vec![row("automatically flushed", 1, false)]
+    );
+}
+
 fn schema() -> TableSchema {
     TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)]).expect("schema")
 }

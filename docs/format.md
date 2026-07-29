@@ -65,6 +65,7 @@ The checksummed binary manifest is:
 u64 generation
 u32 current_schema_version
 u64 current_schema_fingerprint
+u8 key_mode                 # primary=0, unique=1, append-rowid=2
 u64 flushed_wal_sequence
 u64 next_segment_id
 u64 memtable_epoch
@@ -76,6 +77,9 @@ repeated segment_count times:
     u64 min_version
     u64 max_version
     u64 segment_schema_fingerprint
+    composite_key min_key
+    composite_key max_key
+    bytes primary_key_bloom_filter
 u64 xxh3(all preceding manifest bytes)
 ```
 
@@ -195,13 +199,16 @@ from either the old WAL state or the new manifest state.
 Scans merge every pinned segment with the pinned memtable in primary-key
 order, keep maximum `_version`, then remove `_deleted` rows. Pinned readers
 retain their old manifest and memtable `Arc`s across flush and compaction.
+Point reads prune manifest entries by key bounds and bloom filters before
+touching segment files. Inclusive range reads prune disjoint manifest entries
+by their persisted key bounds.
 
 A higher schema version may add nullable columns; old segment and WAL rows
 materialize those columns as `NULL`. Stable-ID renames and segment-backed
 drops are readable. Compaction rewrites dropped bytes away. Required-column
 additions over existing data and physical type changes are rejected.
 
-The schema fingerprint is xxh3 over: `u32 schema_version`,
+The schema fingerprint is xxh3 over: `u32 schema_version`, `u8 key_mode`,
 `u32 column_count`, then for each physical-order user column its `u32` ID,
 one-byte logical type, one-byte nullable flag, raw UTF-8 name bytes, and a zero
 terminator. HLL uses the low six hash bits as the register index and the
@@ -217,3 +224,10 @@ zstd. Publication uses the same segment-before-manifest ordering as flush.
 Obsolete files are deleted only after every snapshot pinning their manifest
 generation releases it; a process restart can immediately remove files not
 listed by the durable manifest.
+
+The catalog fixes one key mode when a table is created: source primary key,
+first source UNIQUE key, or append-rowid. Primary and UNIQUE modes resolve
+maximum versions by that key. Append-rowid mode replaces the source key with a
+monotonic generated `UInt64` storage key and therefore retains every source
+row without deduplication. Reopen derives the next row ID from durable WAL and
+segments; key mode cannot change after data exists.
