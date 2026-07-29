@@ -13,4 +13,7 @@ mod store;
 mod wal;
 
 pub use error::StoreError;
-pub use store::{FlushOutcome, IngestOutcome, StoreOptions, TableSnapshot, TableStore, WalSync};
+pub use store::{
+    CompactionOutcome, CompactionStatus, FlushOutcome, IngestOutcome, StoreOptions, TableSnapshot,
+    TableStore, WalSync,
+};

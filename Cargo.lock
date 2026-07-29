@@ -799,8 +799,10 @@ dependencies = [
  "fs2",
  "lz4_flex",
  "pintail-types",
+ "rand",
  "tempfile",
  "xxhash-rust",
+ "zstd",
 ]
 
 [[package]]

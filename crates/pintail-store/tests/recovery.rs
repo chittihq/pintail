@@ -99,6 +99,99 @@ fn checksum_corruption_reports_the_failing_wal_offset() {
     );
 }
 
+#[test]
+fn reopen_verifies_live_segment_footers_before_returning() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let segment_path = {
+        let mut table =
+            TableStore::open(directory.path(), account_schema(), StoreOptions::default())
+                .expect("open table");
+        table
+            .ingest(vec![account(1, "Ada", 1, false)])
+            .expect("ingest");
+        table
+            .flush()
+            .expect("flush")
+            .segment_path()
+            .expect("segment")
+            .to_path_buf()
+    };
+    let mut bytes = std::fs::read(&segment_path).expect("segment bytes");
+    let footer_checksum = bytes.len() - 16;
+    bytes[footer_checksum] ^= 0x5a;
+    std::fs::write(&segment_path, bytes).expect("corrupt footer");
+
+    let error = TableStore::open(directory.path(), account_schema(), StoreOptions::default())
+        .err()
+        .expect("corrupt footer must fail during open");
+    assert!(
+        error.to_string().contains("footer checksum mismatch"),
+        "{error}"
+    );
+}
+
+#[test]
+fn reopen_removes_unpublished_segments_left_by_a_crash() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let live_path = {
+        let mut table =
+            TableStore::open(directory.path(), account_schema(), StoreOptions::default())
+                .expect("open table");
+        table
+            .ingest(vec![account(1, "Ada", 1, false)])
+            .expect("ingest");
+        table
+            .flush()
+            .expect("flush")
+            .segment_path()
+            .expect("segment")
+            .to_path_buf()
+    };
+    let orphan = directory.path().join("segment-99999999999999999999.ptseg");
+    std::fs::copy(&live_path, &orphan).expect("simulate pre-manifest segment");
+
+    let reopened = TableStore::open(directory.path(), account_schema(), StoreOptions::default())
+        .expect("reopen");
+    assert!(!orphan.exists(), "unpublished segment is not live");
+    assert_eq!(
+        reopened.snapshot().scan().expect("scan"),
+        vec![account(1, "Ada", 1, false)]
+    );
+}
+
+#[test]
+fn manifest_checkpoint_wins_if_a_crash_prevents_wal_truncation() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let stale_wal = {
+        let mut table =
+            TableStore::open(directory.path(), account_schema(), StoreOptions::default())
+                .expect("open table");
+        table
+            .ingest(vec![account(1, "Ada", 1, false)])
+            .expect("ingest");
+        table.checkpoint().expect("checkpoint");
+        let bytes = std::fs::read(directory.path().join("table.wal")).expect("pre-flush WAL");
+        table.flush().expect("flush");
+        bytes
+    };
+    std::fs::write(directory.path().join("table.wal"), stale_wal)
+        .expect("simulate crash before WAL reset");
+
+    let reopened = TableStore::open(directory.path(), account_schema(), StoreOptions::default())
+        .expect("reopen");
+    assert_eq!(
+        reopened.snapshot().scan().expect("scan"),
+        vec![account(1, "Ada", 1, false)]
+    );
+    assert_eq!(
+        std::fs::metadata(directory.path().join("table.wal"))
+            .expect("WAL metadata")
+            .len(),
+        6,
+        "recovery removes records already covered by the manifest"
+    );
+}
+
 fn account_schema() -> TableSchema {
     TableSchema::new(
         1,

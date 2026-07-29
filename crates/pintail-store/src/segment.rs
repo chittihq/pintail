@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use lz4_flex::block::{compress, decompress};
+use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
 use pintail_types::{DataType, PrimaryKey, StoredRow, TableSchema, Value};
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -18,7 +18,6 @@ use crate::{
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
 const FORMAT_VERSION: u8 = 1;
-const COMPRESSION_LZ4: u8 = 1;
 const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
 const TOMBSTONE_COLUMN_ID: u32 = u32::MAX;
@@ -32,6 +31,22 @@ pub(crate) struct SegmentMeta {
     pub(crate) min_version: u64,
     pub(crate) max_version: u64,
     pub(crate) schema_fingerprint: u64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Compression {
+    Lz4 = 1,
+    Zstd = 2,
+}
+
+impl Compression {
+    fn decode(tag: u8) -> Result<Self, String> {
+        match tag {
+            1 => Ok(Self::Lz4),
+            2 => Ok(Self::Zstd),
+            _ => Err(format!("unknown block compression {tag}")),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -126,6 +141,7 @@ pub(crate) fn write(
     schema: &TableSchema,
     rows: &[StoredRow],
     block_rows: usize,
+    compression: Compression,
 ) -> Result<SegmentMeta, StoreError> {
     if rows.is_empty() {
         return Err(StoreError::FormatLimit(
@@ -154,7 +170,7 @@ pub(crate) fn write(
     let mut column_offsets = Vec::with_capacity(specs.len());
     for spec in &specs {
         column_offsets.push(encoder.position() as u64);
-        write_column(&mut encoder, spec, rows, block_rows)?;
+        write_column(&mut encoder, spec, rows, block_rows, compression)?;
     }
 
     let footer_offset = encoder.position() as u64;
@@ -308,6 +324,17 @@ pub(crate) fn read(
     Ok(rows)
 }
 
+pub(crate) fn verify(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+) -> Result<(), StoreError> {
+    let path = directory.join(&meta.file_name);
+    let bytes = std::fs::read(&path)
+        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
+    validate_footer(&path, &bytes, meta, schema)
+}
+
 fn column_specs(schema: &TableSchema) -> Vec<ColumnSpec> {
     let mut specs = vec![
         ColumnSpec {
@@ -345,6 +372,7 @@ fn write_column(
     spec: &ColumnSpec,
     rows: &[StoredRow],
     block_rows: usize,
+    compression: Compression,
 ) -> Result<(), StoreError> {
     encoder.u32(spec.id);
     encoder.u8(spec.logical_type as u8);
@@ -354,7 +382,7 @@ fn write_column(
             .iter()
             .map(|row| cell_for(spec, row))
             .collect::<Vec<_>>();
-        write_block(encoder, spec.logical_type, &cells)?;
+        write_block(encoder, spec.logical_type, &cells, compression)?;
     }
     Ok(())
 }
@@ -363,6 +391,7 @@ fn write_block(
     encoder: &mut Encoder,
     logical_type: LogicalType,
     cells: &[Cell],
+    compression: Compression,
 ) -> Result<(), StoreError> {
     encoder.length(cells.len(), "block row count")?;
     let mut null_bitmap = vec![0_u8; cells.len().div_ceil(8)];
@@ -381,10 +410,10 @@ fn write_block(
     encoder.bytes(&null_bitmap, "null bitmap")?;
     let encoding = select_encoding(logical_type, &non_null);
     encoder.u8(encoding as u8);
-    encoder.u8(COMPRESSION_LZ4);
+    encoder.u8(compression as u8);
     let uncompressed = encode_payload(logical_type, encoding, &non_null)?;
     encoder.length(uncompressed.len(), "uncompressed block")?;
-    let compressed = compress(&uncompressed);
+    let compressed = compress_block(compression, &uncompressed)?;
     encoder.bytes(&compressed, "compressed block")?;
     encoder.u64(xxh3_64(&compressed));
     encoder.u32(null_count);
@@ -473,13 +502,12 @@ fn read_block(
             .map_err(|reason| corrupt_here(path, decoder, reason))?,
     )
     .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    if decoder
-        .u8()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?
-        != COMPRESSION_LZ4
-    {
-        return Err(corrupt_here(path, decoder, "unsupported block compression"));
-    }
+    let compression = Compression::decode(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?,
+    )
+    .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let uncompressed_length = decoder
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))?
@@ -494,8 +522,8 @@ fn read_block(
     if xxh3_64(compressed) != expected_checksum {
         return Err(corrupt(path, checksum_offset, "block checksum mismatch"));
     }
-    let uncompressed = decompress(compressed, uncompressed_length)
-        .map_err(|error| corrupt(path, checksum_offset, format!("invalid LZ4 block: {error}")))?;
+    let uncompressed = decompress_block(compression, compressed, uncompressed_length)
+        .map_err(|reason| corrupt(path, checksum_offset, reason))?;
 
     let declared_nulls = decoder
         .u32()
@@ -541,6 +569,27 @@ fn read_block(
         ));
     }
     Ok(cells)
+}
+
+fn compress_block(compression: Compression, bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
+    match compression {
+        Compression::Lz4 => Ok(lz4_compress(bytes)),
+        Compression::Zstd => zstd::bulk::compress(bytes, 3)
+            .map_err(|error| StoreError::io("compress zstd segment block", error)),
+    }
+}
+
+fn decompress_block(
+    compression: Compression,
+    bytes: &[u8],
+    uncompressed_length: usize,
+) -> Result<Vec<u8>, String> {
+    match compression {
+        Compression::Lz4 => lz4_decompress(bytes, uncompressed_length)
+            .map_err(|error| format!("invalid LZ4 block: {error}")),
+        Compression::Zstd => zstd::bulk::decompress(bytes, uncompressed_length)
+            .map_err(|error| format!("invalid zstd block: {error}")),
+    }
 }
 
 fn select_encoding(logical_type: LogicalType, cells: &[Cell]) -> Encoding {

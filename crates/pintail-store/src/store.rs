@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use fs2::FileExt;
@@ -20,6 +20,8 @@ const WAL_FILE: &str = "table.wal";
 const WRITER_LOCK_FILE: &str = ".writer.lock";
 const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOCK_ROWS: usize = 64 * 1024;
+const DEFAULT_COMPACTION_FAN_IN: usize = 4;
+const SIZE_TIER_RATIO: u64 = 4;
 
 /// WAL durability policy.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -42,6 +44,8 @@ pub struct StoreOptions {
     pub block_rows: usize,
     /// WAL synchronization policy.
     pub wal_sync: WalSync,
+    /// Number of similarly sized overlapping segments merged in one pass.
+    pub compaction_fan_in: usize,
 }
 
 impl Default for StoreOptions {
@@ -50,6 +54,7 @@ impl Default for StoreOptions {
             memtable_bytes: DEFAULT_MEMTABLE_BYTES,
             block_rows: DEFAULT_BLOCK_ROWS,
             wal_sync: WalSync::Checkpoint,
+            compaction_fan_in: DEFAULT_COMPACTION_FAN_IN,
         }
     }
 }
@@ -110,6 +115,67 @@ impl FlushOutcome {
     }
 }
 
+/// Current amount of immutable data eligible for one compaction pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompactionStatus {
+    segment_count: usize,
+    eligible_segments: usize,
+    debt_bytes: u64,
+}
+
+impl CompactionStatus {
+    /// Returns all live segments in the pinned manifest generation.
+    #[must_use]
+    pub fn segment_count(self) -> usize {
+        self.segment_count
+    }
+
+    /// Returns segments selected by the next size-tier pass.
+    #[must_use]
+    pub fn eligible_segments(self) -> usize {
+        self.eligible_segments
+    }
+
+    /// Returns bytes that the next compaction pass must rewrite.
+    #[must_use]
+    pub fn debt_bytes(self) -> u64 {
+        self.debt_bytes
+    }
+}
+
+/// Result of one bounded size-tier compaction pass.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompactionOutcome {
+    input_segments: usize,
+    output_rows: usize,
+    output_path: Option<PathBuf>,
+}
+
+impl CompactionOutcome {
+    /// Returns the number of segments replaced by this pass.
+    #[must_use]
+    pub fn input_segments(&self) -> usize {
+        self.input_segments
+    }
+
+    /// Returns rows retained after version and tombstone resolution.
+    #[must_use]
+    pub fn output_rows(&self) -> usize {
+        self.output_rows
+    }
+
+    /// Returns the replacement segment, if the merge retained any rows.
+    #[must_use]
+    pub fn output_path(&self) -> Option<&Path> {
+        self.output_path.as_deref()
+    }
+}
+
+struct RetiredGeneration {
+    readers: Weak<Manifest>,
+    paths: Vec<PathBuf>,
+}
+
 /// The single-writer handle for one physical table.
 pub struct TableStore {
     _writer_lock: File,
@@ -119,6 +185,7 @@ pub struct TableStore {
     wal: Wal,
     memtable: Memtable,
     manifest: Arc<Manifest>,
+    retired: Vec<RetiredGeneration>,
     last_sequence: u64,
 }
 
@@ -135,6 +202,16 @@ impl TableStore {
         options: StoreOptions,
     ) -> Result<Self, StoreError> {
         let directory = directory.as_ref().to_path_buf();
+        if options.block_rows == 0 {
+            return Err(StoreError::FormatLimit(
+                "segment block row target must be non-zero".into(),
+            ));
+        }
+        if options.compaction_fan_in < 2 {
+            return Err(StoreError::FormatLimit(
+                "compaction fan-in must be at least two".into(),
+            ));
+        }
         std::fs::create_dir_all(&directory)
             .map_err(|error| StoreError::io("create table directory", error))?;
 
@@ -148,7 +225,13 @@ impl TableStore {
         })?;
 
         let manifest = Arc::new(manifest::load(&directory, &schema)?);
-        let (wal, recovery) = Wal::open(&directory.join(WAL_FILE), options.wal_sync)?;
+        for meta in &manifest.segments {
+            segment::verify(&directory, meta, &schema)?;
+        }
+        remove_orphan_segments(&directory, &manifest)?;
+        let (mut wal, recovery) = Wal::open(&directory.join(WAL_FILE), options.wal_sync)?;
+        let recovery_last_sequence = recovery.last_sequence;
+        let recovered_batches = !recovery.batches.is_empty();
         let mut memtable = Memtable::default();
         for (sequence, rows) in recovery.batches {
             if sequence <= manifest.flushed_sequence {
@@ -159,6 +242,9 @@ impl TableStore {
                 memtable.apply(&row);
             }
         }
+        if recovered_batches && recovery_last_sequence <= manifest.flushed_sequence {
+            wal.reset()?;
+        }
 
         Ok(Self {
             _writer_lock: writer_lock,
@@ -167,8 +253,9 @@ impl TableStore {
             options,
             wal,
             memtable,
-            last_sequence: recovery.last_sequence.max(manifest.flushed_sequence),
+            last_sequence: recovery_last_sequence.max(manifest.flushed_sequence),
             manifest,
+            retired: Vec::new(),
         })
     }
 
@@ -253,6 +340,7 @@ impl TableStore {
             &self.schema,
             &rows,
             self.options.block_rows,
+            segment::Compression::Lz4,
         )?;
         let segment_path = self.directory.join(&segment.file_name);
         let mut next_manifest = self.manifest.as_ref().clone();
@@ -281,6 +369,152 @@ impl TableStore {
         })
     }
 
+    /// Calculates the next size-tier compaction candidate and its byte debt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when segment metadata or checksummed key ranges cannot
+    /// be read.
+    pub fn compaction_status(&self) -> Result<CompactionStatus, StoreError> {
+        let plan = self.compaction_plan()?;
+        Ok(CompactionStatus {
+            segment_count: self.manifest.segments.len(),
+            eligible_segments: plan.as_ref().map_or(0, |plan| plan.indices.len()),
+            debt_bytes: plan.map_or(0, |plan| plan.debt_bytes),
+        })
+    }
+
+    /// Runs one bounded size-tier merge of similarly sized overlapping files.
+    ///
+    /// A merge that covers the complete manifest drops tombstones immediately
+    /// and writes zstd at the coldest tier. Partial merges retain tombstones so
+    /// they can still suppress older versions outside the selected set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when input validation, output writing, or atomic
+    /// manifest publication fails.
+    pub fn compact(&mut self) -> Result<CompactionOutcome, StoreError> {
+        let Some(plan) = self.compaction_plan()? else {
+            return Ok(CompactionOutcome {
+                input_segments: 0,
+                output_rows: 0,
+                output_path: None,
+            });
+        };
+        let full_merge = plan.indices.len() == self.manifest.segments.len();
+        let mut merged = BTreeMap::new();
+        for index in &plan.indices {
+            let meta = &self.manifest.segments[*index];
+            for row in segment::read(&self.directory, meta, &self.schema)? {
+                apply_latest(&mut merged, row);
+            }
+        }
+        let rows = merged
+            .into_values()
+            .filter(|row| !full_merge || !row.is_deleted())
+            .collect::<Vec<_>>();
+
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = next_manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        let selected = plan
+            .indices
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let retired_paths = next_manifest
+            .segments
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| selected.contains(index))
+            .map(|(_, meta)| self.directory.join(&meta.file_name))
+            .collect::<Vec<_>>();
+        next_manifest.segments = next_manifest
+            .segments
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| !selected.contains(index))
+            .map(|(_, meta)| meta)
+            .collect();
+
+        let output_path = if rows.is_empty() {
+            None
+        } else {
+            let compression = if full_merge {
+                segment::Compression::Zstd
+            } else {
+                segment::Compression::Lz4
+            };
+            let output = segment::write(
+                &self.directory,
+                next_manifest.next_segment_id,
+                &self.schema,
+                &rows,
+                self.options.block_rows,
+                compression,
+            )?;
+            next_manifest.next_segment_id = next_manifest
+                .next_segment_id
+                .checked_add(1)
+                .ok_or(StoreError::SequenceOverflow)?;
+            let path = self.directory.join(&output.file_name);
+            next_manifest.segments.push(output);
+            Some(path)
+        };
+        manifest::publish(&self.directory, &next_manifest)?;
+
+        let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
+        self.retired.push(RetiredGeneration {
+            readers: Arc::downgrade(&previous),
+            paths: retired_paths,
+        });
+        Ok(CompactionOutcome {
+            input_segments: plan.indices.len(),
+            output_rows: rows.len(),
+            output_path,
+        })
+    }
+
+    /// Deletes obsolete segments after every snapshot that pins them releases.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an eligible obsolete file cannot be removed.
+    pub fn reclaim_obsolete_segments(&mut self) -> Result<usize, StoreError> {
+        let mut reclaimed = 0;
+        let mut retained = Vec::new();
+        for generation in self.retired.drain(..) {
+            if generation.readers.upgrade().is_some() {
+                retained.push(generation);
+                continue;
+            }
+            for path in generation.paths {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => reclaimed += 1,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(StoreError::io(
+                            format!("remove obsolete segment {}", path.display()),
+                            error,
+                        ));
+                    }
+                }
+            }
+        }
+        self.retired = retained;
+        if reclaimed > 0 {
+            segment::sync_directory(&self.directory)?;
+        }
+        Ok(reclaimed)
+    }
+
     /// Pins an immutable view of rows currently visible to readers.
     #[must_use]
     pub fn snapshot(&self) -> TableSnapshot {
@@ -297,6 +531,71 @@ impl TableStore {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+
+    fn compaction_plan(&self) -> Result<Option<CompactionPlan>, StoreError> {
+        if self.manifest.segments.len() < self.options.compaction_fan_in {
+            return Ok(None);
+        }
+        let mut candidates = Vec::with_capacity(self.manifest.segments.len());
+        for (index, meta) in self.manifest.segments.iter().enumerate() {
+            let rows = segment::read(&self.directory, meta, &self.schema)?;
+            let Some(first) = rows.first() else {
+                continue;
+            };
+            let size = std::fs::metadata(self.directory.join(&meta.file_name))
+                .map_err(|error| StoreError::io("inspect segment for compaction", error))?
+                .len();
+            candidates.push(CompactionCandidate {
+                index,
+                size,
+                minimum: first.key().clone(),
+                maximum: rows.last().expect("non-empty segment").key().clone(),
+            });
+        }
+        candidates.sort_by_key(|candidate| (candidate.size, candidate.index));
+        for window in candidates.windows(self.options.compaction_fan_in) {
+            let smallest = window.first().expect("non-empty window").size;
+            let largest = window.last().expect("non-empty window").size;
+            if largest > smallest.saturating_mul(SIZE_TIER_RATIO) || !ranges_overlap(window) {
+                continue;
+            }
+            return Ok(Some(CompactionPlan {
+                indices: window.iter().map(|candidate| candidate.index).collect(),
+                debt_bytes: window.iter().map(|candidate| candidate.size).sum(),
+            }));
+        }
+        Ok(None)
+    }
+}
+
+struct CompactionCandidate {
+    index: usize,
+    size: u64,
+    minimum: PrimaryKey,
+    maximum: PrimaryKey,
+}
+
+struct CompactionPlan {
+    indices: Vec<usize>,
+    debt_bytes: u64,
+}
+
+fn ranges_overlap(candidates: &[CompactionCandidate]) -> bool {
+    let mut by_key = candidates.iter().collect::<Vec<_>>();
+    by_key.sort_by(|left, right| left.minimum.cmp(&right.minimum));
+    let Some(first) = by_key.first() else {
+        return false;
+    };
+    let mut maximum = first.maximum.clone();
+    for candidate in by_key.into_iter().skip(1) {
+        if candidate.minimum > maximum {
+            return false;
+        }
+        if candidate.maximum > maximum {
+            maximum = candidate.maximum.clone();
+        }
+    }
+    true
 }
 
 /// A reader-owned immutable table view.
@@ -346,4 +645,36 @@ fn open_lock(path: &Path) -> Result<File, StoreError> {
         .truncate(false)
         .open(path)
         .map_err(|error| StoreError::io("open table writer lock", error))
+}
+
+fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), StoreError> {
+    let live = manifest
+        .segments
+        .iter()
+        .map(|segment| segment.file_name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut removed = false;
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| StoreError::io("list table directory", error))?
+    {
+        let entry = entry.map_err(|error| StoreError::io("read table directory entry", error))?;
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "ptseg")
+            && !live.contains(file_name)
+        {
+            std::fs::remove_file(&path).map_err(|error| {
+                StoreError::io(format!("remove orphan segment {}", path.display()), error)
+            })?;
+            removed = true;
+        }
+    }
+    if removed {
+        segment::sync_directory(directory)?;
+    }
+    Ok(())
 }

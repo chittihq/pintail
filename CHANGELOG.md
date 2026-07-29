@@ -23,6 +23,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Adaptive version-1 block codecs for plain, dictionary, run-length,
   bit-packed, and delta-bit-packed values, with typed min/max statistics and
   retained 64-register HLL sketches.
+- Bounded size-tier compaction for similarly sized overlapping segments,
+  including byte-debt reporting, max-version collapse, partial-merge
+  tombstone retention, full-merge tombstone removal, and zstd cold output.
+- Reference-counted obsolete-segment reclamation that preserves pinned reader
+  generations and cleans unreferenced crash orphans during reopen.
 
 ### Verification
 
@@ -35,6 +40,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reopen, pre-flush snapshots, max-version merge-on-read across segments and
   WAL recovery, and precise block-checksum corruption.
 - On-disk format tests force and round-trip all five version-1 block encodings.
+- Compaction tests cover delayed reclamation, partial versus full tombstone
+  rules, zstd cold output, and 64 deterministic randomized version/tombstone
+  interleavings against a naive reference model.
+- Recovery tests verify live footers during open, discard unpublished segment
+  orphans, and prefer a durable manifest checkpoint when a crash leaves the
+  pre-flush WAL in place.
 
 ## [M0] - 2026-07-30
 
