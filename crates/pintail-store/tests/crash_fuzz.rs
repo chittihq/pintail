@@ -9,10 +9,11 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const WORKER_ENV: &str = "PINTAIL_CRASH_FUZZ_WORKER";
 const DIRECTORY_ENV: &str = "PINTAIL_CRASH_FUZZ_DIRECTORY";
+const ACK_PREFIX: &str = "crash-fuzz-ack-";
 const ITERATIONS: usize = 100;
 
 #[test]
-fn short_kill9_crash_fuzz_reopens_to_a_valid_monotonic_prefix() {
+fn short_kill9_crash_fuzz_matches_the_acknowledged_commit_oracle() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let executable = std::env::current_exe().expect("current test executable");
     let mut random = StdRng::seed_from_u64(0x0050_494e_5441_494c);
@@ -37,6 +38,7 @@ fn short_kill9_crash_fuzz_reopens_to_a_valid_monotonic_prefix() {
         child.kill().expect("kill crash worker");
         child.wait().expect("reap crash worker");
 
+        let acknowledged_version = latest_acknowledged_version(directory.path());
         let table = TableStore::open(directory.path(), schema(), options())
             .unwrap_or_else(|error| panic!("iteration {iteration} failed to reopen: {error}"));
         let rows = table
@@ -44,6 +46,14 @@ fn short_kill9_crash_fuzz_reopens_to_a_valid_monotonic_prefix() {
             .scan()
             .unwrap_or_else(|error| panic!("iteration {iteration} failed to scan: {error}"));
         assert!(rows.len() <= 1, "single-key worker returned {rows:?}");
+        let actual_version = rows.first().map_or(0, StoredRow::version);
+        assert!(
+            actual_version == acknowledged_version
+                || actual_version == acknowledged_version.saturating_add(1),
+            "iteration {iteration} recovered version {actual_version}, outside exact oracle \
+             [{acknowledged_version}, {}]",
+            acknowledged_version.saturating_add(1)
+        );
         if let Some(row) = rows.first() {
             assert!(
                 row.version() >= recovered_version,
@@ -76,7 +86,7 @@ fn crash_fuzz_worker() {
         return;
     }
     let directory = std::env::var_os(DIRECTORY_ENV).expect("worker directory");
-    let mut table = TableStore::open(directory, schema(), options()).expect("worker open");
+    let mut table = TableStore::open(&directory, schema(), options()).expect("worker open");
     let mut version = table
         .snapshot()
         .scan()
@@ -94,6 +104,7 @@ fn crash_fuzz_worker() {
                 false,
             )])
             .expect("worker ingest");
+        acknowledge_version(std::path::Path::new(&directory), version);
         if version % 2 == 0 {
             table.flush().expect("worker flush");
         }
@@ -107,6 +118,28 @@ fn crash_fuzz_worker() {
         }
         std::thread::yield_now();
     }
+}
+
+fn acknowledge_version(directory: &std::path::Path, version: u64) {
+    let path = directory.join(format!("{ACK_PREFIX}{version:020}"));
+    std::fs::File::create(path)
+        .and_then(|file| file.sync_all())
+        .expect("persist crash-fuzz acknowledgement");
+}
+
+fn latest_acknowledged_version(directory: &std::path::Path) -> u64 {
+    std::fs::read_dir(directory)
+        .expect("read crash-fuzz directory")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix(ACK_PREFIX))
+                .and_then(|version| version.parse::<u64>().ok())
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn options() -> StoreOptions {

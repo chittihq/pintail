@@ -84,10 +84,7 @@ impl Wal {
         self.file
             .seek(SeekFrom::End(0))
             .map_err(|error| StoreError::io("seek to WAL end", error))?;
-        self.file
-            .write_all(&length.to_le_bytes())
-            .and_then(|()| self.file.write_all(&payload))
-            .and_then(|()| self.file.write_all(&checksum.to_le_bytes()))
+        write_record(&mut self.file, length, &payload, checksum)
             .map_err(|error| StoreError::io("append WAL record", error))?;
         if self.sync_policy == WalSync::Always {
             self.sync()?;
@@ -116,6 +113,17 @@ impl Wal {
         }
         Ok(())
     }
+}
+
+fn write_record(
+    writer: &mut impl Write,
+    length: u32,
+    payload: &[u8],
+    checksum: u64,
+) -> std::io::Result<()> {
+    writer.write_all(&length.to_le_bytes())?;
+    writer.write_all(payload)?;
+    writer.write_all(&checksum.to_le_bytes())
 }
 
 fn encode_batch(
@@ -301,4 +309,94 @@ fn recover(file: &mut File) -> Result<Recovery, StoreError> {
         batches,
         last_sequence,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
+
+    use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
+    use xxhash_rust::xxh3::xxh3_64;
+
+    use super::{FORMAT_VERSION, MAGIC, encode_batch, recover, write_record};
+
+    #[test]
+    fn disk_full_during_wal_append_leaves_the_prior_complete_prefix() {
+        let schema = TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)])
+            .expect("schema");
+        let first = encode_batch(1, 7, &schema, &[row("durable", 1)]).expect("first payload");
+        let second =
+            encode_batch(2, 7, &schema, &[row(&"x".repeat(1024), 2)]).expect("second payload");
+        let mut bytes = [MAGIC.as_slice(), &[FORMAT_VERSION]].concat();
+        append_complete(&mut bytes, &first);
+        let valid_length = bytes.len();
+
+        let mut limited = FullAfter {
+            bytes: &mut bytes,
+            remaining: 37,
+        };
+        let error = write_record(
+            &mut limited,
+            u32::try_from(second.len()).expect("payload length"),
+            &second,
+            xxh3_64(&second),
+        )
+        .expect_err("simulated disk must fill during the record");
+        assert_eq!(error.kind(), ErrorKind::StorageFull);
+        assert!(
+            bytes.len() > valid_length,
+            "a torn record prefix was written"
+        );
+
+        let mut file = tempfile::tempfile().expect("temporary WAL");
+        file.write_all(&bytes).expect("write simulated WAL");
+        file.seek(SeekFrom::Start(0)).expect("seek WAL");
+        let recovery = recover(&mut file).expect("recover complete prefix");
+        assert_eq!(recovery.batches.len(), 1);
+        assert_eq!(recovery.batches[0].sequence, 1);
+        assert_eq!(
+            file.metadata().expect("WAL metadata").len(),
+            u64::try_from(valid_length).expect("valid length")
+        );
+    }
+
+    fn append_complete(bytes: &mut Vec<u8>, payload: &[u8]) {
+        write_record(
+            bytes,
+            u32::try_from(payload.len()).expect("payload length"),
+            payload,
+            xxh3_64(payload),
+        )
+        .expect("append complete record");
+    }
+
+    fn row(value: &str, version: u64) -> StoredRow {
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::UInt64(1)]).expect("key"),
+            vec![Value::Utf8(value.into())],
+            version,
+            false,
+        )
+    }
+
+    struct FullAfter<'a> {
+        bytes: &'a mut Vec<u8>,
+        remaining: usize,
+    }
+
+    impl Write for FullAfter<'_> {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(Error::new(ErrorKind::StorageFull, "simulated disk full"));
+            }
+            let written = buffer.len().min(self.remaining);
+            self.bytes.extend_from_slice(&buffer[..written]);
+            self.remaining -= written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 }
