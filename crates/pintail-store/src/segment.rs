@@ -1,5 +1,6 @@
 use std::{
-    collections::HashSet,
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -17,7 +18,6 @@ use crate::{
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
 const FORMAT_VERSION: u8 = 1;
-const ENCODING_PLAIN: u8 = 0;
 const COMPRESSION_LZ4: u8 = 1;
 const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
@@ -43,6 +43,28 @@ enum LogicalType {
     Utf8 = 4,
     Binary = 5,
     PrimaryKey = 6,
+}
+
+#[derive(Clone, Copy)]
+enum Encoding {
+    Plain = 0,
+    Dictionary = 1,
+    RunLength = 2,
+    BitPacked = 3,
+    DeltaBitPacked = 4,
+}
+
+impl Encoding {
+    fn decode(tag: u8) -> Result<Self, String> {
+        match tag {
+            0 => Ok(Self::Plain),
+            1 => Ok(Self::Dictionary),
+            2 => Ok(Self::RunLength),
+            3 => Ok(Self::BitPacked),
+            4 => Ok(Self::DeltaBitPacked),
+            _ => Err(format!("unknown block encoding {tag}")),
+        }
+    }
 }
 
 impl LogicalType {
@@ -344,7 +366,7 @@ fn write_block(
 ) -> Result<(), StoreError> {
     encoder.length(cells.len(), "block row count")?;
     let mut null_bitmap = vec![0_u8; cells.len().div_ceil(8)];
-    let mut plain = Encoder::new();
+    let mut non_null = Vec::with_capacity(cells.len());
     let mut encoded_values = Vec::with_capacity(cells.len());
     let mut null_count = 0_u32;
     for (index, cell) in cells.iter().enumerate() {
@@ -352,28 +374,36 @@ fn write_block(
             null_bitmap[index / 8] |= 1 << (index % 8);
             null_count += 1;
         } else {
-            encode_cell(&mut plain, cell)?;
+            non_null.push(cell.clone());
             encoded_values.push(cell.stat_bytes()?);
         }
     }
     encoder.bytes(&null_bitmap, "null bitmap")?;
-    encoder.u8(ENCODING_PLAIN);
+    let encoding = select_encoding(logical_type, &non_null);
+    encoder.u8(encoding as u8);
     encoder.u8(COMPRESSION_LZ4);
-    let uncompressed = plain.finish();
+    let uncompressed = encode_payload(logical_type, encoding, &non_null)?;
     encoder.length(uncompressed.len(), "uncompressed block")?;
     let compressed = compress(&uncompressed);
     encoder.bytes(&compressed, "compressed block")?;
     encoder.u64(xxh3_64(&compressed));
     encoder.u32(null_count);
 
-    encoded_values.sort();
-    let min = encoded_values.first().cloned().unwrap_or_default();
-    let max = encoded_values.last().cloned().unwrap_or_default();
+    let min = non_null
+        .iter()
+        .min_by(|left, right| compare_cells(left, right))
+        .map(Cell::stat_bytes)
+        .transpose()?
+        .unwrap_or_default();
+    let max = non_null
+        .iter()
+        .max_by(|left, right| compare_cells(left, right))
+        .map(Cell::stat_bytes)
+        .transpose()?
+        .unwrap_or_default();
     encoder.bytes(&min, "block minimum")?;
     encoder.bytes(&max, "block maximum")?;
-    let distinct = encoded_values.into_iter().collect::<HashSet<_>>().len() as u64;
-    encoder.u64(distinct);
-    let _ = logical_type;
+    encoder.bytes(&hll_registers(&encoded_values), "block HLL sketch")?;
     Ok(())
 }
 
@@ -437,13 +467,12 @@ fn read_block(
     if null_bitmap.len() != row_count.div_ceil(8) {
         return Err(corrupt_here(path, decoder, "invalid null bitmap length"));
     }
-    if decoder
-        .u8()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?
-        != ENCODING_PLAIN
-    {
-        return Err(corrupt_here(path, decoder, "unsupported block encoding"));
-    }
+    let encoding = Encoding::decode(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?,
+    )
+    .map_err(|reason| corrupt_here(path, decoder, reason))?;
     if decoder
         .u8()
         .map_err(|reason| corrupt_here(path, decoder, reason))?
@@ -477,9 +506,12 @@ fn read_block(
     let _maximum = decoder
         .bytes()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    let _distinct_estimate = decoder
-        .u64()
+    let hll = decoder
+        .bytes()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    if hll.len() != 64 {
+        return Err(corrupt_here(path, decoder, "invalid HLL register count"));
+    }
 
     let actual_nulls = (0..row_count)
         .filter(|index| null_bitmap[index / 8] & (1 << (index % 8)) != 0)
@@ -487,25 +519,447 @@ fn read_block(
     if actual_nulls != declared_nulls {
         return Err(corrupt_here(path, decoder, "null count mismatch"));
     }
-    let mut plain = Decoder::new(&uncompressed);
+    let non_null_count = row_count - actual_nulls;
+    let decoded_values = decode_payload(&uncompressed, logical_type, encoding, non_null_count)
+        .map_err(|reason| corrupt(path, checksum_offset, reason))?;
+    let mut decoded_values = decoded_values.into_iter();
     let mut cells = Vec::with_capacity(row_count);
     for index in 0..row_count {
         if null_bitmap[index / 8] & (1 << (index % 8)) != 0 {
             cells.push(Cell::Null);
         } else {
-            cells.push(
-                decode_cell(&mut plain, logical_type)
-                    .map_err(|reason| corrupt(path, checksum_offset, reason))?,
-            );
+            cells.push(decoded_values.next().ok_or_else(|| {
+                corrupt(path, checksum_offset, "encoding produced too few values")
+            })?);
         }
     }
-    plain
-        .finish()
-        .map_err(|reason| corrupt(path, checksum_offset, reason))?;
+    if decoded_values.next().is_some() {
+        return Err(corrupt(
+            path,
+            checksum_offset,
+            "encoding produced too many values",
+        ));
+    }
     Ok(cells)
 }
 
-#[derive(Clone)]
+fn select_encoding(logical_type: LogicalType, cells: &[Cell]) -> Encoding {
+    if cells.len() > 1 && cells.iter().all(|cell| cell == &cells[0]) {
+        return Encoding::RunLength;
+    }
+    if matches!(logical_type, LogicalType::Utf8 | LogicalType::Binary)
+        && cells.len() >= 4
+        && cells.iter().collect::<HashSet<_>>().len() * 2 <= cells.len()
+    {
+        return Encoding::Dictionary;
+    }
+    if cells.len() >= 3 && is_monotonic_integer(logical_type, cells) {
+        return Encoding::DeltaBitPacked;
+    }
+    if matches!(
+        logical_type,
+        LogicalType::Boolean | LogicalType::Int64 | LogicalType::UInt64
+    ) {
+        return Encoding::BitPacked;
+    }
+    Encoding::Plain
+}
+
+fn compare_cells(left: &Cell, right: &Cell) -> Ordering {
+    match (left, right) {
+        (Cell::Null, Cell::Null) => Ordering::Equal,
+        (Cell::Boolean(left), Cell::Boolean(right)) => left.cmp(right),
+        (Cell::Int64(left), Cell::Int64(right)) => left.cmp(right),
+        (Cell::UInt64(left), Cell::UInt64(right)) => left.cmp(right),
+        (Cell::Float64(left), Cell::Float64(right)) => {
+            f64::from_bits(*left).total_cmp(&f64::from_bits(*right))
+        }
+        (Cell::Utf8(left), Cell::Utf8(right)) => left.cmp(right),
+        (Cell::Binary(left), Cell::Binary(right)) => left.cmp(right),
+        (Cell::Key(left), Cell::Key(right)) => left.cmp(right),
+        _ => unreachable!("a segment block contains one logical type"),
+    }
+}
+
+fn hll_registers(encoded_values: &[Vec<u8>]) -> [u8; 64] {
+    let mut registers = [0_u8; 64];
+    for value in encoded_values {
+        let hash = xxh3_64(value);
+        let index = usize::from(hash.to_le_bytes()[0] & 63);
+        let rank = u8::try_from((hash >> 6).leading_zeros() - 5).expect("HLL rank is at most 59");
+        registers[index] = registers[index].max(rank);
+    }
+    registers
+}
+
+fn is_monotonic_integer(logical_type: LogicalType, cells: &[Cell]) -> bool {
+    match logical_type {
+        LogicalType::UInt64 => cells.windows(2).all(|pair| match pair {
+            [Cell::UInt64(left), Cell::UInt64(right)] => left <= right,
+            _ => false,
+        }),
+        LogicalType::Int64 => cells.windows(2).all(|pair| match pair {
+            [Cell::Int64(left), Cell::Int64(right)] => left <= right,
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+fn encode_payload(
+    logical_type: LogicalType,
+    encoding: Encoding,
+    cells: &[Cell],
+) -> Result<Vec<u8>, StoreError> {
+    let mut encoder = Encoder::new();
+    match encoding {
+        Encoding::Plain => {
+            for cell in cells {
+                encode_cell(&mut encoder, cell)?;
+            }
+        }
+        Encoding::Dictionary => encode_dictionary(&mut encoder, cells)?,
+        Encoding::RunLength => encode_runs(&mut encoder, cells)?,
+        Encoding::BitPacked => encode_bit_packed(&mut encoder, logical_type, cells)?,
+        Encoding::DeltaBitPacked => encode_delta_bit_packed(&mut encoder, logical_type, cells)?,
+    }
+    Ok(encoder.finish())
+}
+
+fn decode_payload(
+    bytes: &[u8],
+    logical_type: LogicalType,
+    encoding: Encoding,
+    value_count: usize,
+) -> Result<Vec<Cell>, String> {
+    let mut decoder = Decoder::new(bytes);
+    let values = match encoding {
+        Encoding::Plain => (0..value_count)
+            .map(|_| decode_cell(&mut decoder, logical_type))
+            .collect::<Result<Vec<_>, _>>()?,
+        Encoding::Dictionary => decode_dictionary(&mut decoder, logical_type, value_count)?,
+        Encoding::RunLength => decode_runs(&mut decoder, logical_type, value_count)?,
+        Encoding::BitPacked => decode_bit_packed(&mut decoder, logical_type, value_count)?,
+        Encoding::DeltaBitPacked => {
+            decode_delta_bit_packed(&mut decoder, logical_type, value_count)?
+        }
+    };
+    decoder.finish()?;
+    Ok(values)
+}
+
+fn encode_dictionary(encoder: &mut Encoder, cells: &[Cell]) -> Result<(), StoreError> {
+    let mut positions = HashMap::new();
+    let mut dictionary = Vec::new();
+    let mut indices = Vec::with_capacity(cells.len());
+    for cell in cells {
+        let index = if let Some(index) = positions.get(cell) {
+            *index
+        } else {
+            let index = u32::try_from(dictionary.len())
+                .map_err(|_| StoreError::FormatLimit("dictionary exceeds u32::MAX".into()))?;
+            positions.insert(cell.clone(), index);
+            dictionary.push(cell.clone());
+            index
+        };
+        indices.push(index);
+    }
+    encoder.length(dictionary.len(), "block dictionary")?;
+    for value in &dictionary {
+        encode_cell(encoder, value)?;
+    }
+    for index in indices {
+        encoder.u32(index);
+    }
+    Ok(())
+}
+
+fn decode_dictionary(
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    value_count: usize,
+) -> Result<Vec<Cell>, String> {
+    let dictionary_count = decoder.u32()? as usize;
+    let dictionary = (0..dictionary_count)
+        .map(|_| decode_cell(decoder, logical_type))
+        .collect::<Result<Vec<_>, _>>()?;
+    (0..value_count)
+        .map(|_| {
+            let index = decoder.u32()? as usize;
+            dictionary
+                .get(index)
+                .cloned()
+                .ok_or_else(|| format!("dictionary index {index} is out of bounds"))
+        })
+        .collect()
+}
+
+fn encode_runs(encoder: &mut Encoder, cells: &[Cell]) -> Result<(), StoreError> {
+    let mut runs: Vec<(u32, &Cell)> = Vec::new();
+    for cell in cells {
+        if let Some((length, previous)) = runs.last_mut()
+            && *previous == cell
+        {
+            *length = length
+                .checked_add(1)
+                .ok_or_else(|| StoreError::FormatLimit("run length exceeds u32::MAX".into()))?;
+            continue;
+        }
+        runs.push((1, cell));
+    }
+    encoder.length(runs.len(), "run count")?;
+    for (length, value) in runs {
+        encoder.u32(length);
+        encode_cell(encoder, value)?;
+    }
+    Ok(())
+}
+
+fn decode_runs(
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    value_count: usize,
+) -> Result<Vec<Cell>, String> {
+    let run_count = decoder.u32()?;
+    let mut values = Vec::with_capacity(value_count);
+    for _ in 0..run_count {
+        let length = decoder.u32()? as usize;
+        if length == 0 {
+            return Err("run length must be non-zero".to_owned());
+        }
+        let value = decode_cell(decoder, logical_type)?;
+        if values.len().saturating_add(length) > value_count {
+            return Err("run lengths exceed block value count".to_owned());
+        }
+        values.extend(std::iter::repeat_n(value, length));
+    }
+    if values.len() != value_count {
+        return Err(format!(
+            "run lengths produce {} values, expected {value_count}",
+            values.len()
+        ));
+    }
+    Ok(values)
+}
+
+fn encode_bit_packed(
+    encoder: &mut Encoder,
+    logical_type: LogicalType,
+    cells: &[Cell],
+) -> Result<(), StoreError> {
+    let (base, normalized) = normalize_integers(logical_type, cells)?;
+    encode_integer_base(encoder, logical_type, base)?;
+    encode_packed(encoder, &normalized)
+}
+
+fn decode_bit_packed(
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    value_count: usize,
+) -> Result<Vec<Cell>, String> {
+    let base = decode_integer_base(decoder, logical_type)?;
+    unpack(decoder, value_count)?
+        .into_iter()
+        .map(|value| integer_from_base(logical_type, base, value))
+        .collect()
+}
+
+fn encode_delta_bit_packed(
+    encoder: &mut Encoder,
+    logical_type: LogicalType,
+    cells: &[Cell],
+) -> Result<(), StoreError> {
+    let first = cells
+        .first()
+        .ok_or_else(|| StoreError::FormatLimit("delta block cannot be empty".into()))?;
+    encode_cell(encoder, first)?;
+    let values = integer_values(logical_type, cells)?;
+    let deltas = values
+        .windows(2)
+        .map(|pair| {
+            u64::try_from(pair[1] - pair[0])
+                .map_err(|_| StoreError::FormatLimit("integer delta exceeds u64".into()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    encode_packed(encoder, &deltas)
+}
+
+fn decode_delta_bit_packed(
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    value_count: usize,
+) -> Result<Vec<Cell>, String> {
+    if value_count == 0 {
+        return Err("delta block cannot be empty".to_owned());
+    }
+    let first = decode_cell(decoder, logical_type)?;
+    let mut current = integer_value(logical_type, &first)?;
+    let deltas = unpack(decoder, value_count - 1)?;
+    let mut values = Vec::with_capacity(value_count);
+    values.push(first);
+    for delta in deltas {
+        current = current
+            .checked_add(i128::from(delta))
+            .ok_or_else(|| "integer delta overflow".to_owned())?;
+        values.push(integer_from_i128(logical_type, current)?);
+    }
+    Ok(values)
+}
+
+fn normalize_integers(
+    logical_type: LogicalType,
+    cells: &[Cell],
+) -> Result<(i128, Vec<u64>), StoreError> {
+    let values = integer_values(logical_type, cells)?;
+    let base = values.iter().copied().min().unwrap_or(0);
+    let normalized = values
+        .into_iter()
+        .map(|value| {
+            u64::try_from(value - base)
+                .map_err(|_| StoreError::FormatLimit("integer range exceeds u64".into()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((base, normalized))
+}
+
+fn integer_values(logical_type: LogicalType, cells: &[Cell]) -> Result<Vec<i128>, StoreError> {
+    cells
+        .iter()
+        .map(|cell| {
+            integer_value(logical_type, cell)
+                .map_err(|reason| StoreError::FormatLimit(reason.to_owned()))
+        })
+        .collect()
+}
+
+fn integer_value(logical_type: LogicalType, cell: &Cell) -> Result<i128, &'static str> {
+    match (logical_type, cell) {
+        (LogicalType::Boolean, Cell::Boolean(value)) => Ok(i128::from(*value)),
+        (LogicalType::Int64, Cell::Int64(value)) => Ok(i128::from(*value)),
+        (LogicalType::UInt64, Cell::UInt64(value)) => Ok(i128::from(*value)),
+        _ => Err("bit-packed value does not match logical type"),
+    }
+}
+
+fn encode_integer_base(
+    encoder: &mut Encoder,
+    logical_type: LogicalType,
+    base: i128,
+) -> Result<(), StoreError> {
+    match logical_type {
+        LogicalType::Boolean => encoder.u8(u8::try_from(base)
+            .map_err(|_| StoreError::FormatLimit("boolean base does not fit u8".into()))?),
+        LogicalType::Int64 => encoder.i64(
+            i64::try_from(base)
+                .map_err(|_| StoreError::FormatLimit("signed base does not fit i64".into()))?,
+        ),
+        LogicalType::UInt64 => encoder.u64(
+            u64::try_from(base)
+                .map_err(|_| StoreError::FormatLimit("unsigned base does not fit u64".into()))?,
+        ),
+        _ => {
+            return Err(StoreError::FormatLimit(
+                "logical type cannot be bit-packed".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn decode_integer_base(
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+) -> Result<i128, String> {
+    match logical_type {
+        LogicalType::Boolean => Ok(i128::from(decoder.u8()?)),
+        LogicalType::Int64 => Ok(i128::from(decoder.i64()?)),
+        LogicalType::UInt64 => Ok(i128::from(decoder.u64()?)),
+        _ => Err("logical type cannot be bit-packed".to_owned()),
+    }
+}
+
+fn integer_from_base(
+    logical_type: LogicalType,
+    base: i128,
+    normalized: u64,
+) -> Result<Cell, String> {
+    let value = base
+        .checked_add(i128::from(normalized))
+        .ok_or_else(|| "bit-packed integer overflow".to_owned())?;
+    integer_from_i128(logical_type, value)
+}
+
+fn integer_from_i128(logical_type: LogicalType, value: i128) -> Result<Cell, String> {
+    match logical_type {
+        LogicalType::Boolean => match value {
+            0 => Ok(Cell::Boolean(false)),
+            1 => Ok(Cell::Boolean(true)),
+            _ => Err(format!("invalid bit-packed boolean {value}")),
+        },
+        LogicalType::Int64 => i64::try_from(value)
+            .map(Cell::Int64)
+            .map_err(|_| "bit-packed signed integer overflow".to_owned()),
+        LogicalType::UInt64 => u64::try_from(value)
+            .map(Cell::UInt64)
+            .map_err(|_| "bit-packed unsigned integer overflow".to_owned()),
+        _ => Err("logical type cannot be bit-packed".to_owned()),
+    }
+}
+
+fn encode_packed(encoder: &mut Encoder, values: &[u64]) -> Result<(), StoreError> {
+    let maximum = values.iter().copied().max().unwrap_or(0);
+    let width = u8::try_from(u64::BITS - maximum.leading_zeros())
+        .map_err(|_| StoreError::FormatLimit("bit width does not fit u8".into()))?;
+    encoder.u8(width);
+    encoder.bytes(&pack(values, width)?, "bit-packed values")
+}
+
+fn pack(values: &[u64], width: u8) -> Result<Vec<u8>, StoreError> {
+    let total_bits = values
+        .len()
+        .checked_mul(usize::from(width))
+        .ok_or_else(|| StoreError::FormatLimit("bit-packed length overflow".into()))?;
+    let mut bytes = vec![0_u8; total_bits.div_ceil(8)];
+    for (value_index, value) in values.iter().enumerate() {
+        for bit in 0..width {
+            if value & (1_u64 << bit) != 0 {
+                let position = value_index * usize::from(width) + usize::from(bit);
+                bytes[position / 8] |= 1 << (position % 8);
+            }
+        }
+    }
+    Ok(bytes)
+}
+
+fn unpack(decoder: &mut Decoder<'_>, value_count: usize) -> Result<Vec<u64>, String> {
+    let width = decoder.u8()?;
+    if width > 64 {
+        return Err(format!("invalid bit width {width}"));
+    }
+    let bytes = decoder.bytes()?;
+    let expected_bits = value_count
+        .checked_mul(usize::from(width))
+        .ok_or_else(|| "bit-packed length overflow".to_owned())?;
+    if bytes.len() != expected_bits.div_ceil(8) {
+        return Err(format!(
+            "bit-packed payload has {} bytes, expected {}",
+            bytes.len(),
+            expected_bits.div_ceil(8)
+        ));
+    }
+    let mut values = vec![0_u64; value_count];
+    for (value_index, value) in values.iter_mut().enumerate() {
+        for bit in 0..width {
+            let position = value_index * usize::from(width) + usize::from(bit);
+            if bytes[position / 8] & (1 << (position % 8)) != 0 {
+                *value |= 1_u64 << bit;
+            }
+        }
+    }
+    Ok(values)
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
 enum Cell {
     Null,
     Boolean(bool),

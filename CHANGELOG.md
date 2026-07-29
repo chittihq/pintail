@@ -20,6 +20,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   primary-key indexes, bloom filters, and checksummed footers.
 - Atomic, checksummed table manifests that publish flushed segments before WAL
   truncation and pin reader snapshots by reference-counted generation.
+- Adaptive version-1 block codecs for plain, dictionary, run-length,
+  bit-packed, and delta-bit-packed values, with typed min/max statistics and
+  retained 64-register HLL sketches.
 
 ### Verification
 
@@ -31,6 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Segment tests cover every scalar and null representation, multi-block
   reopen, pre-flush snapshots, max-version merge-on-read across segments and
   WAL recovery, and precise block-checksum corruption.
+- On-disk format tests force and round-trip all five version-1 block encodings.
 
 ## [M0] - 2026-07-30
 
