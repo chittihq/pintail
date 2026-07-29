@@ -62,3 +62,16 @@ fn schema_rejects_nulls_and_values_that_do_not_match_the_column() {
         })
     );
 }
+
+#[test]
+fn schema_rejects_column_ids_reserved_for_storage_system_columns() {
+    for id in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
+        assert_eq!(
+            TableSchema::new(
+                1,
+                vec![Column::new(id, "reserved", DataType::UInt64, false)]
+            ),
+            Err(SchemaError::ReservedColumnId(id))
+        );
+    }
+}

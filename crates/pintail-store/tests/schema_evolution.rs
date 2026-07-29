@@ -109,6 +109,30 @@ fn dropped_columns_remain_readable_until_compaction_rewrites_them() {
         .expect("reopen rewritten schema");
 }
 
+#[test]
+fn dropped_columns_are_projected_out_of_unflushed_wal_rows_by_stable_id() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    {
+        let mut table = TableStore::open(directory.path(), schema_v1(), StoreOptions::default())
+            .expect("open v1");
+        table.ingest(vec![row_v1(1, "keep", 1)]).expect("ingest");
+        table.checkpoint().expect("checkpoint");
+    }
+    let schema = TableSchema::new(2, vec![Column::new(2, "label", DataType::Utf8, false)])
+        .expect("dropped id column schema");
+    let reopened = TableStore::open(directory.path(), schema, StoreOptions::default())
+        .expect("project dropped WAL column");
+    assert_eq!(
+        reopened.snapshot().scan().expect("scan"),
+        vec![StoredRow::new(
+            key(1),
+            vec![Value::Utf8("keep".into())],
+            1,
+            false
+        )]
+    );
+}
+
 fn schema_v1() -> TableSchema {
     TableSchema::new(
         1,
@@ -125,8 +149,8 @@ fn schema_v2_nullable() -> TableSchema {
         2,
         vec![
             Column::new(1, "id", DataType::UInt64, false),
-            Column::new(2, "label", DataType::Utf8, false),
             Column::new(3, "active", DataType::Boolean, true),
+            Column::new(2, "label", DataType::Utf8, false),
         ],
     )
     .expect("v2 nullable schema")
@@ -137,8 +161,8 @@ fn schema_v2_required() -> TableSchema {
         2,
         vec![
             Column::new(1, "id", DataType::UInt64, false),
+            Column::new(3, "required", DataType::UInt64, false),
             Column::new(2, "label", DataType::Utf8, false),
-            Column::new(3, "active", DataType::Boolean, false),
         ],
     )
     .expect("v2 required schema")
@@ -167,7 +191,7 @@ fn row_v1(id: u64, label: &str, version: u64) -> StoredRow {
 fn row_v2(id: u64, label: &str, active: Value, version: u64) -> StoredRow {
     StoredRow::new(
         key(id),
-        vec![Value::UInt64(id), Value::Utf8(label.into()), active],
+        vec![Value::UInt64(id), active, Value::Utf8(label.into())],
         version,
         false,
     )

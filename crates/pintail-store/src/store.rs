@@ -13,7 +13,7 @@ use crate::{
     manifest::{self, Manifest},
     memtable::Memtable,
     segment,
-    wal::Wal,
+    wal::{RecoveredBatch, Wal, WalColumn},
 };
 
 const WAL_FILE: &str = "table.wal";
@@ -238,12 +238,17 @@ impl TableStore {
         let recovery_last_sequence = recovery.last_sequence;
         let recovered_batches = !recovery.batches.is_empty();
         let mut memtable = Memtable::default();
-        for (sequence, rows) in recovery.batches {
+        for batch in recovery.batches {
+            let RecoveredBatch {
+                sequence,
+                columns,
+                rows,
+            } = batch;
             if sequence <= manifest.flushed_sequence {
                 continue;
             }
             for row in rows {
-                let row = adapt_recovered_row(&schema, row)?;
+                let row = adapt_recovered_row(&schema, &columns, &row)?;
                 memtable.apply(&row);
             }
         }
@@ -303,7 +308,7 @@ impl TableStore {
             .last_sequence
             .checked_add(1)
             .ok_or(StoreError::SequenceOverflow)?;
-        self.wal.append(sequence, &rows)?;
+        self.wal.append(sequence, &self.schema, &rows)?;
 
         let accepted_rows = rows.len();
         let visible_rows = rows
@@ -666,26 +671,42 @@ fn open_lock(path: &Path) -> Result<File, StoreError> {
         .map_err(|error| StoreError::io("open table writer lock", error))
 }
 
-fn adapt_recovered_row(schema: &TableSchema, row: StoredRow) -> Result<StoredRow, StoreError> {
-    if row.values().len() == schema.columns().len() {
-        schema.validate_row(&row)?;
-        return Ok(row);
+fn adapt_recovered_row(
+    schema: &TableSchema,
+    wal_columns: &[WalColumn],
+    row: &StoredRow,
+) -> Result<StoredRow, StoreError> {
+    if row.values().len() != wal_columns.len() {
+        return Err(StoreError::IncompatibleSchema(format!(
+            "WAL row has {} values for {} recorded columns",
+            row.values().len(),
+            wal_columns.len()
+        )));
     }
-    if row.values().len() > schema.columns().len() {
-        return Err(StoreError::IncompatibleSchema(
-            "an unflushed WAL row has columns removed by the supplied schema".into(),
-        ));
-    }
-    let mut values = row.values().to_vec();
-    for column in &schema.columns()[values.len()..] {
-        if !column.is_nullable() {
+    let mut values = Vec::with_capacity(schema.columns().len());
+    for column in schema.columns() {
+        if let Some((index, wal_column)) = wal_columns
+            .iter()
+            .enumerate()
+            .find(|(_, wal_column)| wal_column.id == column.id())
+        {
+            if wal_column.data_type != column.data_type() {
+                return Err(StoreError::IncompatibleSchema(format!(
+                    "column {} ({}) changed physical type",
+                    column.name(),
+                    column.id()
+                )));
+            }
+            values.push(row.values()[index].clone());
+        } else if column.is_nullable() {
+            values.push(pintail_types::Value::Null);
+        } else {
             return Err(StoreError::IncompatibleSchema(format!(
                 "required column {} ({}) is absent from an unflushed WAL row",
                 column.name(),
                 column.id()
             )));
         }
-        values.push(pintail_types::Value::Null);
     }
     let adapted = StoredRow::new(row.key().clone(), values, row.version(), row.is_deleted());
     schema.validate_row(&adapted)?;

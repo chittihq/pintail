@@ -76,6 +76,9 @@ impl TableSchema {
             if !ids.insert(column.id) {
                 return Err(SchemaError::DuplicateColumnId(column.id));
             }
+            if column.id >= u32::MAX - 2 {
+                return Err(SchemaError::ReservedColumnId(column.id));
+            }
             if !names.insert(column.name.clone()) {
                 return Err(SchemaError::DuplicateColumnName(column.name.clone()));
             }
@@ -140,6 +143,8 @@ pub enum SchemaError {
     EmptyColumnName,
     /// Stable column identifiers must be unique.
     DuplicateColumnId(u32),
+    /// The top three identifiers belong to storage system columns.
+    ReservedColumnId(u32),
     /// Column names must be unique.
     DuplicateColumnName(String),
     /// A row has a different number of values than its schema.
@@ -169,6 +174,9 @@ impl fmt::Display for SchemaError {
             Self::EmptyPrimaryKey => formatter.write_str("a primary key cannot be empty"),
             Self::EmptyColumnName => formatter.write_str("a column name cannot be empty"),
             Self::DuplicateColumnId(id) => write!(formatter, "duplicate column id {id}"),
+            Self::ReservedColumnId(id) => {
+                write!(formatter, "column id {id} is reserved for storage metadata")
+            }
             Self::DuplicateColumnName(name) => write!(formatter, "duplicate column name {name}"),
             Self::WrongArity { expected, actual } => {
                 write!(

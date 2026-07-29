@@ -28,9 +28,26 @@ payload[payload_length]
 u64 xxh3(payload)
 ```
 
-The payload contains a strictly increasing `u64` sequence, a `u32` row count,
-and typed rows. A row contains its composite primary key, values, `u64`
-source version, and a one-byte tombstone flag.
+The payload contains a strictly increasing `u64` sequence, the writer's `u32`
+schema version, a `u32` schema-column count, each stable `u32` column ID plus
+its one-byte logical type, then a `u32` row count and typed rows. A row is:
+
+```
+u32 key_component_count
+repeated key components: u8 tag | typed payload
+u32 value_count
+repeated values: u8 tag | typed payload
+u64 source_version
+u8 tombstone
+```
+
+Key tags are signed 64-bit `0`, unsigned 64-bit `1`, UTF-8 `2`, and binary
+`3`. Value tags are null `0`, boolean `1`, signed 64-bit `2`, unsigned 64-bit
+`3`, IEEE-754 64-bit `4`, UTF-8 `5`, and binary `6`. Integer and float
+payloads are fixed-width little-endian; UTF-8 and binary payloads are
+length-prefixed. WAL schema type tags use the segment logical type IDs.
+Stable IDs let recovery project reordered or dropped columns and materialize
+new nullable columns as `NULL`.
 
 Recovery verifies each checksum and sequence. An incomplete final length,
 payload, or checksum is a torn tail and is truncated to the last complete
@@ -80,8 +97,9 @@ u32 target_block_rows
 ```
 
 Physical columns are the composite key, `_version`, `_deleted`, then user
-columns in schema order. System column identifiers occupy the top three
-`u32` values; user identifiers are stable catalog column IDs.
+columns in schema order. Their system IDs are respectively `u32::MAX - 2`,
+`u32::MAX - 1`, and `u32::MAX`; schemas reject those IDs for user columns.
+Other user identifiers are stable catalog column IDs.
 
 Logical type IDs are boolean `0`, signed 64-bit `1`, unsigned 64-bit `2`,
 IEEE-754 64-bit `3`, UTF-8 `4`, binary `5`, and composite key `6`.
@@ -147,7 +165,9 @@ u64 xxh3(footer bytes above)
 u64 footer_start_offset
 ```
 
-The primary-key bloom filter is 2,048 bits with three xxh3-derived positions.
+The primary-key bloom filter is 2,048 bits. Pintail xxh3-hashes the physical
+key bytes, takes the value shifted right by 0, 21, and 42 bits, and reduces
+each result modulo 2,048.
 The sparse key index records the first key of each target-sized block.
 Readers locate the footer from the final eight bytes and verify its checksum
 before accepting the segment. Every decoded block separately verifies the
@@ -180,6 +200,14 @@ A higher schema version may add nullable columns; old segment and WAL rows
 materialize those columns as `NULL`. Stable-ID renames and segment-backed
 drops are readable. Compaction rewrites dropped bytes away. Required-column
 additions over existing data and physical type changes are rejected.
+
+The schema fingerprint is xxh3 over: `u32 schema_version`,
+`u32 column_count`, then for each physical-order user column its `u32` ID,
+one-byte logical type, one-byte nullable flag, raw UTF-8 name bytes, and a zero
+terminator. HLL uses the low six hash bits as the register index and the
+leading-zero rank of the remaining 58 bits. Packed integers are written
+least-significant bit first within each byte; bit width is the number of
+significant bits in the maximum normalized value.
 
 Compaction selects a bounded fan-in of overlapping files whose sizes differ
 by at most fourfold. The debt value is the selected input bytes. Partial

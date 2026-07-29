@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use pintail_types::StoredRow;
+use pintail_types::{DataType, StoredRow, TableSchema};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
@@ -25,8 +25,19 @@ pub(crate) struct Wal {
 }
 
 pub(crate) struct Recovery {
-    pub(crate) batches: Vec<(u64, Vec<StoredRow>)>,
+    pub(crate) batches: Vec<RecoveredBatch>,
     pub(crate) last_sequence: u64,
+}
+
+pub(crate) struct RecoveredBatch {
+    pub(crate) sequence: u64,
+    pub(crate) columns: Vec<WalColumn>,
+    pub(crate) rows: Vec<StoredRow>,
+}
+
+pub(crate) struct WalColumn {
+    pub(crate) id: u32,
+    pub(crate) data_type: DataType,
 }
 
 impl Wal {
@@ -57,8 +68,13 @@ impl Wal {
         Ok((Self { file, sync_policy }, recovery))
     }
 
-    pub(crate) fn append(&mut self, sequence: u64, rows: &[StoredRow]) -> Result<(), StoreError> {
-        let payload = encode_batch(sequence, rows)?;
+    pub(crate) fn append(
+        &mut self,
+        sequence: u64,
+        schema: &TableSchema,
+        rows: &[StoredRow],
+    ) -> Result<(), StoreError> {
+        let payload = encode_batch(sequence, schema, rows)?;
         let length = u32::try_from(payload.len())
             .map_err(|_| StoreError::FormatLimit("WAL record exceeds u32::MAX".into()))?;
         let checksum = xxh3_64(&payload);
@@ -97,9 +113,19 @@ impl Wal {
     }
 }
 
-fn encode_batch(sequence: u64, rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {
+fn encode_batch(
+    sequence: u64,
+    schema: &TableSchema,
+    rows: &[StoredRow],
+) -> Result<Vec<u8>, StoreError> {
     let mut encoder = Encoder::new();
     encoder.u64(sequence);
+    encoder.u32(schema.version());
+    encoder.length(schema.columns().len(), "WAL schema column count")?;
+    for column in schema.columns() {
+        encoder.u32(column.id());
+        encoder.u8(encode_data_type(column.data_type()));
+    }
     encoder.length(rows.len(), "WAL batch row count")?;
     for row in rows {
         encode_row(&mut encoder, row)?;
@@ -107,16 +133,71 @@ fn encode_batch(sequence: u64, rows: &[StoredRow]) -> Result<Vec<u8>, StoreError
     Ok(encoder.finish())
 }
 
-fn decode_batch(payload: &[u8]) -> Result<(u64, Vec<StoredRow>), String> {
+fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
     let mut decoder = Decoder::new(payload);
     let sequence = decoder.u64()?;
+    let _schema_version = decoder.u32()?;
+    let column_count = decoder.u32()?;
+    let mut columns = Vec::with_capacity(column_count as usize);
+    for _ in 0..column_count {
+        columns.push(WalColumn {
+            id: decoder.u32()?,
+            data_type: decode_data_type(decoder.u8()?)?,
+        });
+    }
     let row_count = decoder.u32()?;
     let mut rows = Vec::with_capacity(row_count as usize);
     for _ in 0..row_count {
-        rows.push(decode_row(&mut decoder)?);
+        let row = decode_row(&mut decoder)?;
+        if row.values().len() != columns.len() {
+            return Err(format!(
+                "row has {} values for {} WAL schema columns",
+                row.values().len(),
+                columns.len()
+            ));
+        }
+        for (column, value) in columns.iter().zip(row.values()) {
+            if value
+                .data_type()
+                .is_some_and(|data_type| data_type != column.data_type)
+            {
+                return Err(format!(
+                    "row value does not match WAL column {} type",
+                    column.id
+                ));
+            }
+        }
+        rows.push(row);
     }
     decoder.finish()?;
-    Ok((sequence, rows))
+    Ok(RecoveredBatch {
+        sequence,
+        columns,
+        rows,
+    })
+}
+
+fn encode_data_type(data_type: DataType) -> u8 {
+    match data_type {
+        DataType::Boolean => 0,
+        DataType::Int64 => 1,
+        DataType::UInt64 => 2,
+        DataType::Float64 => 3,
+        DataType::Utf8 => 4,
+        DataType::Binary => 5,
+    }
+}
+
+fn decode_data_type(tag: u8) -> Result<DataType, String> {
+    match tag {
+        0 => Ok(DataType::Boolean),
+        1 => Ok(DataType::Int64),
+        2 => Ok(DataType::UInt64),
+        3 => Ok(DataType::Float64),
+        4 => Ok(DataType::Utf8),
+        5 => Ok(DataType::Binary),
+        _ => Err(format!("unknown WAL column type {tag}")),
+    }
 }
 
 fn recover(file: &mut File) -> Result<Recovery, StoreError> {
@@ -186,9 +267,10 @@ fn recover(file: &mut File) -> Result<Recovery, StoreError> {
         }
         position = record_end;
 
-        let (sequence, rows) = decode_batch(payload).map_err(|reason| {
+        let batch = decode_batch(payload).map_err(|reason| {
             StoreError::corrupt_wal(record_offset, format!("invalid record payload: {reason}"))
         })?;
+        let sequence = batch.sequence;
         if sequence <= last_sequence {
             return Err(StoreError::corrupt_wal(
                 record_offset,
@@ -196,7 +278,7 @@ fn recover(file: &mut File) -> Result<Recovery, StoreError> {
             ));
         }
         last_sequence = sequence;
-        batches.push((sequence, rows));
+        batches.push(batch);
         valid_length = position;
     }
 

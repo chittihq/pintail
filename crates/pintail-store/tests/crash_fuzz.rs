@@ -9,7 +9,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const WORKER_ENV: &str = "PINTAIL_CRASH_FUZZ_WORKER";
 const DIRECTORY_ENV: &str = "PINTAIL_CRASH_FUZZ_DIRECTORY";
-const ITERATIONS: usize = 24;
+const ITERATIONS: usize = 100;
 
 #[test]
 fn short_kill9_crash_fuzz_reopens_to_a_valid_monotonic_prefix() {
