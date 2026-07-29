@@ -15,5 +15,5 @@ mod wal;
 pub use error::StoreError;
 pub use store::{
     CompactionOutcome, CompactionStatus, FlushOutcome, IngestOutcome, ProjectedRow, ProjectedScan,
-    ScanStats, StoreOptions, TableSnapshot, TableStore, WalSync,
+    ScanStats, StorageMetrics, StoreOptions, TableSnapshot, TableStore, WalSync,
 };

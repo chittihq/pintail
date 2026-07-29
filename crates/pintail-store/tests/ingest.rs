@@ -94,10 +94,31 @@ fn reaching_the_memtable_budget_flushes_and_runs_one_bounded_maintenance_step() 
         table.compaction_status().expect("status").segment_count(),
         1
     );
+    let metrics = table.metrics().expect("storage metrics");
+    assert_eq!(metrics.memtable_bytes(), 0);
+    assert_eq!(metrics.segment_count(), 1);
+    assert_eq!(metrics.compaction_debt_bytes(), 0);
     assert_eq!(
         table.snapshot().scan().expect("scan"),
         vec![row("automatically flushed", 1, false)]
     );
+}
+
+#[test]
+fn storage_metrics_track_unflushed_memtable_memory() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open table");
+
+    assert_eq!(table.metrics().expect("empty metrics").memtable_bytes(), 0);
+    table
+        .ingest(vec![row("resident", 1, false)])
+        .expect("ingest");
+
+    let metrics = table.metrics().expect("resident metrics");
+    assert!(metrics.memtable_bytes() > 0);
+    assert_eq!(metrics.segment_count(), 0);
+    assert_eq!(metrics.compaction_debt_bytes(), 0);
 }
 
 fn schema() -> TableSchema {

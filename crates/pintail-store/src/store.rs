@@ -123,6 +123,34 @@ pub struct CompactionStatus {
     debt_bytes: u64,
 }
 
+/// Point-in-time values exported by the storage metrics surface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageMetrics {
+    memtable_bytes: usize,
+    segment_count: usize,
+    compaction_debt_bytes: u64,
+}
+
+impl StorageMetrics {
+    /// Returns the current mutable-table byte estimate.
+    #[must_use]
+    pub fn memtable_bytes(self) -> usize {
+        self.memtable_bytes
+    }
+
+    /// Returns live immutable segment count.
+    #[must_use]
+    pub fn segment_count(self) -> usize {
+        self.segment_count
+    }
+
+    /// Returns bytes eligible for the next bounded compaction pass.
+    #[must_use]
+    pub fn compaction_debt_bytes(self) -> u64 {
+        self.compaction_debt_bytes
+    }
+}
+
 impl CompactionStatus {
     /// Returns all live segments in the pinned manifest generation.
     #[must_use]
@@ -521,6 +549,20 @@ impl TableStore {
         })
     }
 
+    /// Returns memory, segment, and compaction-debt metric values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when live segment sizes cannot be inspected.
+    pub fn metrics(&self) -> Result<StorageMetrics, StoreError> {
+        let compaction = self.compaction_status()?;
+        Ok(StorageMetrics {
+            memtable_bytes: self.memtable.estimated_bytes(),
+            segment_count: compaction.segment_count(),
+            compaction_debt_bytes: compaction.debt_bytes(),
+        })
+    }
+
     /// Runs one bounded size-tier merge of similarly sized overlapping files.
     ///
     /// A merge that covers the complete manifest drops tombstones immediately
@@ -546,6 +588,7 @@ impl TableStore {
             for row in segment::read(&self.directory, meta, &self.schema)? {
                 apply_latest(&mut merged, row);
             }
+            std::thread::yield_now();
         }
         let rows = merged
             .into_values()

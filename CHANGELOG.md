@@ -39,6 +39,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   source-key deduplication.
 - Enforced memtable bounds: a threshold-crossing batch performs one bounded
   flush, compaction, and obsolete-file maintenance step.
+- Storage metrics for memtable bytes, live segment count, and compaction debt;
+  compaction yields between input segments to preserve query scheduling
+  opportunities.
 - Manifest-resident primary-key bounds and bloom filters with pruned point and
   inclusive range reads that skip unrelated segment block decoding.
 - Projected range scans with checksummed key-block zone-map pruning,
