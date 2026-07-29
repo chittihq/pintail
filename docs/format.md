@@ -111,7 +111,8 @@ IEEE-754 64-bit `3`, UTF-8 `4`, binary `5`, and composite key `6`.
 ### Column chunks and blocks
 
 Each chunk begins with `u32 column_id`, `u8 logical_type`, and
-`u32 block_count`. Each block is:
+`u32 block_count`. Each block is a length-prefixed payload followed by
+`u64 xxh3(block_payload)`. The payload is:
 
 ```
 u32 row_count
@@ -120,7 +121,6 @@ u8 encoding
 u8 compression
 u32 uncompressed_payload_length
 bytes compressed_payload
-u64 xxh3(compressed_payload)
 u32 null_count
 bytes typed_min
 bytes typed_max
@@ -174,9 +174,10 @@ key bytes, takes the value shifted right by 0, 21, and 42 bits, and reduces
 each result modulo 2,048.
 The sparse key index records the first key of each target-sized block.
 Readers locate the footer from the final eight bytes and verify its checksum
-before accepting the segment. Every decoded block separately verifies the
-checksum of its compressed payload and reports the segment path and byte
-offset on failure.
+before accepting the segment. Every visited block verifies the checksum of
+its complete payload—including null bits, codec metadata, compressed values,
+zone maps, and HLL—before its statistics can prune or its values can decode.
+Failures report the segment path and byte offset.
 
 ## Flush and recovery ordering
 
@@ -201,7 +202,10 @@ order, keep maximum `_version`, then remove `_deleted` rows. Pinned readers
 retain their old manifest and memtable `Arc`s across flush and compaction.
 Point reads prune manifest entries by key bounds and bloom filters before
 touching segment files. Inclusive range reads prune disjoint manifest entries
-by their persisted key bounds.
+by their persisted key bounds. Projected range scans then use checksummed key
+block zone maps, decode only surviving key/version/tombstone blocks plus the
+requested user columns, and return segment/block pruning counters for query
+statistics.
 
 A higher schema version may add nullable columns; old segment and WAL rows
 materialize those columns as `NULL`. Stable-ID renames and segment-backed

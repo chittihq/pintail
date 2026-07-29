@@ -41,6 +41,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   flush, compaction, and obsolete-file maintenance step.
 - Manifest-resident primary-key bounds and bloom filters with pruned point and
   inclusive range reads that skip unrelated segment block decoding.
+- Projected range scans with checksummed key-block zone-map pruning,
+  requested-column-only decoding, and physical scan counters.
+- Whole-block xxh3 coverage for null bitmaps, codec metadata, compressed
+  values, zone maps, and HLL sketches, preventing corrupt statistics from
+  causing false pruning.
 
 ### Verification
 

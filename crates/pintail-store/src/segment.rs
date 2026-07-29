@@ -455,6 +455,269 @@ pub(crate) fn overlaps_key_range(meta: &SegmentMeta, start: &PrimaryKey, end: &P
     meta.min_key <= *end && meta.max_key >= *start
 }
 
+pub(crate) struct ProjectedSegmentRow {
+    pub(crate) key: PrimaryKey,
+    pub(crate) values: Vec<Value>,
+    pub(crate) version: u64,
+    pub(crate) deleted: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct SegmentReadStats {
+    pub(crate) blocks_decoded: usize,
+    pub(crate) blocks_pruned: usize,
+}
+
+pub(crate) struct ProjectedSegmentScan {
+    pub(crate) rows: Vec<ProjectedSegmentRow>,
+    pub(crate) stats: SegmentReadStats,
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn read_projected_range(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    start: &PrimaryKey,
+    end: &PrimaryKey,
+    projection: &[usize],
+) -> Result<ProjectedSegmentScan, StoreError> {
+    let path = directory.join(&meta.file_name);
+    let bytes = std::fs::read(&path)
+        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
+    validate_footer(&path, &bytes, meta, schema)?;
+    let mut decoder = Decoder::new(&bytes);
+    expect_raw(&mut decoder, MAGIC).map_err(|reason| corrupt(&path, 0, reason))?;
+    if decoder
+        .u8()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?
+        != FORMAT_VERSION
+    {
+        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
+    }
+    let segment_schema_version = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    if segment_schema_version > schema.version() {
+        return Err(StoreError::SchemaMismatch {
+            expected_version: schema.version(),
+            actual_version: segment_schema_version,
+        });
+    }
+    let fingerprint = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    if fingerprint != meta.schema_fingerprint {
+        return Err(StoreError::SchemaFingerprintMismatch {
+            expected: meta.schema_fingerprint,
+            actual: fingerprint,
+        });
+    }
+    let _row_count = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    let column_count = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    let _block_rows = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+
+    let mut selected_blocks = Vec::new();
+    let mut block_row_counts = Vec::new();
+    let mut keys = None;
+    let mut versions = None;
+    let mut tombstones = None;
+    let mut values = vec![None; projection.len()];
+    let mut stats = SegmentReadStats::default();
+    for _ in 0..column_count {
+        let id = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let logical_type = LogicalType::decode(
+            decoder
+                .u8()
+                .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+        )
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let block_count = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?
+            as usize;
+
+        if id == KEY_COLUMN_ID {
+            if logical_type != LogicalType::PrimaryKey || !selected_blocks.is_empty() {
+                return Err(corrupt_here(
+                    &path,
+                    &decoder,
+                    "invalid or duplicate primary-key column",
+                ));
+            }
+            let mut column_cells = Vec::new();
+            for _ in 0..block_count {
+                let block =
+                    read_block_if(&path, &mut decoder, logical_type, |minimum, maximum| {
+                        let minimum = decode_stat_key(&path, minimum).map_err(|reason| {
+                            StoreError::CorruptSegment {
+                                path: path.clone(),
+                                offset: 0,
+                                reason,
+                            }
+                        })?;
+                        let maximum = decode_stat_key(&path, maximum).map_err(|reason| {
+                            StoreError::CorruptSegment {
+                                path: path.clone(),
+                                offset: 0,
+                                reason,
+                            }
+                        })?;
+                        Ok(minimum <= *end && maximum >= *start)
+                    })?;
+                let selected = block.cells.is_some();
+                stats.blocks_decoded += usize::from(selected);
+                stats.blocks_pruned += usize::from(!selected);
+                selected_blocks.push(selected);
+                block_row_counts.push(block.row_count);
+                if let Some(cells) = block.cells {
+                    column_cells.extend(cells);
+                }
+            }
+            keys = Some(column_cells);
+            continue;
+        }
+        if selected_blocks.len() != block_count {
+            return Err(corrupt_here(
+                &path,
+                &decoder,
+                "column block count differs from primary-key column",
+            ));
+        }
+
+        let system_column = match id {
+            VERSION_COLUMN_ID if logical_type == LogicalType::UInt64 => 1,
+            TOMBSTONE_COLUMN_ID if logical_type == LogicalType::Boolean => 2,
+            VERSION_COLUMN_ID | TOMBSTONE_COLUMN_ID => {
+                return Err(corrupt_here(
+                    &path,
+                    &decoder,
+                    "system column has the wrong logical type",
+                ));
+            }
+            _ => 0,
+        };
+        let schema_index = schema.columns().iter().position(|column| column.id() == id);
+        if let Some(schema_index) = schema_index
+            && LogicalType::from_data_type(schema.columns()[schema_index].data_type())
+                != logical_type
+        {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "column {} ({id}) changed physical type",
+                schema.columns()[schema_index].name()
+            )));
+        }
+        let projected_position = schema_index
+            .and_then(|schema_index| projection.iter().position(|value| *value == schema_index));
+        let decode_column = system_column != 0 || projected_position.is_some();
+        let mut column_cells = Vec::new();
+        for (block_index, selected) in selected_blocks.iter().copied().enumerate() {
+            let block = read_block_if(&path, &mut decoder, logical_type, |_, _| {
+                Ok(selected && decode_column)
+            })?;
+            if block.row_count != block_row_counts[block_index] {
+                return Err(corrupt_here(
+                    &path,
+                    &decoder,
+                    "column block row count mismatch",
+                ));
+            }
+            stats.blocks_decoded += usize::from(block.cells.is_some());
+            if let Some(cells) = block.cells {
+                column_cells.extend(cells);
+            }
+        }
+        match system_column {
+            1 => {
+                if versions.replace(column_cells).is_some() {
+                    return Err(corrupt_here(&path, &decoder, "duplicate version column"));
+                }
+            }
+            2 => {
+                if tombstones.replace(column_cells).is_some() {
+                    return Err(corrupt_here(&path, &decoder, "duplicate tombstone column"));
+                }
+            }
+            0 => {
+                if let Some(position) = projected_position
+                    && values[position].replace(column_cells).is_some()
+                {
+                    return Err(corrupt_here(&path, &decoder, "duplicate user column"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let keys = keys.ok_or_else(|| corrupt_here(&path, &decoder, "missing primary-key column"))?;
+    let versions =
+        versions.ok_or_else(|| corrupt_here(&path, &decoder, "missing version column"))?;
+    let tombstones =
+        tombstones.ok_or_else(|| corrupt_here(&path, &decoder, "missing tombstone column"))?;
+    for (position, schema_index) in projection.iter().copied().enumerate() {
+        if values[position].is_none() {
+            let column = &schema.columns()[schema_index];
+            if !column.is_nullable() {
+                return Err(StoreError::IncompatibleSchema(format!(
+                    "required projected column {} ({}) is absent",
+                    column.name(),
+                    column.id()
+                )));
+            }
+            values[position] = Some(vec![Cell::Null; keys.len()]);
+        }
+    }
+
+    let mut rows = Vec::new();
+    for row_index in 0..keys.len() {
+        let Cell::Key(key) = &keys[row_index] else {
+            return Err(corrupt_here(&path, &decoder, "invalid primary-key cell"));
+        };
+        if key < start || key > end {
+            continue;
+        }
+        let Cell::UInt64(version) = versions[row_index] else {
+            return Err(corrupt_here(&path, &decoder, "invalid version cell"));
+        };
+        let Cell::Boolean(deleted) = tombstones[row_index] else {
+            return Err(corrupt_here(&path, &decoder, "invalid tombstone cell"));
+        };
+        let projected_values = values
+            .iter()
+            .map(|column| {
+                column
+                    .as_ref()
+                    .and_then(|cells| cells.get(row_index))
+                    .map(Cell::to_value)
+                    .ok_or_else(|| corrupt_here(&path, &decoder, "missing projected value"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.push(ProjectedSegmentRow {
+            key: key.clone(),
+            values: projected_values,
+            version,
+            deleted,
+        });
+    }
+    Ok(ProjectedSegmentScan { rows, stats })
+}
+
+fn decode_stat_key(path: &Path, bytes: &[u8]) -> Result<PrimaryKey, String> {
+    let mut decoder = Decoder::new(bytes);
+    let key = decode_key(&mut decoder)
+        .map_err(|reason| format!("invalid key statistic in {}: {reason}", path.display()))?;
+    decoder.finish()?;
+    Ok(key)
+}
+
 fn column_specs(schema: &TableSchema) -> Vec<ColumnSpec> {
     let mut specs = vec![
         ColumnSpec {
@@ -513,7 +776,8 @@ fn write_block(
     cells: &[Cell],
     compression: Compression,
 ) -> Result<(), StoreError> {
-    encoder.length(cells.len(), "block row count")?;
+    let mut block = Encoder::new();
+    block.length(cells.len(), "block row count")?;
     let mut null_bitmap = vec![0_u8; cells.len().div_ceil(8)];
     let mut non_null = Vec::with_capacity(cells.len());
     let mut encoded_values = Vec::with_capacity(cells.len());
@@ -527,16 +791,15 @@ fn write_block(
             encoded_values.push(cell.stat_bytes()?);
         }
     }
-    encoder.bytes(&null_bitmap, "null bitmap")?;
+    block.bytes(&null_bitmap, "null bitmap")?;
     let encoding = select_encoding(logical_type, &non_null);
-    encoder.u8(encoding as u8);
-    encoder.u8(compression as u8);
+    block.u8(encoding as u8);
+    block.u8(compression as u8);
     let uncompressed = encode_payload(logical_type, encoding, &non_null)?;
-    encoder.length(uncompressed.len(), "uncompressed block")?;
+    block.length(uncompressed.len(), "uncompressed block")?;
     let compressed = compress_block(compression, &uncompressed)?;
-    encoder.bytes(&compressed, "compressed block")?;
-    encoder.u64(xxh3_64(&compressed));
-    encoder.u32(null_count);
+    block.bytes(&compressed, "compressed block")?;
+    block.u32(null_count);
 
     let min = non_null
         .iter()
@@ -550,9 +813,12 @@ fn write_block(
         .map(Cell::stat_bytes)
         .transpose()?
         .unwrap_or_default();
-    encoder.bytes(&min, "block minimum")?;
-    encoder.bytes(&max, "block maximum")?;
-    encoder.bytes(&hll_registers(&encoded_values), "block HLL sketch")?;
+    block.bytes(&min, "block minimum")?;
+    block.bytes(&max, "block maximum")?;
+    block.bytes(&hll_registers(&encoded_values), "block HLL sketch")?;
+    let payload = block.finish();
+    encoder.bytes(&payload, "column block")?;
+    encoder.u64(xxh3_64(&payload));
     Ok(())
 }
 
@@ -621,70 +887,114 @@ fn read_block(
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
 ) -> Result<Vec<Cell>, StoreError> {
-    let row_count = decoder
-        .u32()
-        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
-    let null_bitmap = decoder
-        .bytes()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?
-        .to_vec();
-    if null_bitmap.len() != row_count.div_ceil(8) {
-        return Err(corrupt_here(path, decoder, "invalid null bitmap length"));
-    }
-    let encoding = Encoding::decode(
-        decoder
-            .u8()
-            .map_err(|reason| corrupt_here(path, decoder, reason))?,
-    )
-    .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    let compression = Compression::decode(
-        decoder
-            .u8()
-            .map_err(|reason| corrupt_here(path, decoder, reason))?,
-    )
-    .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    let uncompressed_length = decoder
-        .u32()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?
-        as usize;
-    let checksum_offset = decoder.position();
-    let compressed = decoder
+    read_block_if(path, decoder, logical_type, |_, _| Ok(true))?
+        .cells
+        .ok_or_else(|| corrupt_here(path, decoder, "selected block was not decoded"))
+}
+
+struct BlockRead {
+    row_count: usize,
+    cells: Option<Vec<Cell>>,
+}
+
+#[allow(clippy::too_many_lines)]
+fn read_block_if<F>(
+    path: &Path,
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    should_decode: F,
+) -> Result<BlockRead, StoreError>
+where
+    F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
+{
+    let block_offset = decoder.position();
+    let payload = decoder
         .bytes()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let expected_checksum = decoder
         .u64()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    if xxh3_64(compressed) != expected_checksum {
-        return Err(corrupt(path, checksum_offset, "block checksum mismatch"));
+    if xxh3_64(payload) != expected_checksum {
+        return Err(corrupt(path, block_offset, "block checksum mismatch"));
     }
-    let uncompressed = decompress_block(compression, compressed, uncompressed_length)
-        .map_err(|reason| corrupt(path, checksum_offset, reason))?;
-
-    let declared_nulls = decoder
+    let mut block = Decoder::new(payload);
+    let row_count = block
         .u32()
-        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
-    let _minimum = decoder
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?
+        as usize;
+    let null_bitmap = block
         .bytes()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    let _maximum = decoder
-        .bytes()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    let hll = decoder
-        .bytes()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    if hll.len() != 64 {
-        return Err(corrupt_here(path, decoder, "invalid HLL register count"));
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?
+        .to_vec();
+    if null_bitmap.len() != row_count.div_ceil(8) {
+        return Err(corrupt(
+            path,
+            block_offset + block.position(),
+            "invalid null bitmap length",
+        ));
     }
+    let encoding = Encoding::decode(
+        block
+            .u8()
+            .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?,
+    )
+    .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    let compression = Compression::decode(
+        block
+            .u8()
+            .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?,
+    )
+    .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    let uncompressed_length = block
+        .u32()
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?
+        as usize;
+    let compressed_offset = block_offset + block.position();
+    let compressed = block
+        .bytes()
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+
+    let declared_nulls = block
+        .u32()
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?
+        as usize;
+    let minimum = block
+        .bytes()
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    let maximum = block
+        .bytes()
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    let hll = block
+        .bytes()
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    if hll.len() != 64 {
+        return Err(corrupt(
+            path,
+            block_offset + block.position(),
+            "invalid HLL register count",
+        ));
+    }
+    block
+        .finish()
+        .map_err(|reason| corrupt(path, block_offset, reason))?;
 
     let actual_nulls = (0..row_count)
         .filter(|index| null_bitmap[index / 8] & (1 << (index % 8)) != 0)
         .count();
     if actual_nulls != declared_nulls {
-        return Err(corrupt_here(path, decoder, "null count mismatch"));
+        return Err(corrupt(path, block_offset, "null count mismatch"));
     }
+    if !should_decode(minimum, maximum)? {
+        return Ok(BlockRead {
+            row_count,
+            cells: None,
+        });
+    }
+    let uncompressed = decompress_block(compression, compressed, uncompressed_length)
+        .map_err(|reason| corrupt(path, compressed_offset, reason))?;
     let non_null_count = row_count - actual_nulls;
     let decoded_values = decode_payload(&uncompressed, logical_type, encoding, non_null_count)
-        .map_err(|reason| corrupt(path, checksum_offset, reason))?;
+        .map_err(|reason| corrupt(path, compressed_offset, reason))?;
     let mut decoded_values = decoded_values.into_iter();
     let mut cells = Vec::with_capacity(row_count);
     for index in 0..row_count {
@@ -692,18 +1002,21 @@ fn read_block(
             cells.push(Cell::Null);
         } else {
             cells.push(decoded_values.next().ok_or_else(|| {
-                corrupt(path, checksum_offset, "encoding produced too few values")
+                corrupt(path, compressed_offset, "encoding produced too few values")
             })?);
         }
     }
     if decoded_values.next().is_some() {
         return Err(corrupt(
             path,
-            checksum_offset,
+            compressed_offset,
             "encoding produced too many values",
         ));
     }
-    Ok(cells)
+    Ok(BlockRead {
+        row_count,
+        cells: Some(cells),
+    })
 }
 
 fn compress_block(compression: Compression, bytes: &[u8]) -> Result<Vec<u8>, StoreError> {

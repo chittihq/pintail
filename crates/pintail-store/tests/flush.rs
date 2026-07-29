@@ -164,7 +164,7 @@ fn scan_reports_the_corrupt_segment_and_block_offset() {
             .to_path_buf()
     };
     let mut bytes = std::fs::read(&segment_path).expect("read segment");
-    bytes[62] ^= 0xff;
+    bytes[66] ^= 0xff;
     std::fs::write(&segment_path, bytes).expect("corrupt segment");
 
     let reopened =
@@ -176,7 +176,7 @@ fn scan_reports_the_corrupt_segment_and_block_offset() {
             reason,
         } => {
             assert_eq!(path, segment_path);
-            assert_eq!(offset, 58);
+            assert_eq!(offset, 43);
             assert!(reason.contains("checksum mismatch"), "{reason}");
         }
         other => panic!("unexpected error: {other}"),
@@ -201,7 +201,7 @@ fn point_and_range_reads_prune_disjoint_corrupt_segments_before_block_decode() {
         path
     };
     let mut bytes = std::fs::read(&corrupt_path).expect("segment bytes");
-    bytes[62] ^= 0xff;
+    bytes[66] ^= 0xff;
     std::fs::write(&corrupt_path, bytes).expect("corrupt block");
 
     let table =
@@ -220,6 +220,42 @@ fn point_and_range_reads_prune_disjoint_corrupt_segments_before_block_decode() {
     assert!(
         table.snapshot().scan().is_err(),
         "a full scan still visits the corrupt segment"
+    );
+}
+
+#[test]
+fn projected_range_scan_prunes_key_blocks_and_decodes_only_requested_columns() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        block_rows: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    table
+        .ingest(
+            (1..=6)
+                .map(|id| row(id, &format!("label-{id}"), id))
+                .collect(),
+        )
+        .expect("ingest");
+    table.flush().expect("flush");
+
+    let scan = table
+        .snapshot()
+        .scan_projected_range(&key(3), &key(4), &[2])
+        .expect("projected range");
+    assert_eq!(scan.rows().len(), 2);
+    assert_eq!(scan.rows()[0].key(), &key(3));
+    assert_eq!(scan.rows()[0].values(), [Value::Utf8("label-3".into())]);
+    assert_eq!(scan.rows()[1].key(), &key(4));
+    assert_eq!(scan.rows()[1].values(), [Value::Utf8("label-4".into())]);
+    assert_eq!(scan.stats().segments_read(), 1);
+    assert_eq!(scan.stats().segments_pruned(), 0);
+    assert_eq!(scan.stats().blocks_pruned(), 2);
+    assert_eq!(
+        scan.stats().blocks_decoded(),
+        4,
+        "one key block plus version, tombstone, and projected label"
     );
 }
 

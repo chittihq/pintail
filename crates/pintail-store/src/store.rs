@@ -151,6 +151,90 @@ pub struct CompactionOutcome {
     output_path: Option<PathBuf>,
 }
 
+/// A scan row containing only the requested user columns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedRow {
+    key: PrimaryKey,
+    values: Vec<pintail_types::Value>,
+    version: u64,
+}
+
+impl ProjectedRow {
+    /// Returns the physical primary, unique, or generated row key.
+    #[must_use]
+    pub fn key(&self) -> &PrimaryKey {
+        &self.key
+    }
+
+    /// Returns values in the caller's requested column-ID order.
+    #[must_use]
+    pub fn values(&self) -> &[pintail_types::Value] {
+        &self.values
+    }
+
+    /// Returns the winning source version.
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+}
+
+/// Physical work performed by a projected range scan.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ScanStats {
+    segments_pruned: usize,
+    segments_read: usize,
+    blocks_pruned: usize,
+    blocks_decoded: usize,
+}
+
+impl ScanStats {
+    /// Returns segments rejected from manifest key bounds.
+    #[must_use]
+    pub fn segments_pruned(self) -> usize {
+        self.segments_pruned
+    }
+
+    /// Returns segments whose block metadata was inspected.
+    #[must_use]
+    pub fn segments_read(self) -> usize {
+        self.segments_read
+    }
+
+    /// Returns key blocks rejected by typed zone maps.
+    #[must_use]
+    pub fn blocks_pruned(self) -> usize {
+        self.blocks_pruned
+    }
+
+    /// Returns blocks whose encoded values were decompressed and decoded.
+    #[must_use]
+    pub fn blocks_decoded(self) -> usize {
+        self.blocks_decoded
+    }
+}
+
+/// Rows and physical counters from a projected range scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedScan {
+    rows: Vec<ProjectedRow>,
+    stats: ScanStats,
+}
+
+impl ProjectedScan {
+    /// Returns visible projected rows in key order.
+    #[must_use]
+    pub fn rows(&self) -> &[ProjectedRow] {
+        &self.rows
+    }
+
+    /// Returns pruning and decoding counters.
+    #[must_use]
+    pub fn stats(&self) -> ScanStats {
+        self.stats
+    }
+}
+
 impl CompactionOutcome {
     /// Returns the number of segments replaced by this pass.
     #[must_use]
@@ -733,6 +817,120 @@ impl TableSnapshot {
             .into_values()
             .filter(|row| !row.is_deleted())
             .collect())
+    }
+
+    /// Scans an inclusive key range while decoding only requested user
+    /// columns after segment and key-block pruning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reversed range, duplicate/unknown column ID,
+    /// incompatible schema, corrupt block, or filesystem failure.
+    pub fn scan_projected_range(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        column_ids: &[u32],
+    ) -> Result<ProjectedScan, StoreError> {
+        if start > end {
+            return Err(StoreError::FormatLimit(
+                "scan range start follows its end".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        let projection = column_ids
+            .iter()
+            .map(|id| {
+                if !seen.insert(*id) {
+                    return Err(StoreError::FormatLimit(format!(
+                        "projection repeats column id {id}"
+                    )));
+                }
+                self.schema
+                    .columns()
+                    .iter()
+                    .position(|column| column.id() == *id)
+                    .ok_or_else(|| {
+                        StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut stats = ScanStats::default();
+        let mut latest = BTreeMap::new();
+        for segment_meta in &self.manifest.segments {
+            if !segment::overlaps_key_range(segment_meta, start, end) {
+                stats.segments_pruned += 1;
+                continue;
+            }
+            stats.segments_read += 1;
+            let scan = segment::read_projected_range(
+                &self.directory,
+                segment_meta,
+                &self.schema,
+                start,
+                end,
+                &projection,
+            )?;
+            stats.blocks_pruned += scan.stats.blocks_pruned;
+            stats.blocks_decoded += scan.stats.blocks_decoded;
+            for row in scan.rows {
+                apply_projected_latest(
+                    &mut latest,
+                    ProjectedCandidate {
+                        key: row.key,
+                        values: row.values,
+                        version: row.version,
+                        deleted: row.deleted,
+                    },
+                );
+            }
+        }
+        for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
+            apply_projected_latest(
+                &mut latest,
+                ProjectedCandidate {
+                    key: row.key().clone(),
+                    values: projection
+                        .iter()
+                        .map(|index| row.values()[*index].clone())
+                        .collect(),
+                    version: row.version(),
+                    deleted: row.is_deleted(),
+                },
+            );
+        }
+        Ok(ProjectedScan {
+            rows: latest
+                .into_values()
+                .filter(|row| !row.deleted)
+                .map(|row| ProjectedRow {
+                    key: row.key,
+                    values: row.values,
+                    version: row.version,
+                })
+                .collect(),
+            stats,
+        })
+    }
+}
+
+struct ProjectedCandidate {
+    key: PrimaryKey,
+    values: Vec<pintail_types::Value>,
+    version: u64,
+    deleted: bool,
+}
+
+fn apply_projected_latest(
+    rows: &mut BTreeMap<PrimaryKey, ProjectedCandidate>,
+    row: ProjectedCandidate,
+) {
+    if rows
+        .get(&row.key)
+        .is_none_or(|current| row.version >= current.version)
+    {
+        rows.insert(row.key.clone(), row);
     }
 }
 

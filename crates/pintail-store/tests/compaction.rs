@@ -186,18 +186,14 @@ fn block_compressions(bytes: &[u8]) -> Vec<u8> {
         position += 5;
         let block_count = take_u32(bytes, &mut position);
         for _ in 0..block_count {
-            position += 4;
-            skip_bytes(bytes, &mut position);
-            position += 1;
-            compressions.push(bytes[position]);
-            position += 1;
-            position += 4;
-            skip_bytes(bytes, &mut position);
+            let block_length = take_u32(bytes, &mut position) as usize;
+            let block = &bytes[position..position + block_length];
+            let mut block_position = 4;
+            skip_bytes(block, &mut block_position);
+            block_position += 1;
+            compressions.push(block[block_position]);
+            position += block_length;
             position += 8;
-            position += 4;
-            skip_bytes(bytes, &mut position);
-            skip_bytes(bytes, &mut position);
-            skip_bytes(bytes, &mut position);
         }
     }
     compressions.sort_unstable();
