@@ -10,11 +10,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Dependency-free typed schema, scalar value, composite-key, and versioned-row
   model shared by Pintail's data-path modules.
+- Single-writer table store with atomic typed batches, an RCU-style memtable,
+  configurable WAL synchronization, length-prefixed records, and per-record
+  xxh3 checksums.
+- WAL recovery that discards a torn final record while rejecting checksum or
+  sequence corruption with the failing byte offset.
 
 ### Verification
 
 - Public-interface tests verify well-typed rows and reject nullability or type
   mismatches before ingestion.
+- Reopen tests verify checkpoint recovery, pinned reader snapshots,
+  last-version-wins tombstones, pre-WAL validation, torn-tail repair, and
+  precise checksum failures.
 
 ## [M0] - 2026-07-30
 
