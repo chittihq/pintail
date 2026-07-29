@@ -25,6 +25,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   boot-secret file.
 - Bun-only multi-stage container build and persistent Docker Compose
   deployment.
+- M0 milestone gate report, local quick start, and architecture decisions for
+  build tooling and control-plane boundaries.
 
 ### Verification
 

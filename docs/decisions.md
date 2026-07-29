@@ -16,3 +16,17 @@ run. `pintail-api` instead generates the dashboard when its source inputs
 change and embeds that exact output. CI and the container build generate once,
 then set `PINTAIL_DASHBOARD_PREBUILT=1` for the immediately following Cargo
 build. The generated directory stays ignored.
+
+### SQL parsing may use sqlparser-rs
+
+Pintail will use `sqlparser-rs` with its MySQL dialect when the query and
+replication milestones introduce SQL parsing. This is the specification's
+pre-approved engine-adjacent exception: Pintail will still own its bound AST,
+type semantics, planner, optimizer, and vectorized executor.
+
+### SQLite is control-plane storage only
+
+The embedded SQLite database stores metadata, settings, checkpoints, jobs, and
+other operational state. It is never part of the analytical data path; table
+data, indexes, WAL records, and execution remain Pintail-owned formats and
+implementations.
