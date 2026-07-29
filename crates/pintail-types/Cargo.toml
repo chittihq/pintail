@@ -1,0 +1,11 @@
+[package]
+name = "pintail-types"
+description = "Shared value, type, schema, and error model for Pintail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

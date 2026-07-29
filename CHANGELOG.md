@@ -15,6 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   insert-once settings.
 - Bun-managed Nuxt 4 + shadcn-vue dashboard source with a generated Badge
   component and responsive M0 shell.
+- Prescribed Rust crate, integration-test, load-generator, SQL-logic, and
+  benchmark boundaries for every planned component.
+- `pintail-api` Axum `/health` route and build-time embedding of freshly
+  generated dashboard assets.
 
 ### Verification
 
@@ -22,3 +26,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reopen.
 - Settings tests verify insert-once secret persistence.
 - Bun type checking and static generation verify the dashboard source.
+- Dashboard HTTP tests verify embedded HTML and the JSON health response.

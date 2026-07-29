@@ -1,0 +1,11 @@
+[package]
+name = "pintail-store"
+description = "From-scratch columnar storage engine for Pintail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
