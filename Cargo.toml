@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "crates/pintail-meta",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/pintail-db/pintail"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1.0.98"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+tempfile = "3.20.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

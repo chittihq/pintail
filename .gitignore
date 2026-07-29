@@ -1,1 +1,8 @@
-GOAL.md
+/target/
+/data/
+/output/
+/.playwright-mcp/
+*.db
+*.db-shm
+*.db-wal
+secrets.toml
