@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - First-boot JWT and DSN-encryption secrets, displayed only when created; the
   JWT is insert-once SQLite metadata and the DSN key uses an owner-only Unix
   boot-secret file.
+- Owner-only Unix permissions for the data directory, SQLite control-plane
+  database, and its WAL sidecars.
 - Bun-only multi-stage container build and persistent Docker Compose
   deployment.
 - M0 milestone gate report, local quick start, and architecture decisions for
@@ -37,5 +39,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dashboard HTTP tests verify embedded HTML and the JSON health response.
 - Binary boot/restart tests verify SQLite initialization, `/health`, and
   one-time secret display.
+- Unix permission tests protect every file that can contain first-boot
+  secrets.
+- Concurrent first-boot tests verify that another process waits for a complete,
+  durably published boot-secret file.
 - Unified CI generates the dashboard before running Rust formatting, linting,
   and workspace tests against those exact static assets.

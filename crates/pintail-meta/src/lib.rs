@@ -44,6 +44,7 @@ impl MetaStore {
     /// Returns an error when `SQLite` cannot open or configure the database, or
     /// when a migration cannot be applied atomically.
     pub fn open(path: &Path) -> Result<Self> {
+        prepare_private_database_file(path)?;
         let mut connection = Connection::open(path)
             .with_context(|| format!("failed to open metadata database {}", path.display()))?;
         connection
@@ -97,6 +98,40 @@ impl MetaStore {
             .with_context(|| format!("failed to read metadata setting {key}"))?;
         Ok(StoredSetting { value, inserted })
     }
+}
+
+#[cfg(unix)]
+fn prepare_private_database_file(path: &Path) -> Result<()> {
+    use std::{
+        fs::{OpenOptions, Permissions},
+        os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    };
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "failed to create private metadata database {}",
+                path.display()
+            )
+        })?;
+    file.set_permissions(Permissions::from_mode(0o600))
+        .with_context(|| {
+            format!(
+                "failed to secure metadata database permissions {}",
+                path.display()
+            )
+        })
+}
+
+#[cfg(not(unix))]
+fn prepare_private_database_file(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn migrate(connection: &mut Connection) -> Result<()> {

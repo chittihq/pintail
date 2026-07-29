@@ -55,3 +55,28 @@ fn reopening_an_initialized_control_plane_is_idempotent() {
 
     assert_eq!(reopened.schema_version().expect("schema version"), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn control_plane_database_files_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let metadata = pintail_meta::MetaStore::open(&database_path).expect("metadata store");
+
+    for path in [
+        database_path.clone(),
+        database_path.with_extension("db-wal"),
+        database_path.with_extension("db-shm"),
+    ] {
+        let mode = std::fs::metadata(&path)
+            .unwrap_or_else(|error| panic!("metadata for {}: {error}", path.display()))
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "{} is not owner-only", path.display());
+    }
+
+    drop(metadata);
+}
