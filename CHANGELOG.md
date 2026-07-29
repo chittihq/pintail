@@ -46,6 +46,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Whole-block xxh3 coverage for null bitmaps, codec metadata, compressed
   values, zone maps, and HLL sketches, preventing corrupt statistics from
   causing false pruning.
+- A manifest `globally_unique_keys` marker on full-compaction output and a
+  single-segment scan fast path that bypasses merge-on-read state.
 
 ### Verification
 

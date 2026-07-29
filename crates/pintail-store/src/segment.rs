@@ -34,6 +34,7 @@ pub(crate) struct SegmentMeta {
     pub(crate) min_key: PrimaryKey,
     pub(crate) max_key: PrimaryKey,
     pub(crate) bloom: Vec<u8>,
+    pub(crate) unique_keys: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -154,6 +155,7 @@ pub(crate) fn write(
     rows: &[StoredRow],
     block_rows: usize,
     compression: Compression,
+    unique_keys: bool,
 ) -> Result<SegmentMeta, StoreError> {
     if rows.is_empty() {
         return Err(StoreError::FormatLimit(
@@ -230,6 +232,7 @@ pub(crate) fn write(
         min_key,
         max_key,
         bloom,
+        unique_keys,
     })
 }
 

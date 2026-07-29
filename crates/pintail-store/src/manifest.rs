@@ -143,6 +143,19 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
             .bytes()
             .map_err(|reason| corrupt_here(&decoder, reason))?
             .to_vec();
+        let unique_keys = match decoder
+            .u8()
+            .map_err(|reason| corrupt_here(&decoder, reason))?
+        {
+            0 => false,
+            1 => true,
+            value => {
+                return Err(corrupt_here(
+                    &decoder,
+                    format!("invalid unique-key flag {value}"),
+                ));
+            }
+        };
         segments.push(SegmentMeta {
             id,
             file_name,
@@ -153,6 +166,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
             min_key,
             max_key,
             bloom,
+            unique_keys,
         });
     }
     decoder
@@ -218,6 +232,7 @@ pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), Store
         encode_key(&mut encoder, &segment.min_key)?;
         encode_key(&mut encoder, &segment.max_key)?;
         encoder.bytes(&segment.bloom, "segment primary-key bloom")?;
+        encoder.u8(u8::from(segment.unique_keys));
     }
     let checksum = xxh3_64(encoder.as_slice());
     encoder.u64(checksum);

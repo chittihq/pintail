@@ -80,6 +80,7 @@ repeated segment_count times:
     composite_key min_key
     composite_key max_key
     bytes primary_key_bloom_filter
+    u8 globally_unique_keys
 u64 xxh3(all preceding manifest bytes)
 ```
 
@@ -228,6 +229,9 @@ zstd. Publication uses the same segment-before-manifest ordering as flush.
 Obsolete files are deleted only after every snapshot pinning their manifest
 generation releases it; a process restart can immediately remove files not
 listed by the durable manifest.
+Full-merge output is marked globally unique in the manifest. A snapshot with
+that single segment and no memtable rows returns its already-sorted rows
+without allocating merge-on-read state.
 
 The catalog fixes one key mode when a table is created: source primary key,
 first source UNIQUE key, or append-rowid. Primary and UNIQUE modes resolve

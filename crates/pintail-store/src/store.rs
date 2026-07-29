@@ -477,6 +477,7 @@ impl TableStore {
             &rows,
             self.options.block_rows,
             segment::Compression::Lz4,
+            false,
         )?;
         let segment_path = self.directory.join(&segment.file_name);
         let mut next_manifest = self.manifest.as_ref().clone();
@@ -595,6 +596,7 @@ impl TableStore {
                 &rows,
                 self.options.block_rows,
                 compression,
+                full_merge,
             )?;
             next_manifest.next_segment_id = next_manifest
                 .next_segment_id
@@ -744,6 +746,15 @@ impl TableSnapshot {
     /// # Errors
     ///
     pub fn scan(&self) -> Result<Vec<StoredRow>, StoreError> {
+        if self.memtable.is_empty()
+            && let [segment_meta] = self.manifest.segments.as_slice()
+            && segment_meta.unique_keys
+        {
+            return Ok(segment::read(&self.directory, segment_meta, &self.schema)?
+                .into_iter()
+                .filter(|row| !row.is_deleted())
+                .collect());
+        }
         let mut latest = BTreeMap::new();
         for segment_meta in &self.manifest.segments {
             for row in segment::read(&self.directory, segment_meta, &self.schema)? {
