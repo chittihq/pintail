@@ -16,6 +16,11 @@ pub enum StoreError {
     Schema(SchemaError),
     /// Another writer already owns this table.
     WriterBusy,
+    /// A database operation named a table that was not registered at open.
+    UnknownTable {
+        /// Stable table identifier from the catalog.
+        table_id: u64,
+    },
     /// WAL bytes did not satisfy the documented format.
     CorruptWal {
         /// Byte offset at which validation failed.
@@ -90,6 +95,9 @@ impl fmt::Display for StoreError {
             Self::Io { action, source } => write!(formatter, "{action}: {source}"),
             Self::Schema(error) => write!(formatter, "row does not match table schema: {error}"),
             Self::WriterBusy => formatter.write_str("another writer already owns this table"),
+            Self::UnknownTable { table_id } => {
+                write!(formatter, "database does not contain table {table_id}")
+            }
             Self::CorruptWal { offset, reason } => {
                 write!(formatter, "corrupt WAL at byte {offset}: {reason}")
             }

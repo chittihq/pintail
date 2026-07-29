@@ -13,6 +13,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Single-writer table store with atomic typed batches, an RCU-style memtable,
   configurable WAL synchronization, length-prefixed records, and per-record
   xxh3 checksums.
+- Database store with one globally sequenced WAL multiplexed by stable table
+  ID; per-table flush checkpoints preserve every other table's unpublished
+  records.
 - WAL recovery that discards a torn final record while rejecting checksum or
   sequence corruption with the failing byte offset.
 - Immutable version-1 `PTSEG` files with independently checksummed,
@@ -59,6 +62,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reopen tests verify checkpoint recovery, pinned reader snapshots,
   last-version-wins tombstones, pre-WAL validation, torn-tail repair, and
   precise checksum failures.
+- Multi-table tests verify global WAL sequencing, recovery through one
+  database log, safe partial-table flushes, and rejection of unregistered WAL
+  table IDs.
 - Segment tests cover every scalar and null representation, multi-block
   reopen, pre-flush snapshots, max-version merge-on-read across segments and
   WAL recovery, and precise block-checksum corruption.

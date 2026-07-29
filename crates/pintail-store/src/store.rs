@@ -300,6 +300,8 @@ pub struct TableStore {
     retired: Vec<RetiredGeneration>,
     last_sequence: u64,
     next_append_row_id: u64,
+    table_id: u64,
+    truncate_wal_on_flush: bool,
 }
 
 impl TableStore {
@@ -315,6 +317,18 @@ impl TableStore {
         options: StoreOptions,
     ) -> Result<Self, StoreError> {
         let directory = directory.as_ref().to_path_buf();
+        let wal_path = directory.join(WAL_FILE);
+        Self::open_with_wal(directory, &wal_path, 0, schema, options, true)
+    }
+
+    pub(crate) fn open_with_wal(
+        directory: PathBuf,
+        wal_path: &Path,
+        table_id: u64,
+        schema: TableSchema,
+        options: StoreOptions,
+        truncate_wal_on_flush: bool,
+    ) -> Result<Self, StoreError> {
         if options.block_rows == 0 {
             return Err(StoreError::FormatLimit(
                 "segment block row target must be non-zero".into(),
@@ -347,16 +361,23 @@ impl TableStore {
             }
         }
         remove_orphan_segments(&directory, &manifest)?;
-        let (mut wal, recovery) = Wal::open(&directory.join(WAL_FILE), options.wal_sync)?;
+        let (mut wal, recovery) = Wal::open(wal_path, options.wal_sync)?;
         let recovery_last_sequence = recovery.last_sequence;
-        let recovered_batches = !recovery.batches.is_empty();
+        let recovered_batches = recovery
+            .batches
+            .iter()
+            .any(|batch| batch.table_id == table_id);
         let mut memtable = Memtable::default();
         for batch in recovery.batches {
             let RecoveredBatch {
                 sequence,
+                table_id: recovered_table_id,
                 columns,
                 rows,
             } = batch;
+            if recovered_table_id != table_id {
+                continue;
+            }
             if sequence <= manifest.flushed_sequence {
                 continue;
             }
@@ -365,7 +386,10 @@ impl TableStore {
                 memtable.apply(&row);
             }
         }
-        if recovered_batches && recovery_last_sequence <= manifest.flushed_sequence {
+        if truncate_wal_on_flush
+            && recovered_batches
+            && recovery_last_sequence <= manifest.flushed_sequence
+        {
             wal.reset()?;
         }
         if schema_upgrade {
@@ -396,6 +420,8 @@ impl TableStore {
             manifest,
             retired: Vec::new(),
             next_append_row_id,
+            table_id,
+            truncate_wal_on_flush,
         })
     }
 
@@ -407,7 +433,19 @@ impl TableStore {
     /// # Errors
     ///
     /// Returns an error when validation, encoding, or WAL I/O fails.
-    pub fn ingest(&mut self, mut rows: Vec<StoredRow>) -> Result<IngestOutcome, StoreError> {
+    pub fn ingest(&mut self, rows: Vec<StoredRow>) -> Result<IngestOutcome, StoreError> {
+        let sequence = self
+            .last_sequence
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        self.ingest_at_sequence(sequence, rows)
+    }
+
+    pub(crate) fn ingest_at_sequence(
+        &mut self,
+        sequence: u64,
+        mut rows: Vec<StoredRow>,
+    ) -> Result<IngestOutcome, StoreError> {
         for row in &rows {
             self.schema.validate_row(row)?;
         }
@@ -436,11 +474,14 @@ impl TableStore {
             }
         }
 
-        let sequence = self
-            .last_sequence
-            .checked_add(1)
-            .ok_or(StoreError::SequenceOverflow)?;
-        self.wal.append(sequence, &self.schema, &rows)?;
+        if sequence <= self.last_sequence {
+            return Err(StoreError::FormatLimit(format!(
+                "WAL sequence {sequence} must follow {}",
+                self.last_sequence
+            )));
+        }
+        self.wal
+            .append(sequence, self.table_id, &self.schema, &rows)?;
 
         let accepted_rows = rows.len();
         let visible_rows = rows
@@ -472,6 +513,14 @@ impl TableStore {
     /// Returns an error when the operating system cannot synchronize the WAL.
     pub fn checkpoint(&mut self) -> Result<(), StoreError> {
         self.wal.sync()
+    }
+
+    pub(crate) fn has_pending_rows(&self) -> bool {
+        !self.memtable.snapshot().is_empty()
+    }
+
+    pub(crate) fn last_sequence(&self) -> u64 {
+        self.last_sequence
     }
 
     /// Publishes the current memtable as a checksummed immutable PTSEG file.
@@ -527,7 +576,9 @@ impl TableStore {
 
         self.manifest = Arc::new(next_manifest);
         self.memtable.clear();
-        self.wal.reset()?;
+        if self.truncate_wal_on_flush {
+            self.wal.reset()?;
+        }
         Ok(FlushOutcome {
             row_count: rows.len(),
             segment_path: Some(segment_path),

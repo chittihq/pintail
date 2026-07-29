@@ -31,6 +31,7 @@ pub(crate) struct Recovery {
 
 pub(crate) struct RecoveredBatch {
     pub(crate) sequence: u64,
+    pub(crate) table_id: u64,
     pub(crate) columns: Vec<WalColumn>,
     pub(crate) rows: Vec<StoredRow>,
 }
@@ -71,14 +72,18 @@ impl Wal {
     pub(crate) fn append(
         &mut self,
         sequence: u64,
+        table_id: u64,
         schema: &TableSchema,
         rows: &[StoredRow],
     ) -> Result<(), StoreError> {
-        let payload = encode_batch(sequence, schema, rows)?;
+        let payload = encode_batch(sequence, table_id, schema, rows)?;
         let length = u32::try_from(payload.len())
             .map_err(|_| StoreError::FormatLimit("WAL record exceeds u32::MAX".into()))?;
         let checksum = xxh3_64(&payload);
 
+        self.file
+            .seek(SeekFrom::End(0))
+            .map_err(|error| StoreError::io("seek to WAL end", error))?;
         self.file
             .write_all(&length.to_le_bytes())
             .and_then(|()| self.file.write_all(&payload))
@@ -115,11 +120,13 @@ impl Wal {
 
 fn encode_batch(
     sequence: u64,
+    table_id: u64,
     schema: &TableSchema,
     rows: &[StoredRow],
 ) -> Result<Vec<u8>, StoreError> {
     let mut encoder = Encoder::new();
     encoder.u64(sequence);
+    encoder.u64(table_id);
     encoder.u32(schema.version());
     encoder.length(schema.columns().len(), "WAL schema column count")?;
     for column in schema.columns() {
@@ -136,6 +143,7 @@ fn encode_batch(
 fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
     let mut decoder = Decoder::new(payload);
     let sequence = decoder.u64()?;
+    let table_id = decoder.u64()?;
     let _schema_version = decoder.u32()?;
     let column_count = decoder.u32()?;
     let mut columns = Vec::with_capacity(column_count as usize);
@@ -172,6 +180,7 @@ fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
     decoder.finish()?;
     Ok(RecoveredBatch {
         sequence,
+        table_id,
         columns,
         rows,
     })

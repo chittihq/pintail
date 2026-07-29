@@ -4,19 +4,28 @@ All integers are little-endian. Every variable byte string is encoded as a
 `u32` length followed by exactly that many bytes. File-format version numbers
 start at one; readers reject unknown versions rather than guessing.
 
-## Table directory
+## Database and table directories
 
-One physical table owns:
+The production database layout owns:
+
+- `.database.writer.lock`: advisory database-writer lock;
+- `database.wal`: the one mutable recovery log shared by registered tables;
+- `tables/<stable_table_id>/`: one manifest and immutable segment set per
+  table.
+
+Each physical table directory owns:
 
 - `.writer.lock`: advisory single-writer lock;
-- `table.wal`: mutable recovery log;
 - `manifest.ptm`: the only authority for live immutable segments;
 - `segment-{id:020}.ptseg`: immutable columnar data;
 - dot-prefixed temporary files used only until `fsync` plus atomic rename.
 
-Opening a table locks the writer, verifies every live segment footer, removes
-unreferenced `.ptseg` crash orphans, then replays WAL sequences newer than the
-manifest checkpoint.
+Opening a database locks its writer, verifies every live segment footer,
+removes unreferenced `.ptseg` crash orphans, then routes WAL records by stable
+table ID and replays sequences newer than each table's manifest checkpoint.
+Flushing one table leaves the shared WAL intact while any other table has
+unpublished rows. The compatibility `TableStore` API uses the same format for
+one table with ID `0` and a local `table.wal`.
 
 ## WAL (`PTWAL`, version 1)
 
@@ -28,9 +37,10 @@ payload[payload_length]
 u64 xxh3(payload)
 ```
 
-The payload contains a strictly increasing `u64` sequence, the writer's `u32`
-schema version, a `u32` schema-column count, each stable `u32` column ID plus
-its one-byte logical type, then a `u32` row count and typed rows. A row is:
+The payload contains a database-wide strictly increasing `u64` sequence, a
+stable `u64` table ID, the writer's `u32` schema version, a `u32`
+schema-column count, each stable `u32` column ID plus its one-byte logical
+type, then a `u32` row count and typed rows. A row is:
 
 ```
 u32 key_component_count
@@ -53,8 +63,10 @@ Recovery verifies each checksum and sequence. An incomplete final length,
 payload, or checksum is a torn tail and is truncated to the last complete
 record. A checksum failure in a complete record is corruption and reports the
 record byte offset. `always`, `checkpoint`, and `off` control data
-synchronization. A manifest checkpoint covering every recovered sequence wins
-after a crash between manifest publication and WAL reset.
+synchronization. Each table manifest suppresses its already-flushed records
+during replay. The shared WAL resets only when every registered memtable is
+empty, so a crash between a table manifest publication and WAL reset cannot
+discard another table's unpublished records.
 
 ## Manifest (`PTMAN`, version 1)
 
