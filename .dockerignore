@@ -1,0 +1,11 @@
+.git
+.github
+target
+data
+packages/dashboard/node_modules
+packages/dashboard/.nuxt
+packages/dashboard/.data
+*.db
+*.db-shm
+*.db-wal
+secrets.toml

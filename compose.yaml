@@ -1,0 +1,19 @@
+services:
+  pintail:
+    build:
+      context: .
+    image: pintail:dev
+    ports:
+      - "${PINTAIL_HTTP_PORT:-8080}:8080"
+    volumes:
+      - pintail-data:/var/lib/pintail
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 2s
+    restart: unless-stopped
+
+volumes:
+  pintail-data:
