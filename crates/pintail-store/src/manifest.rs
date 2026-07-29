@@ -142,14 +142,14 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         .finish()
         .map_err(|reason| StoreError::corrupt_manifest(checksum_offset, reason))?;
 
-    if schema_version != schema.version() {
+    if schema_version > schema.version() {
         return Err(StoreError::SchemaMismatch {
             expected_version: schema.version(),
             actual_version: schema_version,
         });
     }
     let expected_fingerprint = schema_fingerprint(schema);
-    if stored_fingerprint != expected_fingerprint {
+    if schema_version == schema.version() && stored_fingerprint != expected_fingerprint {
         return Err(StoreError::SchemaFingerprintMismatch {
             expected: expected_fingerprint,
             actual: stored_fingerprint,

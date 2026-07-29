@@ -53,6 +53,8 @@ pub enum StoreError {
         /// Fingerprint recorded on disk.
         actual: u64,
     },
+    /// A newer schema cannot interpret data written by an older schema.
+    IncompatibleSchema(String),
     /// A monotonically increasing sequence number overflowed.
     SequenceOverflow,
     /// A collection could not be represented by the on-disk format.
@@ -114,6 +116,9 @@ impl fmt::Display for StoreError {
                 formatter,
                 "schema fingerprint mismatch: expected {expected:016x}, found {actual:016x}"
             ),
+            Self::IncompatibleSchema(reason) => {
+                write!(formatter, "incompatible schema evolution: {reason}")
+            }
             Self::SequenceOverflow => formatter.write_str("WAL sequence number overflow"),
             Self::FormatLimit(reason) => write!(formatter, "storage format limit: {reason}"),
         }

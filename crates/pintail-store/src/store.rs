@@ -224,9 +224,14 @@ impl TableStore {
             }
         })?;
 
-        let manifest = Arc::new(manifest::load(&directory, &schema)?);
+        let mut manifest = manifest::load(&directory, &schema)?;
+        let schema_upgrade = manifest.schema_version < schema.version();
         for meta in &manifest.segments {
-            segment::verify(&directory, meta, &schema)?;
+            if schema_upgrade {
+                segment::read(&directory, meta, &schema)?;
+            } else {
+                segment::verify(&directory, meta, &schema)?;
+            }
         }
         remove_orphan_segments(&directory, &manifest)?;
         let (mut wal, recovery) = Wal::open(&directory.join(WAL_FILE), options.wal_sync)?;
@@ -238,13 +243,27 @@ impl TableStore {
                 continue;
             }
             for row in rows {
-                schema.validate_row(&row)?;
+                let row = adapt_recovered_row(&schema, row)?;
                 memtable.apply(&row);
             }
         }
         if recovered_batches && recovery_last_sequence <= manifest.flushed_sequence {
             wal.reset()?;
         }
+        if schema_upgrade {
+            manifest.generation = manifest
+                .generation
+                .checked_add(1)
+                .ok_or(StoreError::SequenceOverflow)?;
+            manifest.epoch = manifest
+                .epoch
+                .checked_add(1)
+                .ok_or(StoreError::SequenceOverflow)?;
+            manifest.schema_version = schema.version();
+            manifest.schema_fingerprint = segment::schema_fingerprint(&schema);
+            manifest::publish(&directory, &manifest)?;
+        }
+        let manifest = Arc::new(manifest);
 
         Ok(Self {
             _writer_lock: writer_lock,
@@ -645,6 +664,32 @@ fn open_lock(path: &Path) -> Result<File, StoreError> {
         .truncate(false)
         .open(path)
         .map_err(|error| StoreError::io("open table writer lock", error))
+}
+
+fn adapt_recovered_row(schema: &TableSchema, row: StoredRow) -> Result<StoredRow, StoreError> {
+    if row.values().len() == schema.columns().len() {
+        schema.validate_row(&row)?;
+        return Ok(row);
+    }
+    if row.values().len() > schema.columns().len() {
+        return Err(StoreError::IncompatibleSchema(
+            "an unflushed WAL row has columns removed by the supplied schema".into(),
+        ));
+    }
+    let mut values = row.values().to_vec();
+    for column in &schema.columns()[values.len()..] {
+        if !column.is_nullable() {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "required column {} ({}) is absent from an unflushed WAL row",
+                column.name(),
+                column.id()
+            )));
+        }
+        values.push(pintail_types::Value::Null);
+    }
+    let adapted = StoredRow::new(row.key().clone(), values, row.version(), row.is_deleted());
+    schema.validate_row(&adapted)?;
+    Ok(adapted)
 }
 
 fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), StoreError> {

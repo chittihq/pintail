@@ -28,6 +28,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tombstone retention, full-merge tombstone removal, and zstd cold output.
 - Reference-counted obsolete-segment reclamation that preserves pinned reader
   generations and cleans unreferenced crash orphans during reopen.
+- Metadata-only nullable column additions for older segment and WAL rows,
+  stable-ID dropped-column reads, and compaction-time removal of dropped
+  bytes, with incompatible physical changes rejected.
 
 ### Verification
 
@@ -46,6 +49,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Recovery tests verify live footers during open, discard unpublished segment
   orphans, and prefer a durable manifest checkpoint when a crash leaves the
   pre-flush WAL in place.
+- A short process-level crash-fuzz test performs 24 kill/reopen cycles while a
+  separate writer loops through WAL, flush, manifest, and compaction paths.
 
 ## [M0] - 2026-07-30
 

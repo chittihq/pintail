@@ -49,7 +49,7 @@ impl Compression {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum LogicalType {
     Boolean = 0,
     Int64 = 1,
@@ -237,7 +237,7 @@ pub(crate) fn read(
     let schema_version = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-    if schema_version != schema.version() {
+    if schema_version > schema.version() {
         return Err(StoreError::SchemaMismatch {
             expected_version: schema.version(),
             actual_version: schema_version,
@@ -246,10 +246,9 @@ pub(crate) fn read(
     let fingerprint = decoder
         .u64()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-    let expected_fingerprint = schema_fingerprint(schema);
-    if fingerprint != expected_fingerprint {
+    if fingerprint != meta.schema_fingerprint {
         return Err(StoreError::SchemaFingerprintMismatch {
-            expected: expected_fingerprint,
+            expected: meta.schema_fingerprint,
             actual: fingerprint,
         });
     }
@@ -266,57 +265,142 @@ pub(crate) fn read(
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
 
-    let specs = column_specs(schema);
-    if column_count != specs.len() {
-        return Err(corrupt_here(
-            &path,
-            &decoder,
-            format!(
-                "header declares {column_count} columns, expected {}",
-                specs.len()
-            ),
-        ));
-    }
+    let columns = read_segment_columns(
+        &path,
+        &mut decoder,
+        schema,
+        schema_version,
+        row_count,
+        column_count,
+    )?;
+    assemble_rows(&path, &decoder, &columns, row_count)
+}
 
+struct DecodedColumns {
+    keys: Vec<Cell>,
+    versions: Vec<Cell>,
+    tombstones: Vec<Cell>,
+    values: Vec<Vec<Cell>>,
+}
+
+fn read_segment_columns(
+    path: &Path,
+    decoder: &mut Decoder<'_>,
+    schema: &TableSchema,
+    schema_version: u32,
+    row_count: usize,
+    column_count: usize,
+) -> Result<DecodedColumns, StoreError> {
     let mut keys = None;
     let mut versions = None;
     let mut tombstones = None;
     let mut values = vec![None; schema.columns().len()];
-    for spec in &specs {
-        let column_cells = read_column(&path, &mut decoder, spec, row_count)?;
-        match spec.source {
-            ColumnSource::Key => keys = Some(column_cells),
-            ColumnSource::Version => versions = Some(column_cells),
-            ColumnSource::Tombstone => tombstones = Some(column_cells),
-            ColumnSource::Value(index) => values[index] = Some(column_cells),
+    for _ in 0..column_count {
+        let (id, logical_type, column_cells) = read_column(path, decoder, row_count)?;
+        match id {
+            KEY_COLUMN_ID => assign_system_column(
+                path,
+                decoder,
+                &mut keys,
+                logical_type,
+                LogicalType::PrimaryKey,
+                column_cells,
+                "primary key",
+            )?,
+            VERSION_COLUMN_ID => assign_system_column(
+                path,
+                decoder,
+                &mut versions,
+                logical_type,
+                LogicalType::UInt64,
+                column_cells,
+                "version",
+            )?,
+            TOMBSTONE_COLUMN_ID => assign_system_column(
+                path,
+                decoder,
+                &mut tombstones,
+                logical_type,
+                LogicalType::Boolean,
+                column_cells,
+                "tombstone",
+            )?,
+            _ => {
+                let Some((index, column)) = schema
+                    .columns()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.id() == id)
+                else {
+                    continue;
+                };
+                let expected = LogicalType::from_data_type(column.data_type());
+                if logical_type != expected {
+                    return Err(StoreError::IncompatibleSchema(format!(
+                        "column {} ({id}) changed physical type",
+                        column.name()
+                    )));
+                }
+                if values[index].replace(column_cells).is_some() {
+                    return Err(corrupt_here(
+                        path,
+                        decoder,
+                        format!("duplicate user column id {id}"),
+                    ));
+                }
+            }
         }
     }
+    for (column, cells) in schema.columns().iter().zip(&mut values) {
+        if cells.is_none() {
+            if !column.is_nullable() {
+                return Err(StoreError::IncompatibleSchema(format!(
+                    "required column {} ({}) is absent from schema version {schema_version}",
+                    column.name(),
+                    column.id()
+                )));
+            }
+            *cells = Some(vec![Cell::Null; row_count]);
+        }
+    }
+    Ok(DecodedColumns {
+        keys: keys.ok_or_else(|| corrupt_here(path, decoder, "missing key column"))?,
+        versions: versions.ok_or_else(|| corrupt_here(path, decoder, "missing version column"))?,
+        tombstones: tombstones
+            .ok_or_else(|| corrupt_here(path, decoder, "missing tombstone column"))?,
+        values: values
+            .into_iter()
+            .map(|column| column.ok_or_else(|| corrupt_here(path, decoder, "missing user column")))
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
 
-    let keys = keys.ok_or_else(|| corrupt_here(&path, &decoder, "missing key column"))?;
-    let versions =
-        versions.ok_or_else(|| corrupt_here(&path, &decoder, "missing version column"))?;
-    let tombstones =
-        tombstones.ok_or_else(|| corrupt_here(&path, &decoder, "missing tombstone column"))?;
+fn assemble_rows(
+    path: &Path,
+    decoder: &Decoder<'_>,
+    columns: &DecodedColumns,
+    row_count: usize,
+) -> Result<Vec<StoredRow>, StoreError> {
     let mut rows = Vec::with_capacity(row_count);
     for row_index in 0..row_count {
-        let key = match &keys[row_index] {
+        let key = match &columns.keys[row_index] {
             Cell::Key(key) => key.clone(),
-            _ => return Err(corrupt_here(&path, &decoder, "invalid key cell")),
+            _ => return Err(corrupt_here(path, decoder, "invalid key cell")),
         };
-        let Cell::UInt64(version) = versions[row_index] else {
-            return Err(corrupt_here(&path, &decoder, "invalid version cell"));
+        let Cell::UInt64(version) = columns.versions[row_index] else {
+            return Err(corrupt_here(path, decoder, "invalid version cell"));
         };
-        let Cell::Boolean(deleted) = tombstones[row_index] else {
-            return Err(corrupt_here(&path, &decoder, "invalid tombstone cell"));
+        let Cell::Boolean(deleted) = columns.tombstones[row_index] else {
+            return Err(corrupt_here(path, decoder, "invalid tombstone cell"));
         };
-        let row_values = values
+        let row_values = columns
+            .values
             .iter()
             .map(|column| {
                 column
-                    .as_ref()
-                    .and_then(|column| column.get(row_index))
+                    .get(row_index)
                     .map(Cell::to_value)
-                    .ok_or_else(|| corrupt_here(&path, &decoder, "missing user value"))
+                    .ok_or_else(|| corrupt_here(path, decoder, "missing user value"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         rows.push(StoredRow::new(key, row_values, version, deleted));
@@ -439,28 +523,17 @@ fn write_block(
 fn read_column(
     path: &Path,
     decoder: &mut Decoder<'_>,
-    spec: &ColumnSpec,
     expected_rows: usize,
-) -> Result<Vec<Cell>, StoreError> {
+) -> Result<(u32, LogicalType, Vec<Cell>), StoreError> {
     let id = decoder
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    if id != spec.id {
-        return Err(corrupt_here(
-            path,
-            decoder,
-            format!("column id {id} does not match {}", spec.id),
-        ));
-    }
     let logical_type = LogicalType::decode(
         decoder
             .u8()
             .map_err(|reason| corrupt_here(path, decoder, reason))?,
     )
     .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    if logical_type as u8 != spec.logical_type as u8 {
-        return Err(corrupt_here(path, decoder, "column logical type mismatch"));
-    }
     let block_count = decoder
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
@@ -478,7 +551,33 @@ fn read_column(
             ),
         ));
     }
-    Ok(cells)
+    Ok((id, logical_type, cells))
+}
+
+fn assign_system_column(
+    path: &Path,
+    decoder: &Decoder<'_>,
+    destination: &mut Option<Vec<Cell>>,
+    actual_type: LogicalType,
+    expected_type: LogicalType,
+    cells: Vec<Cell>,
+    name: &str,
+) -> Result<(), StoreError> {
+    if actual_type != expected_type {
+        return Err(corrupt_here(
+            path,
+            decoder,
+            format!("{name} column has the wrong logical type"),
+        ));
+    }
+    if destination.replace(cells).is_some() {
+        return Err(corrupt_here(
+            path,
+            decoder,
+            format!("duplicate {name} column"),
+        ));
+    }
+    Ok(())
 }
 
 fn read_block(
@@ -598,7 +697,7 @@ fn select_encoding(logical_type: LogicalType, cells: &[Cell]) -> Encoding {
     }
     if matches!(logical_type, LogicalType::Utf8 | LogicalType::Binary)
         && cells.len() >= 4
-        && cells.iter().collect::<HashSet<_>>().len() * 2 <= cells.len()
+        && cells.iter().collect::<HashSet<_>>().len() * 10 < cells.len()
     {
         return Encoding::Dictionary;
     }
@@ -1132,13 +1231,112 @@ fn validate_footer(
     if bytes.get(footer_offset..footer_offset + FOOTER_MAGIC.len()) != Some(FOOTER_MAGIC) {
         return Err(corrupt(path, footer_offset, "invalid footer magic"));
     }
-    if meta.schema_fingerprint != schema_fingerprint(schema) {
+    validate_footer_body(
+        path,
+        &bytes[footer_offset..checksum_position],
+        footer_offset,
+        meta,
+    )?;
+    if bytes.len() < 18 || &bytes[..MAGIC.len()] != MAGIC {
+        return Err(corrupt(path, 0, "invalid segment header"));
+    }
+    let segment_schema_version = u32::from_le_bytes(
+        bytes[6..10]
+            .try_into()
+            .map_err(|_| corrupt(path, 6, "invalid schema version"))?,
+    );
+    if segment_schema_version > schema.version() {
+        return Err(StoreError::SchemaMismatch {
+            expected_version: schema.version(),
+            actual_version: segment_schema_version,
+        });
+    }
+    let segment_fingerprint = u64::from_le_bytes(
+        bytes[10..18]
+            .try_into()
+            .map_err(|_| corrupt(path, 10, "invalid schema fingerprint"))?,
+    );
+    if meta.schema_fingerprint != segment_fingerprint {
         return Err(StoreError::SchemaFingerprintMismatch {
-            expected: schema_fingerprint(schema),
-            actual: meta.schema_fingerprint,
+            expected: meta.schema_fingerprint,
+            actual: segment_fingerprint,
         });
     }
     Ok(())
+}
+
+fn validate_footer_body(
+    path: &Path,
+    bytes: &[u8],
+    footer_offset: usize,
+    meta: &SegmentMeta,
+) -> Result<(), StoreError> {
+    let mut decoder = Decoder::new(bytes);
+    expect_raw(&mut decoder, FOOTER_MAGIC)
+        .map_err(|reason| corrupt(path, footer_offset, reason))?;
+    let row_count = decoder
+        .u64()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let min_version = decoder
+        .u64()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let max_version = decoder
+        .u64()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let fingerprint = decoder
+        .u64()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let unique_keys = decoder
+        .u64()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    if (row_count, min_version, max_version, fingerprint)
+        != (
+            meta.row_count,
+            meta.min_version,
+            meta.max_version,
+            meta.schema_fingerprint,
+        )
+        || unique_keys > row_count
+    {
+        return Err(corrupt(
+            path,
+            footer_offset,
+            "footer metadata does not match the manifest",
+        ));
+    }
+    decode_key(&mut decoder)
+        .and_then(|_| decode_key(&mut decoder))
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let column_count = decoder
+        .u32()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    for _ in 0..column_count {
+        decoder
+            .u64()
+            .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    }
+    let sparse_count = decoder
+        .u32()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    for _ in 0..sparse_count {
+        decoder
+            .u64()
+            .and_then(|_| decode_key(&mut decoder).map(|_| 0))
+            .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    }
+    let bloom = decoder
+        .bytes()
+        .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    if bloom.len() != BLOOM_BYTES {
+        return Err(corrupt(
+            path,
+            footer_offset + decoder.position(),
+            "invalid primary-key bloom filter length",
+        ));
+    }
+    decoder
+        .finish()
+        .map_err(|reason| corrupt(path, footer_offset, reason))
 }
 
 fn build_bloom(rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {

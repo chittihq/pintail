@@ -30,3 +30,12 @@ The embedded SQLite database stores metadata, settings, checkpoints, jobs, and
 other operational state. It is never part of the analytical data path; table
 data, indexes, WAL records, and execution remain Pintail-owned formats and
 implementations.
+
+### Storage data uses Pintail-owned binary formats
+
+The M1 data path uses no serialization or database engine crate. Pintail owns
+the WAL, manifest, PTSEG column layout, adaptive encodings, checksums,
+merge-on-read, snapshots, and compaction rules. `xxhash-rust`, `lz4_flex`, and
+`zstd` provide only the utility checksum/compression primitives permitted by
+the specification. Format version 1 is documented byte-for-byte in
+`docs/format.md`.
