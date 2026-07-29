@@ -62,7 +62,10 @@ new nullable columns as `NULL`.
 Recovery verifies each checksum and sequence. An incomplete final length,
 payload, or checksum is a torn tail and is truncated to the last complete
 record. A checksum failure in a complete record is corruption and reports the
-record byte offset. `always`, `checkpoint`, and `off` control data
+record byte offset. A live append that reports a write or `always`-sync I/O
+failure first truncates back to its pre-record offset, so an immediate retry
+cannot be stranded behind a torn record. `always`, `checkpoint`, and `off`
+control data
 synchronization. Each table manifest suppresses its already-flushed records
 during replay. The shared WAL resets only when every registered memtable is
 empty, so a crash between a table manifest publication and WAL reset cannot

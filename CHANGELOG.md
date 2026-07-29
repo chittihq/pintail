@@ -63,7 +63,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   last-version-wins tombstones, pre-WAL validation, torn-tail repair, and
   precise checksum failures.
 - WAL storage-exhaustion tests inject `StorageFull` after a partial record and
-  verify recovery preserves and truncates to the prior complete prefix.
+  verify recovery preserves and truncates to the prior complete prefix; live
+  append failures roll back before a caller can retry.
 - Multi-table tests verify global WAL sequencing, recovery through one
   database log, safe partial-table flushes, and rejection of unregistered WAL
   table IDs.

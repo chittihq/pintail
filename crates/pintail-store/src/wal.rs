@@ -81,15 +81,44 @@ impl Wal {
             .map_err(|_| StoreError::FormatLimit("WAL record exceeds u32::MAX".into()))?;
         let checksum = xxh3_64(&payload);
 
-        self.file
+        let record_offset = self
+            .file
             .seek(SeekFrom::End(0))
             .map_err(|error| StoreError::io("seek to WAL end", error))?;
-        write_record(&mut self.file, length, &payload, checksum)
-            .map_err(|error| StoreError::io("append WAL record", error))?;
+        if let Err(write_error) = write_record(&mut self.file, length, &payload, checksum) {
+            self.rollback_failed_append(record_offset, &write_error)?;
+            return Err(StoreError::io("append WAL record", write_error));
+        }
         if self.sync_policy == WalSync::Always {
-            self.sync()?;
+            if let Err(sync_error) = self.file.sync_data() {
+                self.rollback_failed_append(record_offset, &sync_error)?;
+                return Err(StoreError::io("sync WAL append", sync_error));
+            }
         }
         Ok(())
+    }
+
+    fn rollback_failed_append(
+        &mut self,
+        record_offset: u64,
+        write_error: &std::io::Error,
+    ) -> Result<(), StoreError> {
+        self.file
+            .set_len(record_offset)
+            .and_then(|()| self.file.seek(SeekFrom::Start(record_offset)).map(drop))
+            .and_then(|()| {
+                if self.sync_policy == WalSync::Off {
+                    Ok(())
+                } else {
+                    self.file.sync_all()
+                }
+            })
+            .map_err(|rollback_error| {
+                StoreError::io(
+                    format!("roll back failed WAL append after write error: {write_error}"),
+                    rollback_error,
+                )
+            })
     }
 
     pub(crate) fn sync(&mut self) -> Result<(), StoreError> {
@@ -318,7 +347,9 @@ mod tests {
     use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
     use xxhash_rust::xxh3::xxh3_64;
 
-    use super::{FORMAT_VERSION, MAGIC, encode_batch, recover, write_record};
+    use crate::store::WalSync;
+
+    use super::{FORMAT_VERSION, MAGIC, Wal, encode_batch, recover, write_record};
 
     #[test]
     fn disk_full_during_wal_append_leaves_the_prior_complete_prefix() {
@@ -358,6 +389,31 @@ mod tests {
             file.metadata().expect("WAL metadata").len(),
             u64::try_from(valid_length).expect("valid length")
         );
+    }
+
+    #[test]
+    fn a_failed_append_is_rolled_back_before_the_live_handle_retries() {
+        let directory = tempfile::tempdir().expect("temporary WAL directory");
+        let path = directory.path().join("database.wal");
+        let schema = TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)])
+            .expect("schema");
+        let (mut wal, _) = Wal::open(&path, WalSync::Always).expect("open WAL");
+        let record_offset = wal.file.seek(SeekFrom::End(0)).expect("WAL end");
+        wal.file
+            .write_all(&[0xff; 19])
+            .expect("simulate partial record");
+        wal.rollback_failed_append(
+            record_offset,
+            &Error::new(ErrorKind::StorageFull, "simulated disk full"),
+        )
+        .expect("roll back partial record");
+        wal.append(1, 7, &schema, &[row("retry", 1)])
+            .expect("retry append");
+        drop(wal);
+
+        let (_, recovery) = Wal::open(&path, WalSync::Always).expect("recover retry");
+        assert_eq!(recovery.batches.len(), 1);
+        assert_eq!(recovery.batches[0].sequence, 1);
     }
 
     fn append_complete(bytes: &mut Vec<u8>, payload: &[u8]) {
