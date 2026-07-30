@@ -74,6 +74,14 @@ during replay. The shared WAL resets only when every registered memtable is
 empty, so a crash between a table manifest publication and WAL reset cannot
 discard another table's unpublished records.
 
+Reader-only recovery never mutates the WAL. It accepts the same complete
+checksummed prefix but ignores an incomplete final record rather than
+truncating it, because the active writer may still be appending that record.
+A reader loads a manifest, recovers WAL sequences newer than its
+`flushed_wal_sequence`, then reloads the manifest. Any generation, epoch, or
+flushed-sequence change restarts the open, preventing an old-manifest/new-WAL
+combination during publication and WAL reset.
+
 ## Manifest (`PTMAN`, version 1)
 
 The checksummed binary manifest is:
@@ -272,3 +280,32 @@ maximum versions by that key. Append-rowid mode replaces the source key with a
 monotonic generated `UInt64` storage key and therefore retains every source
 row without deduplication. Reopen derives the next row ID from durable WAL and
 segments; key mode cannot change after data exists.
+
+## Portable backup manifest version 1
+
+Backups preserve PTMAN/PTSEG bytes; they do not transcode the storage format.
+Each backup publishes `<prefix>/<database>/<backup>/backup.json` only after
+every referenced object exists. Its top-level fields are:
+
+```text
+format_version = 1
+database_id
+backup_id
+parent_id | null
+created_at
+control_plane                 # portable JSON metadata, no source DSN
+tables[]
+```
+
+Each table records its logical name, stable directory name, one manifest
+object, and its complete segment-object list. Every object reference contains
+an object key, lowercase SHA-256 digest, byte length, and the backup generation
+that originally uploaded it. An incremental manifest can therefore reference
+unchanged segment objects owned by an ancestor while still describing a
+complete restorable database view.
+
+Restore rejects unknown backup versions, downloads into a new temporary
+directory, checks every byte length and SHA-256 digest, and publishes the
+side-by-side directory only after the complete chain verifies. A backup
+manifest is portable across S3-compatible services, but restoring PTSEG/PTMAN
+version 1 still requires a Pintail binary that supports storage format 1.

@@ -12,20 +12,42 @@ HTTP control plane and dashboard, a read-only MySQL wire endpoint,
 independently supervised databases, Prometheus metrics, safe DLQ retry, and
 native full/incremental S3-compatible backup and side-by-side restore.
 
-## Run locally
+## Quick start with Docker
 
 ```sh
-(cd packages/dashboard && bun install)
+docker compose up --build --detach
+docker compose logs pintail
+```
+
+Open <http://127.0.0.1:8080>, create the first admin, then choose **Add
+database**. Supply a MySQL DSN whose host is reachable from the container,
+test and probe it, select the recommended CDC or polling mode, and start the
+snapshot. The database becomes queryable when its state changes to
+**Streaming** or **Polling**.
+
+The first container boot prints the generated JWT and DSN-encryption secrets
+once; preserve the `pintail-data` volume and restrict access to its logs. The
+dashboard/API is published on port 8080 and the read-only MySQL endpoint on
+3306. Override them with `PINTAIL_HTTP_PORT` and `PINTAIL_WIRE_PORT`.
+
+## Run from source
+
+```sh
+cd packages/dashboard
+bun install --frozen-lockfile
+bun run generate
+cd ../..
 cargo run --release -- --data-dir ./data
 ```
 
-Open <http://127.0.0.1:8080>. On the first boot, Pintail prints the generated
-JWT and DSN-encryption secrets once. The JWT secret lives in the SQLite
-`settings` table; the DSN key is saved in `./data/secrets.toml` with owner-only
+Open <http://127.0.0.1:8080>. The JWT secret lives in the SQLite `settings`
+table; the DSN key is saved in `./data/secrets.toml` with owner-only
 permissions on Unix.
 
 Configuration precedence is CLI arguments, `PINTAIL_*` environment variables,
 `pintail.toml`, then defaults. See `pintail.example.toml`.
+`--query-memory-limit-bytes`, `PINTAIL_QUERY_MEMORY_LIMIT_BYTES`, and
+`[query].memory_limit_bytes` set the shared hard per-query memory ceiling.
 
 The MySQL wire endpoint listens on `127.0.0.1:3306` by default. In the
 dashboard, create a database API key with the `query` scope, then open
@@ -45,15 +67,6 @@ Use a MySQL 8.4 or compatible MariaDB CLI. Oracle's MySQL 9.x CLI no longer
 ships the `mysql_native_password` client plugin used by Pintail's hash-only
 challenge authentication. mysql2, PyMySQL, DBeaver, and Metabase remain
 compatible.
-
-## Run with Docker Compose
-
-```sh
-docker compose up --build
-```
-
-The dashboard and health endpoint are then available on
-<http://127.0.0.1:8080>, with durable state in the `pintail-data` volume.
 
 ## Develop the dashboard
 

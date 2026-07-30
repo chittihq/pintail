@@ -5,6 +5,7 @@ services:
     image: pintail:dev
     ports:
       - "${PINTAIL_HTTP_PORT:-8080}:8080"
+      - "${PINTAIL_WIRE_PORT:-3306}:3306"
     volumes:
       - pintail-data:/var/lib/pintail
     healthcheck:

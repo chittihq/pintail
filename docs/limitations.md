@@ -46,8 +46,10 @@ plausible but incorrect result.
   special-case result that did not follow this behavior; that MySQL-only
   corner is excluded from the common-workload corpus.
 - Integer and floating arithmetic use Pintail's current `Int64`, `UInt64`,
-  and `Float64` execution types. Exact `DECIMAL` query arithmetic will arrive
-  with the wider type mapping work; numeric overflow returns an error.
+  and `Float64` execution types. `DECIMAL` values are stored losslessly, but
+  arithmetic and aggregate inputs currently pass through `Float64`; exact
+  fixed-point query arithmetic remains deferred. Numeric overflow returns an
+  error.
 
 ### Planning and execution
 
@@ -63,10 +65,12 @@ plausible but incorrect result.
   parallelize.
 - Hash joins, hash aggregation, sorting, distinct state, subquery
   materialization, retained projected scans, and cross joins obey a hard
-  per-query memory cap. LIMIT-aware top-K retains only the current candidates
-  plus one input batch; full sorting still materializes its complete input.
-  Spill to disk is intentionally a v1.1 feature. Cross joins also require
-  catalog cardinalities and reject estimates above one million rows.
+  per-query memory cap. The cap is process-configurable but applies
+  independently to every HTTP and MySQL-wire query. LIMIT-aware top-K retains
+  only the current candidates plus one input batch; full sorting still
+  materializes its complete input. Query spill to disk is intentionally a
+  v1.1 feature. Cross joins also require catalog cardinalities and reject
+  estimates above one million rows.
 - Aggregate pushdown is intentionally conservative. M2 removes only
   unreferenced predicate-free cross-join inputs with an exact catalog
   cardinality of one; Pintail has no relationship or uniqueness statistics
@@ -74,20 +78,16 @@ plausible but incorrect result.
 - `EXPLAIN ANALYZE` scan counters accumulate work from all executions of a
   stable table in the statement, including uncorrelated subqueries.
 
-## M3 snapshot engine
+## Snapshot engine
 
-- M3 provides the probe and snapshot library surfaces plus durable chunk
-  journals; the supervisor and REST/SSE controls that invoke them arrive in
-  M6. Snapshot completion therefore leaves tables pending for the M4 CDC or M5
-  polling owner.
 - A missing `FLUSH TABLES WITH READ LOCK` privilege can be allowed explicitly.
   Every worker still uses a repeatable-read consistent transaction, but their
   start instants can differ and the result reports the degraded guarantee.
 - Resume preserves the first attempt's CDC handoff position and replays
-  already published chunks idempotently. This converges correctly once M4
-  replays the overlap. Before that replay, a source changed between attempts
-  can expose a mixed-time snapshot. On binlog-disabled sources, M5 polling and
-  reconciliation own convergence.
+  already published chunks idempotently. A source changed between attempts
+  can leave a mixed-time snapshot only until the mandatory post-snapshot CDC
+  catch-up replays the overlap. On binlog-disabled sources, polling and
+  reconciliation own that convergence.
 - PK-less tables use a single-stream `LIMIT`/`OFFSET` scan and generated
   append-row IDs. Source changes between attempts can shift offsets; polling
   reconciliation is required because there is no stable source identity.
@@ -100,20 +100,21 @@ plausible but incorrect result.
 - `DECIMAL` precision above 38 maps to text with a probe warning. ENUM and SET
   snapshot values are textual. Virtual generated columns are skipped, while
   stored generated columns are included.
+- Spatial columns are retained as binary WKB (without MySQL's four-byte SRID
+  prefix), but Pintail has no spatial logical type, index, or query functions.
+  They can be exported as bytes but cannot be used for spatial predicates.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB. Durable completed row and chunk counts are exact.
 
-## M4 CDC engine
+## CDC engine
 
-- M4 is still an in-process library surface. The multi-database supervisor,
-  retention-pressure metrics and alerts, REST/SSE controls, and DLQ UI arrive
-  in M6 and M8. The runner itself retries eight consecutive connection
-  failures with exponential backoff capped at five seconds.
+- The supervisor runs finite CDC catch-up cycles on a five-second cadence.
+  Each runner retries eight consecutive connection failures with exponential
+  backoff capped at five seconds; a later supervisor cycle retries a database
+  that remains in error.
 - MariaDB GTID text is captured and retained for diagnostics, but
   `mysql_common` 0.37 does not encode MariaDB's GTID dump request. MariaDB 11
   therefore resumes from the file/position captured alongside its GTID.
-- DDL/schema-history handling belongs to M5. M4 uses live TableMap metadata for
-  each row event but expects the probed target schema to remain compatible.
 - Tables without a primary or safe UNIQUE key support idempotent INSERT CDC
   through deterministic append keys. UPDATE and DELETE have no stable source
   identity, so they enter the DLQ and mark that table `needs_resync`. MySQL 8
@@ -124,23 +125,21 @@ plausible but incorrect result.
 - Versions reserve 16 bits for the intra-transaction mutation ordinal. GTID
   sequences must fit 48 bits. File/position versions support a 16-bit numeric
   file suffix and 32-bit event offset. A source transaction above 65,535
-  physical mutations or the configured retained-byte cap fails explicitly.
+  physical mutations fails explicitly. Retained transaction data spills to an
+  anonymous temporary file after the configurable in-memory threshold
+  (256 MiB by default); the spill is intentionally ephemeral because the
+  durable source checkpoint advances only after table WAL synchronization,
+  so a crash safely replays the source transaction.
 - Automatic purge recovery is deliberately database-wide and attempted once
   per runner invocation. It resets every included target because one global
   source coordinate cannot safely advance while a table retains an
   unfillable gap.
-- The M4 type gate asserts source-to-storage fidelity. M7 additionally checks
-  wire text and prepared-result encoding for exact decimal text, valid and
-  normalized-zero temporal values, negative TIME, JSON, Unicode, binary data,
-  Boolean values, and narrow integers. A single source-to-both-surfaces Docker
-  matrix remains part of the M9 full-matrix closure.
+- Type fidelity covers snapshot and CDC storage plus HTTP and wire
+  presentation for exact decimal text, valid and normalized-zero temporal
+  values, negative TIME, JSON, Unicode, binary data, BIT values, Boolean
+  values, and narrow integers.
 
-## M5 DDL and polling
-
-- M5 remains an in-process library surface. The M8 supervisor owns the default
-  1-second cheap probe, 5-second cursor sync, 10-minute delete reconcile, and
-  hourly CDC-cascade schedules. The M6 dashboard will expose their state and
-  polling-mode warning banner.
+## DDL and polling
 - Polling converges source state; it cannot reproduce intermediate states that
   exist entirely between cycles. Hard deletes on cursor tables remain visible
   until a scheduled key reconciliation, except when a secondary-UNIQUE
@@ -182,7 +181,7 @@ plausible but incorrect result.
   arrive with the supervisor/API surface. DROP TABLE retains the replica as an
   orphan; M5 does not provide an operator purge action.
 
-## M6 HTTP API and dashboard
+## HTTP API and dashboard
 
 - HTTP and wire query responses share the same reader-pinned execution facade,
   row ceiling, memory ceiling, catalog construction, and physical scan
@@ -193,7 +192,7 @@ plausible but incorrect result.
   boundary. Its first-boot admin and signed sessions protect operations, while
   network exposure and TLS remain deployment responsibilities.
 
-## M7 MySQL wire protocol
+## MySQL wire protocol
 
 - Pintail implements `mysql_native_password` challenge authentication from a
   stored double-SHA-1 verifier; plaintext API keys are never retained. Keys
@@ -218,8 +217,50 @@ plausible but incorrect result.
   profile, but their full application-level smokes are not automated on this
   workstation.
 
-## Milestone boundary
+## Operations and backup
 
-M7 completes the authenticated HTTP/dashboard and read-only MySQL client
-surfaces. Multi-database lifetime supervision, scheduled reconciliation,
-backups, metrics, and operational DLQ controls belong to M8.
+- The embedded supervisor is deliberately finite-cycle rather than a
+  permanently attached stream. Its five-second cadence bounds idle resource
+  ownership and source failure blast radius, but a newly committed event may
+  wait for the next cycle before ingestion starts.
+- RSS is obtained from the host `ps` process table. Sandboxed or minimal
+  environments without a compatible `ps` command report zero rather than
+  guessing. Storage and segment metrics walk the local data directory and can
+  be comparatively expensive for very large deployments.
+- DLQ retry performs a table reconciliation before removal. A database-level
+  DLQ entry cannot be reconstructed from one row and requires a database
+  resnapshot.
+- S3-compatible backup credentials are encrypted at rest, but object-store
+  authorization remains the operator's responsibility. Prefix validation
+  prevents accidental cross-prefix writes; it is not tenant isolation.
+- Backups do not yet apply an automatic retention policy. Incremental
+  generations depend on their parent chain, so operators must retain every
+  ancestor referenced by a manifest.
+- Restore is intentionally side-by-side and detached. It does not recover or
+  expose the encrypted source DSN and never overwrites an active replica.
+
+## Duckling known-limit parity
+
+The M9 audit covers every limitation named in Duckling's README and legacy
+type-fidelity guide. “Inherited” means Pintail preserves the data but
+deliberately lacks the higher-level operation for the stated architectural
+reason; it does not mean silent corruption is accepted.
+
+| Duckling limitation | Pintail status | Reason or evidence |
+|---|---|---|
+| PeerDB corrupts zero and minimum dates | Fixed | Native snapshot and CDC decoders normalize zero/partial-zero dates to `NULL` and retain `1000-01-01`; storage, HTTP, and wire gates assert both. |
+| PeerDB rejects attachment to a pre-populated destination | Fixed by design | Snapshot and CDC are one native ownership path. The captured source position is persisted before handoff, so no external mirror attaches to Pintail's files. |
+| Polling dumps are inconsistent under mid-dump writes | Fixed for CDC-capable sources | Snapshot workers use coordinated repeatable-read transactions and replay from the captured position. Without the global-lock privilege, Pintail reports a degraded cross-worker guarantee instead of hiding it. |
+| Count-neutral delete/insert can evade polling | Fixed | Count/MAX tokens only schedule work; chunk checksums, key reconciliation, and secondary-UNIQUE audit detect the unchanged-count window. |
+| `BIGINT UNSIGNED` overflows a signed carrier | Fixed | Pintail has a native `UInt64` value and segment carrier through the full `0..=2^64-1` range. |
+| High-precision `DECIMAL` can truncate | Fixed in replication; inherited in arithmetic | Precision up to 38 is stored and returned as exact canonical text. Arithmetic and `SUM`/`AVG` currently use `Float64` because PTSEG v1 and the vectorized executor have no fixed-point arithmetic kernel. Queries requiring exact decimal math should aggregate in MySQL until that kernel is added. |
+| Spatial/geometry values are unusable | Inherited | Pintail removes MySQL's SRID prefix and preserves WKB bytes, but the from-scratch engine intentionally has no spatial logical type, index, or functions yet. |
+| Binary and BIT values break CDC updates | Fixed | Native row decoding stores binary values as bytes and BIT as unsigned values; snapshot, CDC, HTTP, and prepared-wire gates cover insert and update paths. |
+
+## Release boundary
+
+Pintail v1 is a single-node, read-only analytical replica. It does not provide
+clustered query execution, synchronous high availability, source writes,
+multi-tenant isolation, TLS termination, exact decimal arithmetic, spatial
+querying, or query spill-to-disk. Those boundaries are explicit rather than
+emulated with results that look plausible but may be wrong.

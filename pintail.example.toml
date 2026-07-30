@@ -5,3 +5,7 @@ bind = "127.0.0.1:8080"
 
 [wire]
 bind = "127.0.0.1:3306"
+
+[query]
+# Hard memory ceiling shared by HTTP and MySQL wire queries (64 MiB).
+memory_limit_bytes = 67108864

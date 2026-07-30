@@ -30,6 +30,6 @@ COPY --from=builder /source/target/release/pintail /usr/local/bin/pintail
 
 USER pintail
 VOLUME ["/var/lib/pintail"]
-EXPOSE 8080
+EXPOSE 8080 3306
 ENTRYPOINT ["pintail"]
-CMD ["--data-dir", "/var/lib/pintail", "--http-bind", "0.0.0.0:8080"]
+CMD ["--data-dir", "/var/lib/pintail", "--http-bind", "0.0.0.0:8080", "--wire-bind", "0.0.0.0:3306"]
