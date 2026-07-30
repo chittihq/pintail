@@ -49,6 +49,8 @@ impl MysqlContainer {
                 "--detach",
                 "--name",
                 &name,
+                "--tmpfs",
+                "/var/lib/mysql:rw,size=2g",
                 "--env",
                 "MYSQL_ALLOW_EMPTY_PASSWORD=yes",
                 "--env",
