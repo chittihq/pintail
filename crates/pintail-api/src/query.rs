@@ -206,6 +206,7 @@ fn execute_query(
     sql: &str,
 ) -> Result<QueryResponse, ApiError> {
     let output = ReplicaEngine::new(state.data_dir()?, state.metadata_path()?)
+        .with_memory_limit(state.query_memory_limit())
         .execute(database_id, sql, MAX_RESPONSE_ROWS)
         .map_err(query_error)?;
     state.record_query(

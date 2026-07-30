@@ -16,6 +16,9 @@ fn cli_and_environment_override_the_toml_configuration() {
 
             [wire]
             bind = "127.0.0.1:3307"
+
+            [query]
+            memory_limit_bytes = 134217728
         "#,
     )
     .expect("write config");
@@ -26,6 +29,7 @@ fn cli_and_environment_override_the_toml_configuration() {
         data_dir: Some(cli_data_dir.clone()),
         http_bind: None,
         wire_bind: None,
+        query_memory_limit_bytes: Some(268_435_456),
     };
     let environment = [(
         OsString::from("PINTAIL_HTTP_BIND"),
@@ -46,4 +50,5 @@ fn cli_and_environment_override_the_toml_configuration() {
             .parse::<SocketAddr>()
             .expect("wire address")
     );
+    assert_eq!(config.query_memory_limit_bytes(), 268_435_456);
 }

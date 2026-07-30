@@ -25,7 +25,10 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use crate::{DEFAULT_MAX_ROWS, QueryError, QueryField, QueryOutput, QueryStats, ReplicaEngine};
+use crate::{
+    DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
+    ReplicaEngine,
+};
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -43,7 +46,7 @@ pub async fn serve(
     let metadata_path = metadata_path.into();
     loop {
         let (stream, _) = listener.accept().await?;
-        let backend = Backend::new(&data_dir, &metadata_path);
+        let backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
         tokio::spawn(async move {
             let _ = serve_connection(stream, backend).await;
         });
@@ -64,6 +67,31 @@ pub async fn serve_until<F>(
 where
     F: Future<Output = ()>,
 {
+    serve_until_with_memory_limit(
+        listener,
+        data_dir,
+        metadata_path,
+        DEFAULT_QUERY_MEMORY_LIMIT,
+        shutdown,
+    )
+    .await
+}
+
+/// Serves clients with an explicit hard per-query memory ceiling until shutdown.
+///
+/// # Errors
+///
+/// Returns an error when the listener cannot accept another connection.
+pub async fn serve_until_with_memory_limit<F>(
+    listener: TcpListener,
+    data_dir: impl Into<PathBuf>,
+    metadata_path: impl Into<PathBuf>,
+    query_memory_limit: usize,
+    shutdown: F,
+) -> io::Result<()>
+where
+    F: Future<Output = ()>,
+{
     let data_dir = data_dir.into();
     let metadata_path = metadata_path.into();
     tokio::pin!(shutdown);
@@ -73,7 +101,7 @@ where
             () = &mut shutdown => return Ok(()),
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
-                let backend = Backend::new(&data_dir, &metadata_path);
+                let backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
                 tokio::spawn(async move {
                     let _ = serve_connection(stream, backend).await;
                 });
@@ -119,10 +147,11 @@ struct Backend {
 }
 
 impl Backend {
-    fn new(data_dir: &Path, metadata_path: &Path) -> Self {
+    fn new(data_dir: &Path, metadata_path: &Path, query_memory_limit: usize) -> Self {
         Self {
             metadata_path: metadata_path.to_path_buf(),
-            engine: ReplicaEngine::new(data_dir, metadata_path),
+            engine: ReplicaEngine::new(data_dir, metadata_path)
+                .with_memory_limit(query_memory_limit),
             authentication: Mutex::new(None),
             prepared: BTreeMap::new(),
             next_statement_id: 1,

@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT;
 use serde::Deserialize;
 
 const DEFAULT_CONFIG_FILE: &str = "pintail.toml";
@@ -36,6 +37,10 @@ pub struct Cli {
     /// Address used by `MySQL` wire-protocol clients.
     #[arg(long)]
     pub wire_bind: Option<SocketAddr>,
+
+    /// Hard byte ceiling for each HTTP or MySQL wire query.
+    #[arg(long)]
+    pub query_memory_limit_bytes: Option<usize>,
 }
 
 /// Effective process configuration after all sources have been merged.
@@ -44,6 +49,7 @@ pub struct AppConfig {
     data_dir: PathBuf,
     http_bind: SocketAddr,
     wire_bind: SocketAddr,
+    query_memory_limit_bytes: usize,
 }
 
 impl AppConfig {
@@ -130,11 +136,30 @@ impl AppConfig {
             .or(environment_wire_bind)
             .or(file.wire.bind)
             .unwrap_or_else(default_wire_bind);
+        let environment_query_memory_limit = environment
+            .get(&OsString::from("PINTAIL_QUERY_MEMORY_LIMIT_BYTES"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_QUERY_MEMORY_LIMIT_BYTES must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_QUERY_MEMORY_LIMIT_BYTES must be a positive integer")
+            })
+            .transpose()?;
+        let query_memory_limit_bytes = cli
+            .query_memory_limit_bytes
+            .or(environment_query_memory_limit)
+            .or(file.query.memory_limit_bytes)
+            .unwrap_or(DEFAULT_QUERY_MEMORY_LIMIT);
+        if query_memory_limit_bytes == 0 {
+            bail!("query memory limit must be greater than zero");
+        }
 
         Ok(Self {
             data_dir,
             http_bind,
             wire_bind,
+            query_memory_limit_bytes,
         })
     }
 
@@ -155,6 +180,12 @@ impl AppConfig {
     pub fn wire_bind(&self) -> SocketAddr {
         self.wire_bind
     }
+
+    /// Hard byte ceiling for one HTTP or MySQL wire query.
+    #[must_use]
+    pub const fn query_memory_limit_bytes(&self) -> usize {
+        self.query_memory_limit_bytes
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -163,6 +194,7 @@ struct FileConfig {
     data_dir: Option<PathBuf>,
     http: FileHttpConfig,
     wire: FileWireConfig,
+    query: FileQueryConfig,
 }
 
 #[derive(Default, Deserialize)]
@@ -175,6 +207,12 @@ struct FileHttpConfig {
 #[serde(default, deny_unknown_fields)]
 struct FileWireConfig {
     bind: Option<SocketAddr>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct FileQueryConfig {
+    memory_limit_bytes: Option<usize>,
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -207,5 +245,49 @@ fn resolve_config_relative(path: PathBuf, config_dir: Option<&Path>) -> PathBuf 
         config_dir.join(path)
     } else {
         path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppConfig, Cli, DEFAULT_QUERY_MEMORY_LIMIT};
+
+    fn cli() -> Cli {
+        Cli {
+            config: None,
+            data_dir: None,
+            http_bind: None,
+            wire_bind: None,
+            query_memory_limit_bytes: None,
+        }
+    }
+
+    #[test]
+    fn query_memory_limit_defaults_and_accepts_environment_override() {
+        let default = AppConfig::load_from(&cli(), []).expect("default config");
+        assert_eq!(
+            default.query_memory_limit_bytes(),
+            DEFAULT_QUERY_MEMORY_LIMIT
+        );
+
+        let configured = AppConfig::load_from(
+            &cli(),
+            [(
+                "PINTAIL_QUERY_MEMORY_LIMIT_BYTES".into(),
+                "268435456".into(),
+            )],
+        )
+        .expect("environment config");
+        assert_eq!(configured.query_memory_limit_bytes(), 268_435_456);
+    }
+
+    #[test]
+    fn query_memory_limit_must_be_positive() {
+        let error = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_QUERY_MEMORY_LIMIT_BYTES".into(), "0".into())],
+        )
+        .expect_err("zero limit");
+        assert!(error.to_string().contains("greater than zero"));
     }
 }

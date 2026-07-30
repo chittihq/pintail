@@ -14,6 +14,7 @@ use chacha20poly1305::{
     aead::{Aead as _, KeyInit as _},
 };
 use pintail_meta::MetaStore;
+use pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT;
 use rand::RngCore as _;
 use tokio::sync::broadcast;
 
@@ -26,6 +27,7 @@ const NONCE_BYTES: usize = 12;
 pub struct ApiState {
     inner: Option<Arc<ApiStateInner>>,
     wire_bind: Option<SocketAddr>,
+    query_memory_limit: usize,
 }
 
 struct ApiStateInner {
@@ -86,6 +88,7 @@ impl ApiState {
                 metrics: RuntimeMetrics::default(),
             })),
             wire_bind: None,
+            query_memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
         })
     }
 
@@ -93,6 +96,7 @@ impl ApiState {
         Self {
             inner: None,
             wire_bind: None,
+            query_memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
         }
     }
 
@@ -103,8 +107,19 @@ impl ApiState {
         self
     }
 
+    /// Sets the hard byte ceiling used by each HTTP query.
+    #[must_use]
+    pub const fn with_query_memory_limit(mut self, query_memory_limit: usize) -> Self {
+        self.query_memory_limit = query_memory_limit;
+        self
+    }
+
     pub(crate) const fn wire_bind(&self) -> Option<SocketAddr> {
         self.wire_bind
+    }
+
+    pub(crate) const fn query_memory_limit(&self) -> usize {
+        self.query_memory_limit
     }
 
     pub(crate) fn metadata(&self) -> Result<MetaStore, ApiError> {
