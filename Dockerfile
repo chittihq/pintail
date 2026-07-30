@@ -13,6 +13,7 @@ FROM rust:1.94-bookworm AS builder
 WORKDIR /source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY tests/sqllogic ./tests/sqllogic
 COPY --from=dashboard /source/packages/dashboard/.output/public \
     ./packages/dashboard/.output/public
 ENV PINTAIL_DASHBOARD_PREBUILT=1

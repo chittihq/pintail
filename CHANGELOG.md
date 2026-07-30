@@ -39,6 +39,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The CDC restart gate uses a source-side named-lock barrier after the tenth
   commit, proving the worker is SIGKILLed with 190 writes still pending instead
   of relying on workstation/process-start timing.
+- The production builder copies the SQL-oracle workspace member required by
+  the root Cargo manifest, so a clean multi-stage image build can resolve the
+  complete workspace before compiling the Pintail binary.
 
 ### Verification
 
