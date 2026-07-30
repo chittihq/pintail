@@ -16,7 +16,7 @@ use pintail_meta::MetaStore;
 use pintail_probe::{ProbeReport, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreOptions, TableStore};
-use pintail_types::Value;
+use pintail_types::{Column, Value};
 use rusqlite::Connection;
 
 const DATABASE_ID: &str = "m4-source";
@@ -170,6 +170,315 @@ impl Drop for MysqlContainer {
             .stderr(Stdio::null())
             .status();
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn ddl_evolution_add_drop_rename_create_truncate_and_orphan() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE add_drop (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO add_drop VALUES (1,'one');\
+             CREATE TABLE rename_me (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO rename_me VALUES (1,'rename-old');\
+             CREATE TABLE truncate_me (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO truncate_me VALUES (1,'truncate-old');\
+             CREATE TABLE drop_me (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO drop_me VALUES (1,'orphan-retained');",
+        )
+        .expect("DDL source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("DDL DSN"));
+    let mut report = probe(&pool, "app").await.expect("probe DDL source");
+    let workspace = tempfile::tempdir().expect("DDL workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("DDL metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register DDL source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("DDL table schema"),
+                StoreOptions::default(),
+            )
+            .expect("DDL table store");
+            SnapshotTarget::new(source.clone(), store).expect("DDL snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("DDL initial snapshot");
+    let mut targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("DDL CDC target")
+        })
+        .collect();
+
+    mysql
+        .query_batch("ALTER TABLE add_drop ADD COLUMN note VARCHAR(64) NULL;")
+        .expect("ADD COLUMN");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    let added = cdc_target(&targets, "add_drop");
+    assert_eq!(
+        added
+            .store()
+            .schema()
+            .columns()
+            .iter()
+            .map(Column::name)
+            .collect::<Vec<_>>(),
+        ["id", "value", "note"]
+    );
+    assert_eq!(added.store().schema().version(), 2);
+    assert_eq!(
+        added.store().snapshot().scan().unwrap()[0].values()[2],
+        Value::Null
+    );
+
+    mysql
+        .query_batch("INSERT INTO add_drop VALUES (2,'two','two-note');")
+        .expect("post-add insert");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    mysql
+        .query_batch("ALTER TABLE add_drop DROP COLUMN value;")
+        .expect("DROP COLUMN");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    mysql
+        .query_batch("UPDATE add_drop SET note='one-note' WHERE id=1;")
+        .expect("post-drop update");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    let dropped = cdc_target(&targets, "add_drop");
+    assert_eq!(
+        dropped
+            .store()
+            .schema()
+            .columns()
+            .iter()
+            .map(Column::name)
+            .collect::<Vec<_>>(),
+        ["id", "note"]
+    );
+    assert_eq!(dropped.store().schema().version(), 3);
+    assert_eq!(
+        dropped
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .iter()
+            .map(|row| row.values().to_vec())
+            .collect::<Vec<_>>(),
+        [
+            vec![Value::UInt64(1), Value::Utf8("one-note".to_owned())],
+            vec![Value::UInt64(2), Value::Utf8("two-note".to_owned())],
+        ]
+    );
+
+    drop(targets);
+    report = probe(&pool, "app")
+        .await
+        .expect("reprobe after schema evolution");
+    targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            CdcTarget::open_tracked(
+                &metadata_path,
+                DATABASE_ID,
+                source.clone(),
+                workspace.path().join(&source.name),
+                StoreOptions::default(),
+            )
+            .expect("reopen tracked DDL target")
+        })
+        .collect();
+    assert_eq!(
+        cdc_target(&targets, "add_drop")
+            .store()
+            .schema()
+            .columns()
+            .iter()
+            .map(Column::id)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+    mysql
+        .query_batch("UPDATE add_drop SET note='restart-safe' WHERE id=2;")
+        .expect("post-restart schema update");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert!(
+        cdc_target(&targets, "add_drop")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .iter()
+            .any(|row| row.values()[1] == Value::Utf8("restart-safe".to_owned()))
+    );
+
+    mysql
+        .query_batch("ALTER TABLE rename_me RENAME COLUMN value TO renamed;")
+        .expect("RENAME COLUMN");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert!(
+        MetaStore::open(&metadata_path)
+            .unwrap()
+            .tables_needing_resync(DATABASE_ID)
+            .unwrap()
+            .contains("rename_me")
+    );
+
+    mysql
+        .query_batch("TRUNCATE TABLE truncate_me;")
+        .expect("TRUNCATE");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert!(
+        cdc_target(&targets, "truncate_me")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .is_empty()
+    );
+    mysql
+        .query_batch("INSERT INTO truncate_me VALUES (2,'truncate-new');")
+        .expect("post-truncate insert");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert_eq!(
+        cdc_target(&targets, "truncate_me")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    mysql
+        .query_batch(
+            "CREATE TABLE created_after (id BIGINT UNSIGNED PRIMARY KEY, payload VARCHAR(64));",
+        )
+        .expect("CREATE TABLE");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert_eq!(
+        cdc_target(&targets, "created_after")
+            .store()
+            .schema()
+            .version(),
+        1
+    );
+    report = probe(&pool, "app")
+        .await
+        .expect("refresh report after create");
+    mysql
+        .query_batch("INSERT INTO created_after VALUES (1,'created-live');")
+        .expect("created-table insert");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert_eq!(
+        cdc_target(&targets, "created_after")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    mysql
+        .query_batch("DROP TABLE drop_me;")
+        .expect("DROP TABLE");
+    targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert_eq!(
+        cdc_target(&targets, "drop_me")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        1
+    );
+    let metadata = MetaStore::open(&metadata_path).expect("inspect DDL metadata");
+    assert_eq!(
+        metadata
+            .schema_history(DATABASE_ID, "add_drop")
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        metadata
+            .schema_history(DATABASE_ID, "created_after")
+            .unwrap()
+            .len(),
+        1
+    );
+    drop(metadata);
+    let connection = Connection::open(&metadata_path).expect("inspect orphan state");
+    let orphan: (String, Option<String>) = connection
+        .query_row(
+            "SELECT state, orphaned_at FROM tables \
+             WHERE db_id = ?1 AND name = 'drop_me'",
+            [DATABASE_ID],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("orphan row");
+    assert_eq!(orphan.0, "excluded");
+    assert!(orphan.1.is_some());
+    pool.disconnect().await.expect("disconnect DDL pool");
+}
+
+async fn ddl_catch_up(
+    pool: &Pool,
+    metadata_path: &Path,
+    report: &ProbeReport,
+    targets: Vec<CdcTarget>,
+    workspace: &Path,
+) -> Vec<CdcTarget> {
+    run_cdc(
+        pool,
+        metadata_path,
+        DATABASE_ID,
+        report,
+        targets,
+        CdcOptions {
+            blocking: false,
+            new_table_root: Some(workspace.join("auto-created")),
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    .expect("DDL finite catch-up")
+    .targets
+}
+
+fn cdc_target<'a>(targets: &'a [CdcTarget], name: &str) -> &'a CdcTarget {
+    targets
+        .iter()
+        .find(|target| target.source().name == name)
+        .unwrap_or_else(|| panic!("missing CDC target {name}"))
 }
 
 #[tokio::test(flavor = "multi_thread")]

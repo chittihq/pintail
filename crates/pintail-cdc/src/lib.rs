@@ -5,13 +5,14 @@
 //! and only then advances the `SQLite` source checkpoint. A crash therefore
 //! replays at least once with deterministic versions.
 
+mod ddl;
 mod decoder;
 mod gtid;
 
 use std::{
     collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher},
     hash::{Hash as _, Hasher as _},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -28,14 +29,15 @@ use mysql_async::{
     prelude::Queryable as _,
 };
 use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
-use pintail_probe::{ProbeReport, SourceFlavor, SourceTable};
+use pintail_probe::{ProbeReport, SourceFlavor, SourceTable, probe as probe_source};
 use pintail_snapshot::{SnapshotError, SnapshotOptions, SnapshotTarget, run_snapshot};
-use pintail_store::{StoreError, TableStore};
+use pintail_store::{StoreError, StoreOptions, TableStore};
 use pintail_types::{KeyMode, SchemaError, StoredRow};
 use serde_json::json;
 use thiserror::Error;
 
 use crate::{
+    ddl::{AlterKind, DdlAction, parse_ddl},
     decoder::{decode_row, insert_key, physical_key},
     gtid::MysqlGtidSet,
 };
@@ -57,6 +59,37 @@ impl CdcTarget {
         if store.schema() != &expected {
             return Err(CdcError::InvalidConfiguration(format!(
                 "store schema for {} does not match the probed source schema",
+                source.name
+            )));
+        }
+        Ok(Self { source, store })
+    }
+
+    /// Reopens a table using the latest durable stable-column IDs and schema
+    /// generation recorded by the DDL tracker.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when metadata, schema history, or table storage cannot
+    /// be opened consistently.
+    pub fn open_tracked(
+        metadata_path: &Path,
+        database_id: &str,
+        mut source: SourceTable,
+        directory: impl AsRef<Path>,
+        options: StoreOptions,
+    ) -> Result<Self, CdcError> {
+        let history = MetaStore::open(metadata_path)?.schema_history(database_id, &source.name)?;
+        let version = history.last().map_or(1, |record| record.version);
+        if let Some(record) = history.last() {
+            source.columns = serde_json::from_str(&record.columns_json)
+                .map_err(|error| CdcError::Ddl(error.to_string()))?;
+        }
+        let schema = source.table_schema_with_version(version)?;
+        let store = TableStore::open(directory, schema.clone(), options)?;
+        if store.schema() != &schema {
+            return Err(CdcError::InvalidConfiguration(format!(
+                "tracked store schema for {} differs from durable schema history",
                 source.name
             )));
         }
@@ -105,6 +138,16 @@ pub struct CdcOptions {
     pub auto_resnapshot: bool,
     /// Snapshot controls used by automatic purge recovery.
     pub resnapshot_options: SnapshotOptions,
+    /// Auto-snapshot newly created source tables.
+    pub auto_include_new_tables: bool,
+    /// Optional case-insensitive allowlist for newly created tables. Empty
+    /// means all tables not explicitly excluded.
+    pub new_table_includes: BTreeSet<String>,
+    /// Case-insensitive denylist for newly created tables.
+    pub new_table_excludes: BTreeSet<String>,
+    /// Parent directory for auto-included table stores. When absent, the
+    /// first existing target's parent directory is used.
+    pub new_table_root: Option<PathBuf>,
 }
 
 impl Default for CdcOptions {
@@ -118,6 +161,10 @@ impl Default for CdcOptions {
             reconnect_initial_delay: Duration::from_millis(100),
             auto_resnapshot: true,
             resnapshot_options: SnapshotOptions::default(),
+            auto_include_new_tables: true,
+            new_table_includes: BTreeSet::new(),
+            new_table_excludes: BTreeSet::new(),
+            new_table_root: None,
         }
     }
 }
@@ -185,12 +232,18 @@ pub enum CdcError {
     /// Automatic full-snapshot recovery failed.
     #[error("CDC resnapshot failed: {0}")]
     Snapshot(#[from] SnapshotError),
+    /// A post-DDL source reprobe failed.
+    #[error("CDC source reprobe failed: {0}")]
+    Probe(#[from] pintail_probe::ProbeError),
     /// Probed schema or physical key failure.
     #[error("CDC schema failed: {0}")]
     Schema(#[from] SchemaError),
     /// A row event could not be decoded.
     #[error("CDC decode failed: {0}")]
     Decode(String),
+    /// A source DDL statement could not be classified or applied safely.
+    #[error("CDC schema tracking failed: {0}")]
+    Ddl(String),
     /// One source transaction exceeded the configured hard memory cap.
     #[error("CDC transaction retained {retained_bytes} bytes, above the {maximum_bytes}-byte cap")]
     TransactionTooLarge {
@@ -272,7 +325,7 @@ async fn run_cdc_inner(
 ) -> Result<CdcResult, CdcError> {
     validate_configuration(report, &targets, &options)?;
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
-    let target_indexes = targets
+    let mut target_indexes = targets
         .iter()
         .enumerate()
         .map(|(index, target)| (target.source.name.to_ascii_lowercase(), index))
@@ -463,15 +516,47 @@ async fn run_cdc_inner(
                     emit_progress(&progress, commits, mutations, &position)?;
                 }
                 EventData::QueryEvent(query) => {
-                    let statement = query.query();
+                    let statement = query.query().into_owned();
                     let normalized = statement.trim().to_ascii_uppercase();
-                    position.pos = event_position;
                     if normalized == "BEGIN" {
                         continue;
                     }
                     if normalized == "ROLLBACK" {
                         pending = PendingTransaction::default();
                     }
+                    let actions = parse_ddl(&statement)?;
+                    let tracks_schema = !actions.is_empty()
+                        && (query.schema().is_empty()
+                            || query.schema().eq_ignore_ascii_case(&report.database));
+                    if tracks_schema && !pending.mutations.is_empty() {
+                        let outcome = commit_pending(
+                            &mut targets,
+                            &mut metadata,
+                            database_id,
+                            &mut position,
+                            &mut pending,
+                        )?;
+                        commits += 1;
+                        mutations += outcome;
+                        emit_progress(&progress, commits, mutations, &position)?;
+                    }
+                    if tracks_schema {
+                        apply_ddl_actions(
+                            pool,
+                            metadata_path,
+                            database_id,
+                            report,
+                            &mut targets,
+                            &mut target_indexes,
+                            &mut blocked_targets,
+                            &mut metadata,
+                            &options,
+                            &statement,
+                            actions,
+                        )
+                        .await?;
+                    }
+                    position.pos = event_position;
                     let outcome = commit_pending(
                         &mut targets,
                         &mut metadata,
@@ -643,6 +728,308 @@ async fn resnapshot_targets(
             CdcTarget::new(source, target.into_store())
         })
         .collect()
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn apply_ddl_actions(
+    pool: &Pool,
+    metadata_path: &Path,
+    database_id: &str,
+    report: &ProbeReport,
+    targets: &mut Vec<CdcTarget>,
+    target_indexes: &mut BTreeMap<String, usize>,
+    blocked_targets: &mut BTreeSet<usize>,
+    metadata: &mut MetaStore,
+    options: &CdcOptions,
+    statement: &str,
+    actions: Vec<DdlAction>,
+) -> Result<(), CdcError> {
+    let refreshed = probe_source(pool, &report.database).await?;
+    for action in actions {
+        match action {
+            DdlAction::Alter {
+                table,
+                kind: AlterKind::AddOrDropColumns,
+            } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                let Some(source) = find_source_table(&refreshed, &table).cloned() else {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        statement,
+                        None,
+                    )?;
+                    continue;
+                };
+                let source = match stabilize_source_table(&targets[index].source, source) {
+                    Ok(source) => source,
+                    Err(reason) => {
+                        quarantine_schema_change(
+                            metadata,
+                            database_id,
+                            &targets[index],
+                            index,
+                            blocked_targets,
+                            &format!("{statement}; {reason}"),
+                            None,
+                        )?;
+                        continue;
+                    }
+                };
+                let version = next_schema_version(targets[index].store.schema().version())?;
+                let schema = source.table_schema_with_version(version)?;
+                if let Err(error) = targets[index].store.evolve_schema(schema) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {error}"),
+                        Some(&source),
+                    )?;
+                    continue;
+                }
+                let columns_json = serde_json::to_string(&source.columns)
+                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                metadata.record_schema_history(
+                    database_id,
+                    &table,
+                    version,
+                    Some(statement),
+                    &columns_json,
+                    &Utc::now().to_rfc3339(),
+                )?;
+                targets[index].source = source;
+            }
+            DdlAction::Alter {
+                table,
+                kind: AlterKind::RequiresResnapshot,
+            } => {
+                if let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) {
+                    let source = find_source_table(&refreshed, &table);
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        statement,
+                        source,
+                    )?;
+                }
+            }
+            DdlAction::Truncate { table } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                let version = next_schema_version(targets[index].store.schema().version())?;
+                let schema = targets[index].source.table_schema_with_version(version)?;
+                targets[index].store.evolve_schema(schema)?;
+                targets[index].store.reset_for_resnapshot()?;
+                record_target_schema(metadata, database_id, &targets[index], version, statement)?;
+            }
+            DdlAction::Drop { table } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                let version = next_schema_version(targets[index].store.schema().version())?;
+                record_target_schema(metadata, database_id, &targets[index], version, statement)?;
+                metadata.mark_table_orphaned(
+                    database_id,
+                    &table,
+                    statement,
+                    &Utc::now().to_rfc3339(),
+                )?;
+                blocked_targets.insert(index);
+            }
+            DdlAction::Create { table } => {
+                if !options.auto_include_new_tables
+                    || !new_table_matches(&table, options)
+                    || target_indexes.contains_key(&table.to_ascii_lowercase())
+                {
+                    continue;
+                }
+                let Some(source) = find_source_table(&refreshed, &table).cloned() else {
+                    return Err(CdcError::Ddl(format!(
+                        "created table {table} was absent from the refreshed source probe"
+                    )));
+                };
+                let root = options
+                    .new_table_root
+                    .clone()
+                    .or_else(|| {
+                        targets
+                            .first()
+                            .and_then(|target| target.store.directory().parent())
+                            .map(Path::to_path_buf)
+                    })
+                    .ok_or_else(|| {
+                        CdcError::Ddl(
+                            "auto-including a table requires a target storage root".to_owned(),
+                        )
+                    })?;
+                let directory = new_table_directory(&root, &table);
+                let store =
+                    TableStore::open(directory, source.table_schema()?, StoreOptions::default())?;
+                let snapshot_target = SnapshotTarget::new(source.clone(), store)?;
+                let snapshot = run_snapshot(
+                    pool,
+                    metadata_path,
+                    database_id,
+                    &refreshed,
+                    vec![snapshot_target],
+                    options.resnapshot_options.clone(),
+                )
+                .await?;
+                let target = snapshot.targets.into_iter().next().ok_or_else(|| {
+                    CdcError::Ddl("new-table snapshot returned no target".to_owned())
+                })?;
+                let source = target.source().clone();
+                let target = CdcTarget::new(source, target.into_store())?;
+                let index = targets.len();
+                targets.push(target);
+                target_indexes.insert(table.to_ascii_lowercase(), index);
+                record_target_schema(metadata, database_id, &targets[index], 1, statement)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a SourceTable> {
+    report
+        .tables
+        .iter()
+        .find(|source| source.name.eq_ignore_ascii_case(table))
+}
+
+fn stabilize_source_table(
+    previous: &SourceTable,
+    mut refreshed: SourceTable,
+) -> Result<SourceTable, String> {
+    if previous.key.mode != refreshed.key.mode
+        || previous.key.columns.len() != refreshed.key.columns.len()
+        || previous
+            .key
+            .columns
+            .iter()
+            .zip(&refreshed.key.columns)
+            .any(|(left, right)| !left.eq_ignore_ascii_case(right))
+    {
+        return Err("physical key changed".to_owned());
+    }
+    let mut next_id = previous
+        .columns
+        .iter()
+        .map(|column| column.id)
+        .max()
+        .unwrap_or(0);
+    for column in &mut refreshed.columns {
+        if let Some(existing) = previous
+            .columns
+            .iter()
+            .find(|existing| existing.name.eq_ignore_ascii_case(&column.name))
+        {
+            if existing.pintail_type != column.pintail_type {
+                return Err(format!("column {} changed physical type", column.name));
+            }
+            column.id = existing.id;
+        } else {
+            next_id = next_id
+                .checked_add(1)
+                .ok_or_else(|| "stable column ID space is exhausted".to_owned())?;
+            column.id = next_id;
+        }
+    }
+    Ok(refreshed)
+}
+
+fn quarantine_schema_change(
+    metadata: &mut MetaStore,
+    database_id: &str,
+    target: &CdcTarget,
+    target_index: usize,
+    blocked_targets: &mut BTreeSet<usize>,
+    statement: &str,
+    _refreshed: Option<&SourceTable>,
+) -> Result<(), CdcError> {
+    let version = next_schema_version(target.store.schema().version())?;
+    let columns = target.source.columns.as_slice();
+    let columns_json =
+        serde_json::to_string(columns).map_err(|error| CdcError::Ddl(error.to_string()))?;
+    metadata.record_schema_history(
+        database_id,
+        &target.source.name,
+        version,
+        Some(statement),
+        &columns_json,
+        &Utc::now().to_rfc3339(),
+    )?;
+    metadata.mark_table_needs_resync(database_id, &target.source.name, statement)?;
+    blocked_targets.insert(target_index);
+    Ok(())
+}
+
+fn record_target_schema(
+    metadata: &mut MetaStore,
+    database_id: &str,
+    target: &CdcTarget,
+    version: u32,
+    statement: &str,
+) -> Result<(), CdcError> {
+    let columns_json = serde_json::to_string(&target.source.columns)
+        .map_err(|error| CdcError::Ddl(error.to_string()))?;
+    metadata.record_schema_history(
+        database_id,
+        &target.source.name,
+        version,
+        Some(statement),
+        &columns_json,
+        &Utc::now().to_rfc3339(),
+    )?;
+    Ok(())
+}
+
+fn next_schema_version(version: u32) -> Result<u32, CdcError> {
+    version
+        .checked_add(1)
+        .ok_or_else(|| CdcError::Ddl("table schema version exceeds UInt32".to_owned()))
+}
+
+fn new_table_directory(root: &Path, table: &str) -> PathBuf {
+    let safe = table
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(48)
+        .collect::<String>();
+    let mut hasher = DefaultHasher::new();
+    table.to_ascii_lowercase().hash(&mut hasher);
+    root.join(format!("table-{safe}-{:016x}", hasher.finish()))
+}
+
+fn new_table_matches(table: &str, options: &CdcOptions) -> bool {
+    let included = options.new_table_includes.is_empty()
+        || options
+            .new_table_includes
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(table));
+    let excluded = options
+        .new_table_excludes
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(table));
+    included && !excluded
 }
 
 async fn open_stream(
@@ -1037,8 +1424,9 @@ fn finish_result(
     commits: usize,
     mutations: usize,
     position: &StreamPosition,
-    targets: Vec<CdcTarget>,
+    mut targets: Vec<CdcTarget>,
 ) -> Result<CdcResult, CdcError> {
+    targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     Ok(CdcResult {
         commits,
         mutations,
@@ -1258,7 +1646,10 @@ fn generated_server_id(database_id: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{StreamPosition, generated_server_id, sanitize_binlog_filename};
+    use super::{
+        CdcOptions, StreamPosition, generated_server_id, new_table_matches,
+        sanitize_binlog_filename,
+    };
     use pintail_meta::SnapshotCheckpointRecord;
     use pintail_probe::SourceFlavor;
 
@@ -1291,5 +1682,16 @@ mod tests {
                 .expect("sanitized filename"),
             "mysql-bin.000002"
         );
+    }
+
+    #[test]
+    fn new_table_allow_and_deny_rules_are_case_insensitive() {
+        let mut options = CdcOptions::default();
+        assert!(new_table_matches("events", &options));
+        options.new_table_includes.insert("Events".to_owned());
+        assert!(new_table_matches("events", &options));
+        assert!(!new_table_matches("audit", &options));
+        options.new_table_excludes.insert("EVENTS".to_owned());
+        assert!(!new_table_matches("events", &options));
     }
 }

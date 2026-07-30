@@ -116,8 +116,17 @@ impl SourceTable {
     ///
     /// Returns an error if source metadata produced an invalid Pintail schema.
     pub fn table_schema(&self) -> Result<TableSchema, SchemaError> {
+        self.table_schema_with_version(1)
+    }
+
+    /// Builds the logical schema at a caller-owned catalog generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if source metadata produced an invalid Pintail schema.
+    pub fn table_schema_with_version(&self, version: u32) -> Result<TableSchema, SchemaError> {
         TableSchema::with_key_mode(
-            1,
+            version,
             self.columns
                 .iter()
                 .map(|column| {
@@ -150,7 +159,7 @@ impl SourceTable {
 }
 
 /// Source column metadata and its lossless Pintail mapping.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
 pub struct SourceColumn {
     /// Stable source ordinal, used as the initial Pintail column ID.
     pub id: u32,

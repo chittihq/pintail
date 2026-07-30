@@ -1299,6 +1299,7 @@ dependencies = [
  "pintail-types",
  "rusqlite",
  "serde_json",
+ "sqlparser",
  "tempfile",
  "thiserror",
  "tokio",

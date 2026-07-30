@@ -23,6 +23,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Source DDL generations and serialized columns are persisted idempotently;
   dropped source tables are marked as retained orphans instead of deleting
   replica data.
+- CDC query events now track MySQL DDL: ADD/DROP COLUMN evolve live stores,
+  TRUNCATE publishes an empty generation, rename/type/key-affecting changes
+  quarantine only their table for resnapshot, DROP retains orphaned data, and
+  matching CREATE TABLE events auto-snapshot a new target. Durable stable
+  column IDs allow evolved writers to reopen safely after restart.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

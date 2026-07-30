@@ -18,6 +18,7 @@ pintail-snapshot = { path = "../pintail-snapshot" }
 pintail-store.workspace = true
 pintail-types.workspace = true
 serde_json.workspace = true
+sqlparser.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
