@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Authenticated snapshot jobs now resume durable chunks, emit database-scoped
   SSE/WebSocket progress only after publication, and hand populated stores to
   a finite CDC catch-up or forced polling convergence before reporting ready.
+- The read-only HTTP SQL surface now executes against reader-pinned table
+  snapshots with typed fields, bounded results, and physical pruning stats;
+  table schema/preview/count, activity, and dead-letter routes share the same
+  database-scoped authorization model.
 
 ## [M5] - 2026-07-30
 

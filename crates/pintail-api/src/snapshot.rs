@@ -452,7 +452,7 @@ fn snapshot_event(database_id: &str, progress: SnapshotProgress) -> ApiEvent {
     }
 }
 
-fn table_directory(root: &FsPath, table: &str) -> PathBuf {
+pub(crate) fn table_directory(root: &FsPath, table: &str) -> PathBuf {
     let safe = table
         .chars()
         .map(|character| {

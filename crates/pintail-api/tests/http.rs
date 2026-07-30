@@ -1,3 +1,8 @@
+use std::{
+    collections::{BTreeMap, hash_map::DefaultHasher},
+    hash::{Hash as _, Hasher as _},
+};
+
 use axum::{
     body::Body,
     http::{Request, StatusCode, header},
@@ -5,6 +10,13 @@ use axum::{
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
+
+use pintail_probe::{
+    ProbeReport, RecommendedMode, ServerIdentity, SourceCapabilities, SourceColumn, SourceFlavor,
+    SourceKey, SourceTable,
+};
+use pintail_store::{StoreOptions, TableStore};
+use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value as PintailValue};
 
 fn configured_state(data_dir: &std::path::Path) -> pintail_api::ApiState {
     pintail_api::ApiState::new(
@@ -65,6 +77,134 @@ async fn create_database(app: &axum::Router, authorization: &str, name: &str) ->
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     json_response(response).await
+}
+
+fn test_source_table() -> SourceTable {
+    SourceTable {
+        name: "events".to_owned(),
+        engine: Some("InnoDB".to_owned()),
+        estimated_rows: Some(2),
+        columns: vec![
+            SourceColumn {
+                id: 1,
+                name: "id".to_owned(),
+                mysql_data_type: "bigint".to_owned(),
+                mysql_column_type: "bigint unsigned".to_owned(),
+                pintail_type: DataType::UInt64,
+                nullable: false,
+                character_set: None,
+                collation: None,
+                generated_stored: false,
+                auto_increment: true,
+            },
+            SourceColumn {
+                id: 2,
+                name: "name".to_owned(),
+                mysql_data_type: "varchar".to_owned(),
+                mysql_column_type: "varchar(255)".to_owned(),
+                pintail_type: DataType::Utf8,
+                nullable: true,
+                character_set: Some("utf8mb4".to_owned()),
+                collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+                generated_stored: false,
+                auto_increment: false,
+            },
+        ],
+        key: SourceKey {
+            mode: KeyMode::Primary,
+            index_name: Some("PRIMARY".to_owned()),
+            columns: vec!["id".to_owned()],
+        },
+        unique_keys: Vec::new(),
+        requires_reconciliation: false,
+        warnings: Vec::new(),
+    }
+}
+
+fn test_probe_report(database_name: &str, source: SourceTable) -> ProbeReport {
+    ProbeReport {
+        database: database_name.to_owned(),
+        server: ServerIdentity {
+            version: "8.4.0".to_owned(),
+            version_comment: "MySQL Community Server".to_owned(),
+            flavor: SourceFlavor::Mysql,
+        },
+        variables: BTreeMap::new(),
+        grants: Vec::new(),
+        capabilities: SourceCapabilities {
+            log_bin: true,
+            row_binlog: true,
+            full_row_image: true,
+            full_row_metadata: true,
+            replication_grants: true,
+            global_read_lock: true,
+            gtid_available: true,
+            recommended_mode: RecommendedMode::Cdc,
+            reasons: Vec::new(),
+        },
+        tables: vec![source],
+        warnings: Vec::new(),
+    }
+}
+
+fn seed_mirrored_table(data_dir: &std::path::Path, database_id: &str, database_name: &str) {
+    let source = test_source_table();
+    let report = test_probe_report(database_name, source.clone());
+    let mut metadata = pintail_meta::MetaStore::open(&data_dir.join("pintail-meta.db")).unwrap();
+    metadata
+        .update_database_probe(
+            database_id,
+            &serde_json::to_string(&report).unwrap(),
+            "cdc",
+            "2026-07-30T00:00:00Z",
+        )
+        .unwrap();
+    metadata
+        .upsert_snapshot_table(database_id, "events", Some(r#"["id"]"#), Some(r#"["id"]"#))
+        .unwrap();
+    metadata
+        .start_snapshot_chunk(database_id, "events", "all", None, None)
+        .unwrap();
+    metadata
+        .complete_snapshot_chunk(database_id, "events", "all", 2)
+        .unwrap();
+    metadata
+        .set_database_replication_state(database_id, "cdc", "2026-07-30T00:00:01Z")
+        .unwrap();
+
+    let table_root = data_dir.join("databases").join(database_id).join("tables");
+    let safe = "events";
+    let mut hasher = DefaultHasher::new();
+    safe.hash(&mut hasher);
+    let directory = table_root.join(format!("table-{safe}-{:016x}", hasher.finish()));
+    let mut store = TableStore::open(
+        directory,
+        source.table_schema().unwrap(),
+        StoreOptions::default(),
+    )
+    .unwrap();
+    store
+        .ingest(vec![
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(1)]).unwrap(),
+                vec![
+                    PintailValue::UInt64(1),
+                    PintailValue::Utf8("launch".to_owned()),
+                ],
+                1,
+                false,
+            ),
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(2)]).unwrap(),
+                vec![
+                    PintailValue::UInt64(2),
+                    PintailValue::Utf8("land".to_owned()),
+                ],
+                2,
+                false,
+            ),
+        ])
+        .unwrap();
 }
 
 #[tokio::test]
@@ -300,6 +440,25 @@ async fn api_key_secrets_are_shown_once_and_database_scoped() {
     let created = json_response(created).await;
     let secret = created["secret"].as_str().expect("one-time secret");
     assert!(secret.starts_with("pk_"));
+    let metadata = pintail_meta::MetaStore::open(&data.path().join("pintail-meta.db")).unwrap();
+    metadata
+        .start_sync_run(
+            "run-first",
+            first_id,
+            Some("events"),
+            "snapshot",
+            "2026-07-30T00:00:00Z",
+        )
+        .unwrap();
+    metadata
+        .start_sync_run(
+            "run-second",
+            second_id,
+            Some("users"),
+            "snapshot",
+            "2026-07-30T00:00:01Z",
+        )
+        .unwrap();
 
     let listed = app
         .clone()
@@ -327,6 +486,21 @@ async fn api_key_secrets_are_shown_once_and_database_scoped() {
         .await
         .unwrap();
     assert_eq!(own_database.status(), StatusCode::OK);
+
+    let scoped_activity = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/activity")
+                .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let scoped_activity = json_response(scoped_activity).await;
+    assert_eq!(scoped_activity.as_array().unwrap().len(), 1);
+    assert_eq!(scoped_activity[0]["database_id"], first_id);
 
     let other_database = app
         .oneshot(
@@ -385,4 +559,86 @@ async fn snapshot_jobs_reject_paused_databases_without_leaking_a_job_slot() {
             })
         );
     }
+}
+
+#[tokio::test]
+async fn query_and_table_routes_read_the_same_mirrored_snapshot() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let authorization = format!("Bearer {}", setup_admin(&app).await);
+    let database = create_database(&app, &authorization, "analytics").await;
+    let database_id = database["id"].as_str().expect("database ID");
+    seed_mirrored_table(data.path(), database_id, "analytics");
+
+    let query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/query")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, &authorization)
+                .body(Body::from(format!(
+                    r#"{{"db":"{database_id}","sql":"SELECT id, name FROM events ORDER BY id"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(query.status(), StatusCode::OK);
+    let query = json_response(query).await;
+    assert_eq!(
+        query["rows"],
+        serde_json::json!([[1, "launch"], [2, "land"]])
+    );
+    assert_eq!(query["stats"]["rows"], 2);
+
+    let write = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/query")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, &authorization)
+                .body(Body::from(format!(
+                    r#"{{"db":"{database_id}","sql":"DELETE FROM events"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(write.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_response(write).await["error"],
+        "Pintail's HTTP query surface is read-only"
+    );
+
+    let schema = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/tables/events/schema?db={database_id}"))
+                .header(header::AUTHORIZATION, &authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(schema.status(), StatusCode::OK);
+    let schema = json_response(schema).await;
+    assert_eq!(schema["key_columns"], serde_json::json!(["id"]));
+    assert_eq!(schema["columns"][1]["name"], "name");
+
+    let count = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/tables/events/count?db={database_id}"))
+                .header(header::AUTHORIZATION, authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(json_response(count).await, serde_json::json!({"count": 2}));
 }

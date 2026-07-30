@@ -1,10 +1,12 @@
 //! Pintail's authenticated HTTP routes and embedded dashboard.
 
+mod activity;
 mod auth;
 mod databases;
 mod error;
 mod events;
 mod keys;
+mod query;
 mod snapshot;
 mod state;
 
@@ -22,6 +24,7 @@ use serde::Serialize;
 
 pub use state::ApiState;
 
+use crate::activity::{activity, dead_letters, discard_dead_letter};
 use crate::auth::{login, require_auth, session, setup, setup_status};
 use crate::databases::{
     create as create_database, delete as delete_database, get as get_database,
@@ -33,6 +36,7 @@ use crate::keys::{
     create as create_api_key, delete as delete_api_key, list as list_api_keys,
     patch as patch_api_key,
 };
+use crate::query::{list_tables, query, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 
 /// Builds the public HTTP application without configured control-plane API
@@ -69,6 +73,14 @@ pub fn router_with_state(state: ApiState) -> Router {
         )
         .route("/events", get(sse))
         .route("/ws", get(websocket))
+        .route("/activity", get(activity))
+        .route("/dlq", get(dead_letters))
+        .route("/dlq/{id}", axum::routing::delete(discard_dead_letter))
+        .route("/query", post(query))
+        .route("/tables", get(list_tables))
+        .route("/tables/{name}/schema", get(table_schema))
+        .route("/tables/{name}/data", get(table_data))
+        .route("/tables/{name}/count", get(table_count))
         .route("/databases/{id}/snapshot", post(start_snapshot))
         .route("/databases/{id}/snapshot/status", get(snapshot_status))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
