@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cursor selection, inclusive boundary rereads, cheap count/maximum probes,
   monotonic poll versions, soft-delete mapping, complete primary-key
   reconciliation, cursor-less keyed diffs, and append-table rebuilds.
+- Per-table checksum chunk fingerprints are persisted and replaced atomically
+  with their polling checkpoint, including in-place metadata upgrades.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

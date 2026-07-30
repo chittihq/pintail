@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 
-const CURRENT_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -106,6 +106,31 @@ pub struct PollStateUpdate<'a> {
     pub version: u64,
     /// Whether this cycle completed a full delete reconciliation.
     pub reconciled: bool,
+}
+
+/// Persisted source/replica fingerprints for one polling chunk.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollChunkStateRecord {
+    /// Stable zero-based chunk identifier.
+    pub chunk_id: String,
+    /// Rows represented by the source aggregate.
+    pub source_count: u64,
+    /// Source-side aggregate checksum.
+    pub source_checksum: String,
+    /// Replica-side normalized checksum after the completed cycle.
+    pub replica_checksum: String,
+}
+
+/// Values committed for one checksum chunk.
+pub struct PollChunkStateUpdate<'a> {
+    /// Stable zero-based chunk identifier.
+    pub chunk_id: &'a str,
+    /// Rows represented by the source aggregate.
+    pub source_count: u64,
+    /// Source-side aggregate checksum.
+    pub source_checksum: &'a str,
+    /// Replica-side normalized checksum after the completed cycle.
+    pub replica_checksum: &'a str,
 }
 
 impl StoredSetting {
@@ -432,6 +457,49 @@ impl MetaStore {
         .transpose()
     }
 
+    /// Returns durable checksum fingerprints for one table in chunk order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when rows cannot be queried or contain negative
+    /// counts.
+    pub fn poll_chunk_states(
+        &self,
+        database_id: &str,
+        table_name: &str,
+    ) -> Result<Vec<PollChunkStateRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT chunk_id, source_count, source_checksum, replica_checksum \
+                 FROM poll_chunk_states WHERE db_id = ?1 AND table_name = ?2 \
+                 ORDER BY CAST(chunk_id AS INTEGER), chunk_id",
+            )
+            .context("failed to prepare polling chunk-state query")?;
+        statement
+            .query_map((database_id, table_name), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .context("failed to query polling chunk states")?
+            .map(|row| {
+                let (chunk_id, source_count, source_checksum, replica_checksum) =
+                    row.context("failed to decode polling chunk state")?;
+                Ok(PollChunkStateRecord {
+                    chunk_id,
+                    source_count: u64::try_from(source_count)
+                        .context("poll chunk source count is negative")?,
+                    source_checksum,
+                    replica_checksum,
+                })
+            })
+            .collect()
+    }
+
     /// Commits one polling position after its table WAL is synchronized.
     ///
     /// # Errors
@@ -445,6 +513,35 @@ impl MetaStore {
         update: &PollStateUpdate<'_>,
         now: &str,
     ) -> Result<()> {
+        self.commit_poll_state_inner(database_id, table_name, update, None, now)
+    }
+
+    /// Atomically replaces checksum fingerprints and commits a polling
+    /// position after the table WAL is synchronized.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when counters exceed `SQLite`'s range or the
+    /// control-plane transaction cannot commit.
+    pub fn commit_poll_state_with_chunks(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        update: &PollStateUpdate<'_>,
+        chunks: &[PollChunkStateUpdate<'_>],
+        now: &str,
+    ) -> Result<()> {
+        self.commit_poll_state_inner(database_id, table_name, update, Some(chunks), now)
+    }
+
+    fn commit_poll_state_inner(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        update: &PollStateUpdate<'_>,
+        chunks: Option<&[PollChunkStateUpdate<'_>]>,
+        now: &str,
+    ) -> Result<()> {
         let source_count =
             i64::try_from(update.source_count).context("poll source count exceeds i64")?;
         let version = i64::try_from(update.version).context("poll version exceeds i64")?;
@@ -453,6 +550,35 @@ impl MetaStore {
             .connection
             .transaction()
             .context("failed to begin polling checkpoint")?;
+        if let Some(chunks) = chunks {
+            transaction
+                .execute(
+                    "DELETE FROM poll_chunk_states WHERE db_id = ?1 AND table_name = ?2",
+                    (database_id, table_name),
+                )
+                .context("failed to clear stale polling chunk states")?;
+            for chunk in chunks {
+                let chunk_count = i64::try_from(chunk.source_count)
+                    .context("poll chunk source count exceeds i64")?;
+                transaction
+                    .execute(
+                        "INSERT INTO poll_chunk_states (\
+                           db_id, table_name, chunk_id, source_count, source_checksum, \
+                           replica_checksum, updated_at\
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        (
+                            database_id,
+                            table_name,
+                            chunk.chunk_id,
+                            chunk_count,
+                            chunk.source_checksum,
+                            chunk.replica_checksum,
+                            now,
+                        ),
+                    )
+                    .context("failed to persist polling chunk state")?;
+            }
+        }
         transaction
             .execute(
                 "INSERT INTO poll_states (\
@@ -962,6 +1088,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 2 {
         migration_v2(connection.transaction()?)?;
     }
+    if found < 3 {
+        migration_v3(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -981,4 +1110,13 @@ fn migration_v2(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 2")
+}
+
+fn migration_v3(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/003_poll_checksums.sql"))
+        .context("failed to apply metadata migration 3")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 3")
 }

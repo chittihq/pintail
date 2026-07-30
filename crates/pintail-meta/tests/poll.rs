@@ -1,4 +1,4 @@
-use pintail_meta::{MetaStore, PollStateUpdate};
+use pintail_meta::{MetaStore, PollChunkStateUpdate, PollStateUpdate};
 use rusqlite::Connection;
 
 #[test]
@@ -88,5 +88,79 @@ fn polling_state_advances_atomically_and_preserves_reconcile_time() {
     assert_eq!(
         table,
         ("polling".to_owned(), "2026-07-30T01:00:00Z".to_owned())
+    );
+}
+
+#[test]
+fn polling_chunk_fingerprints_replace_atomically_with_the_checkpoint() {
+    let workspace = tempfile::tempdir().expect("metadata workspace");
+    let path = workspace.path().join("pintail-meta.db");
+    let mut store = MetaStore::open(&path).expect("metadata");
+    store
+        .upsert_database("source", "app", b"mysql://source", "2026-07-30T00:00:00Z")
+        .expect("register database");
+    store
+        .upsert_snapshot_table("source", "events", Some("[\"id\"]"), Some("[\"id\"]"))
+        .expect("register table");
+    let poll = PollStateUpdate {
+        cursor_column: None,
+        cursor_json: None,
+        source_token_json: Some(r#"{"count":4,"max":4}"#),
+        source_count: 4,
+        version: 1,
+        reconciled: true,
+    };
+    let first = [
+        PollChunkStateUpdate {
+            chunk_id: "0",
+            source_count: 2,
+            source_checksum: "source-a",
+            replica_checksum: "replica-a",
+        },
+        PollChunkStateUpdate {
+            chunk_id: "1",
+            source_count: 2,
+            source_checksum: "source-b",
+            replica_checksum: "replica-b",
+        },
+    ];
+    store
+        .commit_poll_state_with_chunks("source", "events", &poll, &first, "2026-07-30T01:00:00Z")
+        .expect("first chunk checkpoint");
+    assert_eq!(
+        store.poll_chunk_states("source", "events").unwrap().len(),
+        2
+    );
+
+    let replacement = [PollChunkStateUpdate {
+        chunk_id: "0",
+        source_count: 1,
+        source_checksum: "source-new",
+        replica_checksum: "replica-new",
+    }];
+    store
+        .commit_poll_state_with_chunks(
+            "source",
+            "events",
+            &PollStateUpdate { version: 2, ..poll },
+            &replacement,
+            "2026-07-30T02:00:00Z",
+        )
+        .expect("replacement chunk checkpoint");
+    let chunks = store
+        .poll_chunk_states("source", "events")
+        .expect("read chunks");
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].chunk_id, "0");
+    assert_eq!(chunks[0].source_count, 1);
+    assert_eq!(chunks[0].source_checksum, "source-new");
+    assert_eq!(chunks[0].replica_checksum, "replica-new");
+    assert_eq!(
+        store
+            .poll_state("source", "events")
+            .unwrap()
+            .unwrap()
+            .version,
+        2
     );
 }
