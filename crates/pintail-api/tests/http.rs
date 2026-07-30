@@ -340,3 +340,49 @@ async fn api_key_secrets_are_shown_once_and_database_scoped() {
         .unwrap();
     assert_eq!(other_database.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn snapshot_jobs_reject_paused_databases_without_leaking_a_job_slot() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let authorization = format!("Bearer {}", setup_admin(&app).await);
+    let database = create_database(&app, &authorization, "paused_source").await;
+    let database_id = database["id"].as_str().expect("database ID");
+
+    let paused = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/databases/{database_id}/mode"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, &authorization)
+                .body(Body::from(r#"{"mode":"paused"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paused.status(), StatusCode::OK);
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/databases/{database_id}/snapshot"))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            json_response(response).await,
+            serde_json::json!({
+                "error": "resume the database before starting a snapshot"
+            })
+        );
+    }
+}

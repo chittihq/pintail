@@ -3,7 +3,9 @@
 mod auth;
 mod databases;
 mod error;
+mod events;
 mod keys;
+mod snapshot;
 mod state;
 
 use axum::{
@@ -26,10 +28,12 @@ use crate::databases::{
     list as list_databases, probe_database, set_mode, status as database_status, test_connection,
     update as update_database,
 };
+use crate::events::{sse, websocket};
 use crate::keys::{
     create as create_api_key, delete as delete_api_key, list as list_api_keys,
     patch as patch_api_key,
 };
+use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 
 /// Builds the public HTTP application without configured control-plane API
 /// state.
@@ -63,6 +67,10 @@ pub fn router_with_state(state: ApiState) -> Router {
             "/databases/{id}/api-keys/{key_id}",
             axum::routing::patch(patch_api_key).delete(delete_api_key),
         )
+        .route("/events", get(sse))
+        .route("/ws", get(websocket))
+        .route("/databases/{id}/snapshot", post(start_snapshot))
+        .route("/databases/{id}/snapshot/status", get(snapshot_status))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let api = Router::new()
         .route("/auth/setup/status", get(setup_status))

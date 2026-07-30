@@ -34,6 +34,10 @@ pub(crate) struct AuthPrincipal {
 }
 
 impl AuthPrincipal {
+    pub(crate) fn database_scope(&self) -> Option<&str> {
+        self.database_id.as_deref()
+    }
+
     pub(crate) fn require_operator(&self) -> Result<(), ApiError> {
         if matches!(self.role.as_str(), "admin" | "operator") {
             Ok(())

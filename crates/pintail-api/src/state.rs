@@ -1,6 +1,7 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{Context, Result, bail};
@@ -10,8 +11,9 @@ use chacha20poly1305::{
 };
 use pintail_meta::MetaStore;
 use rand::RngCore as _;
+use tokio::sync::broadcast;
 
-use crate::error::ApiError;
+use crate::{error::ApiError, events::ApiEvent};
 
 const NONCE_BYTES: usize = 12;
 
@@ -26,6 +28,8 @@ struct ApiStateInner {
     data_dir: PathBuf,
     jwt_secret: Vec<u8>,
     dsn_key: [u8; 32],
+    events: broadcast::Sender<ApiEvent>,
+    active_jobs: Mutex<BTreeSet<String>>,
 }
 
 impl ApiState {
@@ -44,12 +48,15 @@ impl ApiState {
         let metadata_path = metadata_path.into();
         MetaStore::open(&metadata_path)?;
         let dsn_key = decode_hex_key(dsn_encryption_key)?;
+        let (events, _) = broadcast::channel(256);
         Ok(Self {
             inner: Some(Arc::new(ApiStateInner {
                 metadata_path,
                 data_dir: data_dir.into(),
                 jwt_secret: jwt_secret.into(),
                 dsn_key,
+                events,
+                active_jobs: Mutex::new(BTreeSet::new()),
             })),
         })
     }
@@ -77,6 +84,13 @@ impl ApiState {
         self.inner
             .as_ref()
             .map(|inner| inner.data_dir.as_path())
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
+    }
+
+    pub(crate) fn metadata_path(&self) -> Result<&Path, ApiError> {
+        self.inner
+            .as_ref()
+            .map(|inner| inner.metadata_path.as_path())
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
     }
 
@@ -114,6 +128,42 @@ impl ApiState {
             .decrypt(&nonce, ciphertext)
             .map_err(ApiError::internal)?;
         String::from_utf8(plaintext).map_err(ApiError::internal)
+    }
+
+    pub(crate) fn subscribe(&self) -> Result<broadcast::Receiver<ApiEvent>, ApiError> {
+        self.inner
+            .as_ref()
+            .map(|inner| inner.events.subscribe())
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
+    }
+
+    pub(crate) fn publish(&self, event: ApiEvent) {
+        if let Some(inner) = &self.inner {
+            let _ = inner.events.send(event);
+        }
+    }
+
+    pub(crate) fn acquire_job(&self, database_id: &str) -> Result<(), ApiError> {
+        let inner = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
+        let mut jobs = inner.active_jobs.lock().map_err(ApiError::internal)?;
+        if jobs.insert(database_id.to_owned()) {
+            Ok(())
+        } else {
+            Err(ApiError::conflict(
+                "a replication job is already active for this database",
+            ))
+        }
+    }
+
+    pub(crate) fn release_job(&self, database_id: &str) {
+        if let Some(inner) = &self.inner {
+            if let Ok(mut jobs) = inner.active_jobs.lock() {
+                jobs.remove(database_id);
+            }
+        }
     }
 }
 

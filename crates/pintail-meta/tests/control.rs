@@ -95,6 +95,11 @@ fn users_databases_and_table_controls_round_trip() {
         metadata.database("db-1").unwrap().unwrap().effective_mode,
         None
     );
+    metadata
+        .set_database_replication_state("db-1", "polling", "2026-07-30T00:06:00Z")
+        .unwrap();
+    assert_eq!(metadata.database("db-1").unwrap().unwrap().state, "polling");
+    assert_eq!(metadata.tables("db-1").unwrap()[0].state, "polling");
 
     assert!(metadata.delete_database("db-1").unwrap());
     assert!(metadata.databases().unwrap().is_empty());

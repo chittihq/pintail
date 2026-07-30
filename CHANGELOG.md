@@ -15,6 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   JWT login/session authentication, ChaCha20-Poly1305 encrypted source DSNs,
   database CRUD/test/probe routes, and SHA-256 hash-only database API keys
   whose `pk_` secret is shown exactly once and enforced by scope.
+- Authenticated snapshot jobs now resume durable chunks, emit database-scoped
+  SSE/WebSocket progress only after publication, and hand populated stores to
+  a finite CDC catch-up or forced polling convergence before reporting ready.
 
 ## [M5] - 2026-07-30
 

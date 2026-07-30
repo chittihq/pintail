@@ -339,6 +339,80 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Publishes a completed snapshot handoff state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid effective mode, a missing database, or
+    /// a storage failure.
+    pub fn set_database_replication_state(
+        &self,
+        id: &str,
+        effective_mode: &str,
+        now: &str,
+    ) -> Result<()> {
+        let (database_state, table_state) = match effective_mode {
+            "cdc" => ("streaming", "streaming"),
+            "polling" => ("polling", "polling"),
+            _ => bail!("effective database mode must be cdc or polling"),
+        };
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin replication-state update")?;
+        let changed = transaction
+            .execute(
+                "UPDATE databases SET effective_mode = ?2, state = ?3, updated_at = ?4 \
+                 WHERE id = ?1",
+                (id, effective_mode, database_state, now),
+            )
+            .context("failed to update database replication state")?;
+        if changed == 0 {
+            bail!("database {id} does not exist");
+        }
+        transaction
+            .execute(
+                "UPDATE tables SET state = ?2, last_error = NULL \
+                 WHERE db_id = ?1 AND state NOT IN ('excluded', 'needs_resync')",
+                (id, table_state),
+            )
+            .context("failed to update table replication states")?;
+        transaction
+            .commit()
+            .context("failed to commit replication-state update")
+    }
+
+    /// Records a database-level API job failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be updated.
+    pub fn fail_database_job(&self, id: &str, error: &str, now: &str) -> Result<()> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin database failure update")?;
+        let changed = transaction
+            .execute(
+                "UPDATE databases SET state = 'error', updated_at = ?2 WHERE id = ?1",
+                (id, now),
+            )
+            .context("failed to record database job failure")?;
+        if changed == 0 {
+            bail!("database {id} does not exist");
+        }
+        transaction
+            .execute(
+                "UPDATE tables SET state = 'error', last_error = ?2 \
+                 WHERE db_id = ?1 AND state NOT IN ('excluded', 'needs_resync')",
+                (id, error),
+            )
+            .context("failed to record table job failure")?;
+        transaction
+            .commit()
+            .context("failed to commit database failure update")
+    }
+
     /// Deletes one database and its cascading control-plane records.
     ///
     /// # Errors

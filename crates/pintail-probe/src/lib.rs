@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 
 use mysql_async::{Pool, prelude::Queryable};
 use pintail_types::{Column, DataType, KeyMode, SchemaError, TableSchema};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Complete source capability and schema report.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProbeReport {
     /// Source database that was inspected.
     pub database: String,
@@ -31,7 +31,7 @@ pub struct ProbeReport {
 }
 
 /// Identifies the source server family.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceFlavor {
     /// Oracle `MySQL`.
@@ -41,7 +41,7 @@ pub enum SourceFlavor {
 }
 
 /// Source product information.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServerIdentity {
     /// Raw `@@version` value.
     pub version: String,
@@ -52,7 +52,7 @@ pub struct ServerIdentity {
 }
 
 /// Recommended continuous-replication mode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecommendedMode {
     /// Native row-binlog CDC can be used.
@@ -62,7 +62,7 @@ pub enum RecommendedMode {
 }
 
 /// Derived source capabilities used by the replication coordinator.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SourceCapabilities {
     /// Whether the binary log is enabled.
@@ -87,7 +87,7 @@ pub struct SourceCapabilities {
 }
 
 /// One probed source table.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceTable {
     /// Source table name.
     pub name: String,
@@ -184,7 +184,7 @@ pub struct SourceColumn {
 }
 
 /// Physical key selected from source indexes.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceKey {
     /// Pintail key fallback mode.
     pub mode: KeyMode,
