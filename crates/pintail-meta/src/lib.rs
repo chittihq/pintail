@@ -20,7 +20,7 @@ pub use control::{
     UserRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 7;
+const CURRENT_SCHEMA_VERSION: u32 = 8;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1297,6 +1297,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 7 {
         migration_v7(connection.transaction()?)?;
     }
+    if found < 8 {
+        migration_v8(connection)?;
+    }
     Ok(())
 }
 
@@ -1361,4 +1364,33 @@ fn migration_v7(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 7")
+}
+
+fn migration_v8(connection: &mut Connection) -> Result<()> {
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .context("failed to disable foreign keys for metadata migration 8")?;
+    let migration = (|| {
+        let transaction = connection.transaction()?;
+        transaction
+            .execute_batch(include_str!("../migrations/008_restored_tables.sql"))
+            .context("failed to apply metadata migration 8")?;
+        transaction
+            .commit()
+            .context("failed to commit metadata migration 8")
+    })();
+    let reenabled = connection
+        .pragma_update(None, "foreign_keys", true)
+        .context("failed to re-enable foreign keys after metadata migration 8");
+    migration?;
+    reenabled?;
+    let violations: u64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .context("failed to verify metadata foreign keys after migration 8")?;
+    if violations != 0 {
+        bail!("metadata migration 8 left {violations} foreign key violations");
+    }
+    Ok(())
 }

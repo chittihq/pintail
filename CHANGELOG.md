@@ -6,12 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M8] - 2026-07-30
+
 ### Added
 
 - Control-plane schema version 7 stores per-database S3-compatible backup
   configuration, encrypted credential material, and durable full/incremental
   backup run history with parent chains, object counts, byte totals, and
   terminal errors.
+- Control-plane schema version 8 extends the table lifecycle with a detached
+  `restored` state while preserving existing table and child metadata during
+  in-place upgrades.
 - Native S3-compatible backups pin and encode storage manifests, upload
   checksum-addressed immutable segments, reuse unchanged objects in
   incremental chains, publish portable JSON manifests last, and restore only
@@ -31,6 +36,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   history, and side-by-side restore. Activity and database views offer
   retry-before-discard DLQ controls, while Settings links the live Prometheus
   surface and reports the isolated supervisor policy.
+
+### Verification
+
+- An ignored Docker gate completes a full backup and an incremental backup
+  against MinIO, proves that an unchanged immutable segment is reused, and
+  restores both generations through SHA-256-verified object downloads.
+- A three-source MySQL 8.4 gate runs CDC and polling databases concurrently,
+  stops a third source, and proves that its durable error state does not
+  interrupt healthy supervisor cycles or queries.
+- Rust formatting, strict workspace Clippy, the locked all-feature workspace
+  tests, Bun's frozen install/typecheck/static generation, and desktop/mobile
+  Playwright checks pass with no browser errors, warnings, or horizontal
+  overflow.
 
 ## [M7] - 2026-07-30
 

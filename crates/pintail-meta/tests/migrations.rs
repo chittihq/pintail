@@ -5,7 +5,7 @@ fn opening_a_blank_control_plane_applies_the_initial_schema() {
 
     let metadata = pintail_meta::MetaStore::open(&database_path).expect("metadata store");
 
-    assert_eq!(metadata.schema_version().expect("schema version"), 7);
+    assert_eq!(metadata.schema_version().expect("schema version"), 8);
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn reopening_an_initialized_control_plane_is_idempotent() {
     pintail_meta::MetaStore::open(&database_path).expect("first open");
     let reopened = pintail_meta::MetaStore::open(&database_path).expect("second open");
 
-    assert_eq!(reopened.schema_version().expect("schema version"), 7);
+    assert_eq!(reopened.schema_version().expect("schema version"), 8);
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn version_one_control_plane_upgrades_polling_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 7);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -99,7 +99,7 @@ fn version_two_control_plane_upgrades_polling_checksums_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 7);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -130,7 +130,7 @@ fn version_three_control_plane_upgrades_schema_tracking_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 7);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let orphaned_column: bool = connection
@@ -164,7 +164,7 @@ fn version_four_control_plane_upgrades_api_configuration_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 7);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let api_scopes: bool = connection
@@ -210,7 +210,7 @@ fn version_five_control_plane_upgrades_wire_auth_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 7);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let native_hash: bool = connection
@@ -250,7 +250,7 @@ fn version_six_control_plane_upgrades_backup_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 7);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let backup_tables: i64 = connection
@@ -262,6 +262,63 @@ fn version_six_control_plane_upgrades_backup_state_in_place() {
         )
         .expect("backup tables");
     assert_eq!(backup_tables, 2);
+}
+
+#[test]
+fn version_seven_adds_restored_table_state_without_losing_children() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let connection = rusqlite::Connection::open(&database_path).expect("version seven database");
+    for migration in [
+        include_str!("../migrations/001_initial.sql"),
+        include_str!("../migrations/002_polling.sql"),
+        include_str!("../migrations/003_poll_checksums.sql"),
+        include_str!("../migrations/004_schema_tracking.sql"),
+        include_str!("../migrations/005_api_control.sql"),
+        include_str!("../migrations/006_wire_auth.sql"),
+        include_str!("../migrations/007_backups.sql"),
+    ] {
+        connection
+            .execute_batch(migration)
+            .expect("apply historical migration");
+    }
+    connection
+        .execute(
+            "INSERT INTO databases (
+               id, name, mysql_dsn_encrypted, mode, state, created_at, updated_at
+             ) VALUES ('db', 'app', X'', 'paused', 'restored', 'now', 'now')",
+            [],
+        )
+        .expect("seed database");
+    connection
+        .execute(
+            "INSERT INTO tables (db_id, name, state) VALUES ('db', 'events', 'excluded')",
+            [],
+        )
+        .expect("seed table");
+    connection
+        .execute(
+            "INSERT INTO snapshot_chunks (db_id, table_name, chunk_id, status)
+             VALUES ('db', 'events', 'chunk', 'completed')",
+            [],
+        )
+        .expect("seed child row");
+    drop(connection);
+
+    let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
+    assert_eq!(upgraded.schema_version().expect("schema version"), 8);
+    drop(upgraded);
+    let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
+    connection
+        .execute(
+            "UPDATE tables SET state = 'restored' WHERE db_id = 'db' AND name = 'events'",
+            [],
+        )
+        .expect("restored table state is accepted");
+    let chunks: u64 = connection
+        .query_row("SELECT COUNT(*) FROM snapshot_chunks", [], |row| row.get(0))
+        .expect("retained child rows");
+    assert_eq!(chunks, 1);
 }
 
 #[cfg(unix)]
