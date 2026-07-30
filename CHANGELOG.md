@@ -71,6 +71,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inclusive storage bounds.
 - Deterministic catalog-backed `SHOW DATABASES`, `SHOW TABLES`, `SHOW COLUMNS`,
   and `DESCRIBE` responses with MySQL-compatible field names and type strings.
+- Catalog-backed `information_schema.schemata`, `.tables`, and `.columns`
+  basics with projection, aliases, case-insensitive filtering, ordering,
+  limits, and `COUNT(*)`.
 - Typed lowering for uncorrelated constant scalar subqueries and `IN` subqueries
   over `UNION ALL`, including empty scalar results, multi-row scalar errors, and
   SQL NULL membership semantics.

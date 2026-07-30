@@ -1,8 +1,12 @@
-use std::fmt;
+use std::{cmp::Ordering, fmt};
 
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
-use sqlparser::ast::{ObjectName, ShowStatementOptions, Statement};
+use sqlparser::ast::{
+    BinaryOperator, Expr, GroupByExpr, LimitClause, ObjectName, OrderByKind, Query, Select,
+    SelectFlavor, SelectItem, SetExpr, ShowStatementOptions, Statement, TableFactor,
+    Value as SqlValue, WildcardAdditionalOptions,
+};
 
 /// One metadata result-column description.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,8 +82,512 @@ pub fn execute_metadata(
             let (_, table) = resolve_table(table_name, catalog, current_database)?;
             Ok(describe_table(table))
         }
+        Statement::Query(query) => execute_information_schema(query, catalog),
         _ => Err(MetadataError::Unsupported(statement.to_string())),
     }
+}
+
+fn execute_information_schema(
+    query: &Query,
+    catalog: &CatalogSnapshot,
+) -> Result<MetadataResult, MetadataError> {
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return Err(MetadataError::Unsupported(query.to_string()));
+    };
+    if query_has_unsupported_clauses(query)
+        || select_has_unsupported_clauses(select)
+        || select.from.len() != 1
+        || !select.from[0].joins.is_empty()
+    {
+        return Err(MetadataError::Unsupported(query.to_string()));
+    }
+    let TableFactor::Table {
+        name,
+        args: None,
+        with_hints,
+        version: None,
+        with_ordinality: false,
+        partitions,
+        json_path: None,
+        sample: None,
+        index_hints,
+        ..
+    } = &select.from[0].relation
+    else {
+        return Err(MetadataError::Unsupported(query.to_string()));
+    };
+    if !with_hints.is_empty() || !partitions.is_empty() || !index_hints.is_empty() {
+        return Err(MetadataError::Unsupported(query.to_string()));
+    }
+
+    let mut result = information_schema_table(name, catalog)?;
+    if let Some(predicate) = &select.selection {
+        let mut filtered = Vec::with_capacity(result.rows.len());
+        for row in result.rows {
+            if evaluate_metadata_predicate(predicate, &result.fields, &row)? {
+                filtered.push(row);
+            }
+        }
+        result.rows = filtered;
+    }
+    result = project_metadata_result(result, &select.projection)?;
+    order_metadata_result(&mut result, query)?;
+    limit_metadata_result(&mut result, query)?;
+    Ok(result)
+}
+
+fn query_has_unsupported_clauses(query: &Query) -> bool {
+    query.with.is_some()
+        || query.fetch.is_some()
+        || !query.locks.is_empty()
+        || query.for_clause.is_some()
+        || query.settings.is_some()
+        || query.format_clause.is_some()
+        || !query.pipe_operators.is_empty()
+}
+
+fn select_has_unsupported_clauses(select: &Select) -> bool {
+    let empty_grouping =
+        matches!(&select.group_by, GroupByExpr::Expressions(exprs, _) if exprs.is_empty());
+    !select.optimizer_hints.is_empty()
+        || select.distinct.is_some()
+        || select
+            .select_modifiers
+            .as_ref()
+            .is_some_and(sqlparser::ast::SelectModifiers::is_any_set)
+        || select.top.is_some()
+        || select.exclude.is_some()
+        || select.into.is_some()
+        || !select.lateral_views.is_empty()
+        || select.prewhere.is_some()
+        || !select.connect_by.is_empty()
+        || !empty_grouping
+        || !select.cluster_by.is_empty()
+        || !select.distribute_by.is_empty()
+        || !select.sort_by.is_empty()
+        || select.having.is_some()
+        || !select.named_window.is_empty()
+        || select.qualify.is_some()
+        || select.value_table_mode.is_some()
+        || select.flavor != SelectFlavor::Standard
+}
+
+fn information_schema_table(
+    name: &ObjectName,
+    catalog: &CatalogSnapshot,
+) -> Result<MetadataResult, MetadataError> {
+    let parts = object_name_parts(name)?;
+    let [database, table] = parts.as_slice() else {
+        return Err(MetadataError::Unsupported(name.to_string()));
+    };
+    if !database.eq_ignore_ascii_case("information_schema") {
+        return Err(MetadataError::Unsupported(name.to_string()));
+    }
+    if table.eq_ignore_ascii_case("schemata") {
+        Ok(information_schemata(catalog))
+    } else if table.eq_ignore_ascii_case("tables") {
+        Ok(information_tables(catalog))
+    } else if table.eq_ignore_ascii_case("columns") {
+        Ok(information_columns(catalog))
+    } else {
+        Err(MetadataError::UnknownTable((*table).to_owned()))
+    }
+}
+
+fn information_schemata(catalog: &CatalogSnapshot) -> MetadataResult {
+    let fields = metadata_fields(&[
+        ("CATALOG_NAME", DataType::Utf8, false),
+        ("SCHEMA_NAME", DataType::Utf8, false),
+        ("DEFAULT_CHARACTER_SET_NAME", DataType::Utf8, false),
+        ("DEFAULT_COLLATION_NAME", DataType::Utf8, false),
+        ("SQL_PATH", DataType::Utf8, true),
+    ]);
+    let rows = catalog
+        .databases()
+        .map(|database| {
+            vec![
+                utf8("def"),
+                utf8(database.name()),
+                utf8("utf8mb4"),
+                utf8("utf8mb4_general_ci"),
+                Value::Null,
+            ]
+        })
+        .collect();
+    MetadataResult { fields, rows }
+}
+
+fn information_tables(catalog: &CatalogSnapshot) -> MetadataResult {
+    let fields = metadata_fields(&[
+        ("TABLE_CATALOG", DataType::Utf8, false),
+        ("TABLE_SCHEMA", DataType::Utf8, false),
+        ("TABLE_NAME", DataType::Utf8, false),
+        ("TABLE_TYPE", DataType::Utf8, false),
+        ("ENGINE", DataType::Utf8, false),
+        ("TABLE_ROWS", DataType::UInt64, true),
+    ]);
+    let rows = catalog
+        .databases()
+        .flat_map(|database| {
+            database.tables().map(move |table| {
+                vec![
+                    utf8("def"),
+                    utf8(database.name()),
+                    utf8(table.name()),
+                    utf8("BASE TABLE"),
+                    utf8("PINTAIL"),
+                    table
+                        .statistics()
+                        .row_count()
+                        .map_or(Value::Null, Value::UInt64),
+                ]
+            })
+        })
+        .collect();
+    MetadataResult { fields, rows }
+}
+
+fn information_columns(catalog: &CatalogSnapshot) -> MetadataResult {
+    let fields = metadata_fields(&[
+        ("TABLE_CATALOG", DataType::Utf8, false),
+        ("TABLE_SCHEMA", DataType::Utf8, false),
+        ("TABLE_NAME", DataType::Utf8, false),
+        ("COLUMN_NAME", DataType::Utf8, false),
+        ("ORDINAL_POSITION", DataType::UInt64, false),
+        ("COLUMN_DEFAULT", DataType::Utf8, true),
+        ("IS_NULLABLE", DataType::Utf8, false),
+        ("DATA_TYPE", DataType::Utf8, false),
+        ("COLUMN_TYPE", DataType::Utf8, false),
+        ("COLUMN_KEY", DataType::Utf8, false),
+        ("EXTRA", DataType::Utf8, false),
+    ]);
+    let mut rows = Vec::new();
+    for database in catalog.databases() {
+        for table in database.tables() {
+            for (index, column) in table.schema().columns().iter().enumerate() {
+                let column_type = mysql_type(column.data_type());
+                rows.push(vec![
+                    utf8("def"),
+                    utf8(database.name()),
+                    utf8(table.name()),
+                    utf8(column.name()),
+                    Value::UInt64(u64::try_from(index + 1).expect("column ordinal fits u64")),
+                    Value::Null,
+                    utf8(if column.is_nullable() { "YES" } else { "NO" }),
+                    utf8(mysql_data_type(column.data_type())),
+                    utf8(column_type),
+                    utf8(""),
+                    utf8(""),
+                ]);
+            }
+        }
+    }
+    MetadataResult { fields, rows }
+}
+
+fn metadata_fields(definitions: &[(&str, DataType, bool)]) -> Vec<MetadataField> {
+    definitions
+        .iter()
+        .map(|(name, data_type, nullable)| MetadataField {
+            name: (*name).to_owned(),
+            data_type: *data_type,
+            nullable: *nullable,
+        })
+        .collect()
+}
+
+fn utf8(value: &str) -> Value {
+    Value::Utf8(value.to_owned())
+}
+
+fn project_metadata_result(
+    source: MetadataResult,
+    projection: &[SelectItem],
+) -> Result<MetadataResult, MetadataError> {
+    if projection.len() == 1 && projection[0].to_string().eq_ignore_ascii_case("COUNT(*)") {
+        return Ok(MetadataResult {
+            fields: metadata_fields(&[("COUNT(*)", DataType::UInt64, false)]),
+            rows: vec![vec![Value::UInt64(
+                u64::try_from(source.rows.len()).expect("metadata row count fits u64"),
+            )]],
+        });
+    }
+
+    let mut columns = Vec::new();
+    for item in projection {
+        match item {
+            SelectItem::Wildcard(options) | SelectItem::QualifiedWildcard(_, options)
+                if wildcard_is_plain(options) =>
+            {
+                columns.extend(
+                    source
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| (index, field.clone())),
+                );
+            }
+            SelectItem::UnnamedExpr(expr) => {
+                let index = metadata_expr_column(expr, &source.fields)?;
+                columns.push((index, source.fields[index].clone()));
+            }
+            SelectItem::ExprWithAlias { expr, alias } => {
+                let index = metadata_expr_column(expr, &source.fields)?;
+                let mut field = source.fields[index].clone();
+                field.name.clone_from(&alias.value);
+                columns.push((index, field));
+            }
+            _ => return Err(MetadataError::Unsupported(item.to_string())),
+        }
+    }
+    let fields = columns.iter().map(|(_, field)| field.clone()).collect();
+    let rows = source
+        .rows
+        .into_iter()
+        .map(|row| {
+            columns
+                .iter()
+                .map(|(index, _)| row[*index].clone())
+                .collect()
+        })
+        .collect();
+    Ok(MetadataResult { fields, rows })
+}
+
+fn wildcard_is_plain(options: &WildcardAdditionalOptions) -> bool {
+    options == &WildcardAdditionalOptions::default()
+}
+
+fn metadata_expr_column(
+    expression: &Expr,
+    fields: &[MetadataField],
+) -> Result<usize, MetadataError> {
+    let name = match expression {
+        Expr::Identifier(identifier) => identifier.value.as_str(),
+        Expr::CompoundIdentifier(identifiers) => identifiers
+            .last()
+            .map(|identifier| identifier.value.as_str())
+            .ok_or_else(|| MetadataError::Unsupported(expression.to_string()))?,
+        _ => return Err(MetadataError::Unsupported(expression.to_string())),
+    };
+    fields
+        .iter()
+        .position(|field| field.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| MetadataError::UnknownColumn(name.to_owned()))
+}
+
+fn evaluate_metadata_predicate(
+    expression: &Expr,
+    fields: &[MetadataField],
+    row: &[Value],
+) -> Result<bool, MetadataError> {
+    match expression {
+        Expr::Nested(expression) => evaluate_metadata_predicate(expression, fields, row),
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => Ok(evaluate_metadata_predicate(left, fields, row)?
+            && evaluate_metadata_predicate(right, fields, row)?),
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Or,
+            right,
+        } => Ok(evaluate_metadata_predicate(left, fields, row)?
+            || evaluate_metadata_predicate(right, fields, row)?),
+        Expr::BinaryOp { left, op, right }
+            if matches!(op, BinaryOperator::Eq | BinaryOperator::NotEq) =>
+        {
+            let equal = metadata_equal(
+                &metadata_expr_value(left, fields, row)?,
+                &metadata_expr_value(right, fields, row)?,
+            )
+            .unwrap_or(false);
+            Ok(if *op == BinaryOperator::Eq {
+                equal
+            } else {
+                !equal
+            })
+        }
+        Expr::IsNull(expression) => Ok(matches!(
+            metadata_expr_value(expression, fields, row)?,
+            Value::Null
+        )),
+        Expr::IsNotNull(expression) => Ok(!matches!(
+            metadata_expr_value(expression, fields, row)?,
+            Value::Null
+        )),
+        Expr::InList {
+            expr,
+            list,
+            negated,
+        } => {
+            let needle = metadata_expr_value(expr, fields, row)?;
+            let found = list.iter().try_fold(false, |found, candidate| {
+                Ok::<_, MetadataError>(
+                    found
+                        || metadata_equal(&needle, &metadata_expr_value(candidate, fields, row)?)
+                            .unwrap_or(false),
+                )
+            })?;
+            Ok(if *negated { !found } else { found })
+        }
+        Expr::Like {
+            negated,
+            any: false,
+            expr,
+            pattern,
+            escape_char: None,
+        } => {
+            let value = metadata_expr_value(expr, fields, row)?;
+            let pattern = metadata_expr_value(pattern, fields, row)?;
+            let matched = match (&value, &pattern) {
+                (Value::Utf8(value), Value::Utf8(pattern)) => metadata_like(value, pattern),
+                _ => false,
+            };
+            Ok(if *negated { !matched } else { matched })
+        }
+        _ => Err(MetadataError::Unsupported(expression.to_string())),
+    }
+}
+
+fn metadata_expr_value(
+    expression: &Expr,
+    fields: &[MetadataField],
+    row: &[Value],
+) -> Result<Value, MetadataError> {
+    match expression {
+        Expr::Identifier(_) | Expr::CompoundIdentifier(_) => {
+            Ok(row[metadata_expr_column(expression, fields)?].clone())
+        }
+        Expr::Nested(expression) => metadata_expr_value(expression, fields, row),
+        Expr::Value(value) => match &value.value {
+            SqlValue::SingleQuotedString(value)
+            | SqlValue::DoubleQuotedString(value)
+            | SqlValue::NationalStringLiteral(value) => Ok(utf8(value)),
+            SqlValue::Number(value, _) => value
+                .parse::<u64>()
+                .map(Value::UInt64)
+                .map_err(|_| MetadataError::Unsupported(expression.to_string())),
+            SqlValue::Boolean(value) => Ok(Value::Boolean(*value)),
+            SqlValue::Null => Ok(Value::Null),
+            _ => Err(MetadataError::Unsupported(expression.to_string())),
+        },
+        _ => Err(MetadataError::Unsupported(expression.to_string())),
+    }
+}
+
+fn metadata_equal(left: &Value, right: &Value) -> Option<bool> {
+    match (left, right) {
+        (Value::Null, _) | (_, Value::Null) => None,
+        (Value::Utf8(left), Value::Utf8(right)) => Some(left.eq_ignore_ascii_case(right)),
+        _ => Some(left == right),
+    }
+}
+
+fn metadata_like(value: &str, pattern: &str) -> bool {
+    let value = value.to_lowercase().into_bytes();
+    let pattern = pattern.to_lowercase().into_bytes();
+    let mut matches = vec![false; value.len() + 1];
+    matches[0] = true;
+    for token in pattern {
+        if token == b'%' {
+            for index in 1..=value.len() {
+                matches[index] |= matches[index - 1];
+            }
+        } else {
+            for index in (1..=value.len()).rev() {
+                matches[index] = matches[index - 1] && (token == b'_' || token == value[index - 1]);
+            }
+            matches[0] = false;
+        }
+    }
+    matches[value.len()]
+}
+
+fn order_metadata_result(result: &mut MetadataResult, query: &Query) -> Result<(), MetadataError> {
+    let Some(order_by) = &query.order_by else {
+        return Ok(());
+    };
+    let OrderByKind::Expressions(expressions) = &order_by.kind else {
+        return Err(MetadataError::Unsupported(order_by.to_string()));
+    };
+    if order_by.interpolate.is_some()
+        || expressions
+            .iter()
+            .any(|expression| expression.with_fill.is_some())
+    {
+        return Err(MetadataError::Unsupported(order_by.to_string()));
+    }
+    let keys = expressions
+        .iter()
+        .map(|expression| {
+            let index = metadata_expr_column(&expression.expr, &result.fields)?;
+            Ok((index, expression.options.asc.unwrap_or(true)))
+        })
+        .collect::<Result<Vec<_>, MetadataError>>()?;
+    result.rows.sort_by(|left, right| {
+        for (index, ascending) in &keys {
+            let ordering = metadata_order(&left[*index], &right[*index]);
+            if ordering != Ordering::Equal {
+                return if *ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                };
+            }
+        }
+        Ordering::Equal
+    });
+    Ok(())
+}
+
+fn metadata_order(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Null, _) => Ordering::Less,
+        (_, Value::Null) => Ordering::Greater,
+        (Value::Utf8(left), Value::Utf8(right)) => left.to_lowercase().cmp(&right.to_lowercase()),
+        _ => left.cmp(right),
+    }
+}
+
+fn limit_metadata_result(result: &mut MetadataResult, query: &Query) -> Result<(), MetadataError> {
+    let Some(limit) = &query.limit_clause else {
+        return Ok(());
+    };
+    let (offset, count) = match limit {
+        LimitClause::LimitOffset {
+            limit: Some(limit),
+            offset,
+            limit_by,
+        } if limit_by.is_empty() => (
+            offset
+                .as_ref()
+                .map_or(Ok(0), |offset| metadata_usize(&offset.value))?,
+            metadata_usize(limit)?,
+        ),
+        LimitClause::OffsetCommaLimit { offset, limit } => {
+            (metadata_usize(offset)?, metadata_usize(limit)?)
+        }
+        LimitClause::LimitOffset { .. } => {
+            return Err(MetadataError::Unsupported(limit.to_string()));
+        }
+    };
+    result.rows = result.rows.drain(..).skip(offset).take(count).collect();
+    Ok(())
+}
+
+fn metadata_usize(expression: &Expr) -> Result<usize, MetadataError> {
+    let Expr::Value(value) = expression else {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    };
+    let SqlValue::Number(value, _) = &value.value else {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    };
+    value
+        .parse()
+        .map_err(|_| MetadataError::Unsupported(expression.to_string()))
 }
 
 fn single_string_result<'a>(
@@ -131,6 +639,16 @@ const fn mysql_type(data_type: DataType) -> &'static str {
         DataType::Boolean => "tinyint(1)",
         DataType::Int64 => "bigint",
         DataType::UInt64 => "bigint unsigned",
+        DataType::Float64 => "double",
+        DataType::Utf8 => "text",
+        DataType::Binary => "blob",
+    }
+}
+
+const fn mysql_data_type(data_type: DataType) -> &'static str {
+    match data_type {
+        DataType::Boolean => "tinyint",
+        DataType::Int64 | DataType::UInt64 => "bigint",
         DataType::Float64 => "double",
         DataType::Utf8 => "text",
         DataType::Binary => "blob",
@@ -212,6 +730,8 @@ pub enum MetadataError {
     UnknownDatabase(String),
     /// No catalog table has this name.
     UnknownTable(String),
+    /// No metadata field has this name.
+    UnknownColumn(String),
     /// An object name has an unsupported shape.
     InvalidObjectName(String),
 }
@@ -225,6 +745,7 @@ impl fmt::Display for MetadataError {
             Self::NoCurrentDatabase => formatter.write_str("no current database selected"),
             Self::UnknownDatabase(database) => write!(formatter, "unknown database {database}"),
             Self::UnknownTable(table) => write!(formatter, "unknown table {table}"),
+            Self::UnknownColumn(column) => write!(formatter, "unknown column {column}"),
             Self::InvalidObjectName(name) => write!(formatter, "invalid object name {name}"),
         }
     }
@@ -293,5 +814,77 @@ mod tests {
             Value::Utf8("bigint unsigned".to_owned())
         );
         assert_eq!(columns.rows[1][2], Value::Utf8("YES".to_owned()));
+    }
+
+    #[test]
+    fn serves_basic_information_schema_queries() {
+        let catalog = catalog();
+        let schemata = execute_metadata(
+            &parse_statement(
+                "SELECT schema_name FROM information_schema.schemata \
+                 WHERE schema_name = 'analytics'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+        )
+        .expect("schemata");
+        assert_eq!(schemata.rows, [vec![Value::Utf8("Analytics".to_owned())]]);
+
+        let tables = execute_metadata(
+            &parse_statement(
+                "SELECT table_name, table_rows FROM information_schema.tables \
+                 WHERE table_schema = 'Analytics' ORDER BY table_name LIMIT 1",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+        )
+        .expect("tables");
+        assert_eq!(
+            tables.rows,
+            [vec![Value::Utf8("Events".to_owned()), Value::UInt64(3)]]
+        );
+
+        let columns = execute_metadata(
+            &parse_statement(
+                "SELECT column_name AS name, ordinal_position, is_nullable \
+                 FROM information_schema.columns \
+                 WHERE table_schema = 'analytics' AND table_name LIKE 'eve%' \
+                 ORDER BY ordinal_position",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+        )
+        .expect("columns");
+        assert_eq!(columns.fields[0].name, "name");
+        assert_eq!(
+            columns.rows,
+            [
+                vec![
+                    Value::Utf8("id".to_owned()),
+                    Value::UInt64(1),
+                    Value::Utf8("NO".to_owned()),
+                ],
+                vec![
+                    Value::Utf8("name".to_owned()),
+                    Value::UInt64(2),
+                    Value::Utf8("YES".to_owned()),
+                ],
+            ]
+        );
+
+        let count = execute_metadata(
+            &parse_statement(
+                "SELECT COUNT(*) FROM information_schema.columns \
+                 WHERE table_schema = 'Analytics'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+        )
+        .expect("count");
+        assert_eq!(count.rows, [vec![Value::UInt64(2)]]);
     }
 }
