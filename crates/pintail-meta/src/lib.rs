@@ -8,7 +8,14 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 
-const CURRENT_SCHEMA_VERSION: u32 = 4;
+mod control;
+
+pub use control::{
+    ApiKeyRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, NewApiKey, SyncRunRecord, TableRecord,
+    UserRecord,
+};
+
+const CURRENT_SCHEMA_VERSION: u32 = 5;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1276,6 +1283,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 4 {
         migration_v4(connection.transaction()?)?;
     }
+    if found < 5 {
+        migration_v5(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1313,4 +1323,13 @@ fn migration_v4(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 4")
+}
+
+fn migration_v5(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/005_api_control.sql"))
+        .context("failed to apply metadata migration 5")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 5")
 }

@@ -5,7 +5,7 @@ fn opening_a_blank_control_plane_applies_the_initial_schema() {
 
     let metadata = pintail_meta::MetaStore::open(&database_path).expect("metadata store");
 
-    assert_eq!(metadata.schema_version().expect("schema version"), 4);
+    assert_eq!(metadata.schema_version().expect("schema version"), 5);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn reopening_an_initialized_control_plane_is_idempotent() {
     pintail_meta::MetaStore::open(&database_path).expect("first open");
     let reopened = pintail_meta::MetaStore::open(&database_path).expect("second open");
 
-    assert_eq!(reopened.schema_version().expect("schema version"), 4);
+    assert_eq!(reopened.schema_version().expect("schema version"), 5);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn version_one_control_plane_upgrades_polling_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 4);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 5);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -97,7 +97,7 @@ fn version_two_control_plane_upgrades_polling_checksums_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 4);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 5);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -128,7 +128,7 @@ fn version_three_control_plane_upgrades_schema_tracking_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 4);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 5);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let orphaned_column: bool = connection
@@ -140,6 +140,49 @@ fn version_three_control_plane_upgrades_schema_tracking_in_place() {
         )
         .expect("orphaned column");
     assert!(orphaned_column);
+}
+
+#[test]
+fn version_four_control_plane_upgrades_api_configuration_in_place() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let connection = rusqlite::Connection::open(&database_path).expect("version four database");
+    connection
+        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .expect("apply version one schema");
+    connection
+        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .expect("apply version two schema");
+    connection
+        .execute_batch(include_str!("../migrations/003_poll_checksums.sql"))
+        .expect("apply version three schema");
+    connection
+        .execute_batch(include_str!("../migrations/004_schema_tracking.sql"))
+        .expect("apply version four schema");
+    drop(connection);
+
+    let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
+    assert_eq!(upgraded.schema_version().expect("schema version"), 5);
+    drop(upgraded);
+    let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
+    let api_scopes: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('api_keys') \
+             WHERE name = 'scopes_json')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("API scopes column");
+    let cadence: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('databases') \
+             WHERE name = 'poll_interval_seconds')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("poll cadence column");
+    assert!(api_scopes);
+    assert!(cadence);
 }
 
 #[cfg(unix)]

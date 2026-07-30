@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Control-plane schema version 5 adds dashboard user state, scoped API-key
+  metadata, per-database polling/reconciliation cadence, and per-table
+  soft-delete mapping, with typed CRUD records and an in-place v4 upgrade.
+
 ## [M5] - 2026-07-30
 
 ### Added
