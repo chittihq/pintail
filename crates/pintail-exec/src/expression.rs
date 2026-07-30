@@ -36,6 +36,13 @@ pub(crate) enum CompiledExpr {
 }
 
 impl CompiledExpr {
+    pub(crate) const fn column_index(&self) -> Option<usize> {
+        match self {
+            Self::Column(index) => Some(*index),
+            _ => None,
+        }
+    }
+
     pub(crate) fn compile(
         expr: &BoundExpr,
         columns: &[pintail_sql::BoundColumn],

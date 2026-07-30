@@ -1,8 +1,8 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},
     fmt,
-    hash::Hash,
+    hash::{DefaultHasher, Hash, Hasher},
     mem::{size_of, size_of_val},
 };
 
@@ -988,14 +988,13 @@ impl PullOperator {
                 let Some(mut batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                let batch_bytes = batch.estimated_bytes();
                 for row in 0..batch.row_count() {
                     if !batch.selection().is_selected(row) {
                         continue;
                     }
                     memory.ensure_transient(
-                        batch
-                            .estimated_bytes()
-                            .saturating_add(predicate.allocation_upper_bound(&batch, row)),
+                        batch_bytes.saturating_add(predicate.allocation_upper_bound(&batch, row)),
                     )?;
                     let keep = predicate_truth(&predicate.evaluate(&batch, row)?)?;
                     if !keep {
@@ -1026,6 +1025,7 @@ impl PullOperator {
                 let Some(batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                let batch_bytes = batch.estimated_bytes();
                 let expression_memory = expressions
                     .iter()
                     .map(|(expression, _)| {
@@ -1055,8 +1055,7 @@ impl PullOperator {
                             .saturating_mul(size_of::<u64>()),
                     )
                     .saturating_add(expression_memory);
-                memory
-                    .ensure_transient(batch.estimated_bytes().saturating_add(projected_memory))?;
+                memory.ensure_transient(batch_bytes.saturating_add(projected_memory))?;
                 let mut columns = Vec::with_capacity(expressions.len());
                 for (expression, data_type) in expressions {
                     let mut values = Vec::with_capacity(batch.row_count());
@@ -1072,22 +1071,19 @@ impl PullOperator {
                 }
                 let mut output = RecordBatch::new(batch.row_count(), columns)?;
                 output.set_selection(batch.selection().clone())?;
-                memory.ensure_transient(
-                    batch
-                        .estimated_bytes()
-                        .saturating_add(output.estimated_bytes()),
-                )?;
+                memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
                 Ok(Some(output))
             }
             Self::Distinct { input, seen } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                let batch_bytes = batch.estimated_bytes();
                 reserve_hash_set_entries(
                     seen,
                     batch.visible_row_count(),
                     size_of::<Vec<Value>>().saturating_add(HASH_ENTRY_OVERHEAD),
-                    batch.estimated_bytes(),
+                    batch_bytes,
                     memory,
                 )?;
                 for row in 0..batch.row_count() {
@@ -1095,7 +1091,7 @@ impl PullOperator {
                         continue;
                     }
                     let row_upper = estimated_normalized_batch_row_bytes(&batch, row)?;
-                    memory.ensure_transient(batch.estimated_bytes().saturating_add(row_upper))?;
+                    memory.ensure_transient(batch_bytes.saturating_add(row_upper))?;
                     let key = batch
                         .columns()
                         .iter()
@@ -1113,8 +1109,7 @@ impl PullOperator {
                         batch.selection_mut().set(row, false)?;
                     } else {
                         let row_bytes = estimated_row_payload_bytes(&key);
-                        memory
-                            .ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
+                        memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
                         memory.reserve(row_bytes)?;
                         seen.insert(key);
                     }
@@ -1460,13 +1455,14 @@ fn build_hash_join(
     let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
     let mut build_reserved = 0_usize;
     while let Some(batch) = right.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
         build_reserved = build_reserved.saturating_add(reserve_hash_map_entries(
             &mut build,
             batch.visible_row_count(),
             size_of::<JoinHashKey>()
                 .saturating_add(size_of::<Vec<Vec<Value>>>())
                 .saturating_add(HASH_ENTRY_OVERHEAD),
-            batch.estimated_bytes(),
+            batch_bytes,
             memory,
         )?);
         for row in batch.selection().selected_rows() {
@@ -1475,8 +1471,7 @@ fn build_hash_join(
                 .allocation_upper_bound(&batch, row)
                 .saturating_mul(12);
             memory.ensure_transient(
-                batch
-                    .estimated_bytes()
+                batch_bytes
                     .saturating_add(row_bytes)
                     .saturating_add(key_memory),
             )?;
@@ -1490,8 +1485,7 @@ fn build_hash_join(
             };
             let row_payload = row_bytes.saturating_sub(size_of::<Vec<Value>>());
             memory.ensure_transient(
-                batch
-                    .estimated_bytes()
+                batch_bytes
                     .saturating_add(key_memory)
                     .saturating_add(row_payload)
                     .saturating_add(64_usize.saturating_mul(size_of::<Vec<Value>>()))
@@ -1511,14 +1505,14 @@ fn build_hash_join(
 
     let mut rows = Vec::new();
     while let Some(batch) = left.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
         for row in batch.selection().selected_rows() {
             let left_row_bytes = estimated_batch_row_bytes(&batch, row)?;
             let key_memory = left_key
                 .allocation_upper_bound(&batch, row)
                 .saturating_mul(12);
             memory.ensure_transient(
-                batch
-                    .estimated_bytes()
+                batch_bytes
                     .saturating_add(left_row_bytes)
                     .saturating_add(key_memory),
             )?;
@@ -1529,12 +1523,9 @@ fn build_hash_join(
                 BoundJoinKind::Inner => {
                     if let Some(matches) = matches {
                         memory.ensure_transient(
-                            batch
-                                .estimated_bytes()
-                                .saturating_add(left_row_bytes)
-                                .saturating_add(
-                                    matches.len().saturating_mul(size_of::<Vec<Value>>()),
-                                ),
+                            batch_bytes.saturating_add(left_row_bytes).saturating_add(
+                                matches.len().saturating_mul(size_of::<Vec<Value>>()),
+                            ),
                         )?;
                         reserve_vec_elements(&mut rows, matches.len(), 0, memory)?;
                         for right_values in matches {
@@ -1543,7 +1534,7 @@ fn build_hash_join(
                                 right_values,
                                 0,
                                 left_row_bytes,
-                                &batch,
+                                batch_bytes,
                                 memory,
                             )?;
                             let mut output = left_values.clone();
@@ -1555,12 +1546,9 @@ fn build_hash_join(
                 BoundJoinKind::Left => {
                     if let Some(matches) = matches {
                         memory.ensure_transient(
-                            batch
-                                .estimated_bytes()
-                                .saturating_add(left_row_bytes)
-                                .saturating_add(
-                                    matches.len().saturating_mul(size_of::<Vec<Value>>()),
-                                ),
+                            batch_bytes.saturating_add(left_row_bytes).saturating_add(
+                                matches.len().saturating_mul(size_of::<Vec<Value>>()),
+                            ),
                         )?;
                         reserve_vec_elements(&mut rows, matches.len(), 0, memory)?;
                         for right_values in matches {
@@ -1569,7 +1557,7 @@ fn build_hash_join(
                                 right_values,
                                 0,
                                 left_row_bytes,
-                                &batch,
+                                batch_bytes,
                                 memory,
                             )?;
                             let mut output = left_values.clone();
@@ -1578,8 +1566,7 @@ fn build_hash_join(
                         }
                     } else {
                         memory.ensure_transient(
-                            batch
-                                .estimated_bytes()
+                            batch_bytes
                                 .saturating_add(left_row_bytes)
                                 .saturating_add(size_of::<Vec<Value>>()),
                         )?;
@@ -1589,7 +1576,7 @@ fn build_hash_join(
                             &[],
                             right_width,
                             left_row_bytes,
-                            &batch,
+                            batch_bytes,
                             memory,
                         )?;
                         let mut output = left_values;
@@ -1599,27 +1586,23 @@ fn build_hash_join(
                 }
                 BoundJoinKind::Semi if matches.is_some() => {
                     memory.ensure_transient(
-                        batch
-                            .estimated_bytes()
+                        batch_bytes
                             .saturating_add(left_row_bytes)
                             .saturating_add(size_of::<Vec<Value>>()),
                     )?;
                     reserve_vec_elements(&mut rows, 1, 0, memory)?;
-                    memory
-                        .ensure_transient(batch.estimated_bytes().saturating_add(left_row_bytes))?;
+                    memory.ensure_transient(batch_bytes.saturating_add(left_row_bytes))?;
                     memory.reserve(left_row_bytes.saturating_sub(size_of::<Vec<Value>>()))?;
                     rows.push(left_values);
                 }
                 BoundJoinKind::Anti if matches.is_none() => {
                     memory.ensure_transient(
-                        batch
-                            .estimated_bytes()
+                        batch_bytes
                             .saturating_add(left_row_bytes)
                             .saturating_add(size_of::<Vec<Value>>()),
                     )?;
                     reserve_vec_elements(&mut rows, 1, 0, memory)?;
-                    memory
-                        .ensure_transient(batch.estimated_bytes().saturating_add(left_row_bytes))?;
+                    memory.ensure_transient(batch_bytes.saturating_add(left_row_bytes))?;
                     memory.reserve(left_row_bytes.saturating_sub(size_of::<Vec<Value>>()))?;
                     rows.push(left_values);
                 }
@@ -1697,7 +1680,7 @@ impl AggregateState {
     fn update(
         &mut self,
         aggregate: &CompiledAggregate,
-        value: Value,
+        value: &Value,
         memory: &mut MemoryTracker,
     ) -> Result<(), ExecError> {
         if matches!(value, Value::Null) {
@@ -1723,14 +1706,10 @@ impl AggregateState {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
             AggregateValue::Sum(sum) => {
-                *sum = Some(add_aggregate_value(
-                    sum.take(),
-                    &value,
-                    aggregate.data_type,
-                )?);
+                *sum = Some(add_aggregate_value(sum.take(), value, aggregate.data_type)?);
             }
             AggregateValue::Average { sum, count } => {
-                *sum += mysql_f64(&value)?;
+                *sum += mysql_f64(value)?;
                 if !sum.is_finite() {
                     return Err(ExecError::NumericOverflow);
                 }
@@ -1738,27 +1717,27 @@ impl AggregateState {
             }
             AggregateValue::Minimum(minimum) => {
                 let replace = match minimum.as_ref() {
-                    Some(current) => compare_mysql(&value, current)? == Ordering::Less,
+                    Some(current) => compare_mysql(value, current)? == Ordering::Less,
                     None => true,
                 };
                 if replace {
-                    replace_retained_value(minimum, value, memory)?;
+                    replace_retained_value(minimum, value.clone(), memory)?;
                 }
             }
             AggregateValue::Maximum(maximum) => {
                 let replace = match maximum.as_ref() {
-                    Some(current) => compare_mysql(&value, current)? == Ordering::Greater,
+                    Some(current) => compare_mysql(value, current)? == Ordering::Greater,
                     None => true,
                 };
                 if replace {
-                    replace_retained_value(maximum, value, memory)?;
+                    replace_retained_value(maximum, value.clone(), memory)?;
                 }
             }
             AggregateValue::GroupConcat(values) => {
-                let value_bytes = scalar_string_memory_upper_bound(&value);
+                let value_bytes = scalar_string_memory_upper_bound(value);
                 reserve_vec_elements(values, 1, 64, memory)?;
                 memory.reserve(value_bytes)?;
-                let value = aggregate_string(&value)?;
+                let value = aggregate_string(value)?;
                 values.push(value);
             }
         }
@@ -1810,6 +1789,15 @@ fn build_hash_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &mut MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
+    if !group_by.is_empty()
+        && let Some(group_columns) = group_by
+            .iter()
+            .map(CompiledExpr::column_index)
+            .collect::<Option<Vec<_>>>()
+    {
+        return build_direct_column_aggregate(input, &group_columns, aggregates, memory);
+    }
+
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     if group_by.is_empty() {
         reserve_hash_map_entries(
@@ -1832,13 +1820,14 @@ fn build_hash_aggregate(
     }
 
     while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
         reserve_hash_map_entries(
             &mut groups,
-            batch.visible_row_count(),
+            batch.visible_row_count().min(64),
             size_of::<Vec<Value>>()
                 .saturating_add(size_of::<AggregateGroup>())
                 .saturating_add(HASH_ENTRY_OVERHEAD),
-            batch.estimated_bytes(),
+            batch_bytes,
             memory,
         )?;
         for row in batch.selection().selected_rows() {
@@ -1857,7 +1846,7 @@ fn build_hash_aggregate(
                 .saturating_add(size_of::<AggregateGroup>())
                 .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
                 .saturating_add(HASH_ENTRY_OVERHEAD);
-            memory.ensure_transient(batch.estimated_bytes().saturating_add(group_memory))?;
+            memory.ensure_transient(batch_bytes.saturating_add(group_memory))?;
             let values = group_by
                 .iter()
                 .map(|expression| expression.evaluate(&batch, row))
@@ -1867,44 +1856,42 @@ fn build_hash_aggregate(
                 .cloned()
                 .map(|value| normalized_hash_key(value).unwrap_or(Value::Null))
                 .collect::<Vec<_>>();
-            if !groups.contains_key(&key) {
-                let bytes = estimated_row_payload_bytes(&values)
-                    .saturating_add(estimated_row_payload_bytes(&key))
-                    .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()));
-                memory.ensure_transient(batch.estimated_bytes().saturating_add(bytes))?;
-                memory.reserve(bytes)?;
-                groups.insert(
-                    key.clone(),
-                    AggregateGroup {
+            if groups.len() == groups.capacity() {
+                let growth = groups.capacity().max(1);
+                reserve_hash_map_entries(
+                    &mut groups,
+                    growth,
+                    size_of::<Vec<Value>>()
+                        .saturating_add(size_of::<AggregateGroup>())
+                        .saturating_add(HASH_ENTRY_OVERHEAD),
+                    batch_bytes,
+                    memory,
+                )?;
+            }
+            let group = match groups.entry(key) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let bytes = estimated_row_payload_bytes(&values)
+                        .saturating_add(estimated_row_payload_bytes(entry.key()))
+                        .saturating_add(
+                            aggregates.len().saturating_mul(size_of::<AggregateState>()),
+                        );
+                    memory.ensure_transient(batch_bytes.saturating_add(bytes))?;
+                    memory.reserve(bytes)?;
+                    entry.insert(AggregateGroup {
                         values,
                         states: aggregates.iter().map(AggregateState::new).collect(),
-                    },
-                );
-            }
-            let group = groups.get_mut(&key).expect("inserted above");
-            for (aggregate, state) in aggregates.iter().zip(&mut group.states) {
-                let update_memory = aggregate
-                    .expr
-                    .as_ref()
-                    .map_or(0, |expression| {
-                        expression
-                            .allocation_upper_bound(&batch, row)
-                            .saturating_mul(13)
                     })
-                    .saturating_add(
-                        64_usize
-                            .saturating_mul(size_of::<String>())
-                            .saturating_add(256),
-                    );
-                memory.ensure_transient(batch.estimated_bytes().saturating_add(update_memory))?;
-                let value = aggregate
-                    .expr
-                    .as_ref()
-                    .map_or(Ok(Value::Boolean(true)), |expression| {
-                        expression.evaluate(&batch, row)
-                    })?;
-                state.update(aggregate, value, memory)?;
-            }
+                }
+            };
+            update_aggregate_states(
+                &batch,
+                row,
+                batch_bytes,
+                aggregates,
+                &mut group.states,
+                memory,
+            )?;
         }
     }
 
@@ -1920,6 +1907,216 @@ fn build_hash_aggregate(
         rows.push(row);
     }
     Ok(MaterializedRows { rows, position: 0 })
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_direct_column_aggregate(
+    input: &mut PullOperator,
+    group_columns: &[usize],
+    aggregates: &[CompiledAggregate],
+    memory: &mut MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let mut groups = Vec::<AggregateGroup>::new();
+    let mut scalar_index = HashMap::<Value, usize>::new();
+    let mut raw_index = HashMap::<u64, usize>::new();
+    let mut index_reserved = 0_usize;
+
+    while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
+        let indexed = group_columns.len() == 1
+            && batch.column(group_columns[0]).is_some_and(|column| {
+                matches!(
+                    column.data_type().storage_type(),
+                    DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
+                )
+            });
+        for row in batch.selection().selected_rows() {
+            let raw_hash = (!indexed)
+                .then(|| direct_group_hash(&batch, row, group_columns))
+                .transpose()?;
+            let existing = if indexed {
+                let value = direct_group_value(&batch, row, group_columns[0])?;
+                scalar_index.get(value).copied()
+            } else {
+                raw_index
+                    .get(&raw_hash.expect("non-indexed groups have a raw hash"))
+                    .copied()
+                    .filter(|index| {
+                        direct_group_matches_exact(
+                            &groups[*index].values,
+                            &batch,
+                            row,
+                            group_columns,
+                        )
+                    })
+                    .or_else(|| {
+                        groups.iter().position(|group| {
+                            direct_group_matches(&group.values, &batch, row, group_columns)
+                        })
+                    })
+            };
+            let group_index = if let Some(index) = existing {
+                index
+            } else {
+                let values = group_columns
+                    .iter()
+                    .map(|column| direct_group_value(&batch, row, *column).cloned())
+                    .collect::<Result<Vec<_>, _>>()?;
+                let bytes = estimated_row_payload_bytes(&values)
+                    .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()));
+                memory.ensure_transient(batch_bytes.saturating_add(bytes))?;
+                reserve_vec_elements(&mut groups, 1, 64, memory)?;
+                memory.reserve(bytes)?;
+                let index = groups.len();
+                groups.push(AggregateGroup {
+                    values,
+                    states: aggregates.iter().map(AggregateState::new).collect(),
+                });
+                if indexed {
+                    index_reserved = index_reserved.saturating_add(reserve_hash_map_entries(
+                        &mut scalar_index,
+                        1,
+                        size_of::<Value>()
+                            .saturating_add(size_of::<usize>())
+                            .saturating_add(HASH_ENTRY_OVERHEAD),
+                        batch_bytes,
+                        memory,
+                    )?);
+                    let key = direct_group_value(&batch, row, group_columns[0])?.clone();
+                    memory.reserve(key.heap_bytes())?;
+                    index_reserved = index_reserved.saturating_add(key.heap_bytes());
+                    scalar_index.insert(key, index);
+                }
+                index
+            };
+            if let Some(raw_hash) = raw_hash
+                && !raw_index.contains_key(&raw_hash)
+            {
+                index_reserved = index_reserved.saturating_add(reserve_hash_map_entries(
+                    &mut raw_index,
+                    1,
+                    size_of::<u64>()
+                        .saturating_add(size_of::<usize>())
+                        .saturating_add(HASH_ENTRY_OVERHEAD),
+                    batch_bytes,
+                    memory,
+                )?);
+                raw_index.insert(raw_hash, group_index);
+            }
+            update_aggregate_states(
+                &batch,
+                row,
+                batch_bytes,
+                aggregates,
+                &mut groups[group_index].states,
+                memory,
+            )?;
+        }
+    }
+
+    drop(scalar_index);
+    drop(raw_index);
+    memory.release(index_reserved);
+    memory.reserve(groups.len().saturating_mul(size_of::<Vec<Value>>()))?;
+    let mut rows = Vec::with_capacity(groups.len());
+    for group in groups {
+        let mut row = group.values;
+        reserve_vec_elements(&mut row, group.states.len(), 0, memory)?;
+        for state in group.states {
+            row.push(state.finish(memory)?);
+        }
+        memory.reserve(estimated_row_payload_bytes(&row))?;
+        rows.push(row);
+    }
+    Ok(MaterializedRows { rows, position: 0 })
+}
+
+fn direct_group_value(batch: &RecordBatch, row: usize, column: usize) -> Result<&Value, ExecError> {
+    batch
+        .column(column)
+        .and_then(|values| values.value(row))
+        .ok_or(ExecError::InvalidBatch(
+            "grouping column is outside the input batch",
+        ))
+}
+
+fn direct_group_matches(
+    values: &[Value],
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[usize],
+) -> bool {
+    values.iter().zip(columns).all(|(grouped, column)| {
+        direct_group_value(batch, row, *column).is_ok_and(|candidate| match (grouped, candidate) {
+            (Value::Utf8(left), Value::Utf8(right)) => {
+                if left.is_ascii() && right.is_ascii() {
+                    left.eq_ignore_ascii_case(right)
+                } else {
+                    compare_utf8_mysql(left, right) == Ordering::Equal
+                }
+            }
+            _ => grouped == candidate,
+        })
+    })
+}
+
+fn direct_group_matches_exact(
+    values: &[Value],
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[usize],
+) -> bool {
+    values.iter().zip(columns).all(|(grouped, column)| {
+        direct_group_value(batch, row, *column).is_ok_and(|candidate| grouped == candidate)
+    })
+}
+
+fn direct_group_hash(batch: &RecordBatch, row: usize, columns: &[usize]) -> Result<u64, ExecError> {
+    let mut hasher = DefaultHasher::new();
+    for column in columns {
+        direct_group_value(batch, row, *column)?.hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
+fn update_aggregate_states(
+    batch: &RecordBatch,
+    row: usize,
+    batch_bytes: usize,
+    aggregates: &[CompiledAggregate],
+    states: &mut [AggregateState],
+    memory: &mut MemoryTracker,
+) -> Result<(), ExecError> {
+    for (aggregate, state) in aggregates.iter().zip(states) {
+        let update_memory = aggregate
+            .expr
+            .as_ref()
+            .filter(|expression| expression.column_index().is_none())
+            .map_or(0, |expression| {
+                expression
+                    .allocation_upper_bound(batch, row)
+                    .saturating_mul(13)
+            })
+            .saturating_add(
+                64_usize
+                    .saturating_mul(size_of::<String>())
+                    .saturating_add(256),
+            );
+        memory.ensure_transient(batch_bytes.saturating_add(update_memory))?;
+        match &aggregate.expr {
+            None => state.update(aggregate, &Value::Boolean(true), memory)?,
+            Some(expression) => {
+                if let Some(column) = expression.column_index() {
+                    let value = direct_group_value(batch, row, column)?;
+                    state.update(aggregate, value, memory)?;
+                } else {
+                    let value = expression.evaluate(batch, row)?;
+                    state.update(aggregate, &value, memory)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn add_aggregate_value(
@@ -2048,7 +2245,7 @@ fn reserve_join_output(
     right: &[Value],
     nulls: usize,
     left_temporary_bytes: usize,
-    batch: &RecordBatch,
+    batch_bytes: usize,
     memory: &mut MemoryTracker,
 ) -> Result<(), ExecError> {
     let value_count = left.len().saturating_add(right.len()).saturating_add(nulls);
@@ -2062,8 +2259,7 @@ fn reserve_join_output(
         .saturating_add(heap_bytes)
         .saturating_add(2 * size_of::<usize>());
     memory.ensure_transient(
-        batch
-            .estimated_bytes()
+        batch_bytes
             .saturating_add(left_temporary_bytes)
             .saturating_add(bytes),
     )?;
@@ -2101,17 +2297,16 @@ fn materialize(
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     let mut rows = Vec::new();
     while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
         memory.ensure_transient(
-            batch
-                .estimated_bytes()
-                .saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
+            batch_bytes.saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
         )?;
         reserve_vec_elements(&mut rows, additional_rows, 0, memory)?;
         for row in batch.selection().selected_rows() {
             let row_bytes =
                 estimated_batch_row_bytes(&batch, row)?.saturating_sub(size_of::<Vec<Value>>());
-            memory.ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
+            memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
             memory.reserve(row_bytes)?;
             let values = batch
                 .columns()
@@ -2155,17 +2350,16 @@ fn materialize_top_k(
     }
     let mut rows = Vec::new();
     while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
         memory.ensure_transient(
-            batch
-                .estimated_bytes()
-                .saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
+            batch_bytes.saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
         )?;
         reserve_vec_elements(&mut rows, additional_rows, 0, memory)?;
         for row in batch.selection().selected_rows() {
             let row_bytes =
                 estimated_batch_row_bytes(&batch, row)?.saturating_sub(size_of::<Vec<Value>>());
-            memory.ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
+            memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
             memory.reserve(row_bytes)?;
             let values = batch
                 .columns()
