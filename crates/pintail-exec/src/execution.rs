@@ -13,7 +13,8 @@ use pintail_sql::{
 use pintail_types::{DataType, Value};
 
 use crate::{
-    BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, RecordBatch, Scan,
+    BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, LogicalPlanner, Optimizer,
+    RecordBatch, Scan,
     expression::{CompiledExpr, mysql_f64, mysql_i64, mysql_u64, predicate_truth},
 };
 
@@ -417,7 +418,11 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(Data
                 collect_expression_tables(argument, tables);
             }
         }
-        BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => {}
+        BoundExprKind::InSubquery { expr, .. } => collect_expression_tables(expr, tables),
+        BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_) => {}
     }
 }
 
@@ -519,15 +524,19 @@ impl Execution {
     /// Returns an error when a scan cannot open or an expression references a
     /// column absent from its physical input.
     pub fn start(
-        plan: PhysicalPlan,
+        mut plan: PhysicalPlan,
         provider: &dyn ScanProvider,
         memory_limit: usize,
     ) -> Result<Self, ExecError> {
+        let mut subquery_bytes = 0;
+        resolve_plan_subqueries(&mut plan, provider, memory_limit, &mut subquery_bytes)?;
         let output_fields = plan.output_fields();
         let (root, _) = build_operator(plan, provider)?;
+        let mut memory = MemoryTracker::new(memory_limit);
+        memory.reserve(subquery_bytes)?;
         Ok(Self {
             root,
-            memory: MemoryTracker::new(memory_limit),
+            memory,
             output_fields,
         })
     }
@@ -552,6 +561,196 @@ impl Execution {
     pub const fn memory(&self) -> &MemoryTracker {
         &self.memory
     }
+}
+
+#[allow(clippy::too_many_lines)]
+fn resolve_plan_subqueries(
+    plan: &mut PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory_limit: usize,
+    retained_bytes: &mut usize,
+) -> Result<(), ExecError> {
+    match plan {
+        PhysicalPlan::Scan(scan) => {
+            for predicate in &mut scan.predicates {
+                resolve_expr_subqueries(predicate, provider, memory_limit, retained_bytes)?;
+            }
+        }
+        PhysicalPlan::Derived { input, .. }
+        | PhysicalPlan::Distinct { input }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. } => {
+            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+        }
+        PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => {
+            for input in inputs {
+                resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            }
+        }
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            left_key,
+            right_key,
+            ..
+        } => {
+            resolve_plan_subqueries(left, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(right, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(left_key, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(right_key, provider, memory_limit, retained_bytes)?;
+        }
+        PhysicalPlan::Filter { input, predicate } => {
+            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(predicate, provider, memory_limit, retained_bytes)?;
+        }
+        PhysicalPlan::HashAggregate {
+            input,
+            group_by,
+            aggregates,
+        } => {
+            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            for expression in group_by {
+                resolve_expr_subqueries(expression, provider, memory_limit, retained_bytes)?;
+            }
+            for aggregate in aggregates {
+                if let Some(expression) = &mut aggregate.expr {
+                    resolve_expr_subqueries(expression, provider, memory_limit, retained_bytes)?;
+                }
+            }
+        }
+        PhysicalPlan::Project { input, expressions } => {
+            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            for projection in expressions {
+                resolve_expr_subqueries(
+                    &mut projection.expr,
+                    provider,
+                    memory_limit,
+                    retained_bytes,
+                )?;
+            }
+        }
+        PhysicalPlan::Empty | PhysicalPlan::OneRow => {}
+    }
+    Ok(())
+}
+
+fn resolve_expr_subqueries(
+    expression: &mut BoundExpr,
+    provider: &dyn ScanProvider,
+    memory_limit: usize,
+    retained_bytes: &mut usize,
+) -> Result<(), ExecError> {
+    match &mut expression.kind {
+        BoundExprKind::ScalarSubquery(query) => {
+            let values = materialize_subquery((**query).clone(), provider, memory_limit)?;
+            let value = match values.as_slice() {
+                [] => Value::Null,
+                [value] => value.clone(),
+                _ => {
+                    return Err(ExecError::ScalarSubqueryRows { rows: values.len() });
+                }
+            };
+            reserve_subquery_values(std::slice::from_ref(&value), memory_limit, retained_bytes)?;
+            expression.kind = BoundExprKind::Literal(value);
+        }
+        BoundExprKind::InSubquery {
+            expr,
+            query,
+            negated,
+        } => {
+            resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+            let values = materialize_subquery((**query).clone(), provider, memory_limit)?;
+            reserve_subquery_values(&values, memory_limit, retained_bytes)?;
+            let mut args = Vec::with_capacity(values.len() + 1);
+            args.push((**expr).clone());
+            args.extend(values.into_iter().map(|value| BoundExpr {
+                data_type: value.data_type(),
+                nullable: matches!(value, Value::Null),
+                kind: BoundExprKind::Literal(value),
+            }));
+            expression.kind = BoundExprKind::Scalar {
+                function: pintail_sql::ScalarFunction::InList { negated: *negated },
+                args,
+            };
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            resolve_expr_subqueries(left, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(right, provider, memory_limit, retained_bytes)?;
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                resolve_expr_subqueries(argument, provider, memory_limit, retained_bytes)?;
+            }
+        }
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Literal(_) => {}
+    }
+    Ok(())
+}
+
+fn materialize_subquery(
+    query: pintail_sql::BoundQuery,
+    provider: &dyn ScanProvider,
+    memory_limit: usize,
+) -> Result<Vec<Value>, ExecError> {
+    let logical = Optimizer::optimize(LogicalPlanner::plan(query));
+    let physical = PhysicalPlanner::plan(logical)?;
+    if physical.output_fields().len() != 1 {
+        return Err(ExecError::InvalidPhysicalPlan(
+            "scalar or IN subquery must produce exactly one column",
+        ));
+    }
+    let mut execution = Execution::start(physical, provider, memory_limit)?;
+    let mut values = Vec::new();
+    let mut used = 0_usize;
+    while let Some(batch) = execution.next_batch()? {
+        for row in batch.selection().selected_rows() {
+            let value = batch
+                .column(0)
+                .and_then(|column| column.value(row))
+                .cloned()
+                .ok_or(ExecError::InvalidBatch(
+                    "subquery result is missing its scalar column",
+                ))?;
+            let bytes = size_of::<Value>().saturating_add(value.heap_bytes());
+            if used.saturating_add(bytes) > memory_limit {
+                return Err(ExecError::MemoryLimitExceeded {
+                    used,
+                    requested: bytes,
+                    limit: memory_limit,
+                });
+            }
+            used += bytes;
+            values.push(value);
+        }
+    }
+    Ok(values)
+}
+
+fn reserve_subquery_values(
+    values: &[Value],
+    memory_limit: usize,
+    retained_bytes: &mut usize,
+) -> Result<(), ExecError> {
+    let bytes = values.iter().fold(0_usize, |bytes, value| {
+        bytes
+            .saturating_add(size_of::<Value>())
+            .saturating_add(value.heap_bytes())
+    });
+    if retained_bytes.saturating_add(bytes) > memory_limit {
+        return Err(ExecError::MemoryLimitExceeded {
+            used: *retained_bytes,
+            requested: bytes,
+            limit: memory_limit,
+        });
+    }
+    *retained_bytes += bytes;
+    Ok(())
 }
 
 enum PullOperator {
@@ -1665,6 +1864,11 @@ pub enum ExecError {
         /// Configured safety ceiling.
         limit: u64,
     },
+    /// A scalar subquery produced more than one row.
+    ScalarSubqueryRows {
+        /// Actual result cardinality.
+        rows: usize,
+    },
     /// A physical plan violates an internal layout invariant.
     InvalidPhysicalPlan(&'static str),
     /// A source returned a malformed batch.
@@ -1743,6 +1947,9 @@ impl fmt::Display for ExecError {
                 formatter,
                 "cross join estimate {estimated_rows} exceeds safety limit {limit}"
             ),
+            Self::ScalarSubqueryRows { rows } => {
+                write!(formatter, "scalar subquery produced {rows} rows")
+            }
             Self::InvalidPhysicalPlan(message) => {
                 write!(formatter, "invalid physical plan: {message}")
             }

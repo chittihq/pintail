@@ -67,6 +67,17 @@ pub enum BoundExprKind {
     Aggregate(usize),
     /// Typed scalar literal.
     Literal(Value),
+    /// One-column, at-most-one-row uncorrelated query.
+    ScalarSubquery(Box<BoundQuery>),
+    /// Uncorrelated one-column query used for SQL membership.
+    InSubquery {
+        /// Outer value tested against the materialized result.
+        expr: Box<BoundExpr>,
+        /// Query producing candidate values.
+        query: Box<BoundQuery>,
+        /// Whether membership is negated.
+        negated: bool,
+    },
     /// Unary scalar operation.
     Unary {
         /// Operation.

@@ -30,6 +30,8 @@ struct BoundCte {
     query: BoundQuery,
 }
 
+type SubqueryResolver<'resolver> = dyn Fn(&Query) -> Result<BoundQuery, BindError> + 'resolver;
+
 impl<'catalog> Binder<'catalog> {
     /// Constructs a binder with an optional current database.
     #[must_use]
@@ -141,10 +143,11 @@ impl<'catalog> Binder<'catalog> {
         validate_select_shape(select)?;
 
         let (from, tables) = self.bind_from(select, ctes)?;
+        let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
         let filter = select
             .selection
             .as_ref()
-            .map(|expr| bind_expr(expr, &tables))
+            .map(|expr| bind_expr(expr, &tables, Some(&resolve_subquery)))
             .transpose()?;
         if let Some(filter) = &filter
             && !is_truth_value(filter.data_type)
@@ -153,13 +156,20 @@ impl<'catalog> Binder<'catalog> {
                 actual: filter.data_type,
             });
         }
-        let group_by = bind_group_by(&select.group_by, &tables)?;
+        let group_by = bind_group_by(&select.group_by, &tables, Some(&resolve_subquery))?;
         let mut aggregates = Vec::new();
-        let mut projection = bind_projection(&select.projection, &tables, Some(&mut aggregates))?;
+        let mut projection = bind_projection(
+            &select.projection,
+            &tables,
+            Some(&mut aggregates),
+            Some(&resolve_subquery),
+        )?;
         let mut having = select
             .having
             .as_ref()
-            .map(|expr| bind_aggregate_expr(expr, &tables, &mut aggregates))
+            .map(|expr| {
+                bind_aggregate_expr(expr, &tables, &mut aggregates, Some(&resolve_subquery))
+            })
             .transpose()?;
         if let Some(predicate) = &having
             && !is_truth_value(predicate.data_type)
@@ -224,7 +234,10 @@ impl<'catalog> Binder<'catalog> {
                 tables.push(table.clone());
                 let (kind, constraint) = bind_join_operator(&join.join_operator)?;
                 let condition = match constraint {
-                    JoinConstraint::On(condition) => Some(bind_expr(condition, &tables)?),
+                    JoinConstraint::On(condition) => {
+                        let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
+                        Some(bind_expr(condition, &tables, Some(&resolve_subquery))?)
+                    }
                     JoinConstraint::None if kind == BoundJoinKind::Cross => None,
                     JoinConstraint::None if kind == BoundJoinKind::Inner => None,
                     JoinConstraint::Using(_) | JoinConstraint::Natural | JoinConstraint::None => {
@@ -514,12 +527,13 @@ fn bind_projection(
     items: &[SelectItem],
     tables: &[BoundTable],
     mut aggregates: Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<Vec<BoundProjection>, BindError> {
     let mut projection = Vec::new();
     for item in items {
         match item {
             SelectItem::UnnamedExpr(expr) => {
-                let bound = bind_expr_inner(expr, tables, &mut aggregates)?;
+                let bound = bind_expr_inner(expr, tables, &mut aggregates, subqueries)?;
                 projection.push(BoundProjection {
                     name: projection_name(expr),
                     expr: bound,
@@ -528,7 +542,7 @@ fn bind_projection(
             SelectItem::ExprWithAlias { expr, alias } => {
                 projection.push(BoundProjection {
                     name: alias.value.clone(),
-                    expr: bind_expr_inner(expr, tables, &mut aggregates)?,
+                    expr: bind_expr_inner(expr, tables, &mut aggregates, subqueries)?,
                 });
             }
             SelectItem::Wildcard(options) => {
@@ -559,6 +573,7 @@ fn bind_projection(
 fn bind_group_by(
     group_by: &GroupByExpr,
     tables: &[BoundTable],
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<Vec<BoundExpr>, BindError> {
     let GroupByExpr::Expressions(expressions, modifiers) = group_by else {
         return Err(BindError::UnsupportedQueryClause(group_by.to_string()));
@@ -568,7 +583,7 @@ fn bind_group_by(
     }
     expressions
         .iter()
-        .map(|expr| bind_expr(expr, tables))
+        .map(|expr| bind_expr(expr, tables, subqueries))
         .collect()
 }
 
@@ -614,51 +629,59 @@ fn resolve_wildcard_table<'a>(
     }
 }
 
-fn bind_expr(expr: &Expr, tables: &[BoundTable]) -> Result<BoundExpr, BindError> {
+fn bind_expr(
+    expr: &Expr,
+    tables: &[BoundTable],
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
     let mut aggregates = None;
-    bind_expr_inner(expr, tables, &mut aggregates)
+    bind_expr_inner(expr, tables, &mut aggregates, subqueries)
 }
 
 fn bind_aggregate_expr(
     expr: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Vec<BoundAggregate>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let mut aggregate_context = Some(aggregates);
-    bind_expr_inner(expr, tables, &mut aggregate_context)
+    bind_expr_inner(expr, tables, &mut aggregate_context, subqueries)
 }
 
 fn bind_expr_inner(
     expr: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     match expr {
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
         Expr::Value(value) => bind_literal(&value.value),
-        Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates),
-        Expr::UnaryOp { op, expr } => bind_unary(*op, expr, tables, aggregates),
-        Expr::BinaryOp { left, op, right } => bind_binary(left, op, right, tables, aggregates),
-        Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates),
-        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates),
+        Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates, subqueries),
+        Expr::UnaryOp { op, expr } => bind_unary(*op, expr, tables, aggregates, subqueries),
+        Expr::BinaryOp { left, op, right } => {
+            bind_binary(left, op, right, tables, aggregates, subqueries)
+        }
+        Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates, subqueries),
+        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates, subqueries),
         Expr::Function(function)
             if aggregates.is_some() && aggregate_function_name(function).is_some() =>
         {
-            bind_aggregate(function, tables, aggregates)
+            bind_aggregate(function, tables, aggregates, subqueries)
         }
-        Expr::Function(function) => bind_scalar_function(function, tables, aggregates),
+        Expr::Function(function) => bind_scalar_function(function, tables, aggregates, subqueries),
         Expr::InList {
             expr,
             list,
             negated,
-        } => bind_in_list(expr, list, *negated, tables, aggregates),
+        } => bind_in_list(expr, list, *negated, tables, aggregates, subqueries),
         Expr::Between {
             expr,
             negated,
             low,
             high,
-        } => bind_between(expr, low, high, *negated, tables, aggregates),
+        } => bind_between(expr, low, high, *negated, tables, aggregates, subqueries),
         Expr::Like {
             negated,
             any: false,
@@ -672,6 +695,7 @@ fn bind_expr_inner(
             escape_char.as_ref(),
             tables,
             aggregates,
+            subqueries,
         ),
         Expr::Case {
             operand,
@@ -684,6 +708,7 @@ fn bind_expr_inner(
             else_result.as_deref(),
             tables,
             aggregates,
+            subqueries,
         ),
         Expr::Cast {
             kind: CastKind::Cast,
@@ -691,7 +716,7 @@ fn bind_expr_inner(
             data_type,
             array: false,
             format: None,
-        } => bind_cast(expr, data_type, tables, aggregates),
+        } => bind_cast(expr, data_type, tables, aggregates, subqueries),
         Expr::Substring {
             expr,
             substring_from: Some(from),
@@ -699,11 +724,11 @@ fn bind_expr_inner(
             ..
         } => {
             let mut args = vec![
-                bind_expr_inner(expr, tables, aggregates)?,
-                bind_expr_inner(from, tables, aggregates)?,
+                bind_expr_inner(expr, tables, aggregates, subqueries)?,
+                bind_expr_inner(from, tables, aggregates, subqueries)?,
             ];
             if let Some(length) = substring_for {
-                args.push(bind_expr_inner(length, tables, aggregates)?);
+                args.push(bind_expr_inner(length, tables, aggregates, subqueries)?);
             }
             bind_scalar(ScalarFunction::Substring, args)
         }
@@ -714,20 +739,42 @@ fn bind_expr_inner(
             trim_characters: None,
         } => bind_scalar(
             ScalarFunction::Trim,
-            vec![bind_expr_inner(expr, tables, aggregates)?],
+            vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
         ),
-        Expr::Subquery(query) => bind_constant_scalar_subquery(query),
+        Expr::Subquery(query) => bind_scalar_subquery(query, subqueries),
         Expr::InSubquery {
             expr,
             subquery,
             negated,
-        } => bind_constant_in_subquery(expr, subquery, *negated, tables, aggregates),
+        } => bind_in_subquery(expr, subquery, *negated, tables, aggregates, subqueries),
         _ => Err(BindError::UnsupportedExpression(expr.to_string())),
     }
 }
 
-fn bind_constant_scalar_subquery(query: &Query) -> Result<BoundExpr, BindError> {
-    let values = bind_constant_subquery(query)?;
+fn bind_scalar_subquery(
+    query: &Query,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let values = match bind_constant_subquery(query) {
+        Ok(values) => values,
+        Err(BindError::UnsupportedSubquery(_)) => {
+            let resolver =
+                subqueries.ok_or_else(|| BindError::UnsupportedSubquery(query.to_string()))?;
+            let query = resolver(query)?;
+            let [projection] = query.projection.as_slice() else {
+                return Err(BindError::UnsupportedSubquery(
+                    "scalar subquery must produce exactly one column".to_owned(),
+                ));
+            };
+            let data_type = projection.expr.data_type;
+            return Ok(BoundExpr {
+                kind: BoundExprKind::ScalarSubquery(Box::new(query)),
+                data_type,
+                nullable: true,
+            });
+        }
+        Err(error) => return Err(error),
+    };
     match values.as_slice() {
         [] => Ok(BoundExpr {
             kind: BoundExprKind::Literal(Value::Null),
@@ -739,15 +786,43 @@ fn bind_constant_scalar_subquery(query: &Query) -> Result<BoundExpr, BindError> 
     }
 }
 
-fn bind_constant_in_subquery(
+fn bind_in_subquery(
     expr: &Expr,
     query: &Query,
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let mut args = vec![bind_expr_inner(expr, tables, aggregates)?];
-    args.extend(bind_constant_subquery(query)?);
+    let expr = bind_expr_inner(expr, tables, aggregates, subqueries)?;
+    let values = match bind_constant_subquery(query) {
+        Ok(values) => values,
+        Err(BindError::UnsupportedSubquery(_)) => {
+            let resolver =
+                subqueries.ok_or_else(|| BindError::UnsupportedSubquery(query.to_string()))?;
+            let query = resolver(query)?;
+            let [projection] = query.projection.as_slice() else {
+                return Err(BindError::UnsupportedSubquery(
+                    "IN subquery must produce exactly one column".to_owned(),
+                ));
+            };
+            if !comparable(expr.data_type, projection.expr.data_type) {
+                return Err(BindError::InvalidScalarFunction("IN subquery".to_owned()));
+            }
+            return Ok(BoundExpr {
+                kind: BoundExprKind::InSubquery {
+                    expr: Box::new(expr),
+                    query: Box::new(query),
+                    negated,
+                },
+                data_type: Some(DataType::Boolean),
+                nullable: true,
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let mut args = vec![expr];
+    args.extend(values);
     if args[1..]
         .iter()
         .any(|value| !comparable(args[0].data_type, value.data_type))
@@ -801,7 +876,12 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
                 return Err(BindError::UnsupportedSubquery(select.to_string()));
             };
             let mut aggregates = None;
-            Ok(vec![bind_expr_inner(expression, &[], &mut aggregates)?])
+            Ok(vec![bind_expr_inner(
+                expression,
+                &[],
+                &mut aggregates,
+                None,
+            )?])
         }
         SetExpr::SetOperation {
             left,
@@ -905,8 +985,9 @@ fn bind_unary(
     expr: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr_inner(expr, tables, aggregates)?;
+    let expr = bind_expr_inner(expr, tables, aggregates, subqueries)?;
     let (op, data_type) = match operator {
         UnaryOperator::Plus if is_numeric(expr.data_type) => (UnaryOp::Plus, expr.data_type),
         UnaryOperator::Minus if is_numeric(expr.data_type) => (UnaryOp::Minus, expr.data_type),
@@ -936,9 +1017,10 @@ fn bind_binary(
     right: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let left = bind_expr_inner(left, tables, aggregates)?;
-    let right = bind_expr_inner(right, tables, aggregates)?;
+    let left = bind_expr_inner(left, tables, aggregates, subqueries)?;
+    let right = bind_expr_inner(right, tables, aggregates, subqueries)?;
     let (op, data_type) = match operator {
         BinaryOperator::Plus
         | BinaryOperator::Minus
@@ -1015,8 +1097,9 @@ fn bind_is_null(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr_inner(expr, tables, aggregates)?;
+    let expr = bind_expr_inner(expr, tables, aggregates, subqueries)?;
     Ok(BoundExpr {
         kind: BoundExprKind::IsNull {
             expr: Box::new(expr),
@@ -1031,6 +1114,7 @@ fn bind_scalar_function(
     function: &Function,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if function.uses_odbc_syntax
         || !matches!(function.parameters, FunctionArguments::None)
@@ -1059,6 +1143,7 @@ fn bind_scalar_function(
             function_name == "DATE_SUB",
             tables,
             aggregates,
+            subqueries,
         );
     }
     let mut args = Vec::with_capacity(arguments.args.len());
@@ -1066,7 +1151,7 @@ fn bind_scalar_function(
         let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
             return Err(BindError::UnsupportedExpression(function.to_string()));
         };
-        args.push(bind_expr_inner(expression, tables, aggregates)?);
+        args.push(bind_expr_inner(expression, tables, aggregates, subqueries)?);
     }
     let scalar = match function_name.as_str() {
         "CONCAT" if !args.is_empty() => ScalarFunction::Concat,
@@ -1108,6 +1193,7 @@ fn bind_date_interval(
     subtract: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let [
         FunctionArg::Unnamed(FunctionArgExpr::Expr(date)),
@@ -1134,8 +1220,8 @@ fn bind_date_interval(
     bind_scalar(
         ScalarFunction::DateInterval { unit, subtract },
         vec![
-            bind_expr_inner(date, tables, aggregates)?,
-            bind_expr_inner(&interval.value, tables, aggregates)?,
+            bind_expr_inner(date, tables, aggregates, subqueries)?,
+            bind_expr_inner(&interval.value, tables, aggregates, subqueries)?,
         ],
     )
 }
@@ -1146,14 +1232,15 @@ fn bind_in_list(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if list.is_empty() {
         return Err(BindError::UnsupportedExpression(expr.to_string()));
     }
     let mut args = Vec::with_capacity(list.len() + 1);
-    args.push(bind_expr_inner(expr, tables, aggregates)?);
+    args.push(bind_expr_inner(expr, tables, aggregates, subqueries)?);
     for value in list {
-        args.push(bind_expr_inner(value, tables, aggregates)?);
+        args.push(bind_expr_inner(value, tables, aggregates, subqueries)?);
     }
     if args[1..]
         .iter()
@@ -1171,11 +1258,12 @@ fn bind_between(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let args = vec![
-        bind_expr_inner(expr, tables, aggregates)?,
-        bind_expr_inner(low, tables, aggregates)?,
-        bind_expr_inner(high, tables, aggregates)?,
+        bind_expr_inner(expr, tables, aggregates, subqueries)?,
+        bind_expr_inner(low, tables, aggregates, subqueries)?,
+        bind_expr_inner(high, tables, aggregates, subqueries)?,
     ];
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
@@ -1192,6 +1280,7 @@ fn bind_like(
     escape: Option<&sqlparser::ast::ValueWithSpan>,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let escape = match escape {
         None => None,
@@ -1212,8 +1301,8 @@ fn bind_like(
         ),
     };
     let args = vec![
-        bind_expr_inner(expr, tables, aggregates)?,
-        bind_expr_inner(pattern, tables, aggregates)?,
+        bind_expr_inner(expr, tables, aggregates, subqueries)?,
+        bind_expr_inner(pattern, tables, aggregates, subqueries)?,
     ];
     bind_scalar(ScalarFunction::Like { negated, escape }, args)
 }
@@ -1224,12 +1313,13 @@ fn bind_case(
     else_result: Option<&Expr>,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if conditions.is_empty() {
         return Err(BindError::InvalidScalarFunction("CASE".to_owned()));
     }
     let operand = operand
-        .map(|expression| bind_expr_inner(expression, tables, aggregates))
+        .map(|expression| bind_expr_inner(expression, tables, aggregates, subqueries))
         .transpose()?;
     let mut result = else_result.map_or_else(
         || {
@@ -1239,10 +1329,10 @@ fn bind_case(
                 nullable: true,
             })
         },
-        |expression| bind_expr_inner(expression, tables, aggregates),
+        |expression| bind_expr_inner(expression, tables, aggregates, subqueries),
     )?;
     for clause in conditions.iter().rev() {
-        let condition = bind_expr_inner(&clause.condition, tables, aggregates)?;
+        let condition = bind_expr_inner(&clause.condition, tables, aggregates, subqueries)?;
         let condition = if let Some(operand) = &operand {
             equality_expr(operand.clone(), condition)?
         } else {
@@ -1253,7 +1343,7 @@ fn bind_case(
             }
             condition
         };
-        let value = bind_expr_inner(&clause.result, tables, aggregates)?;
+        let value = bind_expr_inner(&clause.result, tables, aggregates, subqueries)?;
         result = bind_scalar(ScalarFunction::If, vec![condition, value, result])?;
     }
     Ok(result)
@@ -1264,12 +1354,13 @@ fn bind_cast(
     data_type: &SqlDataType,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let target = cast_data_type(data_type)
         .ok_or_else(|| BindError::InvalidScalarFunction(format!("CAST AS {data_type}")))?;
     bind_scalar(
         ScalarFunction::Cast(target),
-        vec![bind_expr_inner(expr, tables, aggregates)?],
+        vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
     )
 }
 
@@ -1412,6 +1503,7 @@ fn bind_aggregate(
     function: &Function,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if function.uses_odbc_syntax
         || !matches!(function.parameters, FunctionArguments::None)
@@ -1439,7 +1531,9 @@ fn bind_aggregate(
         None | Some(DuplicateTreatment::All) => false,
     };
     let expr = match &arguments.args[0] {
-        FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(bind_expr(expr, tables)?),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
+            Some(bind_expr(expr, tables, subqueries)?)
+        }
         FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
             if aggregate_function == AggregateFunction::Count && !distinct =>
         {
@@ -1549,7 +1643,10 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
             *index = index.saturating_add(group_by.len());
             Ok(())
         }
-        BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) => Ok(()),
+        BoundExprKind::InSubquery { expr, .. } => rewrite_group_references(expr, group_by),
+        BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::GroupKey(_) => Ok(()),
     }
 }
 
@@ -2169,6 +2266,19 @@ mod tests {
             bind("SELECT (SELECT 1 UNION ALL SELECT 2)"),
             Err(BindError::InvalidScalarSubqueryRows(2))
         );
+    }
+
+    #[test]
+    fn binds_table_reading_scalar_and_in_subqueries() {
+        let query = bind(
+            "SELECT (SELECT MAX(id) FROM users) AS largest_user, \
+             id IN (SELECT id FROM users WHERE id >= 2) AS known \
+             FROM Events",
+        )
+        .expect("relational subqueries");
+
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::UInt64));
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
     }
 
     #[test]

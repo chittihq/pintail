@@ -85,6 +85,11 @@ impl CompiledExpr {
                     .collect::<Result<Vec<_>, _>>()?,
                 data_type: expr.data_type,
             }),
+            BoundExprKind::ScalarSubquery(_) | BoundExprKind::InSubquery { .. } => {
+                Err(ExecError::InvalidPhysicalPlan(
+                    "unresolved subquery reached expression compilation",
+                ))
+            }
         }
     }
 

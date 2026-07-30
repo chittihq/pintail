@@ -216,7 +216,7 @@ fn run_oracle() -> Result<(), String> {
     }
     if failures.is_empty() {
         println!(
-            "all {EXPECTED_CASES} generated queries matched MySQL 8.4 across 10 operator families"
+            "all {EXPECTED_CASES} generated queries matched MySQL 8.4 across 11 operator families"
         );
         Ok(())
     } else {
@@ -381,7 +381,7 @@ fn oracle_cases() -> Vec<OracleCase> {
             ),
         });
     }
-    for value in 0..75 {
+    for value in 0..50 {
         cases.push(OracleCase {
             family: "constant subqueries",
             sql: format!(
@@ -390,6 +390,27 @@ fn oracle_cases() -> Vec<OracleCase> {
                  {value} NOT IN (SELECT 101 UNION ALL SELECT 102), \
                  (SELECT NULL)"
             ),
+        });
+    }
+    for value in 0..25 {
+        let threshold = value % 10 + 1;
+        let limit = value % 4 + 1;
+        let sql = if value % 2 == 0 {
+            format!(
+                "SELECT id, (SELECT MAX(id) FROM users), \
+                 id IN (SELECT id FROM users WHERE id >= {threshold}) \
+                 FROM events WHERE id = {threshold} ORDER BY id"
+            )
+        } else {
+            format!(
+                "SELECT id, name FROM events \
+                 WHERE id IN (SELECT id FROM users WHERE id >= {threshold}) \
+                 ORDER BY id LIMIT {limit}"
+            )
+        };
+        cases.push(OracleCase {
+            family: "relational subqueries",
+            sql,
         });
     }
     for value in 0..25 {

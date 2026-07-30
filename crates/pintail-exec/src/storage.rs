@@ -394,7 +394,7 @@ mod tests {
     use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
     use crate::{
-        Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
+        ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
         explain_analyze_statement,
     };
 
@@ -784,6 +784,48 @@ mod tests {
                 Value::Utf8("user-b".to_owned()),
             ]
         );
+
+        let statement = parse_statement(
+            "SELECT events.id, (SELECT MAX(id) FROM users) AS largest_user, \
+             events.id IN (SELECT id FROM users WHERE id = 2) AS selected \
+             FROM events ORDER BY events.id",
+        )
+        .expect("parse relational subqueries");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind relational subqueries");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("relational subquery plan");
+        let mut execution =
+            Execution::start(physical, &provider, 64 * 1024).expect("subquery execution");
+        let batch = execution
+            .next_batch()
+            .expect("subquery pull")
+            .expect("subquery batch");
+        assert_eq!(
+            batch.column(0).expect("ids").values(),
+            [Value::UInt64(1), Value::UInt64(2)]
+        );
+        assert_eq!(
+            batch.column(1).expect("maximum").values(),
+            [Value::UInt64(2), Value::UInt64(2)]
+        );
+        assert_eq!(
+            batch.column(2).expect("membership").values(),
+            [Value::Boolean(false), Value::Boolean(true)]
+        );
+
+        let statement =
+            parse_statement("SELECT (SELECT id FROM users)").expect("parse multi-row subquery");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind multi-row subquery");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("multi-row subquery plan");
+        assert!(matches!(
+            Execution::start(physical, &provider, 64 * 1024),
+            Err(ExecError::ScalarSubqueryRows { rows: 2 })
+        ));
     }
 
     fn schema() -> TableSchema {
