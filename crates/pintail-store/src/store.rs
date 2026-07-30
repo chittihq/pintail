@@ -658,6 +658,49 @@ impl TableStore {
         self.wal.sync()
     }
 
+    /// Publishes an empty table generation before a full resnapshot.
+    ///
+    /// Existing reader snapshots retain their old immutable segments until
+    /// they are released. The WAL and mutable row state are discarded because
+    /// the caller has already marked the source as requiring a full rebuild.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the WAL cannot be reset, the empty manifest
+    /// cannot be published, or obsolete segments cannot be reclaimed.
+    pub fn reset_for_resnapshot(&mut self) -> Result<(), StoreError> {
+        self.wal.reset()?;
+        let mut next_manifest = Manifest::empty(&self.schema);
+        next_manifest.generation = self
+            .manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = self
+            .manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.next_segment_id = self.manifest.next_segment_id;
+        manifest::publish(&self.directory, &next_manifest)?;
+
+        self.memtable.clear();
+        self.last_sequence = 0;
+        self.next_append_row_id = 1;
+        let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
+        let paths = previous
+            .segments
+            .iter()
+            .map(|segment| self.directory.join(&segment.file_name))
+            .collect();
+        self.retired.push(RetiredGeneration {
+            readers: Arc::downgrade(&previous),
+            paths,
+        });
+        self.reclaim_obsolete_segments()?;
+        Ok(())
+    }
+
     /// Publishes one initial-snapshot chunk directly as an immutable segment.
     ///
     /// This path bypasses both the WAL and memtable. It is intended only for

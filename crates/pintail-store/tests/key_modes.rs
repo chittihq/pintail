@@ -76,6 +76,45 @@ fn primary_and_unique_modes_resolve_duplicate_keys_by_max_version() {
     }
 }
 
+#[test]
+fn resnapshot_reset_keeps_pinned_readers_and_accepts_a_fresh_snapshot() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table = TableStore::open(
+        directory.path(),
+        schema(KeyMode::Primary),
+        StoreOptions::default(),
+    )
+    .expect("open reset table");
+    table
+        .ingest(vec![source_row("old", 1)])
+        .expect("ingest old generation");
+    table.flush().expect("flush old generation");
+    let pinned = table.snapshot();
+
+    table.reset_for_resnapshot().expect("reset table");
+    assert!(
+        table
+            .snapshot()
+            .scan()
+            .expect("scan empty generation")
+            .is_empty()
+    );
+    assert_eq!(
+        pinned.scan().expect("scan pinned generation"),
+        vec![source_row("old", 1)]
+    );
+    table
+        .bulk_ingest_snapshot(vec![source_row("fresh", 0)])
+        .expect("publish fresh snapshot");
+    assert_eq!(
+        table.snapshot().scan().expect("scan fresh generation"),
+        vec![source_row("fresh", 0)]
+    );
+
+    drop(pinned);
+    assert_eq!(table.reclaim_obsolete_segments().expect("reclaim old"), 1);
+}
+
 fn schema(key_mode: KeyMode) -> TableSchema {
     TableSchema::with_key_mode(
         1,
