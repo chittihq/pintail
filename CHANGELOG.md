@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rule-based logical optimization with conservative constant folding,
   single-table conjunct pushdown, stable-ID projection pruning,
   cardinality-ordered cross joins, and semantics-safe scan limit propagation.
+- Typed columnar executor batches targeting 4,096 rows, including nullable
+  vectors, zero-column relational rows, and compact shared selection masks.
 
 ## [M1] - 2026-07-30
 
