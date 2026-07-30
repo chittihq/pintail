@@ -7,5 +7,22 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+mysql_async.workspace = true
+pintail-meta.workspace = true
+pintail-probe = { path = "../pintail-probe" }
+pintail-snapshot = { path = "../pintail-snapshot" }
+pintail-store.workspace = true
+pintail-types.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

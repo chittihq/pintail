@@ -702,7 +702,7 @@ fn convert_row(
         .unwrap()
         .into_iter()
         .zip(&table.columns)
-        .map(|(value, column)| map_value(&table.name, column, value))
+        .map(|(value, column)| map_mysql_value(&table.name, column, value))
         .collect::<Result<Vec<_>, _>>()?;
     let key = if table.key.mode == KeyMode::AppendRowId {
         PrimaryKey::new(vec![KeyPart::UInt64(append_row_id)])?
@@ -733,7 +733,15 @@ fn convert_row(
     Ok(StoredRow::new(key, values, 0, false))
 }
 
-fn map_value(
+/// Converts one value returned by a source query using probed column metadata.
+///
+/// CDC reuses this normalization after adapting binlog-only representations
+/// such as ENUM indexes and packed timestamps.
+///
+/// # Errors
+///
+/// Returns a typed mapping error when the source representation is invalid.
+pub fn map_mysql_value(
     table: &str,
     column: &SourceColumn,
     value: MysqlValue,
