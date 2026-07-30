@@ -18,7 +18,7 @@ mod wal;
 pub use database::DatabaseStore;
 pub use error::StoreError;
 pub use store::{
-    BulkIngestOutcome, CompactionOutcome, CompactionStatus, FlushOutcome, IngestOutcome,
-    ProjectedRow, ProjectedScan, ScanStats, StorageMetrics, StoreOptions, TableSnapshot,
-    TableStore, WalSync,
+    BackupArtifacts, BackupSegment, BulkIngestOutcome, CompactionOutcome, CompactionStatus,
+    FlushOutcome, IngestOutcome, ProjectedRow, ProjectedScan, ScanStats, StorageMetrics,
+    StoreOptions, TableSnapshot, TableStore, WalSync,
 };

@@ -211,6 +211,24 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
 }
 
 pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), StoreError> {
+    let bytes = encode(manifest)?;
+    let temporary = directory.join(".manifest.ptm.tmp");
+    let destination = directory.join(FILE_NAME);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temporary)
+        .map_err(|error| StoreError::io("create temporary manifest", error))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| StoreError::io("write temporary manifest", error))?;
+    std::fs::rename(&temporary, &destination)
+        .map_err(|error| StoreError::io("publish manifest", error))?;
+    sync_directory(directory)
+}
+
+pub(crate) fn encode(manifest: &Manifest) -> Result<Vec<u8>, StoreError> {
     let mut encoder = Encoder::new();
     encoder.raw(MAGIC);
     encoder.u8(FORMAT_VERSION);
@@ -236,21 +254,7 @@ pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), Store
     }
     let checksum = xxh3_64(encoder.as_slice());
     encoder.u64(checksum);
-
-    let temporary = directory.join(".manifest.ptm.tmp");
-    let destination = directory.join(FILE_NAME);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&temporary)
-        .map_err(|error| StoreError::io("create temporary manifest", error))?;
-    file.write_all(&encoder.finish())
-        .and_then(|()| file.sync_all())
-        .map_err(|error| StoreError::io("write temporary manifest", error))?;
-    std::fs::rename(&temporary, &destination)
-        .map_err(|error| StoreError::io("publish manifest", error))?;
-    sync_directory(directory)
+    Ok(encoder.finish())
 }
 
 fn corrupt_here(decoder: &Decoder<'_>, reason: impl Into<String>) -> StoreError {

@@ -30,6 +30,7 @@ anyhow = "1.0.98"
 argon2 = "0.5.3"
 async-trait = "0.1.91"
 axum = { version = "0.8.4", features = ["ws"] }
+bytes = "1.10.1"
 chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.41", default-features = false, features = ["clock"] }
 clap = { version = "4.5.40", features = ["derive", "env"] }
@@ -42,6 +43,7 @@ lz4_flex = "0.11.5"
 mime_guess = "2.0.5"
 mysql_async = { version = "0.37.0", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
 opensrv-mysql = { version = "0.7.0", default-features = false }
+object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
 pintail-api = { path = "crates/pintail-api" }
 pintail-catalog = { path = "crates/pintail-catalog" }
 pintail-cdc = { path = "crates/pintail-cdc" }

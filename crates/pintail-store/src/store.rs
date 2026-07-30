@@ -1171,11 +1171,84 @@ pub struct TableSnapshot {
     schema: TableSchema,
 }
 
+/// Immutable files pinned by a reader snapshot for native backup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackupArtifacts {
+    generation: u64,
+    manifest: Vec<u8>,
+    segments: Vec<BackupSegment>,
+}
+
+impl BackupArtifacts {
+    /// Returns the pinned manifest generation.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the encoded storage manifest that references the pinned files.
+    #[must_use]
+    pub fn manifest(&self) -> &[u8] {
+        &self.manifest
+    }
+
+    /// Returns the immutable segment files referenced by the manifest.
+    #[must_use]
+    pub fn segments(&self) -> &[BackupSegment] {
+        &self.segments
+    }
+}
+
+/// One immutable storage segment pinned for backup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackupSegment {
+    file_name: String,
+    path: PathBuf,
+}
+
+impl BackupSegment {
+    /// Returns the portable segment file name.
+    #[must_use]
+    pub fn file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    /// Returns the local path to the pinned segment.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl TableSnapshot {
     /// Returns the catalog schema pinned with this reader snapshot.
     #[must_use]
     pub const fn schema(&self) -> &TableSchema {
         &self.schema
+    }
+
+    /// Captures the encoded manifest and immutable segment paths pinned by
+    /// this reader. The caller must retain this snapshot while reading the
+    /// returned paths so compaction cannot reclaim them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pinned manifest cannot be encoded.
+    pub fn backup_artifacts(&self) -> Result<BackupArtifacts, StoreError> {
+        let segments = self
+            .manifest
+            .segments
+            .iter()
+            .map(|segment| BackupSegment {
+                file_name: segment.file_name.clone(),
+                path: self.directory.join(&segment.file_name),
+            })
+            .collect();
+        Ok(BackupArtifacts {
+            generation: self.manifest.generation,
+            manifest: manifest::encode(&self.manifest)?,
+            segments,
+        })
     }
 
     /// Returns the minimum and maximum retained storage keys in this snapshot.

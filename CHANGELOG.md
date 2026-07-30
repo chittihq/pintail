@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configuration, encrypted credential material, and durable full/incremental
   backup run history with parent chains, object counts, byte totals, and
   terminal errors.
+- Native S3-compatible backups pin and encode storage manifests, upload
+  checksum-addressed immutable segments, reuse unchanged objects in
+  incremental chains, publish portable JSON manifests last, and restore only
+  into new side-by-side directories after SHA-256 verification.
 
 ## [M7] - 2026-07-30
 
