@@ -71,7 +71,7 @@ pub struct StoreOptions {
     pub wal_sync: WalSync,
     /// Number of similarly sized overlapping segments merged in one pass.
     pub compaction_fan_in: usize,
-    /// Maximum input rows admitted to one in-memory compaction pass.
+    /// Maximum rows retained in one compaction output buffer and segment.
     pub max_compaction_rows: u64,
 }
 
@@ -373,12 +373,7 @@ impl ProjectedScan {
     }
 }
 
-/// Pull-based projected scan over independently visible immutable segments.
-///
-/// This fast path is available only when every selected segment is marked
-/// unique, their key ranges do not overlap, and no WAL-backed memtable rows
-/// are present. Those conditions make each segment independently visible
-/// without weakening merge-on-read semantics.
+/// Pull-based projected scan over immutable segments and WAL-backed rows.
 pub struct ProjectedScanStream {
     snapshot: TableSnapshot,
     segments: Vec<segment::SegmentMeta>,
@@ -387,6 +382,14 @@ pub struct ProjectedScanStream {
     column_ids: Vec<u32>,
     next_segment: usize,
     pruned_segments: usize,
+    merge: Option<MergedProjectedStream>,
+}
+
+struct MergedProjectedStream {
+    streams: Vec<segment::SegmentRowStream>,
+    heads: Vec<Option<StoredRow>>,
+    memtable_head: Option<StoredRow>,
+    reported_segments: bool,
 }
 
 /// One bounded set of projected values from an independently visible segment.
@@ -512,6 +515,9 @@ impl ProjectedScanStream {
         &mut self,
         memory_limit: usize,
     ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
+        if self.merge.is_some() {
+            return self.next_merged_column_chunk(memory_limit);
+        }
         let Some(segment) = self.segments.get(self.next_segment).cloned() else {
             return Ok(None);
         };
@@ -532,6 +538,9 @@ impl ProjectedScanStream {
         max_chunks: usize,
         memory_limit: usize,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        if self.merge.is_some() {
+            return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
+        }
         let max_chunks = if memory_limit < 64 * 1024 * 1024 {
             1
         } else {
@@ -566,6 +575,142 @@ impl ProjectedScanStream {
             return self.next_column_chunks(chunk_count.div_ceil(2), memory_limit);
         }
         decoded
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn next_merged_column_chunk(
+        &mut self,
+        memory_limit: usize,
+    ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
+        const MAX_MERGED_CHUNK_ROWS: usize = 8 * 1024;
+        let projection = self
+            .column_ids
+            .iter()
+            .map(|id| {
+                self.snapshot
+                    .schema
+                    .columns()
+                    .iter()
+                    .position(|column| column.id() == *id)
+                    .ok_or_else(|| {
+                        StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let merge = self.merge.as_mut().expect("checked merged scan");
+        let chunk_rows = if projection.is_empty() {
+            MAX_MERGED_CHUNK_ROWS
+        } else {
+            memory_limit
+                .checked_div(
+                    projection
+                        .len()
+                        .saturating_mul(size_of::<pintail_types::Value>())
+                        .saturating_mul(2),
+                )
+                .unwrap_or(0)
+                .clamp(1, MAX_MERGED_CHUNK_ROWS)
+        };
+        let mut columns = projection
+            .iter()
+            .map(|_| Vec::with_capacity(chunk_rows))
+            .collect::<Vec<_>>();
+        let mut row_count = 0;
+        while row_count < chunk_rows {
+            let minimum = merge
+                .heads
+                .iter()
+                .filter_map(|row| row.as_ref().map(StoredRow::key))
+                .chain(merge.memtable_head.as_ref().map(StoredRow::key).into_iter())
+                .min()
+                .cloned();
+            let Some(minimum) = minimum else {
+                break;
+            };
+            let mut winner = None;
+            for (stream, head) in merge.streams.iter_mut().zip(&mut merge.heads) {
+                while head.as_ref().is_some_and(|row| row.key() == &minimum) {
+                    let candidate = head.take().expect("matching stream head");
+                    if winner
+                        .as_ref()
+                        .is_none_or(|current: &StoredRow| candidate.version() >= current.version())
+                    {
+                        winner = Some(candidate);
+                    }
+                    *head = stream.next_row()?;
+                }
+            }
+            if merge
+                .memtable_head
+                .as_ref()
+                .is_some_and(|row| row.key() == &minimum)
+            {
+                let candidate = merge.memtable_head.take().expect("matching memtable head");
+                if winner
+                    .as_ref()
+                    .is_none_or(|current: &StoredRow| candidate.version() >= current.version())
+                {
+                    winner = Some(candidate);
+                }
+                merge.memtable_head = self
+                    .snapshot
+                    .memtable
+                    .range((
+                        std::ops::Bound::Excluded(minimum.clone()),
+                        std::ops::Bound::Included(self.end.clone()),
+                    ))
+                    .next()
+                    .map(|(_, row)| row.clone());
+            }
+            let winner = winner.expect("minimum key has a winning row");
+            if winner.key() < &self.start || winner.key() > &self.end || winner.is_deleted() {
+                continue;
+            }
+            for (output, index) in columns.iter_mut().zip(&projection) {
+                output.push(winner.values()[*index].clone());
+            }
+            row_count += 1;
+        }
+        if row_count == 0 {
+            return Ok(None);
+        }
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                columns
+                    .capacity()
+                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+            )
+            .saturating_add(
+                columns
+                    .iter()
+                    .map(|values| {
+                        values
+                            .capacity()
+                            .saturating_mul(size_of::<pintail_types::Value>())
+                            .saturating_add(
+                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
+                            )
+                    })
+                    .sum(),
+            );
+        if retained_bytes > memory_limit {
+            return Err(StoreError::MemoryLimitExceeded {
+                used: 0,
+                requested: retained_bytes,
+                limit: memory_limit,
+            });
+        }
+        let first_chunk = !std::mem::replace(&mut merge.reported_segments, true);
+        Ok(Some(ProjectedColumnChunk {
+            columns,
+            row_count,
+            stats: ScanStats {
+                segments_read: usize::from(first_chunk) * self.segments.len(),
+                segments_pruned: usize::from(first_chunk) * self.pruned_segments,
+                ..ScanStats::default()
+            },
+            retained_bytes,
+        }))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1345,6 +1490,7 @@ impl TableStore {
     ///
     /// Returns an error when input validation, output writing, or atomic
     /// manifest publication fails.
+    #[allow(clippy::too_many_lines)]
     pub fn compact(&mut self) -> Result<CompactionOutcome, StoreError> {
         let Some(plan) = self.compaction_plan()? else {
             return Ok(CompactionOutcome {
@@ -1354,18 +1500,19 @@ impl TableStore {
             });
         };
         let full_merge = plan.indices.len() == self.manifest.segments.len();
-        let mut merged = BTreeMap::new();
+        let mut streams = Vec::with_capacity(plan.indices.len());
         for index in &plan.indices {
             let meta = &self.manifest.segments[*index];
-            for row in segment::read(&self.directory, meta, &self.schema)? {
-                apply_latest(&mut merged, row);
-            }
-            std::thread::yield_now();
+            streams.push(segment::SegmentRowStream::open(
+                &self.directory,
+                meta,
+                &self.schema,
+            )?);
         }
-        let rows = merged
-            .into_values()
-            .filter(|row| !full_merge || !row.is_deleted())
-            .collect::<Vec<_>>();
+        let mut heads = streams
+            .iter_mut()
+            .map(segment::SegmentRowStream::next_row)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut next_manifest = self.manifest.as_ref().clone();
         next_manifest.generation = next_manifest
@@ -1396,31 +1543,74 @@ impl TableStore {
             .map(|(_, meta)| meta)
             .collect();
 
-        let output_path = if rows.is_empty() {
-            None
+        let compression = if full_merge {
+            segment::Compression::Zstd
         } else {
-            let compression = if full_merge {
-                segment::Compression::Zstd
-            } else {
-                segment::Compression::Lz4
+            segment::Compression::Lz4
+        };
+        let output_row_limit =
+            usize::try_from(self.options.max_compaction_rows).unwrap_or(usize::MAX);
+        let mut rows = Vec::with_capacity(output_row_limit.min(64 * 1024));
+        let mut output_rows = 0_usize;
+        let mut output_path = None;
+        while let Some(minimum) = heads
+            .iter()
+            .filter_map(|row| row.as_ref().map(StoredRow::key))
+            .min()
+            .cloned()
+        {
+            let mut winner = None;
+            for (stream, head) in streams.iter_mut().zip(&mut heads) {
+                while head.as_ref().is_some_and(|row| row.key() == &minimum) {
+                    let Some(candidate) = head.take() else {
+                        return Err(StoreError::FormatLimit(
+                            "matching compaction head disappeared".into(),
+                        ));
+                    };
+                    if winner
+                        .as_ref()
+                        .is_none_or(|current: &StoredRow| candidate.version() >= current.version())
+                    {
+                        winner = Some(candidate);
+                    }
+                    *head = stream.next_row()?;
+                }
+            }
+            let Some(winner) = winner else {
+                return Err(StoreError::FormatLimit(
+                    "compaction minimum has no winning row".into(),
+                ));
             };
-            let output = segment::write(
+            if !full_merge || !winner.is_deleted() {
+                rows.push(winner);
+                output_rows = output_rows.saturating_add(1);
+            }
+            if rows.len() >= output_row_limit {
+                let path = write_compaction_chunk(
+                    &self.directory,
+                    &self.schema,
+                    self.options.block_rows,
+                    compression,
+                    full_merge,
+                    &mut next_manifest,
+                    &rows,
+                )?;
+                output_path.get_or_insert(path);
+                rows.clear();
+            }
+        }
+        if !rows.is_empty() {
+            let path = write_compaction_chunk(
                 &self.directory,
-                next_manifest.next_segment_id,
                 &self.schema,
-                &rows,
                 self.options.block_rows,
                 compression,
                 full_merge,
+                &mut next_manifest,
+                &rows,
             )?;
-            next_manifest.next_segment_id = next_manifest
-                .next_segment_id
-                .checked_add(1)
-                .ok_or(StoreError::SequenceOverflow)?;
-            let path = self.directory.join(&output.file_name);
-            next_manifest.segments.push(output);
-            Some(path)
-        };
+            output_path.get_or_insert(path);
+        }
         manifest::publish(&self.directory, &next_manifest)?;
 
         let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
@@ -1430,7 +1620,7 @@ impl TableStore {
         });
         Ok(CompactionOutcome {
             input_segments: plan.indices.len(),
-            output_rows: rows.len(),
+            output_rows,
             output_path,
         })
     }
@@ -1504,7 +1694,6 @@ impl TableStore {
             candidates.push(CompactionCandidate {
                 index,
                 size,
-                row_count: meta.row_count,
                 minimum: meta.min_key.clone(),
                 maximum: meta.max_key.clone(),
             });
@@ -1513,14 +1702,7 @@ impl TableStore {
         for window in candidates.windows(self.options.compaction_fan_in) {
             let smallest = window.first().expect("non-empty window").size;
             let largest = window.last().expect("non-empty window").size;
-            let row_count = window
-                .iter()
-                .map(|candidate| candidate.row_count)
-                .sum::<u64>();
-            if row_count > self.options.max_compaction_rows
-                || largest > smallest.saturating_mul(SIZE_TIER_RATIO)
-                || !ranges_overlap(window)
-            {
+            if largest > smallest.saturating_mul(SIZE_TIER_RATIO) || !ranges_overlap(window) {
                 continue;
             }
             return Ok(Some(CompactionPlan {
@@ -1535,7 +1717,6 @@ impl TableStore {
 struct CompactionCandidate {
     index: usize,
     size: u64,
-    row_count: u64,
     minimum: PrimaryKey,
     maximum: PrimaryKey,
 }
@@ -1883,11 +2064,8 @@ impl TableSnapshot {
         self.scan_projected_range_bounded(start, end, column_ids, usize::MAX)
     }
 
-    /// Opens a bounded pull scan when immutable segments are independently
-    /// visible without merge-on-read.
-    ///
-    /// Returns `None` when overlapping generations or memtable rows require
-    /// the general materializing merge path.
+    /// Opens a bounded pull scan, using a direct segment path when possible
+    /// and a block-wise last-write-wins merge otherwise.
     ///
     /// # Errors
     ///
@@ -1922,31 +2100,55 @@ impl TableSnapshot {
                 )));
             }
         }
-        if !self.memtable.is_empty() {
-            return Ok(None);
-        }
-
         let mut segments = Vec::new();
         let mut pruned_segments = 0;
+        let mut independently_visible = self.memtable.is_empty();
         for meta in &self.manifest.segments {
             let overlaps = segment::overlaps_key_range(meta, start, end);
             let point_might_match = start != end
                 || segment::might_contain_key(&self.directory, meta, &self.schema, start)?;
             if !overlaps || !point_might_match {
                 pruned_segments += 1;
-            } else if !meta.unique_keys {
-                return Ok(None);
             } else {
+                independently_visible &= meta.unique_keys;
                 segments.push(meta.clone());
             }
         }
         segments.sort_by(|left, right| left.min_key.cmp(&right.min_key));
-        if segments
+        independently_visible &= !segments
             .windows(2)
-            .any(|pair| pair[0].max_key >= pair[1].min_key)
-        {
+            .any(|pair| pair[0].max_key >= pair[1].min_key);
+        let candidate_rows = segments
+            .iter()
+            .map(|segment| segment.row_count)
+            .sum::<u64>()
+            .saturating_add(u64::try_from(self.memtable.len()).unwrap_or(u64::MAX));
+        if !independently_visible && candidate_rows < 64 * 1024 {
             return Ok(None);
         }
+        let merge = if independently_visible {
+            None
+        } else {
+            let mut streams = segments
+                .iter()
+                .map(|meta| segment::SegmentRowStream::open(&self.directory, meta, &self.schema))
+                .collect::<Result<Vec<_>, _>>()?;
+            let heads = streams
+                .iter_mut()
+                .map(segment::SegmentRowStream::next_row)
+                .collect::<Result<Vec<_>, _>>()?;
+            let memtable_head = self
+                .memtable
+                .range(start.clone()..=end.clone())
+                .next()
+                .map(|(_, row)| row.clone());
+            Some(MergedProjectedStream {
+                streams,
+                heads,
+                memtable_head,
+                reported_segments: false,
+            })
+        };
         Ok(Some(ProjectedScanStream {
             snapshot: self.clone(),
             segments,
@@ -1955,6 +2157,7 @@ impl TableSnapshot {
             column_ids: column_ids.to_vec(),
             next_segment: 0,
             pruned_segments,
+            merge,
         }))
     }
 
@@ -2248,6 +2451,33 @@ fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
     {
         rows.insert(row.key().clone(), row);
     }
+}
+
+fn write_compaction_chunk(
+    directory: &Path,
+    schema: &TableSchema,
+    block_rows: usize,
+    compression: segment::Compression,
+    unique_keys: bool,
+    manifest: &mut Manifest,
+    rows: &[StoredRow],
+) -> Result<PathBuf, StoreError> {
+    let output = segment::write(
+        directory,
+        manifest.next_segment_id,
+        schema,
+        rows,
+        block_rows,
+        compression,
+        unique_keys,
+    )?;
+    manifest.next_segment_id = manifest
+        .next_segment_id
+        .checked_add(1)
+        .ok_or(StoreError::SequenceOverflow)?;
+    let path = directory.join(&output.file_name);
+    manifest.segments.push(output);
+    Ok(path)
 }
 
 fn open_lock(path: &Path) -> Result<File, StoreError> {

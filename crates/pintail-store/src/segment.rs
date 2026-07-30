@@ -80,6 +80,24 @@ impl FileDecoder {
         self.position = self.position.saturating_add(bytes.len());
         Ok(())
     }
+
+    fn seek_to(&mut self, position: usize) -> Result<(), String> {
+        self.reader
+            .seek(SeekFrom::Start(
+                u64::try_from(position).map_err(|_| "file offset exceeds u64".to_owned())?,
+            ))
+            .map_err(|error| error.to_string())?;
+        self.position = position;
+        Ok(())
+    }
+
+    fn skip(&mut self, length: usize) -> Result<(), String> {
+        let position = self
+            .position
+            .checked_add(length)
+            .ok_or_else(|| "file offset overflow".to_owned())?;
+        self.seek_to(position)
+    }
 }
 
 impl DecodePosition for FileDecoder {
@@ -494,6 +512,358 @@ struct DecodedColumns {
     versions: Vec<Cell>,
     tombstones: Vec<Cell>,
     values: Vec<Vec<Cell>>,
+}
+
+enum StreamColumnTarget {
+    Key,
+    Version,
+    Tombstone,
+    Value(usize),
+}
+
+struct StreamColumn {
+    decoder: FileDecoder,
+    logical_type: LogicalType,
+    remaining_blocks: usize,
+    target: StreamColumnTarget,
+}
+
+/// Bounded row cursor over one immutable columnar segment.
+pub(crate) struct SegmentRowStream {
+    path: PathBuf,
+    columns: Vec<StreamColumn>,
+    nullable_absent: Vec<usize>,
+    remaining_rows: usize,
+    buffered_rows: std::vec::IntoIter<StoredRow>,
+}
+
+impl SegmentRowStream {
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn open(
+        directory: &Path,
+        meta: &SegmentMeta,
+        schema: &TableSchema,
+    ) -> Result<Self, StoreError> {
+        verify(directory, meta, schema)?;
+        let path = directory.join(&meta.file_name);
+        let mut layout = FileDecoder::open(&path)?;
+        let magic = layout
+            .raw(MAGIC.len())
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+        if magic.as_slice() != MAGIC {
+            return Err(corrupt(&path, 0, "invalid segment magic"));
+        }
+        if layout
+            .u8()
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?
+            != FORMAT_VERSION
+        {
+            return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
+        }
+        let schema_version = layout
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+        if schema_version > schema.version() {
+            return Err(StoreError::SchemaMismatch {
+                expected_version: schema.version(),
+                actual_version: schema_version,
+            });
+        }
+        let fingerprint = layout
+            .u64()
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+        if fingerprint != meta.schema_fingerprint {
+            return Err(StoreError::SchemaFingerprintMismatch {
+                expected: meta.schema_fingerprint,
+                actual: fingerprint,
+            });
+        }
+        let remaining_rows = usize::try_from(
+            layout
+                .u64()
+                .map_err(|reason| corrupt_here(&path, &layout, reason))?,
+        )
+        .map_err(|_| corrupt_here(&path, &layout, "segment row count exceeds usize"))?;
+        let column_count = layout
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?
+            as usize;
+        let block_rows = layout
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+        if block_rows == 0 {
+            return Err(corrupt_here(
+                &path,
+                &layout,
+                "segment block row target is zero",
+            ));
+        }
+
+        let mut columns = Vec::with_capacity(column_count);
+        let mut found_key = false;
+        let mut found_version = false;
+        let mut found_tombstone = false;
+        let mut found_values = vec![false; schema.columns().len()];
+        let mut expected_blocks = None;
+        for _ in 0..column_count {
+            let column_offset = layout.decode_position();
+            let id = layout
+                .u32()
+                .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+            let logical_type = LogicalType::decode(
+                layout
+                    .u8()
+                    .map_err(|reason| corrupt_here(&path, &layout, reason))?,
+            )
+            .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+            let block_count = layout
+                .u32()
+                .map_err(|reason| corrupt_here(&path, &layout, reason))?
+                as usize;
+            if expected_blocks
+                .replace(block_count)
+                .is_some_and(|count| count != block_count)
+            {
+                return Err(corrupt_here(&path, &layout, "column block counts differ"));
+            }
+
+            let target = match id {
+                KEY_COLUMN_ID => {
+                    if std::mem::replace(&mut found_key, true)
+                        || logical_type != LogicalType::PrimaryKey
+                    {
+                        return Err(corrupt_here(
+                            &path,
+                            &layout,
+                            "invalid or duplicate primary-key column",
+                        ));
+                    }
+                    Some(StreamColumnTarget::Key)
+                }
+                VERSION_COLUMN_ID => {
+                    if std::mem::replace(&mut found_version, true)
+                        || logical_type != LogicalType::UInt64
+                    {
+                        return Err(corrupt_here(
+                            &path,
+                            &layout,
+                            "invalid or duplicate version column",
+                        ));
+                    }
+                    Some(StreamColumnTarget::Version)
+                }
+                TOMBSTONE_COLUMN_ID => {
+                    if std::mem::replace(&mut found_tombstone, true)
+                        || logical_type != LogicalType::Boolean
+                    {
+                        return Err(corrupt_here(
+                            &path,
+                            &layout,
+                            "invalid or duplicate tombstone column",
+                        ));
+                    }
+                    Some(StreamColumnTarget::Tombstone)
+                }
+                _ => schema
+                    .columns()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.id() == id)
+                    .map(|(index, column)| {
+                        if found_values[index] {
+                            return Err(corrupt_here(
+                                &path,
+                                &layout,
+                                format!("duplicate user column id {id}"),
+                            ));
+                        }
+                        let expected = LogicalType::from_data_type(column.data_type());
+                        if logical_type != expected {
+                            return Err(StoreError::IncompatibleSchema(format!(
+                                "column {} ({id}) changed physical type",
+                                column.name()
+                            )));
+                        }
+                        found_values[index] = true;
+                        Ok(StreamColumnTarget::Value(index))
+                    })
+                    .transpose()?,
+            };
+
+            if let Some(target) = target {
+                let mut decoder = FileDecoder::open(&path)?;
+                decoder
+                    .seek_to(column_offset)
+                    .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+                let decoded_id = decoder
+                    .u32()
+                    .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+                let decoded_type = LogicalType::decode(
+                    decoder
+                        .u8()
+                        .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+                )
+                .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+                let decoded_blocks = decoder
+                    .u32()
+                    .map_err(|reason| corrupt_here(&path, &decoder, reason))?
+                    as usize;
+                if (decoded_id, decoded_type, decoded_blocks) != (id, logical_type, block_count) {
+                    return Err(corrupt_here(&path, &decoder, "column layout changed"));
+                }
+                columns.push(StreamColumn {
+                    decoder,
+                    logical_type,
+                    remaining_blocks: block_count,
+                    target,
+                });
+            }
+            for _ in 0..block_count {
+                let payload_length = layout
+                    .u32()
+                    .map_err(|reason| corrupt_here(&path, &layout, reason))?
+                    as usize;
+                layout
+                    .skip(payload_length.saturating_add(8))
+                    .map_err(|reason| corrupt_here(&path, &layout, reason))?;
+            }
+        }
+        if !found_key || !found_version || !found_tombstone {
+            return Err(corrupt_here(
+                &path,
+                &layout,
+                "segment is missing a system column",
+            ));
+        }
+        let mut nullable_absent = Vec::new();
+        for (index, (column, found)) in schema.columns().iter().zip(found_values).enumerate() {
+            if found {
+                continue;
+            }
+            if !column.is_nullable() {
+                return Err(StoreError::IncompatibleSchema(format!(
+                    "required column {} ({}) is absent from schema version {schema_version}",
+                    column.name(),
+                    column.id()
+                )));
+            }
+            nullable_absent.push(index);
+        }
+        Ok(Self {
+            path,
+            columns,
+            nullable_absent,
+            remaining_rows,
+            buffered_rows: Vec::new().into_iter(),
+        })
+    }
+
+    pub(crate) fn next_row(&mut self) -> Result<Option<StoredRow>, StoreError> {
+        loop {
+            if let Some(row) = self.buffered_rows.next() {
+                return Ok(Some(row));
+            }
+            if self.remaining_rows == 0 {
+                if self
+                    .columns
+                    .iter()
+                    .any(|column| column.remaining_blocks != 0)
+                {
+                    return Err(corrupt(&self.path, 0, "segment has extra column blocks"));
+                }
+                return Ok(None);
+            }
+            self.refill()?;
+        }
+    }
+
+    fn refill(&mut self) -> Result<(), StoreError> {
+        let mut keys = None;
+        let mut versions = None;
+        let mut tombstones = None;
+        let value_count = self
+            .columns
+            .iter()
+            .filter_map(|column| match column.target {
+                StreamColumnTarget::Value(index) => Some(index),
+                StreamColumnTarget::Key
+                | StreamColumnTarget::Version
+                | StreamColumnTarget::Tombstone => None,
+            })
+            .chain(self.nullable_absent.iter().copied())
+            .max()
+            .map_or(0, |index| index + 1);
+        let mut values = vec![None; value_count];
+        let mut block_rows = None;
+        let mut decode_position = 0;
+        for column in &mut self.columns {
+            if column.remaining_blocks == 0 {
+                return Err(corrupt(
+                    &self.path,
+                    column.decoder.decode_position(),
+                    "column ended before the segment row count",
+                ));
+            }
+            let cells = read_file_block(&self.path, &mut column.decoder, column.logical_type)?;
+            column.remaining_blocks -= 1;
+            decode_position = column.decoder.decode_position();
+            if block_rows
+                .replace(cells.len())
+                .is_some_and(|count| count != cells.len())
+            {
+                return Err(corrupt(
+                    &self.path,
+                    decode_position,
+                    "column block row count mismatch",
+                ));
+            }
+            match column.target {
+                StreamColumnTarget::Key => keys = Some(cells),
+                StreamColumnTarget::Version => versions = Some(cells),
+                StreamColumnTarget::Tombstone => tombstones = Some(cells),
+                StreamColumnTarget::Value(index) => values[index] = Some(cells),
+            }
+        }
+        let block_rows =
+            block_rows.ok_or_else(|| corrupt(&self.path, 0, "segment has no columns"))?;
+        if block_rows == 0 || block_rows > self.remaining_rows {
+            return Err(corrupt(
+                &self.path,
+                decode_position,
+                "invalid streamed block row count",
+            ));
+        }
+        for index in &self.nullable_absent {
+            values[*index] = Some(vec![Cell::Null; block_rows]);
+        }
+        let decoded = DecodedColumns {
+            keys: keys.ok_or_else(|| corrupt(&self.path, decode_position, "missing key block"))?,
+            versions: versions
+                .ok_or_else(|| corrupt(&self.path, decode_position, "missing version block"))?,
+            tombstones: tombstones
+                .ok_or_else(|| corrupt(&self.path, decode_position, "missing tombstone block"))?,
+            values: values
+                .into_iter()
+                .map(|column| {
+                    column
+                        .ok_or_else(|| corrupt(&self.path, decode_position, "missing value block"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        let position = DecodeOffset(decode_position);
+        let rows = assemble_rows(&self.path, &position, decoded, block_rows)?;
+        self.remaining_rows -= block_rows;
+        self.buffered_rows = rows.into_iter();
+        Ok(())
+    }
+}
+
+struct DecodeOffset(usize);
+
+impl DecodePosition for DecodeOffset {
+    fn decode_position(&self) -> usize {
+        self.0
+    }
 }
 
 fn read_file_segment_columns(

@@ -90,11 +90,11 @@ fn partial_compaction_retains_tombstones_that_suppress_unmerged_versions() {
 }
 
 #[test]
-fn compaction_defers_a_candidate_above_the_configured_row_bound() {
+fn compaction_partitions_output_at_the_configured_row_bound() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let options = StoreOptions {
         compaction_fan_in: 2,
-        max_compaction_rows: 3,
+        max_compaction_rows: 2,
         ..StoreOptions::default()
     };
     let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
@@ -108,12 +108,16 @@ fn compaction_defers_a_candidate_above_the_configured_row_bound() {
 
     let status = table.compaction_status().expect("compaction status");
     assert_eq!(status.segment_count(), 2);
-    assert_eq!(status.eligible_segments(), 0);
-    assert_eq!(status.debt_bytes(), 0);
+    assert_eq!(status.eligible_segments(), 2);
+    assert!(status.debt_bytes() > 0);
+    let outcome = table.compact().expect("bounded compact");
+    assert_eq!(outcome.input_segments(), 2);
+    assert_eq!(outcome.output_rows(), 3);
     assert_eq!(
-        table.compact().expect("bounded compact").input_segments(),
-        0
+        table.reclaim_obsolete_segments().expect("reclaim inputs"),
+        2
     );
+    assert_eq!(segment_count(directory.path()), 2);
     assert_eq!(
         table.snapshot().scan().expect("scan deferred segments"),
         vec![
