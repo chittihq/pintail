@@ -130,6 +130,61 @@ fn resync_and_dlq_updates_are_durable_and_idempotent() {
     assert_eq!(created_at, "2026-07-30T01:00:00Z");
 }
 
+#[test]
+fn begin_resnapshot_clears_the_old_handoff_and_chunk_journal() {
+    let workspace = tempfile::tempdir().expect("metadata workspace");
+    let path = workspace.path().join("pintail-meta.db");
+    let store = MetaStore::open(&path).expect("metadata");
+    register_source(&store);
+    store
+        .upsert_snapshot_checkpoint(
+            "source",
+            "filepos",
+            None,
+            Some("mysql-bin.000001"),
+            Some(123),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("old checkpoint");
+    store
+        .start_snapshot_chunk("source", "events", "chunk-000", None, None)
+        .expect("old chunk");
+    store
+        .mark_database_needs_resync("source", "purged")
+        .expect("mark source");
+
+    store
+        .begin_resnapshot("source", "2026-07-30T02:00:00Z")
+        .expect("begin fresh snapshot");
+    assert!(
+        store
+            .snapshot_checkpoint("source")
+            .expect("checkpoint query")
+            .is_none()
+    );
+    assert!(
+        store
+            .snapshot_chunks("source", "events")
+            .expect("chunk query")
+            .is_empty()
+    );
+    assert!(
+        store
+            .tables_needing_resync("source")
+            .expect("resync query")
+            .is_empty()
+    );
+    let connection = Connection::open(&path).expect("inspect metadata");
+    let state: String = connection
+        .query_row(
+            "SELECT state FROM databases WHERE id = 'source'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("database state");
+    assert_eq!(state, "snapshotting");
+}
+
 fn register_source(store: &MetaStore) {
     store
         .upsert_database("source", "app", b"mysql://source", "2026-07-30T00:00:00Z")

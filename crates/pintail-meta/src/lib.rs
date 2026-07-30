@@ -445,6 +445,46 @@ impl MetaStore {
             .context("failed to decode resnapshot tables")
     }
 
+    /// Clears prior snapshot progress and prepares a fresh source handoff.
+    ///
+    /// The caller resets table storage before invoking the snapshot engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the control-plane transaction cannot commit.
+    pub fn begin_resnapshot(&self, database_id: &str, now: &str) -> Result<()> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin resnapshot reset")?;
+        transaction
+            .execute(
+                "DELETE FROM snapshot_chunks WHERE db_id = ?1",
+                [database_id],
+            )
+            .context("failed to clear snapshot chunk journal")?;
+        transaction
+            .execute("DELETE FROM checkpoints WHERE db_id = ?1", [database_id])
+            .context("failed to clear source checkpoint")?;
+        transaction
+            .execute(
+                "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
+                   last_error = NULL WHERE db_id = ?1 AND state != 'excluded'",
+                [database_id],
+            )
+            .context("failed to reset table snapshot state")?;
+        transaction
+            .execute(
+                "UPDATE databases SET state = 'snapshotting', updated_at = ?2 \
+                 WHERE id = ?1",
+                (database_id, now),
+            )
+            .context("failed to reset database snapshot state")?;
+        transaction
+            .commit()
+            .context("failed to commit resnapshot reset")
+    }
+
     /// Marks every included table as requiring a new snapshot.
     ///
     /// # Errors
