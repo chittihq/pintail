@@ -263,8 +263,8 @@ async fn root_serves_the_embedded_dashboard() {
         .to_bytes();
     let html = String::from_utf8(body.to_vec()).expect("dashboard HTML");
     assert!(html.contains("<title>Pintail</title>"));
-    assert!(html.contains("Columnar analytics"));
-    assert!(html.contains("for MySQL."));
+    assert!(html.contains("Opening control plane"));
+    assert!(html.contains("Pintail turns live MySQL data into fast columnar analytics."));
 }
 
 #[tokio::test]

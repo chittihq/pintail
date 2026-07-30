@@ -45,7 +45,7 @@ fn run_until_healthy(data_dir: &Path) -> String {
         .expect("start pintail");
     let mut process = ProcessGuard(child);
 
-    let response = wait_for_health(address);
+    let response = wait_for_health(&mut process.0, address);
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains(r#"{"status":"ok"}"#), "{response}");
 
@@ -64,8 +64,18 @@ fn run_until_healthy(data_dir: &Path) -> String {
     stderr
 }
 
-fn wait_for_health(address: SocketAddr) -> String {
-    for _ in 0..100 {
+fn wait_for_health(process: &mut Child, address: SocketAddr) -> String {
+    for _ in 0..400 {
+        if let Some(status) = process.try_wait().expect("inspect pintail process") {
+            let mut stderr = String::new();
+            process
+                .stderr
+                .take()
+                .expect("pintail stderr")
+                .read_to_string(&mut stderr)
+                .expect("read failed pintail stderr");
+            panic!("pintail exited with {status} before listening on {address}:\n{stderr}");
+        }
         match TcpStream::connect_timeout(&address, Duration::from_millis(50)) {
             Ok(mut stream) => {
                 stream

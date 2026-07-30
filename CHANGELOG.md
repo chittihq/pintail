@@ -22,6 +22,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   snapshots with typed fields, bounded results, and physical pruning stats;
   table schema/preview/count, activity, and dead-letter routes share the same
   database-scoped authorization model.
+- The embedded Nuxt control plane now provides setup and login, fleet and
+  database health, a guided source wizard, snapshot and replication progress,
+  table/schema/storage inspection, a lazy-loaded CodeMirror SQL console with
+  export, activity and dead-letter views, scoped API-key management, responsive
+  navigation, and explicit preactivation states for later backup and settings
+  milestones.
 
 ## [M5] - 2026-07-30
 

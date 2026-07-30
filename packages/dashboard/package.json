@@ -9,6 +9,10 @@
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.7",
     "@lucide/vue": "^1.27.0",
     "@vueuse/core": "^14.4.0",
     "class-variance-authority": "^0.7.1",
