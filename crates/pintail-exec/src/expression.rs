@@ -1,6 +1,10 @@
 use std::cmp::Ordering;
 
+use chrono::{
+    Datelike, Duration, Local, Months, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
+};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
+use pintail_sql::{DatePart, IntervalUnit};
 use pintail_types::{DataType, Value};
 
 use crate::{ExecError, RecordBatch};
@@ -249,11 +253,175 @@ fn evaluate_eager_scalar(
         ScalarFunction::InList { negated } => evaluate_in_list(values, negated),
         ScalarFunction::Between { negated } => evaluate_between(values, negated),
         ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
+        ScalarFunction::Now => Ok(Value::Utf8(
+            Local::now()
+                .naive_local()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+        )),
+        ScalarFunction::CurrentDate => Ok(Value::Utf8(Local::now().format("%Y-%m-%d").to_string())),
+        ScalarFunction::Date => Ok(Value::Utf8(
+            parse_mysql_datetime(&scalar_string(&values[0])?)?
+                .date()
+                .format("%Y-%m-%d")
+                .to_string(),
+        )),
+        ScalarFunction::DatePart(part) => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            Ok(Value::UInt64(date_part(value, part)))
+        }
+        ScalarFunction::DateFormat => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            let format = mysql_date_format(&scalar_string(&values[1])?);
+            Ok(Value::Utf8(value.format(&format).to_string()))
+        }
+        ScalarFunction::DateInterval { unit, subtract } => {
+            let input = scalar_string(&values[0])?;
+            let value = parse_mysql_datetime(&input)?;
+            let amount = mysql_i64(&values[1])?;
+            let value = apply_interval(value, amount, unit, subtract)?;
+            let date_only = input.len() <= 10
+                && matches!(
+                    unit,
+                    IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day
+                );
+            Ok(Value::Utf8(
+                value
+                    .format(if date_only {
+                        "%Y-%m-%d"
+                    } else {
+                        "%Y-%m-%d %H:%M:%S"
+                    })
+                    .to_string(),
+            ))
+        }
+        ScalarFunction::DateDiff => {
+            let left = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            let right = parse_mysql_datetime(&scalar_string(&values[1])?)?;
+            Ok(Value::Int64(
+                left.date().signed_duration_since(right.date()).num_days(),
+            ))
+        }
+        ScalarFunction::UnixTimestamp => {
+            let timestamp = if values.is_empty() {
+                Utc::now().timestamp()
+            } else {
+                let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+                Local
+                    .from_local_datetime(&value)
+                    .single()
+                    .ok_or(ExecError::InvalidDateTime)?
+                    .timestamp()
+            };
+            Ok(Value::UInt64(u64::try_from(timestamp).unwrap_or(0)))
+        }
+        ScalarFunction::FromUnixTime => {
+            let timestamp = mysql_i64(&values[0])?;
+            let value = Local
+                .timestamp_opt(timestamp, 0)
+                .single()
+                .ok_or(ExecError::InvalidDateTime)?;
+            Ok(Value::Utf8(value.format("%Y-%m-%d %H:%M:%S").to_string()))
+        }
         ScalarFunction::If | ScalarFunction::Coalesce | ScalarFunction::NullIf => {
             Err(ExecError::InvalidExpressionType)
         }
     }
     .and_then(|value| cast_scalar(&value, data_type))
+}
+
+fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
+    for format in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ] {
+        if let Ok(value) = NaiveDateTime::parse_from_str(value, format) {
+            return Ok(value);
+        }
+    }
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
+        .ok_or(ExecError::InvalidDateTime)
+}
+
+fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {
+    match part {
+        DatePart::Year => u64::try_from(value.year()).unwrap_or(0),
+        DatePart::Month => u64::from(value.month()),
+        DatePart::Day => u64::from(value.day()),
+        DatePart::Hour => u64::from(value.hour()),
+        DatePart::Minute => u64::from(value.minute()),
+        DatePart::Second => u64::from(value.second()),
+    }
+}
+
+fn apply_interval(
+    value: NaiveDateTime,
+    amount: i64,
+    unit: IntervalUnit,
+    subtract: bool,
+) -> Result<NaiveDateTime, ExecError> {
+    let amount = if subtract {
+        amount.checked_neg().ok_or(ExecError::NumericOverflow)?
+    } else {
+        amount
+    };
+    match unit {
+        IntervalUnit::Year | IntervalUnit::Month => {
+            let months = if unit == IntervalUnit::Year {
+                amount.checked_mul(12).ok_or(ExecError::NumericOverflow)?
+            } else {
+                amount
+            };
+            let magnitude =
+                u32::try_from(months.unsigned_abs()).map_err(|_| ExecError::NumericOverflow)?;
+            if months < 0 {
+                value.checked_sub_months(Months::new(magnitude))
+            } else {
+                value.checked_add_months(Months::new(magnitude))
+            }
+        }
+        IntervalUnit::Day => value.checked_add_signed(Duration::days(amount)),
+        IntervalUnit::Hour => value.checked_add_signed(Duration::hours(amount)),
+        IntervalUnit::Minute => value.checked_add_signed(Duration::minutes(amount)),
+        IntervalUnit::Second => value.checked_add_signed(Duration::seconds(amount)),
+    }
+    .ok_or(ExecError::InvalidDateTime)
+}
+
+fn mysql_date_format(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            output.push(character);
+            continue;
+        }
+        let Some(specifier) = characters.next() else {
+            output.push('%');
+            break;
+        };
+        output.push_str(match specifier {
+            'c' => "%-m",
+            'e' => "%-d",
+            'M' => "%B",
+            'k' => "%-H",
+            'l' => "%-I",
+            'i' => "%M",
+            's' => "%S",
+            'f' => "%6f",
+            '%' => "%%",
+            other => {
+                output.push('%');
+                output.push(other);
+                continue;
+            }
+        });
+    }
+    output
 }
 
 fn scalar_string(value: &Value) -> Result<String, ExecError> {

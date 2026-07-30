@@ -27,6 +27,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 anyhow = "1.0.98"
 axum = "0.8.4"
+chrono = { version = "0.4.41", default-features = false, features = ["clock"] }
 clap = { version = "4.5.40", features = ["derive", "env"] }
 fs2 = "0.4.3"
 http-body-util = "0.1.3"

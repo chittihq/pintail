@@ -1643,6 +1643,8 @@ pub enum ExecError {
     NumericOverflow,
     /// Binary numeric coercion encountered invalid UTF-8.
     InvalidUtf8Number,
+    /// A date/time value or operation is outside the supported `MySQL` range.
+    InvalidDateTime,
     /// A source-specific failure.
     Source(String),
     /// The scan provider was configured twice for one stable table.
@@ -1716,6 +1718,7 @@ impl fmt::Display for ExecError {
             Self::InvalidUtf8Number => {
                 formatter.write_str("binary value is not valid UTF-8 for numeric coercion")
             }
+            Self::InvalidDateTime => formatter.write_str("invalid MySQL date/time value"),
             Self::Source(message) => write!(formatter, "scan source failed: {message}"),
             Self::DuplicateSnapshot {
                 database_id,
@@ -1942,6 +1945,47 @@ mod tests {
                 Value::Boolean(true),
                 Value::Boolean(true),
                 Value::Int64(12),
+            ]
+        );
+    }
+
+    #[test]
+    fn executes_mysql_date_time_functions_and_interval_arithmetic() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT DATE('2024-02-29 12:34:56'), YEAR('2024-02-29'), \
+             MONTH('2024-02-29'), DAY('2024-02-29'), HOUR('2024-02-29 12:34:56'), \
+             MINUTE('2024-02-29 12:34:56'), SECOND('2024-02-29 12:34:56'), \
+             DATE_FORMAT('2024-02-29 12:34:56', '%Y-%m-%d %H:%i:%s'), \
+             DATE_ADD('2024-01-31', INTERVAL 1 MONTH), \
+             DATE_SUB('2024-03-01', INTERVAL 1 DAY), \
+             DATEDIFF('2024-03-05', '2024-03-01'), \
+             FROM_UNIXTIME(UNIX_TIMESTAMP('2024-02-29 12:34:56'))",
+        );
+        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let values = batch
+            .columns()
+            .iter()
+            .map(|column| column.value(0).cloned().expect("value"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                Value::Utf8("2024-02-29".to_owned()),
+                Value::UInt64(2024),
+                Value::UInt64(2),
+                Value::UInt64(29),
+                Value::UInt64(12),
+                Value::UInt64(34),
+                Value::UInt64(56),
+                Value::Utf8("2024-02-29 12:34:56".to_owned()),
+                Value::Utf8("2024-02-29".to_owned()),
+                Value::Utf8("2024-02-29".to_owned()),
+                Value::Int64(4),
+                Value::Utf8("2024-02-29 12:34:56".to_owned()),
             ]
         );
     }

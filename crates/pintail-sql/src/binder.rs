@@ -3,9 +3,9 @@ use std::fmt;
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
-    BinaryOperator, CastKind, DataType as SqlDataType, Distinct, DuplicateTreatment, Expr,
-    Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident, JoinConstraint,
-    JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
+    BinaryOperator, CastKind, DataType as SqlDataType, DateTimeField, Distinct, DuplicateTreatment,
+    Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident,
+    JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
     SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableFactor,
     UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
 };
@@ -13,7 +13,7 @@ use sqlparser::ast::{
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
-    ScalarFunction, UnaryOp,
+    DatePart, IntervalUnit, ScalarFunction, UnaryOp,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -812,6 +812,16 @@ fn bind_scalar_function(
     if arguments.duplicate_treatment.is_some() || !arguments.clauses.is_empty() {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     }
+    let function_name = name.to_ascii_uppercase();
+    if matches!(function_name.as_str(), "DATE_ADD" | "DATE_SUB") {
+        return bind_date_interval(
+            function,
+            arguments,
+            function_name == "DATE_SUB",
+            tables,
+            aggregates,
+        );
+    }
     let mut args = Vec::with_capacity(arguments.args.len());
     for argument in &arguments.args {
         let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
@@ -819,7 +829,6 @@ fn bind_scalar_function(
         };
         args.push(bind_expr_inner(expression, tables, aggregates)?);
     }
-    let function_name = name.to_ascii_uppercase();
     let scalar = match function_name.as_str() {
         "CONCAT" if !args.is_empty() => ScalarFunction::Concat,
         "SUBSTRING" | "SUBSTR" if matches!(args.len(), 2 | 3) => ScalarFunction::Substring,
@@ -836,9 +845,60 @@ fn bind_scalar_function(
         "IFNULL" if args.len() == 2 => ScalarFunction::Coalesce,
         "COALESCE" if !args.is_empty() => ScalarFunction::Coalesce,
         "NULLIF" if args.len() == 2 => ScalarFunction::NullIf,
+        "NOW" if args.is_empty() => ScalarFunction::Now,
+        "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
+        "DATE" if args.len() == 1 => ScalarFunction::Date,
+        "YEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Year),
+        "MONTH" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Month),
+        "DAY" | "DAYOFMONTH" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Day),
+        "HOUR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Hour),
+        "MINUTE" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Minute),
+        "SECOND" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Second),
+        "DATE_FORMAT" if args.len() == 2 => ScalarFunction::DateFormat,
+        "DATEDIFF" if args.len() == 2 => ScalarFunction::DateDiff,
+        "UNIX_TIMESTAMP" if args.len() <= 1 => ScalarFunction::UnixTimestamp,
+        "FROM_UNIXTIME" if args.len() == 1 => ScalarFunction::FromUnixTime,
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
     bind_scalar(scalar, args)
+}
+
+fn bind_date_interval(
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+    subtract: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    let [
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(date)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Interval(interval))),
+    ] = arguments.args.as_slice()
+    else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    if interval.leading_precision.is_some()
+        || interval.last_field.is_some()
+        || interval.fractional_seconds_precision.is_some()
+    {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    let unit = match interval.leading_field {
+        Some(DateTimeField::Year) => IntervalUnit::Year,
+        Some(DateTimeField::Month) => IntervalUnit::Month,
+        Some(DateTimeField::Day) => IntervalUnit::Day,
+        Some(DateTimeField::Hour) => IntervalUnit::Hour,
+        Some(DateTimeField::Minute) => IntervalUnit::Minute,
+        Some(DateTimeField::Second) => IntervalUnit::Second,
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    };
+    bind_scalar(
+        ScalarFunction::DateInterval { unit, subtract },
+        vec![
+            bind_expr_inner(date, tables, aggregates)?,
+            bind_expr_inner(&interval.value, tables, aggregates)?,
+        ],
+    )
 }
 
 fn bind_in_list(
@@ -1030,6 +1090,22 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         ),
         ScalarFunction::NullIf => (args[0].data_type, true),
         ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
+        ScalarFunction::Now | ScalarFunction::CurrentDate => (Some(DataType::Utf8), false),
+        ScalarFunction::Date
+        | ScalarFunction::DateFormat
+        | ScalarFunction::DateInterval { .. }
+        | ScalarFunction::FromUnixTime => (
+            Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::DatePart(_) | ScalarFunction::UnixTimestamp => (
+            Some(DataType::UInt64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::DateDiff => (
+            Some(DataType::Int64),
+            args.iter().any(|argument| argument.nullable),
+        ),
     };
     Ok(BoundExpr {
         kind: BoundExprKind::Scalar { function, args },

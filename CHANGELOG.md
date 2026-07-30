@@ -55,6 +55,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `RIGHT`, `LOCATE`, `IF`, `IFNULL`, `COALESCE`, `NULLIF`, searched and simple
   `CASE`, `LIKE`, list `IN`, `BETWEEN`, and core scalar casts, including SQL
   three-valued NULL behavior and short-circuit conditional evaluation.
+- Local-session date/time evaluation for `NOW`, `CURDATE`, `DATE`, component
+  extraction, `DATE_FORMAT`, single-field `DATE_ADD`/`DATE_SUB`, `DATEDIFF`,
+  `UNIX_TIMESTAMP`, and `FROM_UNIXTIME`, including calendar-aware month
+  arithmetic and invalid-date errors.
 
 ## [M1] - 2026-07-30
 

@@ -145,6 +145,63 @@ pub enum ScalarFunction {
     },
     /// Explicit scalar conversion.
     Cast(DataType),
+    /// Current local date and time.
+    Now,
+    /// Current local date.
+    CurrentDate,
+    /// Extract the date component.
+    Date,
+    /// Extract a calendar/time component.
+    DatePart(DatePart),
+    /// Format a date/time with a `MySQL` format string.
+    DateFormat,
+    /// Add or subtract one date/time interval.
+    DateInterval {
+        /// Interval unit.
+        unit: IntervalUnit,
+        /// Whether the interval is subtracted.
+        subtract: bool,
+    },
+    /// Whole-day difference between two dates.
+    DateDiff,
+    /// Convert date/time to a Unix timestamp.
+    UnixTimestamp,
+    /// Convert a Unix timestamp to local date/time.
+    FromUnixTime,
+}
+
+/// Calendar component extracted from a `MySQL` date/time value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DatePart {
+    /// Four-digit year.
+    Year,
+    /// Month number.
+    Month,
+    /// Day of month.
+    Day,
+    /// Hour.
+    Hour,
+    /// Minute.
+    Minute,
+    /// Second.
+    Second,
+}
+
+/// Single-field `MySQL` interval units supported by date arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntervalUnit {
+    /// Calendar years.
+    Year,
+    /// Calendar months.
+    Month,
+    /// Calendar days.
+    Day,
+    /// Hours.
+    Hour,
+    /// Minutes.
+    Minute,
+    /// Seconds.
+    Second,
 }
 
 /// Aggregate functions supported by the v1 query engine.
