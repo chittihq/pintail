@@ -218,25 +218,64 @@ pub(crate) async fn start(
 ) -> Result<(StatusCode, Json<AcceptedBackup>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
-    state.acquire_job(&database_id)?;
+    let force_full = payload.is_some_and(|Json(request)| request.full);
+    let accepted = start_job(&state, &database_id, force_full)?;
+    Ok((StatusCode::ACCEPTED, Json(accepted)))
+}
+
+pub(crate) fn start_scheduled_if_due(
+    state: &ApiState,
+    database_id: &str,
+) -> Result<bool, ApiError> {
+    let metadata = state.metadata()?;
+    let Some(config) = metadata
+        .backup_config(database_id)
+        .map_err(ApiError::internal)?
+        .filter(|config| config.enabled)
+    else {
+        return Ok(false);
+    };
+    let last_started = metadata
+        .backups(database_id, 1)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .next()
+        .and_then(|backup| chrono::DateTime::parse_from_rfc3339(&backup.started_at).ok())
+        .map(|started| started.with_timezone(&Utc));
+    let due = last_started.is_none_or(|started| {
+        Utc::now().signed_duration_since(started).num_minutes()
+            >= i64::try_from(config.schedule_minutes).unwrap_or(i64::MAX)
+    });
+    drop(metadata);
+    if !due {
+        return Ok(false);
+    }
+    start_job(state, database_id, false).map(|_| true)
+}
+
+fn start_job(
+    state: &ApiState,
+    database_id: &str,
+    force_full: bool,
+) -> Result<AcceptedBackup, ApiError> {
+    state.acquire_job(database_id)?;
     let metadata = state
         .metadata()
-        .inspect_err(|_| state.release_job(&database_id))?;
+        .inspect_err(|_| state.release_job(database_id))?;
     let configured = metadata
-        .backup_config(&database_id)
-        .inspect_err(|_| state.release_job(&database_id))
+        .backup_config(database_id)
+        .inspect_err(|_| state.release_job(database_id))
         .map_err(ApiError::internal)?;
     if configured.is_none() {
-        state.release_job(&database_id);
+        state.release_job(database_id);
         return Err(ApiError::conflict(
             "configure a backup destination before starting a backup",
         ));
     }
     let parent = metadata
-        .latest_completed_backup(&database_id)
-        .inspect_err(|_| state.release_job(&database_id))
+        .latest_completed_backup(database_id)
+        .inspect_err(|_| state.release_job(database_id))
         .map_err(ApiError::internal)?;
-    let force_full = payload.is_some_and(|Json(request)| request.full);
     let kind = if force_full || parent.is_none() {
         "full"
     } else {
@@ -247,32 +286,32 @@ pub(crate) async fn start(
         .flatten();
     let id = crate::state::random_identifier("backup_", 16);
     let config = metadata
-        .backup_config(&database_id)
-        .inspect_err(|_| state.release_job(&database_id))
+        .backup_config(database_id)
+        .inspect_err(|_| state.release_job(database_id))
         .map_err(ApiError::internal)?
         .ok_or_else(|| {
-            state.release_job(&database_id);
+            state.release_job(database_id);
             ApiError::internal("backup configuration disappeared")
         })?;
     let object_prefix = format!("{}/{database_id}/{id}", config.prefix);
     metadata
         .start_backup(&NewBackup {
             id: &id,
-            database_id: &database_id,
+            database_id,
             kind,
             parent_id: parent_id.as_deref(),
             object_prefix: &object_prefix,
             started_at: &Utc::now().to_rfc3339(),
         })
-        .inspect_err(|_| state.release_job(&database_id))
+        .inspect_err(|_| state.release_job(database_id))
         .map_err(ApiError::internal)?;
 
     let job_state = state.clone();
-    let job_database = database_id.clone();
+    let job_database = database_id.to_owned();
     let job_id = id.clone();
     let job_kind = kind.to_owned();
     let failure_state = state.clone();
-    let failure_database = database_id.clone();
+    let failure_database = database_id.to_owned();
     let failure_id = id.clone();
     std::thread::Builder::new()
         .name(format!("pintail-backup-{database_id}"))
@@ -293,17 +332,14 @@ pub(crate) async fn start(
             }
         })
         .map_err(|error| {
-            finish_backup_error(&state, &database_id, &id, &error);
+            finish_backup_error(state, database_id, &id, &error);
             ApiError::unavailable(format!("could not start backup worker: {error}"))
         })?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AcceptedBackup {
-            id,
-            kind: kind.to_owned(),
-            state: "running",
-        }),
-    ))
+    Ok(AcceptedBackup {
+        id,
+        kind: kind.to_owned(),
+        state: "running",
+    })
 }
 
 pub(crate) async fn restore(

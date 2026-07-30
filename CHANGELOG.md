@@ -20,6 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   schedules, launch and audit manual full/incremental jobs, list their history,
   and restore a completed backup as a new detached, queryable database without
   exporting the source DSN.
+- A process supervisor now runs finite CDC/polling cycles in isolated
+  per-database workers, retries failed sources without stalling healthy
+  mirrors, and launches due scheduled backups. Prometheus text metrics expose
+  query latency/rows, ingest cycles and errors, replication lag, storage and
+  compaction debt, memory, DLQ pressure, and backup outcomes; DLQ entries can
+  be retried through a safe table reconciliation before removal.
 
 ## [M7] - 2026-07-30
 

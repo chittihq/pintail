@@ -687,6 +687,23 @@ impl MetaStore {
             .context("failed to decode DLQ records")
     }
 
+    /// Loads one dead-letter record by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the query or row decoding fails.
+    pub fn dlq_record(&self, id: &str) -> Result<Option<DlqRecord>> {
+        self.connection
+            .query_row(
+                "SELECT id, db_id, table_name, event_json, error, created_at \
+                 FROM dlq WHERE id = ?1",
+                [id],
+                decode_dlq,
+            )
+            .optional()
+            .context("failed to load DLQ record")
+    }
+
     /// Discards one dead-letter record.
     ///
     /// # Errors

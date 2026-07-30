@@ -260,6 +260,46 @@ async fn status_reports_the_live_wire_endpoint() {
 }
 
 #[tokio::test]
+async fn metrics_expose_prometheus_runtime_storage_and_control_plane_facts() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("metrics request"),
+        )
+        .await
+        .expect("metrics response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&header::HeaderValue::from_static(
+            "text/plain; version=0.0.4; charset=utf-8"
+        ))
+    );
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("metrics body")
+        .to_bytes();
+    let metrics = String::from_utf8(body.to_vec()).expect("UTF-8 metrics");
+    for required in [
+        "pintail_queries_total 0",
+        "pintail_replication_cycles_total 0",
+        "pintail_replication_lag_seconds",
+        "pintail_compaction_debt_segments",
+        "pintail_process_resident_memory_bytes",
+        "pintail_dead_letters",
+        "pintail_backup_runs",
+    ] {
+        assert!(metrics.contains(required), "missing {required}");
+    }
+}
+
+#[tokio::test]
 async fn backup_configuration_encrypts_credentials_and_never_reads_them_back() {
     let data = tempfile::tempdir().expect("API data directory");
     let app = pintail_api::router_with_state(configured_state(data.path()));

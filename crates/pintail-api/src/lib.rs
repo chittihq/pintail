@@ -8,9 +8,11 @@ mod databases;
 mod error;
 mod events;
 mod keys;
+mod metrics;
 mod query;
 mod snapshot;
 mod state;
+mod supervisor;
 
 use axum::{
     Json, Router,
@@ -25,8 +27,9 @@ use rust_embed::RustEmbed;
 use serde::Serialize;
 
 pub use state::ApiState;
+pub use supervisor::spawn as spawn_supervisor;
 
-use crate::activity::{activity, dead_letters, discard_dead_letter};
+use crate::activity::{activity, dead_letters, discard_dead_letter, retry_dead_letter};
 use crate::auth::{login, require_auth, session, setup, setup_status};
 use crate::backup::{
     get_config as get_backup_config, list as list_backups, put_config as put_backup_config,
@@ -43,6 +46,7 @@ use crate::keys::{
     create as create_api_key, delete as delete_api_key, list as list_api_keys,
     patch as patch_api_key,
 };
+use crate::metrics::metrics;
 use crate::query::{list_tables, query, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 
@@ -92,6 +96,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/activity", get(activity))
         .route("/dlq", get(dead_letters))
         .route("/dlq/{id}", axum::routing::delete(discard_dead_letter))
+        .route("/dlq/{id}/retry", post(retry_dead_letter))
         .route("/query", post(query))
         .route("/tables", get(list_tables))
         .route("/tables/{name}/schema", get(table_schema))
@@ -111,6 +116,7 @@ pub fn router_with_state(state: ApiState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/status", get(status))
+        .route("/metrics", get(metrics))
         .nest("/api", api)
         .route("/", get(dashboard))
         .route("/{*path}", get(dashboard_asset))

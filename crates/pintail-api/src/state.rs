@@ -2,7 +2,10 @@ use std::{
     collections::BTreeSet,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use anyhow::{Context, Result, bail};
@@ -32,6 +35,27 @@ struct ApiStateInner {
     dsn_key: [u8; 32],
     events: broadcast::Sender<ApiEvent>,
     active_jobs: Mutex<BTreeSet<String>>,
+    metrics: RuntimeMetrics,
+}
+
+#[derive(Default)]
+struct RuntimeMetrics {
+    queries: AtomicU64,
+    query_rows: AtomicU64,
+    query_duration_ms: AtomicU64,
+    replication_cycles: AtomicU64,
+    replication_errors: AtomicU64,
+    ingested_rows: AtomicU64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RuntimeMetricsSnapshot {
+    pub(crate) queries: u64,
+    pub(crate) query_rows: u64,
+    pub(crate) query_duration_ms: u64,
+    pub(crate) replication_cycles: u64,
+    pub(crate) replication_errors: u64,
+    pub(crate) ingested_rows: u64,
 }
 
 impl ApiState {
@@ -59,6 +83,7 @@ impl ApiState {
                 dsn_key,
                 events,
                 active_jobs: Mutex::new(BTreeSet::new()),
+                metrics: RuntimeMetrics::default(),
             })),
             wire_bind: None,
         })
@@ -189,6 +214,51 @@ impl ApiState {
                 jobs.remove(database_id);
             }
         }
+    }
+
+    pub(crate) fn record_query(&self, duration_ms: u64, rows: u64) {
+        if let Some(inner) = &self.inner {
+            inner.metrics.queries.fetch_add(1, Ordering::Relaxed);
+            inner.metrics.query_rows.fetch_add(rows, Ordering::Relaxed);
+            inner
+                .metrics
+                .query_duration_ms
+                .fetch_add(duration_ms, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn record_replication_cycle(&self, rows: u64, succeeded: bool) {
+        if let Some(inner) = &self.inner {
+            inner
+                .metrics
+                .replication_cycles
+                .fetch_add(1, Ordering::Relaxed);
+            inner
+                .metrics
+                .ingested_rows
+                .fetch_add(rows, Ordering::Relaxed);
+            if !succeeded {
+                inner
+                    .metrics
+                    .replication_errors
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    pub(crate) fn runtime_metrics(&self) -> RuntimeMetricsSnapshot {
+        self.inner
+            .as_ref()
+            .map_or_else(RuntimeMetricsSnapshot::default, |inner| {
+                RuntimeMetricsSnapshot {
+                    queries: inner.metrics.queries.load(Ordering::Relaxed),
+                    query_rows: inner.metrics.query_rows.load(Ordering::Relaxed),
+                    query_duration_ms: inner.metrics.query_duration_ms.load(Ordering::Relaxed),
+                    replication_cycles: inner.metrics.replication_cycles.load(Ordering::Relaxed),
+                    replication_errors: inner.metrics.replication_errors.load(Ordering::Relaxed),
+                    ingested_rows: inner.metrics.ingested_rows.load(Ordering::Relaxed),
+                }
+            })
     }
 }
 

@@ -205,6 +205,10 @@ fn execute_query(
     let output = ReplicaEngine::new(state.data_dir()?, state.metadata_path()?)
         .execute(database_id, sql, MAX_RESPONSE_ROWS)
         .map_err(query_error)?;
+    state.record_query(
+        output.stats.duration_ms,
+        u64::try_from(output.stats.rows).unwrap_or(u64::MAX),
+    );
     let rows = output
         .rows
         .iter()

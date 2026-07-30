@@ -6,7 +6,7 @@ use pintail::{
     config::{AppConfig, Cli},
     secrets::{LoadedBootSecrets, generate_secret, load_or_create},
 };
-use pintail_api::{ApiState, router_with_state};
+use pintail_api::{ApiState, router_with_state, spawn_supervisor};
 use pintail_meta::MetaStore;
 use pintail_wire::serve_until;
 use tokio::net::TcpListener;
@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
     });
     let mut http_shutdown = shutdown.subscribe();
     let mut wire_shutdown = shutdown.subscribe();
+    let supervisor = spawn_supervisor(api_state.clone(), shutdown.subscribe());
     let http = axum::serve(http_listener, router_with_state(api_state)).with_graceful_shutdown(
         async move {
             let _ = http_shutdown.recv().await;
@@ -74,6 +75,7 @@ async fn main() -> Result<()> {
     tokio::try_join!(async { http.await.context("HTTP server failed") }, async {
         wire.await.context("MySQL wire server failed")
     })?;
+    supervisor.await.context("replication supervisor failed")?;
     Ok(())
 }
 

@@ -6,7 +6,7 @@ use axum::{
 use pintail_meta::{DlqRecord, SyncRunRecord};
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiState, auth::AuthPrincipal, error::ApiError};
+use crate::{ApiState, auth::AuthPrincipal, controls::run_reconcile_job, error::ApiError};
 
 const DEFAULT_LIMIT: u64 = 100;
 const MAX_LIMIT: u64 = 1_000;
@@ -90,6 +90,40 @@ pub(crate) async fn discard_dead_letter(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("dead-letter record does not exist"))
+    }
+}
+
+pub(crate) async fn retry_dead_letter(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    principal.require_operator()?;
+    let metadata = state.metadata()?;
+    let record = metadata
+        .dlq_record(&id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("dead-letter record does not exist"))?;
+    principal.authorize_database(&record.database_id)?;
+    let table = record.table_name.as_deref().ok_or_else(|| {
+        ApiError::conflict("database-level dead letters require a database resnapshot")
+    })?;
+    let table = table.to_owned();
+    drop(metadata);
+    state.acquire_job(&record.database_id)?;
+    let result = run_reconcile_job(&state, &record.database_id, &table).await;
+    state.release_job(&record.database_id);
+    result.map_err(ApiError::unavailable)?;
+    if state
+        .metadata()?
+        .delete_dlq_record(&id)
+        .map_err(ApiError::internal)?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found(
+            "dead-letter record disappeared after retry",
+        ))
     }
 }
 

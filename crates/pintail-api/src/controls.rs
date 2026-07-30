@@ -134,7 +134,7 @@ async fn complete_reconcile_job(
     );
 }
 
-async fn run_reconcile_job(
+pub(crate) async fn run_reconcile_job(
     state: &ApiState,
     database_id: &str,
     table_name: &str,
