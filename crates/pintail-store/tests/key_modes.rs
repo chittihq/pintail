@@ -31,6 +31,35 @@ fn append_rowid_mode_retains_duplicate_source_rows_with_generated_keys() {
 }
 
 #[test]
+fn append_rowid_cdc_replay_preserves_deterministic_keys() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table = TableStore::open(
+        directory.path(),
+        schema(KeyMode::AppendRowId),
+        StoreOptions::default(),
+    )
+    .expect("open append table");
+    let row = StoredRow::new(
+        PrimaryKey::new(vec![KeyPart::UInt64(42)]).expect("CDC append key"),
+        vec![Value::Utf8("once".into())],
+        42,
+        false,
+    );
+    table.ingest_cdc(vec![row.clone()]).expect("first replay");
+    table.ingest_cdc(vec![row]).expect("duplicate replay");
+    let rows = table.snapshot().scan().expect("scan replayed appends");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key().parts(), [KeyPart::UInt64(42)]);
+
+    table
+        .ingest(vec![source_row("next", 43)])
+        .expect("ordinary append after CDC");
+    let rows = table.snapshot().scan().expect("scan mixed appends");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1].key().parts(), [KeyPart::UInt64(43)]);
+}
+
+#[test]
 fn primary_and_unique_modes_resolve_duplicate_keys_by_max_version() {
     for key_mode in [KeyMode::Primary, KeyMode::Unique] {
         let directory = tempfile::tempdir().expect("temporary table directory");

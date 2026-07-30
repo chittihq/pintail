@@ -18,6 +18,12 @@ use crate::{
 };
 
 const WAL_FILE: &str = "table.wal";
+
+#[derive(Clone, Copy)]
+enum AppendKeyPolicy {
+    Generate,
+    Preserve,
+}
 const WRITER_LOCK_FILE: &str = ".writer.lock";
 const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOCK_ROWS: usize = 64 * 1024;
@@ -527,13 +533,40 @@ impl TableStore {
             .last_sequence
             .checked_add(1)
             .ok_or(StoreError::SequenceOverflow)?;
-        self.ingest_at_sequence(sequence, rows)
+        self.ingest_at_sequence_with_append_policy(sequence, rows, AppendKeyPolicy::Generate)
+    }
+
+    /// Validates and durably orders one CDC batch.
+    ///
+    /// In append-row-ID mode, the caller-provided unsigned key is preserved so
+    /// replay of the same deterministic source version remains idempotent.
+    /// Snapshot and ordinary ingest continue to allocate local row IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid rows, append keys, sequence overflow, or
+    /// durable storage failure.
+    pub fn ingest_cdc(&mut self, rows: Vec<StoredRow>) -> Result<IngestOutcome, StoreError> {
+        let sequence = self
+            .last_sequence
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        self.ingest_at_sequence_with_append_policy(sequence, rows, AppendKeyPolicy::Preserve)
     }
 
     pub(crate) fn ingest_at_sequence(
         &mut self,
         sequence: u64,
+        rows: Vec<StoredRow>,
+    ) -> Result<IngestOutcome, StoreError> {
+        self.ingest_at_sequence_with_append_policy(sequence, rows, AppendKeyPolicy::Generate)
+    }
+
+    fn ingest_at_sequence_with_append_policy(
+        &mut self,
+        sequence: u64,
         mut rows: Vec<StoredRow>,
+        append_key_policy: AppendKeyPolicy,
     ) -> Result<IngestOutcome, StoreError> {
         for row in &rows {
             self.schema.validate_row(row)?;
@@ -547,19 +580,40 @@ impl TableStore {
             });
         }
         if self.schema.key_mode() == KeyMode::AppendRowId {
-            for row in &mut rows {
-                let row_id = self.next_append_row_id;
-                self.next_append_row_id = self
-                    .next_append_row_id
-                    .checked_add(1)
-                    .ok_or(StoreError::SequenceOverflow)?;
-                let storage_key = PrimaryKey::new(vec![KeyPart::UInt64(row_id)])?;
-                *row = StoredRow::new(
-                    storage_key,
-                    row.values().to_vec(),
-                    row.version(),
-                    row.is_deleted(),
-                );
+            match append_key_policy {
+                AppendKeyPolicy::Generate => {
+                    for row in &mut rows {
+                        let row_id = self.next_append_row_id;
+                        self.next_append_row_id = self
+                            .next_append_row_id
+                            .checked_add(1)
+                            .ok_or(StoreError::SequenceOverflow)?;
+                        let storage_key = PrimaryKey::new(vec![KeyPart::UInt64(row_id)])?;
+                        *row = StoredRow::new(
+                            storage_key,
+                            row.values().to_vec(),
+                            row.version(),
+                            row.is_deleted(),
+                        );
+                    }
+                }
+                AppendKeyPolicy::Preserve => {
+                    for row in &rows {
+                        let [KeyPart::UInt64(row_id)] = row.key().parts() else {
+                            return Err(StoreError::FormatLimit(
+                                "CDC append key must contain one UInt64 component".to_owned(),
+                            ));
+                        };
+                        if *row_id == 0 {
+                            return Err(StoreError::FormatLimit(
+                                "CDC append key must be non-zero".to_owned(),
+                            ));
+                        }
+                        self.next_append_row_id = self
+                            .next_append_row_id
+                            .max(row_id.checked_add(1).ok_or(StoreError::SequenceOverflow)?);
+                    }
+                }
             }
         }
 
