@@ -54,14 +54,23 @@ fn non_overlapping_snapshot_segments_stream_with_bounded_memory() {
         .expect("non-overlapping snapshot fast path");
     assert_eq!(stream.segment_count(), 2);
     let first = stream
-        .next_chunk(1024 * 1024)
+        .next_column_chunk(1024 * 1024)
         .expect("first stream chunk")
         .expect("first segment");
     let second = stream
         .next_chunk(1024 * 1024)
         .expect("second stream chunk")
         .expect("second segment");
-    assert_eq!(first.rows().len(), 50);
+    assert_eq!(first.row_count(), 50);
+    assert_eq!(first.columns().len(), 1);
+    assert_eq!(
+        first.columns()[0].first(),
+        Some(&Value::Utf8("value-1".into()))
+    );
+    assert_eq!(
+        first.columns()[0].last(),
+        Some(&Value::Utf8("value-50".into()))
+    );
     assert_eq!(second.rows().len(), 50);
     assert!(
         stream

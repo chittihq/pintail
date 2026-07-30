@@ -392,6 +392,14 @@ pub struct ProjectedValueChunk {
     retained_bytes: usize,
 }
 
+/// One bounded column-major projection from an independently visible segment.
+pub struct ProjectedColumnChunk {
+    columns: Vec<Vec<pintail_types::Value>>,
+    row_count: usize,
+    stats: ScanStats,
+    retained_bytes: usize,
+}
+
 impl ProjectedValueChunk {
     /// Returns projected values in physical key order.
     #[must_use]
@@ -418,6 +426,38 @@ impl ProjectedValueChunk {
     }
 }
 
+impl ProjectedColumnChunk {
+    /// Returns projected columns in query projection order.
+    #[must_use]
+    pub fn columns(&self) -> &[Vec<pintail_types::Value>] {
+        &self.columns
+    }
+
+    /// Moves projected columns into a columnar executor.
+    #[must_use]
+    pub fn into_columns(self) -> Vec<Vec<pintail_types::Value>> {
+        self.columns
+    }
+
+    /// Returns the number of physical rows represented by the columns.
+    #[must_use]
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns bytes retained by the projected columns.
+    #[must_use]
+    pub const fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+
+    /// Returns pruning and decoding counters for this segment.
+    #[must_use]
+    pub const fn stats(&self) -> ScanStats {
+        self.stats
+    }
+}
+
 impl ProjectedScanStream {
     /// Decodes the next independently visible segment within `memory_limit`.
     ///
@@ -428,6 +468,46 @@ impl ProjectedScanStream {
         &mut self,
         memory_limit: usize,
     ) -> Result<Option<ProjectedValueChunk>, StoreError> {
+        let Some(chunk) = self.next_column_chunk(memory_limit)? else {
+            return Ok(None);
+        };
+        let stats = chunk.stats;
+        let row_count = chunk.row_count;
+        let rows = columns_to_rows(chunk.columns, row_count)?;
+        let retained_bytes = size_of::<ProjectedValueChunk>()
+            .saturating_add(
+                rows.capacity()
+                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+            )
+            .saturating_add(
+                rows.iter()
+                    .map(|values| {
+                        values
+                            .capacity()
+                            .saturating_mul(size_of::<pintail_types::Value>())
+                            .saturating_add(
+                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
+                            )
+                    })
+                    .sum(),
+            );
+        Ok(Some(ProjectedValueChunk {
+            rows,
+            stats,
+            retained_bytes,
+        }))
+    }
+
+    /// Decodes the next independently visible segment in column-major form.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise storage, corruption, schema, or memory-limit error.
+    #[allow(clippy::too_many_lines)]
+    pub fn next_column_chunk(
+        &mut self,
+        memory_limit: usize,
+    ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
         let Some(segment) = self.segments.get(self.next_segment).cloned() else {
             return Ok(None);
         };
@@ -463,16 +543,16 @@ impl ProjectedScanStream {
                 &scan_budget,
             )?;
             scan_budget.release(row_index_bytes);
-            let retained_bytes = size_of::<ProjectedValueChunk>()
+            let retained_bytes = size_of::<ProjectedColumnChunk>()
                 .saturating_add(
                     fetch
-                        .values
+                        .columns
                         .capacity()
                         .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
                 )
                 .saturating_add(
                     fetch
-                        .values
+                        .columns
                         .iter()
                         .map(|values| {
                             values
@@ -486,8 +566,9 @@ impl ProjectedScanStream {
                 );
             scan_budget.release(fetch.reserved_bytes);
             scan_budget.reserve(retained_bytes)?;
-            return Ok(Some(ProjectedValueChunk {
-                rows: fetch.values,
+            return Ok(Some(ProjectedColumnChunk {
+                columns: fetch.columns,
+                row_count,
                 stats: ScanStats {
                     segments_read: 1,
                     blocks_decoded: fetch.blocks_decoded,
@@ -510,14 +591,38 @@ impl ProjectedScanStream {
             &self.column_ids,
             memory_limit,
         )?;
-        Ok(Some(ProjectedValueChunk {
-            retained_bytes: projected.retained_bytes(),
-            stats: projected.stats(),
-            rows: projected
-                .into_rows()
-                .into_iter()
-                .map(ProjectedRow::into_values)
-                .collect(),
+        let stats = projected.stats();
+        let rows = projected
+            .into_rows()
+            .into_iter()
+            .map(ProjectedRow::into_values)
+            .collect::<Vec<_>>();
+        let row_count = rows.len();
+        let columns = rows_to_columns(rows, self.column_ids.len())?;
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                columns
+                    .capacity()
+                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+            )
+            .saturating_add(
+                columns
+                    .iter()
+                    .map(|values| {
+                        values
+                            .capacity()
+                            .saturating_mul(size_of::<pintail_types::Value>())
+                            .saturating_add(
+                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
+                            )
+                    })
+                    .sum(),
+            );
+        Ok(Some(ProjectedColumnChunk {
+            columns,
+            row_count,
+            stats,
+            retained_bytes,
         }))
     }
 
@@ -532,6 +637,55 @@ impl ProjectedScanStream {
     pub const fn pruned_segment_count(&self) -> usize {
         self.pruned_segments
     }
+}
+
+fn columns_to_rows(
+    mut columns: Vec<Vec<pintail_types::Value>>,
+    row_count: usize,
+) -> Result<Vec<Vec<pintail_types::Value>>, StoreError> {
+    if columns.iter().any(|column| column.len() != row_count) {
+        return Err(StoreError::FormatLimit(
+            "projected column length differs from its segment row count".into(),
+        ));
+    }
+    for column in &mut columns {
+        column.reverse();
+    }
+    let mut rows = Vec::with_capacity(row_count);
+    for _ in 0..row_count {
+        rows.push(
+            columns
+                .iter_mut()
+                .map(|column| {
+                    column.pop().ok_or_else(|| {
+                        StoreError::FormatLimit("projected column ended before its rows".into())
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+    Ok(rows)
+}
+
+fn rows_to_columns(
+    rows: Vec<Vec<pintail_types::Value>>,
+    column_count: usize,
+) -> Result<Vec<Vec<pintail_types::Value>>, StoreError> {
+    let row_count = rows.len();
+    let mut columns = (0..column_count)
+        .map(|_| Vec::with_capacity(row_count))
+        .collect::<Vec<_>>();
+    for row in rows {
+        if row.len() != column_count {
+            return Err(StoreError::FormatLimit(
+                "projected row length differs from its projection".into(),
+            ));
+        }
+        for (column, value) in columns.iter_mut().zip(row) {
+            column.push(value);
+        }
+    }
+    Ok(columns)
 }
 
 impl CompactionOutcome {
@@ -1916,7 +2070,7 @@ impl TableSnapshot {
                         &scan_budget,
                     )?;
                     let fetched_bytes = fetch
-                        .values
+                        .columns
                         .iter()
                         .map(|values| {
                             size_of::<Vec<pintail_types::Value>>()
@@ -1927,9 +2081,10 @@ impl TableSnapshot {
                                     .sum::<usize>()
                         })
                         .sum();
+                    let values = columns_to_rows(fetch.columns, selected.len())?;
                     scan_budget.release(fetch.reserved_bytes);
                     scan_budget.reserve(fetched_bytes)?;
-                    Ok((selected, fetch.values, fetch.blocks_decoded))
+                    Ok((selected, values, fetch.blocks_decoded))
                 })
                 .collect::<Result<Vec<_>, StoreError>>()
         })?;

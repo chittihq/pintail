@@ -662,7 +662,7 @@ pub(crate) struct ProjectedSegmentScan {
 }
 
 pub(crate) struct ProjectedValueFetch {
-    pub(crate) values: Vec<Vec<Value>>,
+    pub(crate) columns: Vec<Vec<Value>>,
     pub(crate) blocks_decoded: usize,
     pub(crate) reserved_bytes: usize,
 }
@@ -1011,11 +1011,11 @@ pub(crate) fn read_projected_rows(
         ));
     }
 
-    let option_matrix_reserved = row_indices
+    let option_matrix_reserved = projection
         .len()
         .saturating_mul(
             std::mem::size_of::<Vec<Option<Value>>>().saturating_add(
-                projection
+                row_indices
                     .len()
                     .saturating_mul(std::mem::size_of::<Option<Value>>()),
             ),
@@ -1023,7 +1023,7 @@ pub(crate) fn read_projected_rows(
         .saturating_add(projection.len().saturating_mul(std::mem::size_of::<bool>()));
     memory.reserve(option_matrix_reserved)?;
     let mut reserved_bytes = option_matrix_reserved;
-    let mut values = vec![vec![None; projection.len()]; row_indices.len()];
+    let mut columns = vec![vec![None; row_indices.len()]; projection.len()];
     let mut found = vec![false; projection.len()];
     let mut blocks_decoded = 0;
     for _ in 0..column_count {
@@ -1087,7 +1087,7 @@ pub(crate) fn read_projected_rows(
                     if row_index < block_start || row_index >= block_end {
                         continue;
                     }
-                    values[result_index][position] =
+                    columns[position][result_index] =
                         Some(cells[row_index - block_start].to_value());
                 }
             }
@@ -1114,23 +1114,24 @@ pub(crate) fn read_projected_rows(
                 column.id()
             )));
         }
-        for row in &mut values {
-            row[position] = Some(Value::Null);
+        for value in &mut columns[position] {
+            *value = Some(Value::Null);
         }
     }
-    let output_matrix_reserved = row_indices.len().saturating_mul(
+    let output_matrix_reserved = projection.len().saturating_mul(
         std::mem::size_of::<Vec<Value>>().saturating_add(
-            projection
+            row_indices
                 .len()
                 .saturating_mul(std::mem::size_of::<Value>()),
         ),
     );
     memory.reserve(output_matrix_reserved)?;
     reserved_bytes = reserved_bytes.saturating_add(output_matrix_reserved);
-    let values = values
+    let columns = columns
         .into_iter()
-        .map(|row| {
-            row.into_iter()
+        .map(|column| {
+            column
+                .into_iter()
                 .map(|value| {
                     value.ok_or_else(|| corrupt_here(&path, &decoder, "missing projected value"))
                 })
@@ -1138,7 +1139,7 @@ pub(crate) fn read_projected_rows(
         })
         .collect::<Result<Vec<Vec<_>>, _>>()?;
     Ok(ProjectedValueFetch {
-        values,
+        columns,
         blocks_decoded,
         reserved_bytes,
     })

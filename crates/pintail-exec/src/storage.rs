@@ -214,6 +214,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             self.record_stats(key, PhysicalScanStats::default());
             return Ok(Box::new(SnapshotStream {
                 rows: VecDeque::new(),
+                columns: Vec::new(),
+                column_rows: 0,
                 stream: None,
                 types,
                 retained_bytes: stream_overhead,
@@ -244,6 +246,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             );
             return Ok(Box::new(SnapshotStream {
                 rows: VecDeque::new(),
+                columns: Vec::new(),
+                column_rows: 0,
                 stream: Some(stream),
                 types,
                 retained_bytes: stream_overhead,
@@ -308,6 +312,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             projected_values_retained_bytes(rows.capacity(), &rows).saturating_add(stream_overhead);
         Ok(Box::new(SnapshotStream {
             rows: rows.into(),
+            columns: Vec::new(),
+            column_rows: 0,
             stream: None,
             types,
             retained_bytes,
@@ -566,6 +572,8 @@ fn predecessor(value: &KeyPart) -> Option<KeyPart> {
 
 struct SnapshotStream {
     rows: VecDeque<Vec<Value>>,
+    columns: Vec<Vec<Value>>,
+    column_rows: usize,
     stream: Option<ProjectedScanStream>,
     types: Vec<pintail_types::DataType>,
     retained_bytes: usize,
@@ -573,53 +581,87 @@ struct SnapshotStream {
 }
 
 impl BatchStream for SnapshotStream {
+    #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
         while self.rows.is_empty()
+            && self.column_rows == 0
             && self.remaining != Some(0)
             && let Some(stream) = &mut self.stream
         {
             let batch_overhead = batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS);
             let Some(chunk) = stream
-                .next_chunk(available_memory.saturating_sub(batch_overhead))
+                .next_column_chunk(available_memory.saturating_sub(batch_overhead))
                 .map_err(|error| ExecError::Source(error.to_string()))?
             else {
                 self.stream = None;
                 break;
             };
+            self.column_rows = chunk.row_count();
             self.retained_bytes = self.retained_bytes.saturating_add(
                 chunk
                     .retained_bytes()
                     .saturating_sub(std::mem::size_of_val(&chunk)),
             );
-            self.rows = chunk.into_rows().into();
+            self.columns = chunk.into_columns();
+            for column in &mut self.columns {
+                column.reverse();
+            }
         }
-        if self.rows.is_empty() {
+        if self.rows.is_empty() && self.column_rows == 0 {
             return Ok(None);
         }
-        let row_count = self
-            .rows
-            .len()
+        let buffered_rows = if self.column_rows > 0 {
+            self.column_rows
+        } else {
+            self.rows.len()
+        };
+        let row_count = buffered_rows
             .min(DEFAULT_BATCH_ROWS)
             .min(self.remaining.unwrap_or(usize::MAX));
-        let mut values_by_column = self
-            .types
-            .iter()
-            .map(|_| Vec::with_capacity(row_count))
-            .collect::<Vec<_>>();
-        for _ in 0..row_count {
-            let values = self.rows.pop_front().expect("row count bounded above");
-            self.retained_bytes = self
-                .retained_bytes
-                .saturating_sub(projected_value_payload_bytes(&values));
-            if values.len() != self.types.len() {
+        let values_by_column = if self.column_rows > 0 {
+            let mut output = self
+                .types
+                .iter()
+                .map(|_| Vec::with_capacity(row_count))
+                .collect::<Vec<_>>();
+            if self.columns.len() != self.types.len() {
                 return Err(ExecError::InvalidBatch(
-                    "stored row is shorter than its snapshot schema",
+                    "stored column count differs from its snapshot schema",
                 ));
             }
-            for (position, value) in values.into_iter().enumerate() {
-                values_by_column[position].push(value);
+            for (source, output) in self.columns.iter_mut().zip(&mut output) {
+                for _ in 0..row_count {
+                    let value = source.pop().ok_or(ExecError::InvalidBatch(
+                        "stored column ended before its segment rows",
+                    ))?;
+                    self.retained_bytes = self.retained_bytes.saturating_sub(value.heap_bytes());
+                    output.push(value);
+                }
             }
-        }
+            self.column_rows = self.column_rows.saturating_sub(row_count);
+            output
+        } else {
+            let mut output = self
+                .types
+                .iter()
+                .map(|_| Vec::with_capacity(row_count))
+                .collect::<Vec<_>>();
+            for _ in 0..row_count {
+                let values = self.rows.pop_front().expect("row count bounded above");
+                self.retained_bytes = self
+                    .retained_bytes
+                    .saturating_sub(projected_value_payload_bytes(&values));
+                if values.len() != self.types.len() {
+                    return Err(ExecError::InvalidBatch(
+                        "stored row is shorter than its snapshot schema",
+                    ));
+                }
+                for (position, value) in values.into_iter().enumerate() {
+                    output[position].push(value);
+                }
+            }
+            output
+        };
         if let Some(remaining) = &mut self.remaining {
             *remaining = remaining.saturating_sub(row_count);
             if *remaining == 0 {
@@ -630,6 +672,14 @@ impl BatchStream for SnapshotStream {
                         .sum(),
                 );
                 self.rows.clear();
+                self.retained_bytes =
+                    self.retained_bytes
+                        .saturating_sub(projected_columns_retained_bytes(
+                            self.columns.capacity(),
+                            &self.columns,
+                        ));
+                self.columns.clear();
+                self.column_rows = 0;
                 self.stream = None;
             }
         }
@@ -639,6 +689,16 @@ impl BatchStream for SnapshotStream {
             self.retained_bytes = self.retained_bytes.saturating_sub(
                 capacity.saturating_sub(self.rows.capacity()) * std::mem::size_of::<Vec<Value>>(),
             );
+        }
+        if self.column_rows == 0 && !self.columns.is_empty() {
+            self.retained_bytes =
+                self.retained_bytes
+                    .saturating_sub(projected_columns_retained_bytes(
+                        self.columns.capacity(),
+                        &self.columns,
+                    ));
+            self.columns.clear();
+            self.columns.shrink_to_fit();
         }
         let columns = self
             .types
@@ -657,7 +717,11 @@ impl BatchStream for SnapshotStream {
     }
 
     fn next_batch_memory_upper_bound(&self) -> usize {
-        let row_count = self.rows.len().min(DEFAULT_BATCH_ROWS);
+        let row_count = self
+            .rows
+            .len()
+            .max(self.column_rows)
+            .min(DEFAULT_BATCH_ROWS);
         if row_count == 0 {
             return self.stream.as_ref().map_or(0, |_| {
                 batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS)
@@ -679,6 +743,22 @@ fn projected_values_retained_bytes(capacity: usize, rows: &[Vec<Value>]) -> usiz
 
 fn projected_value_payload_bytes(values: &[Value]) -> usize {
     std::mem::size_of_val(values).saturating_add(values.iter().map(Value::heap_bytes).sum())
+}
+
+fn projected_columns_retained_bytes(outer_capacity: usize, columns: &[Vec<Value>]) -> usize {
+    outer_capacity
+        .saturating_mul(std::mem::size_of::<Vec<Value>>())
+        .saturating_add(
+            columns
+                .iter()
+                .map(|values| {
+                    values
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<Value>())
+                        .saturating_add(values.iter().map(Value::heap_bytes).sum())
+                })
+                .sum(),
+        )
 }
 
 fn batch_memory_upper_bound(types: &[pintail_types::DataType], row_count: usize) -> usize {
