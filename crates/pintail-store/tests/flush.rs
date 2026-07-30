@@ -354,6 +354,51 @@ fn projected_scan_enforces_its_retained_memory_budget() {
 }
 
 #[test]
+fn projected_scan_streams_a_segment_larger_than_its_memory_budget() {
+    const MEMORY_LIMIT: usize = 1024 * 1024;
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        block_rows: 4,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    let rows = (1..=16)
+        .map(|id| {
+            let mut state: u64 = id;
+            let label = (0..128 * 1024)
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    let offset =
+                        u8::try_from((state >> 32) % 90).expect("random character offset fits u8");
+                    char::from(b'!' + offset)
+                })
+                .collect::<String>();
+            row(id, &label, id)
+        })
+        .collect();
+    table.ingest(rows).expect("ingest");
+    let segment = table
+        .flush()
+        .expect("flush")
+        .segment_path()
+        .expect("segment path")
+        .to_path_buf();
+    assert!(
+        std::fs::metadata(segment).expect("segment metadata").len()
+            > u64::try_from(MEMORY_LIMIT).expect("memory limit fits u64")
+    );
+
+    let scan = table
+        .snapshot()
+        .scan_projected_range_bounded(&key(1), &key(16), &[1], MEMORY_LIMIT)
+        .expect("streamed bounded scan");
+    assert_eq!(scan.rows().len(), 16);
+    assert!(scan.retained_bytes() <= MEMORY_LIMIT);
+}
+
+#[test]
 fn projected_memtable_scan_reserves_payloads_before_cloning() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let mut table =

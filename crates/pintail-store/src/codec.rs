@@ -44,10 +44,6 @@ impl Encoder {
         self.bytes.extend_from_slice(value);
     }
 
-    pub(crate) fn position(&self) -> usize {
-        self.bytes.len()
-    }
-
     pub(crate) fn as_slice(&self) -> &[u8] {
         &self.bytes
     }
@@ -60,11 +56,24 @@ impl Encoder {
 pub(crate) struct Decoder<'a> {
     bytes: &'a [u8],
     position: usize,
+    base_offset: usize,
 }
 
 impl<'a> Decoder<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, position: 0 }
+        Self {
+            bytes,
+            position: 0,
+            base_offset: 0,
+        }
+    }
+
+    pub(crate) fn with_base_offset(bytes: &'a [u8], base_offset: usize) -> Self {
+        Self {
+            bytes,
+            position: 0,
+            base_offset,
+        }
     }
 
     pub(crate) fn u8(&mut self) -> Result<u8, String> {
@@ -109,7 +118,7 @@ impl<'a> Decoder<'a> {
     }
 
     pub(crate) fn position(&self) -> usize {
-        self.position
+        self.base_offset.saturating_add(self.position)
     }
 
     pub(crate) fn take(&mut self, length: usize) -> Result<&'a [u8], String> {

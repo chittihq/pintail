@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
 };
@@ -23,6 +23,70 @@ const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
 const TOMBSTONE_COLUMN_ID: u32 = u32::MAX;
 const BLOOM_BYTES: usize = 256;
+
+trait DecodePosition {
+    fn decode_position(&self) -> usize;
+}
+
+impl DecodePosition for Decoder<'_> {
+    fn decode_position(&self) -> usize {
+        self.position()
+    }
+}
+
+struct FileDecoder {
+    reader: BufReader<File>,
+    position: usize,
+}
+
+impl FileDecoder {
+    fn open(path: &Path) -> Result<Self, StoreError> {
+        let file = File::open(path)
+            .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))?;
+        Ok(Self {
+            reader: BufReader::new(file),
+            position: 0,
+        })
+    }
+
+    fn u8(&mut self) -> Result<u8, String> {
+        let mut bytes = [0_u8; 1];
+        self.read_exact(&mut bytes)?;
+        Ok(bytes[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        let mut bytes = [0_u8; 4];
+        self.read_exact(&mut bytes)?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn u64(&mut self) -> Result<u64, String> {
+        let mut bytes = [0_u8; 8];
+        self.read_exact(&mut bytes)?;
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn raw(&mut self, length: usize) -> Result<Vec<u8>, String> {
+        let mut bytes = vec![0_u8; length];
+        self.read_exact(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn read_exact(&mut self, bytes: &mut [u8]) -> Result<(), String> {
+        self.reader
+            .read_exact(bytes)
+            .map_err(|error| error.to_string())?;
+        self.position = self.position.saturating_add(bytes.len());
+        Ok(())
+    }
+}
+
+impl DecodePosition for FileDecoder {
+    fn decode_position(&self) -> usize {
+        self.position
+    }
+}
 
 pub(crate) struct ScanMemoryBudget<'a> {
     used: &'a AtomicUsize,
@@ -275,52 +339,77 @@ pub(crate) fn write(
     let max_key = rows.last().expect("non-empty rows").key().clone();
     let bloom = build_bloom(rows)?;
     let specs = column_specs(schema);
-    let mut encoder = Encoder::new();
-    encoder.raw(MAGIC);
-    encoder.u8(FORMAT_VERSION);
-    encoder.u32(schema.version());
-    encoder.u64(fingerprint);
-    encoder.u64(rows.len() as u64);
-    encoder.length(specs.len(), "segment column count")?;
-    encoder.length(block_rows, "segment block row target")?;
-
-    let mut column_offsets = Vec::with_capacity(specs.len());
-    for spec in &specs {
-        column_offsets.push(encoder.position() as u64);
-        write_column(&mut encoder, spec, rows, block_rows, compression)?;
-    }
-
-    let footer_offset = encoder.position() as u64;
-    let footer_start = encoder.position();
-    encoder.raw(FOOTER_MAGIC);
-    encoder.u64(rows.len() as u64);
-    encoder.u64(min_version);
-    encoder.u64(max_version);
-    encoder.u64(fingerprint);
-    encoder.u64(rows.len() as u64);
-    encode_key(&mut encoder, &min_key)?;
-    encode_key(&mut encoder, &max_key)?;
-    encoder.length(column_offsets.len(), "footer column count")?;
-    for offset in column_offsets {
-        encoder.u64(offset);
-    }
-
-    let sparse_count = rows.len().div_ceil(block_rows);
-    encoder.length(sparse_count, "sparse primary-key index")?;
-    for row_index in (0..rows.len()).step_by(block_rows) {
-        encoder.u64(row_index as u64);
-        encode_key(&mut encoder, rows[row_index].key())?;
-    }
-    encoder.bytes(&bloom, "primary-key bloom filter")?;
-
-    let footer_checksum = xxh3_64(&encoder.as_slice()[footer_start..]);
-    encoder.u64(footer_checksum);
-    encoder.u64(footer_offset);
-
     let file_name = format!("segment-{id:020}.ptseg");
     let path = directory.join(&file_name);
     let temporary = directory.join(format!(".{file_name}.tmp"));
-    write_atomic(&temporary, &path, &encoder.finish())?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temporary)
+        .map_err(|error| StoreError::io(format!("create {}", temporary.display()), error))?;
+    let mut header = Encoder::new();
+    header.raw(MAGIC);
+    header.u8(FORMAT_VERSION);
+    header.u32(schema.version());
+    header.u64(fingerprint);
+    header.u64(rows.len() as u64);
+    header.length(specs.len(), "segment column count")?;
+    header.length(block_rows, "segment block row target")?;
+    let header = header.finish();
+    file.write_all(&header)
+        .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
+    let mut position = header.len();
+    let mut column_offsets = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        column_offsets.push(position as u64);
+        let mut column = Encoder::new();
+        write_column(&mut column, spec, rows, block_rows, compression)?;
+        let column = column.finish();
+        file.write_all(&column)
+            .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
+        position = position.saturating_add(column.len());
+    }
+
+    let footer_offset = position as u64;
+    let mut footer = Encoder::new();
+    footer.raw(FOOTER_MAGIC);
+    footer.u64(rows.len() as u64);
+    footer.u64(min_version);
+    footer.u64(max_version);
+    footer.u64(fingerprint);
+    footer.u64(rows.len() as u64);
+    encode_key(&mut footer, &min_key)?;
+    encode_key(&mut footer, &max_key)?;
+    footer.length(column_offsets.len(), "footer column count")?;
+    for offset in column_offsets {
+        footer.u64(offset);
+    }
+
+    let sparse_count = rows.len().div_ceil(block_rows);
+    footer.length(sparse_count, "sparse primary-key index")?;
+    for row_index in (0..rows.len()).step_by(block_rows) {
+        footer.u64(row_index as u64);
+        encode_key(&mut footer, rows[row_index].key())?;
+    }
+    footer.bytes(&bloom, "primary-key bloom filter")?;
+    let footer_checksum = xxh3_64(footer.as_slice());
+    footer.u64(footer_checksum);
+    footer.u64(footer_offset);
+    file.write_all(&footer.finish())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
+    std::fs::rename(&temporary, &path).map_err(|error| {
+        StoreError::io(
+            format!(
+                "publish segment {} as {}",
+                temporary.display(),
+                path.display()
+            ),
+            error,
+        )
+    })?;
+    sync_directory(directory)?;
 
     Ok(SegmentMeta {
         id,
@@ -342,12 +431,15 @@ pub(crate) fn read(
     schema: &TableSchema,
 ) -> Result<Vec<StoredRow>, StoreError> {
     let path = directory.join(&meta.file_name);
-    let bytes = std::fs::read(&path)
-        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
-    validate_footer(&path, &bytes, meta, schema)?;
+    verify(directory, meta, schema)?;
 
-    let mut decoder = Decoder::new(&bytes);
-    expect_raw(&mut decoder, MAGIC).map_err(|reason| corrupt(&path, 0, reason))?;
+    let mut decoder = FileDecoder::open(&path)?;
+    let magic = decoder
+        .raw(MAGIC.len())
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    if magic.as_slice() != MAGIC {
+        return Err(corrupt(&path, 0, "invalid segment magic"));
+    }
     if decoder
         .u8()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?
@@ -386,7 +478,7 @@ pub(crate) fn read(
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
 
-    let columns = read_segment_columns(
+    let columns = read_file_segment_columns(
         &path,
         &mut decoder,
         schema,
@@ -394,7 +486,7 @@ pub(crate) fn read(
         row_count,
         column_count,
     )?;
-    assemble_rows(&path, &decoder, &columns, row_count)
+    assemble_rows(&path, &decoder, columns, row_count)
 }
 
 struct DecodedColumns {
@@ -404,9 +496,9 @@ struct DecodedColumns {
     values: Vec<Vec<Cell>>,
 }
 
-fn read_segment_columns(
+fn read_file_segment_columns(
     path: &Path,
-    decoder: &mut Decoder<'_>,
+    decoder: &mut FileDecoder,
     schema: &TableSchema,
     schema_version: u32,
     row_count: usize,
@@ -417,7 +509,7 @@ fn read_segment_columns(
     let mut tombstones = None;
     let mut values = vec![None; schema.columns().len()];
     for _ in 0..column_count {
-        let (id, logical_type, column_cells) = read_column(path, decoder, row_count)?;
+        let (id, logical_type, column_cells) = read_file_column(path, decoder, row_count)?;
         match id {
             KEY_COLUMN_ID => assign_system_column(
                 path,
@@ -498,33 +590,52 @@ fn read_segment_columns(
 
 fn assemble_rows(
     path: &Path,
-    decoder: &Decoder<'_>,
-    columns: &DecodedColumns,
+    decoder: &impl DecodePosition,
+    columns: DecodedColumns,
     row_count: usize,
 ) -> Result<Vec<StoredRow>, StoreError> {
     let mut rows = Vec::with_capacity(row_count);
-    for row_index in 0..row_count {
-        let key = match &columns.keys[row_index] {
-            Cell::Key(key) => key.clone(),
-            _ => return Err(corrupt_here(path, decoder, "invalid key cell")),
+    let mut value_columns = columns
+        .values
+        .into_iter()
+        .map(Vec::into_iter)
+        .collect::<Vec<_>>();
+    let row_cells = columns
+        .keys
+        .into_iter()
+        .zip(columns.versions)
+        .zip(columns.tombstones);
+    for ((key, version), deleted) in row_cells {
+        let Cell::Key(key) = key else {
+            return Err(corrupt_here(path, decoder, "invalid key cell"));
         };
-        let Cell::UInt64(version) = columns.versions[row_index] else {
+        let Cell::UInt64(version) = version else {
             return Err(corrupt_here(path, decoder, "invalid version cell"));
         };
-        let Cell::Boolean(deleted) = columns.tombstones[row_index] else {
+        let Cell::Boolean(deleted) = deleted else {
             return Err(corrupt_here(path, decoder, "invalid tombstone cell"));
         };
-        let row_values = columns
-            .values
-            .iter()
+        let row_values = value_columns
+            .iter_mut()
             .map(|column| {
                 column
-                    .get(row_index)
-                    .map(Cell::to_value)
+                    .next()
+                    .map(Cell::into_value)
                     .ok_or_else(|| corrupt_here(path, decoder, "missing user value"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         rows.push(StoredRow::new(key, row_values, version, deleted));
+    }
+    if rows.len() != row_count
+        || value_columns
+            .iter_mut()
+            .any(|column| column.next().is_some())
+    {
+        return Err(corrupt_here(
+            path,
+            decoder,
+            "decoded column row counts differ",
+        ));
     }
     Ok(rows)
 }
@@ -677,18 +788,14 @@ pub(crate) fn read_row_headers_range(
     memory: &ScanMemoryBudget<'_>,
 ) -> Result<ProjectedSegmentScan, StoreError> {
     let path = directory.join(&meta.file_name);
-    let file_bytes = usize::try_from(
-        std::fs::metadata(&path)
-            .map_err(|error| StoreError::io(format!("stat segment {}", path.display()), error))?
-            .len(),
-    )
-    .map_err(|_| StoreError::FormatLimit("segment file length exceeds usize".into()))?;
-    let _file_memory = memory.reserve_temporary(file_bytes.saturating_add(1))?;
-    let bytes = std::fs::read(&path)
-        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
-    validate_footer(&path, &bytes, meta, schema)?;
-    let mut decoder = Decoder::new(&bytes);
-    expect_raw(&mut decoder, MAGIC).map_err(|reason| corrupt(&path, 0, reason))?;
+    verify(directory, meta, schema)?;
+    let mut decoder = FileDecoder::open(&path)?;
+    let magic = decoder
+        .raw(MAGIC.len())
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    if magic.as_slice() != MAGIC {
+        return Err(corrupt(&path, 0, "invalid segment magic"));
+    }
     if decoder
         .u8()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?
@@ -783,7 +890,7 @@ pub(crate) fn read_row_headers_range(
             }
             let mut column_cells = Vec::new();
             for _ in 0..block_count {
-                let block = read_block_if_bounded(
+                let block = read_file_block_if_bounded(
                     &path,
                     &mut decoder,
                     logical_type,
@@ -856,7 +963,7 @@ pub(crate) fn read_row_headers_range(
         let mut column_cells = Vec::new();
         for (block_index, selected) in selected_blocks.iter().copied().enumerate() {
             let block =
-                read_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
+                read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
                     Ok(selected && decode_column)
                 })?;
             if block.row_count != block_row_counts[block_index] {
@@ -949,18 +1056,15 @@ pub(crate) fn read_projected_rows(
         ));
     }
     let path = directory.join(&meta.file_name);
-    let file_bytes = usize::try_from(
-        std::fs::metadata(&path)
-            .map_err(|error| StoreError::io(format!("stat segment {}", path.display()), error))?
-            .len(),
-    )
-    .map_err(|_| StoreError::FormatLimit("segment file length exceeds usize".into()))?;
-    let _file_memory = memory.reserve_temporary(file_bytes.saturating_add(1))?;
-    let bytes = std::fs::read(&path)
-        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
-    validate_footer(&path, &bytes, meta, schema)?;
-    let mut decoder = Decoder::new(&bytes);
-    expect_raw(&mut decoder, MAGIC).map_err(|reason| corrupt(&path, 0, reason))?;
+    verify(directory, meta, schema)?;
+    let mut decoder = FileDecoder::open(&path)?;
+    if decoder
+        .raw(MAGIC.len())
+        .map_err(|reason| corrupt(&path, 0, reason))?
+        != MAGIC
+    {
+        return Err(corrupt(&path, 0, "invalid segment magic"));
+    }
     if decoder
         .u8()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?
@@ -1011,19 +1115,19 @@ pub(crate) fn read_projected_rows(
         ));
     }
 
-    let option_matrix_reserved = projection
+    let column_matrix_reserved = projection
         .len()
         .saturating_mul(
-            std::mem::size_of::<Vec<Option<Value>>>().saturating_add(
+            std::mem::size_of::<Vec<Value>>().saturating_add(
                 row_indices
                     .len()
-                    .saturating_mul(std::mem::size_of::<Option<Value>>()),
+                    .saturating_mul(std::mem::size_of::<Value>()),
             ),
         )
         .saturating_add(projection.len().saturating_mul(std::mem::size_of::<bool>()));
-    memory.reserve(option_matrix_reserved)?;
-    let mut reserved_bytes = option_matrix_reserved;
-    let mut columns = vec![vec![None; row_indices.len()]; projection.len()];
+    memory.reserve(column_matrix_reserved)?;
+    let mut reserved_bytes = column_matrix_reserved;
+    let mut columns = vec![vec![Value::Null; row_indices.len()]; projection.len()];
     let mut found = vec![false; projection.len()];
     let mut blocks_decoded = 0;
     for _ in 0..column_count {
@@ -1066,7 +1170,7 @@ pub(crate) fn read_projected_rows(
                     .iter()
                     .any(|index| *index >= block_start && *index < block_limit);
             let block =
-                read_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
+                read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
                     Ok(selected)
                 })?;
             reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
@@ -1087,8 +1191,7 @@ pub(crate) fn read_projected_rows(
                     if row_index < block_start || row_index >= block_end {
                         continue;
                     }
-                    columns[position][result_index] =
-                        Some(cells[row_index - block_start].to_value());
+                    columns[position][result_index] = cells[row_index - block_start].to_value();
                 }
             }
             block_start = block_end;
@@ -1114,30 +1217,7 @@ pub(crate) fn read_projected_rows(
                 column.id()
             )));
         }
-        for value in &mut columns[position] {
-            *value = Some(Value::Null);
-        }
     }
-    let output_matrix_reserved = projection.len().saturating_mul(
-        std::mem::size_of::<Vec<Value>>().saturating_add(
-            row_indices
-                .len()
-                .saturating_mul(std::mem::size_of::<Value>()),
-        ),
-    );
-    memory.reserve(output_matrix_reserved)?;
-    reserved_bytes = reserved_bytes.saturating_add(output_matrix_reserved);
-    let columns = columns
-        .into_iter()
-        .map(|column| {
-            column
-                .into_iter()
-                .map(|value| {
-                    value.ok_or_else(|| corrupt_here(&path, &decoder, "missing projected value"))
-                })
-                .collect()
-        })
-        .collect::<Result<Vec<Vec<_>>, _>>()?;
     Ok(ProjectedValueFetch {
         columns,
         blocks_decoded,
@@ -1257,9 +1337,9 @@ fn write_block(
     Ok(())
 }
 
-fn read_column(
+fn read_file_column(
     path: &Path,
-    decoder: &mut Decoder<'_>,
+    decoder: &mut FileDecoder,
     expected_rows: usize,
 ) -> Result<(u32, LogicalType, Vec<Cell>), StoreError> {
     let id = decoder
@@ -1276,7 +1356,7 @@ fn read_column(
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let mut cells = Vec::with_capacity(expected_rows);
     for _ in 0..block_count {
-        cells.extend(read_block(path, decoder, logical_type)?);
+        cells.extend(read_file_block(path, decoder, logical_type)?);
     }
     if cells.len() != expected_rows {
         return Err(corrupt_here(
@@ -1293,7 +1373,7 @@ fn read_column(
 
 fn assign_system_column(
     path: &Path,
-    decoder: &Decoder<'_>,
+    decoder: &impl DecodePosition,
     destination: &mut Option<Vec<Cell>>,
     actual_type: LogicalType,
     expected_type: LogicalType,
@@ -1327,6 +1407,36 @@ fn read_block(
         .ok_or_else(|| corrupt_here(path, decoder, "selected block was not decoded"))
 }
 
+fn read_file_block(
+    path: &Path,
+    decoder: &mut FileDecoder,
+    logical_type: LogicalType,
+) -> Result<Vec<Cell>, StoreError> {
+    let block_offset = decoder.decode_position();
+    let payload_length = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    let encoded_length = payload_length.saturating_add(12);
+    let mut encoded = Vec::with_capacity(encoded_length);
+    encoded.extend_from_slice(
+        &u32::try_from(payload_length)
+            .map_err(|_| StoreError::FormatLimit("block payload exceeds u32::MAX".into()))?
+            .to_le_bytes(),
+    );
+    encoded.resize(payload_length.saturating_add(4), 0);
+    decoder
+        .read_exact(&mut encoded[4..])
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    encoded.extend_from_slice(
+        &decoder
+            .u64()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?
+            .to_le_bytes(),
+    );
+    let mut block_decoder = Decoder::with_base_offset(&encoded, block_offset);
+    read_block(path, &mut block_decoder, logical_type)
+}
+
 struct BlockRead {
     row_count: usize,
     cells: Option<Vec<Cell>>,
@@ -1357,6 +1467,48 @@ where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
 {
     read_block_if_with_budget(path, decoder, logical_type, Some(memory), should_decode)
+}
+
+fn read_file_block_if_bounded<F>(
+    path: &Path,
+    decoder: &mut FileDecoder,
+    logical_type: LogicalType,
+    memory: &ScanMemoryBudget<'_>,
+    should_decode: F,
+) -> Result<BlockRead, StoreError>
+where
+    F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
+{
+    let block_offset = decoder.decode_position();
+    let payload_length = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    let encoded_length = payload_length.saturating_add(12);
+    let _encoded_memory = memory.reserve_temporary(encoded_length)?;
+    let mut encoded = Vec::with_capacity(encoded_length);
+    encoded.extend_from_slice(
+        &u32::try_from(payload_length)
+            .map_err(|_| StoreError::FormatLimit("block payload exceeds u32::MAX".into()))?
+            .to_le_bytes(),
+    );
+    encoded.resize(payload_length.saturating_add(4), 0);
+    decoder
+        .read_exact(&mut encoded[4..])
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    encoded.extend_from_slice(
+        &decoder
+            .u64()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?
+            .to_le_bytes(),
+    );
+    let mut block_decoder = Decoder::with_base_offset(&encoded, block_offset);
+    read_block_if_bounded(
+        path,
+        &mut block_decoder,
+        logical_type,
+        memory,
+        should_decode,
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2058,6 +2210,21 @@ impl Cell {
         }
     }
 
+    fn into_value(self) -> Value {
+        match self {
+            Self::Null => Value::Null,
+            Self::Boolean(value) => Value::Boolean(value),
+            Self::Int64(value) => Value::Int64(value),
+            Self::UInt64(value) => Value::UInt64(value),
+            Self::Float64(bits) => {
+                Value::Float64(pintail_types::Float64::new(f64::from_bits(bits)))
+            }
+            Self::Utf8(value) => Value::Utf8(value),
+            Self::Binary(value) => Value::Binary(value),
+            Self::Key(_) => unreachable!("primary keys are not user values"),
+        }
+    }
+
     fn stat_bytes(&self) -> Result<Vec<u8>, StoreError> {
         let mut encoder = Encoder::new();
         encode_cell(&mut encoder, self)?;
@@ -2111,81 +2278,6 @@ fn decode_cell(decoder: &mut Decoder<'_>, logical_type: LogicalType) -> Result<C
         LogicalType::Binary => Ok(Cell::Binary(decoder.bytes()?.to_vec())),
         LogicalType::PrimaryKey => Ok(Cell::Key(decode_key(decoder)?)),
     }
-}
-
-fn validate_footer(
-    path: &Path,
-    bytes: &[u8],
-    meta: &SegmentMeta,
-    schema: &TableSchema,
-) -> Result<(), StoreError> {
-    if bytes.len() < 16 {
-        return Err(corrupt(path, 0, "segment is shorter than its trailer"));
-    }
-    let footer_offset_position = bytes.len() - size_of::<u64>();
-    let footer_offset = usize::try_from(u64::from_le_bytes(
-        bytes[footer_offset_position..]
-            .try_into()
-            .map_err(|_| corrupt(path, footer_offset_position, "invalid footer offset"))?,
-    ))
-    .map_err(|_| {
-        corrupt(
-            path,
-            footer_offset_position,
-            "footer offset does not fit usize",
-        )
-    })?;
-    let checksum_position = footer_offset_position - size_of::<u64>();
-    if footer_offset >= checksum_position {
-        return Err(corrupt(
-            path,
-            footer_offset_position,
-            "footer offset is outside segment",
-        ));
-    }
-    let expected = u64::from_le_bytes(
-        bytes[checksum_position..footer_offset_position]
-            .try_into()
-            .map_err(|_| corrupt(path, checksum_position, "invalid footer checksum"))?,
-    );
-    if xxh3_64(&bytes[footer_offset..checksum_position]) != expected {
-        return Err(corrupt(path, footer_offset, "footer checksum mismatch"));
-    }
-    if bytes.get(footer_offset..footer_offset + FOOTER_MAGIC.len()) != Some(FOOTER_MAGIC) {
-        return Err(corrupt(path, footer_offset, "invalid footer magic"));
-    }
-    validate_footer_body(
-        path,
-        &bytes[footer_offset..checksum_position],
-        footer_offset,
-        meta,
-    )?;
-    if bytes.len() < 18 || &bytes[..MAGIC.len()] != MAGIC {
-        return Err(corrupt(path, 0, "invalid segment header"));
-    }
-    let segment_schema_version = u32::from_le_bytes(
-        bytes[6..10]
-            .try_into()
-            .map_err(|_| corrupt(path, 6, "invalid schema version"))?,
-    );
-    if segment_schema_version > schema.version() {
-        return Err(StoreError::SchemaMismatch {
-            expected_version: schema.version(),
-            actual_version: segment_schema_version,
-        });
-    }
-    let segment_fingerprint = u64::from_le_bytes(
-        bytes[10..18]
-            .try_into()
-            .map_err(|_| corrupt(path, 10, "invalid schema fingerprint"))?,
-    );
-    if meta.schema_fingerprint != segment_fingerprint {
-        return Err(StoreError::SchemaFingerprintMismatch {
-            expected: meta.schema_fingerprint,
-            actual: segment_fingerprint,
-        });
-    }
-    Ok(())
 }
 
 fn validate_footer_body(
@@ -2299,29 +2391,6 @@ fn bloom_might_contain(bloom: &[u8], hash: u64) -> bool {
     })
 }
 
-fn write_atomic(temporary: &Path, destination: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(temporary)
-        .map_err(|error| StoreError::io(format!("create {}", temporary.display()), error))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
-    std::fs::rename(temporary, destination).map_err(|error| {
-        StoreError::io(
-            format!(
-                "publish segment {} as {}",
-                temporary.display(),
-                destination.display()
-            ),
-            error,
-        )
-    })?;
-    sync_directory(destination.parent().expect("segment has parent"))
-}
-
 pub(crate) fn sync_directory(directory: &Path) -> Result<(), StoreError> {
     File::open(directory)
         .and_then(|file| file.sync_all())
@@ -2344,6 +2413,10 @@ fn corrupt(path: &Path, offset: usize, reason: impl Into<String>) -> StoreError 
     }
 }
 
-fn corrupt_here(path: &Path, decoder: &Decoder<'_>, reason: impl Into<String>) -> StoreError {
-    corrupt(path, decoder.position(), reason)
+fn corrupt_here(
+    path: &Path,
+    decoder: &impl DecodePosition,
+    reason: impl Into<String>,
+) -> StoreError {
+    corrupt(path, decoder.decode_position(), reason)
 }
