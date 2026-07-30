@@ -53,6 +53,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   converged on an exact 2,576,375-row source/replica checksum with zero DLQ,
   observed at most 27 seconds of lag, peaked at 291.2 MiB RSS, and fitted a
   46.6 MiB/hour RSS slope. Every enforced gate passed.
+- The complete release matrix passed twice consecutively on the same product
+  source: frozen Bun dashboard builds; formatting; strict all-target,
+  all-feature Clippy and tests; 600-query MySQL oracle; crash/resume,
+  replication, polling, wire-client, MinIO, and all API integration gates;
+  production non-root Compose health; and real-browser desktop/mobile checks
+  with exact typed rows, zero console errors or warnings, and no horizontal
+  overflow.
 
 ## [M8] - 2026-07-30
 
