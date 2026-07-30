@@ -25,9 +25,11 @@ use mysql_async::{
         events::{EventData, RowsEventData},
         row::BinlogRow,
     },
+    prelude::Queryable as _,
 };
 use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
 use pintail_probe::{ProbeReport, SourceFlavor, SourceTable};
+use pintail_snapshot::{SnapshotError, SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreError, TableStore};
 use pintail_types::{KeyMode, SchemaError, StoredRow};
 use serde_json::json;
@@ -98,6 +100,11 @@ pub struct CdcOptions {
     /// First reconnect delay. Subsequent failures use bounded exponential
     /// backoff.
     pub reconnect_initial_delay: Duration,
+    /// Automatically rebuild all targets once when the source checkpoint has
+    /// fallen outside binlog retention.
+    pub auto_resnapshot: bool,
+    /// Snapshot controls used by automatic purge recovery.
+    pub resnapshot_options: SnapshotOptions,
 }
 
 impl Default for CdcOptions {
@@ -109,6 +116,8 @@ impl Default for CdcOptions {
             max_transaction_bytes: 64 * 1024 * 1024,
             max_reconnect_attempts: 8,
             reconnect_initial_delay: Duration::from_millis(100),
+            auto_resnapshot: true,
+            resnapshot_options: SnapshotOptions::default(),
         }
     }
 }
@@ -173,6 +182,9 @@ pub enum CdcError {
     /// Pintail WAL or table-store failure.
     #[error("CDC storage failed: {0}")]
     Store(#[from] StoreError),
+    /// Automatic full-snapshot recovery failed.
+    #[error("CDC resnapshot failed: {0}")]
+    Snapshot(#[from] SnapshotError),
     /// Probed schema or physical key failure.
     #[error("CDC schema failed: {0}")]
     Schema(#[from] SchemaError),
@@ -284,9 +296,43 @@ async fn run_cdc_inner(
     let mut commits = 0_usize;
     let mut mutations = 0_usize;
     let mut reconnect_attempts = 0_usize;
+    let mut resnapshot_attempted = false;
     loop {
-        let mut stream = match open_stream(pool, &position, server_id, options.blocking).await {
+        let mut stream = match open_stream(
+            pool,
+            &metadata,
+            database_id,
+            &position,
+            server_id,
+            options.blocking,
+        )
+        .await
+        {
             Ok(stream) => stream,
+            Err(CdcError::NeedsResync { .. })
+                if options.auto_resnapshot && !resnapshot_attempted =>
+            {
+                targets = resnapshot_targets(
+                    pool,
+                    metadata_path,
+                    database_id,
+                    report,
+                    targets,
+                    options.resnapshot_options.clone(),
+                )
+                .await?;
+                let checkpoint = metadata.snapshot_checkpoint(database_id)?.ok_or_else(|| {
+                    CdcError::InvalidCheckpoint(
+                        "automatic resnapshot did not capture a source position".to_owned(),
+                    )
+                })?;
+                position = StreamPosition::from_checkpoint(checkpoint, report.server.flavor)?;
+                pending = PendingTransaction::default();
+                blocked_targets.clear();
+                reconnect_attempts = 0;
+                resnapshot_attempted = true;
+                continue;
+            }
             Err(CdcError::Mysql(error)) => {
                 position = reconnect_from_checkpoint(
                     &metadata,
@@ -479,13 +525,84 @@ async fn run_cdc_inner(
     }
 }
 
+async fn resnapshot_targets(
+    pool: &Pool,
+    metadata_path: &Path,
+    database_id: &str,
+    report: &ProbeReport,
+    targets: Vec<CdcTarget>,
+    snapshot_options: SnapshotOptions,
+) -> Result<Vec<CdcTarget>, CdcError> {
+    let mut snapshot_targets = Vec::with_capacity(targets.len());
+    for mut target in targets {
+        target.store.reset_for_resnapshot()?;
+        snapshot_targets.push(SnapshotTarget::new(target.source, target.store)?);
+    }
+    MetaStore::open(metadata_path)?.begin_resnapshot(database_id, &Utc::now().to_rfc3339())?;
+    let snapshot = run_snapshot(
+        pool,
+        metadata_path,
+        database_id,
+        report,
+        snapshot_targets,
+        snapshot_options,
+    )
+    .await?;
+    let mut metadata = MetaStore::open(metadata_path)?;
+    let checkpoint = metadata.snapshot_checkpoint(database_id)?.ok_or_else(|| {
+        CdcError::InvalidCheckpoint(
+            "automatic resnapshot did not persist its handoff position".to_owned(),
+        )
+    })?;
+    let table_names = snapshot
+        .targets
+        .iter()
+        .map(|target| target.source().name.clone())
+        .collect::<Vec<_>>();
+    metadata.commit_cdc_checkpoint(
+        database_id,
+        &checkpoint,
+        &table_names,
+        &Utc::now().to_rfc3339(),
+    )?;
+    snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store())
+        })
+        .collect()
+}
+
 async fn open_stream(
     pool: &Pool,
+    metadata: &MetaStore,
+    database_id: &str,
     position: &StreamPosition,
     server_id: u32,
     blocking: bool,
 ) -> Result<BinlogStream, CdcError> {
-    let connection = pool.get_conn().await?;
+    let mut connection = pool.get_conn().await?;
+    if matches!(position.kind, PositionKind::FilePosition) {
+        let logs = connection
+            .query::<mysql_async::Row, _>("SHOW BINARY LOGS")
+            .await?;
+        let available_size = logs.iter().find_map(|row| {
+            let file = row.get::<String, _>(0)?;
+            file.eq_ignore_ascii_case(&position.file)
+                .then(|| row.get::<u64, _>(1))
+                .flatten()
+        });
+        if available_size.is_none_or(|size| position.pos > size) {
+            let reason = format!(
+                "binlog checkpoint {}:{} is no longer retained by the source",
+                position.file, position.pos
+            );
+            metadata.mark_database_needs_resync(database_id, &reason)?;
+            return Err(CdcError::NeedsResync { reason });
+        }
+    }
     let request = position.request(server_id, blocking)?;
     connection
         .get_binlog_stream(request)

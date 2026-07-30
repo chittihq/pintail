@@ -7,7 +7,7 @@ use std::{
 };
 
 use mysql_async::{Opts, Pool};
-use pintail_cdc::{CdcCheckpoint, CdcOptions, CdcTarget, run_cdc};
+use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
 use pintail_probe::{ProbeReport, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
@@ -24,26 +24,9 @@ struct MysqlContainer {
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos();
-        let name = format!("pintail-m4-mysql84-{}-{nonce}", std::process::id());
-        checked_output(
-            Command::new("docker").args([
-                "run",
-                "--detach",
-                "--name",
-                &name,
-                "--publish",
-                "0:3306",
-                "--tmpfs",
-                "/var/lib/mysql:rw,size=2g",
-                "--env",
-                "MYSQL_ROOT_PASSWORD=pintail-root",
-                "--env",
-                "MYSQL_DATABASE=app",
-                "mysql:8.4",
+        Self::start_variant(
+            "mysql84-gtid",
+            &[
                 "--server-id=184",
                 "--log-bin=mysql-bin",
                 "--binlog-format=ROW",
@@ -53,9 +36,49 @@ impl MysqlContainer {
                 "--enforce-gtid-consistency=ON",
                 "--default-time-zone=+00:00",
                 "--sql-mode=NO_ENGINE_SUBSTITUTION",
-            ]),
-            "start MySQL 8.4 CDC source",
-        )?;
+            ],
+        )
+    }
+
+    fn start_file_position() -> Result<Self, String> {
+        Self::start_variant(
+            "mysql84-filepos",
+            &[
+                "--server-id=185",
+                "--log-bin=mysql-bin",
+                "--binlog-format=ROW",
+                "--binlog-row-image=FULL",
+                "--binlog-row-metadata=FULL",
+                "--default-time-zone=+00:00",
+                "--sql-mode=NO_ENGINE_SUBSTITUTION",
+            ],
+        )
+    }
+
+    fn start_variant(label: &str, server_arguments: &[&str]) -> Result<Self, String> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let name = format!("pintail-m4-{label}-{}-{nonce}", std::process::id());
+        let mut command = Command::new("docker");
+        command.args([
+            "run",
+            "--detach",
+            "--name",
+            &name,
+            "--publish",
+            "0:3306",
+            "--tmpfs",
+            "/var/lib/mysql:rw,size=2g",
+            "--env",
+            "MYSQL_ROOT_PASSWORD=pintail-root",
+            "--env",
+            "MYSQL_DATABASE=app",
+            "mysql:8.4",
+        ]);
+        command.args(server_arguments);
+        checked_output(&mut command, "start MySQL 8.4 CDC source")?;
         let host = docker_host()?;
         let port_output = checked_output(
             Command::new("docker").args(["port", &name, "3306/tcp"]),
@@ -127,6 +150,150 @@ impl Drop for MysqlContainer {
             .stderr(Stdio::null())
             .status();
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn purged_file_position_marks_the_source_for_resnapshot() {
+    let mysql = MysqlContainer::start_file_position().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE events (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(32));\
+             INSERT INTO events VALUES (1,'before');",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("purge DSN"));
+    let report = probe(&pool, "app").await.expect("probe purge source");
+    let workspace = tempfile::tempdir().expect("purge workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("purge metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register purge source");
+    let source = report.tables.first().expect("events source");
+    let store = TableStore::open(
+        workspace.path().join("events"),
+        source.table_schema().expect("events schema"),
+        StoreOptions::default(),
+    )
+    .expect("events store");
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![SnapshotTarget::new(source.clone(), store).expect("purge snapshot target")],
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("purge baseline snapshot");
+    let captured_file = match &snapshot.position {
+        pintail_snapshot::SnapshotPosition::FilePosition { file, .. } => file.clone(),
+        _ => panic!("file-position source must capture a file checkpoint"),
+    };
+    mysql
+        .query_batch("INSERT INTO events VALUES (2,'lost'); FLUSH BINARY LOGS;")
+        .expect("rotate captured binlog");
+    let active_file = mysql
+        .query_batch("SHOW BINARY LOG STATUS;")
+        .expect("active binlog")
+        .split_whitespace()
+        .next()
+        .expect("active binlog file")
+        .to_owned();
+    assert_ne!(captured_file, active_file);
+    mysql
+        .query_batch(&format!("PURGE BINARY LOGS TO '{active_file}';"))
+        .expect("purge captured binlog");
+    assert!(
+        !mysql
+            .query_batch("SHOW BINARY LOGS;")
+            .expect("retained binlogs")
+            .contains(&captured_file)
+    );
+    let target = snapshot
+        .targets
+        .into_iter()
+        .next()
+        .expect("snapshot target");
+    let source = target.source().clone();
+    let Err(error) = run_cdc(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![CdcTarget::new(source, target.into_store()).expect("purge CDC target")],
+        CdcOptions {
+            blocking: false,
+            auto_resnapshot: false,
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    else {
+        panic!("purged checkpoint must fail");
+    };
+    assert!(matches!(error, CdcError::NeedsResync { .. }));
+    assert_eq!(
+        MetaStore::open(&metadata_path)
+            .expect("inspect resync metadata")
+            .tables_needing_resync(DATABASE_ID)
+            .expect("resync tables"),
+        ["events".to_owned()].into_iter().collect()
+    );
+
+    assert_auto_resnapshot_recovers(&pool, &metadata_path, workspace.path(), &report).await;
+    pool.disconnect().await.expect("disconnect purge pool");
+}
+
+async fn assert_auto_resnapshot_recovers(
+    pool: &Pool,
+    metadata_path: &Path,
+    workspace: &Path,
+    report: &ProbeReport,
+) {
+    let source = report.tables.first().expect("recovery source");
+    let store = TableStore::open(
+        workspace.join("events"),
+        source.table_schema().expect("recovery schema"),
+        StoreOptions::default(),
+    )
+    .expect("reopen resnapshot store");
+    let recovered = run_cdc(
+        pool,
+        metadata_path,
+        DATABASE_ID,
+        report,
+        vec![CdcTarget::new(source.clone(), store).expect("recovery target")],
+        CdcOptions {
+            blocking: false,
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    .expect("automatic resnapshot recovery");
+    let rows = recovered.targets[0]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("recovered rows");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1].values()[1], Value::Utf8("lost".to_owned()));
+    assert!(
+        MetaStore::open(metadata_path)
+            .expect("inspect recovery metadata")
+            .tables_needing_resync(DATABASE_ID)
+            .expect("recovered table states")
+            .is_empty()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
