@@ -25,6 +25,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cardinality-ordered cross joins, and semantics-safe scan limit propagation.
 - Typed columnar executor batches targeting 4,096 rows, including nullable
   vectors, zero-column relational rows, and compact shared selection masks.
+- Pull-based physical execution for empty, one-row, scan, filter, project, and
+  limit plans, with compiled scalar expressions, MySQL three-valued coercion,
+  validated scan layouts, and a clear hard query-memory-cap error.
 
 ## [M1] - 2026-07-30
 

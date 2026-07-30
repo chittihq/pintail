@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, mem::size_of};
 
 use pintail_types::{DataType, Value};
 
@@ -63,6 +63,14 @@ impl ColumnVector {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
+    }
+
+    /// Estimates bytes retained by the vector and its owned scalar payloads.
+    #[must_use]
+    pub fn estimated_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.values.capacity() * size_of::<Value>()
+            + self.values.iter().map(Value::heap_bytes).sum::<usize>()
     }
 }
 
@@ -294,6 +302,19 @@ impl RecordBatch {
     #[must_use]
     pub fn visible_row_count(&self) -> usize {
         self.selection.count()
+    }
+
+    /// Estimates bytes retained by the batch, its columns, and its selection
+    /// mask.
+    #[must_use]
+    pub fn estimated_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self
+                .columns
+                .iter()
+                .map(ColumnVector::estimated_bytes)
+                .sum::<usize>()
+            + self.selection.words.capacity() * size_of::<u64>()
     }
 }
 
