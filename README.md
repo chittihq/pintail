@@ -3,12 +3,14 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestones M0 through M7 provide the
+The project is under active development. Milestones M0 through M8 provide the
 single-process skeleton, Pintail's durable PTSEG columnar storage core, and
 the in-process MySQL-dialect query engine, plus real MySQL/MariaDB source
 probing, resumable consistent snapshots, native row-binlog CDC, live DDL
 tracking, binlog-disabled polling with delete reconciliation, the authenticated
-HTTP control plane and dashboard, and a read-only MySQL wire endpoint.
+HTTP control plane and dashboard, a read-only MySQL wire endpoint,
+independently supervised databases, Prometheus metrics, safe DLQ retry, and
+native full/incremental S3-compatible backup and side-by-side restore.
 
 ## Run locally
 
@@ -97,6 +99,10 @@ cargo test -p pintail-poll --test mysql_poll \
 PINTAIL_EXTERNAL_WIRE_CLIENTS=1 \
 PINTAIL_MYSQL_CLI=/opt/homebrew/opt/mysql-client@8.4/bin/mysql \
 cargo test -p pintail-wire --test wire_compat -- --nocapture
+cargo test -p pintail-backup --test minio_restore -- --ignored --nocapture
+cargo test -p pintail-api --test mysql_api \
+  three_database_supervisor_contains_one_source_failure \
+  -- --ignored --exact --nocapture
 ```
 
 The oracle starts a uniquely named MySQL 8.4 container and compares 600
@@ -112,6 +118,8 @@ UNIQUE reuse, CDC-invisible cascades, and idle-cycle storage invariance.
 The M7 wire gate additionally covers native challenge authentication, metadata
 discovery, prepared statements, BI-style aggregates, read-only errors, and
 typed binary results with a Rust client, MySQL CLI, mysql2 under Bun, and
-PyMySQL.
+PyMySQL. The M8 gates exercise a full/incremental/checksum-verified restore
+against MinIO and three independently supervised MySQL sources in mixed CDC
+and polling modes while one source fails.
 Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
