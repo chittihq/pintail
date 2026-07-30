@@ -43,6 +43,94 @@ impl CompiledExpr {
         }
     }
 
+    pub(crate) fn evaluate_predicate_direct(
+        &self,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<Option<bool>, ExecError> {
+        match self {
+            Self::Binary {
+                op: BinaryOp::And,
+                left,
+                right,
+                ..
+            } => Ok(left
+                .evaluate_predicate_direct(batch, row)?
+                .zip(right.evaluate_predicate_direct(batch, row)?)
+                .map(|(left, right)| left && right)),
+            Self::Binary {
+                op: BinaryOp::Or,
+                left,
+                right,
+                ..
+            } => Ok(left
+                .evaluate_predicate_direct(batch, row)?
+                .zip(right.evaluate_predicate_direct(batch, row)?)
+                .map(|(left, right)| left || right)),
+            Self::Binary {
+                op:
+                    op @ (BinaryOp::Equal
+                    | BinaryOp::NotEqual
+                    | BinaryOp::Less
+                    | BinaryOp::LessOrEqual
+                    | BinaryOp::Greater
+                    | BinaryOp::GreaterOrEqual),
+                left,
+                right,
+                ..
+            } => {
+                let Some((left, right)) = left
+                    .direct_value(batch, row)
+                    .zip(right.direct_value(batch, row))
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(predicate_truth(&evaluate_comparison(
+                    *op, left, right,
+                )?)?))
+            }
+            Self::Scalar {
+                function: ScalarFunction::Between { negated },
+                args,
+                ..
+            } if args.len() == 3 => {
+                let Some((value, lower, upper)) = args[0]
+                    .direct_value(batch, row)
+                    .zip(args[1].direct_value(batch, row))
+                    .zip(args[2].direct_value(batch, row))
+                    .map(|((value, lower), upper)| (value, lower, upper))
+                else {
+                    return Ok(None);
+                };
+                if matches!(value, Value::Null)
+                    || matches!(lower, Value::Null)
+                    || matches!(upper, Value::Null)
+                {
+                    return Ok(Some(false));
+                }
+                let in_range = predicate_truth(&evaluate_comparison(
+                    BinaryOp::GreaterOrEqual,
+                    value,
+                    lower,
+                )?)? && predicate_truth(&evaluate_comparison(
+                    BinaryOp::LessOrEqual,
+                    value,
+                    upper,
+                )?)?;
+                Ok(Some(if *negated { !in_range } else { in_range }))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn direct_value<'a>(&'a self, batch: &'a RecordBatch, row: usize) -> Option<&'a Value> {
+        match self {
+            Self::Column(index) => batch.column(*index)?.value(row),
+            Self::Literal(value) => Some(value),
+            _ => None,
+        }
+    }
+
     pub(crate) fn compile(
         expr: &BoundExpr,
         columns: &[pintail_sql::BoundColumn],
@@ -916,6 +1004,12 @@ pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, Exe
 }
 
 pub(crate) fn compare_utf8_mysql(left: &str, right: &str) -> Ordering {
+    if left.is_ascii() && right.is_ascii() {
+        return left
+            .bytes()
+            .map(|byte| byte.to_ascii_lowercase())
+            .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()));
+    }
     left.chars()
         .flat_map(char::to_lowercase)
         .cmp(right.chars().flat_map(char::to_lowercase))
@@ -1152,9 +1246,11 @@ mod tests {
     // do not require a catalog.
     use std::cmp::Ordering;
 
-    use pintail_types::Value;
+    use pintail_sql::{BinaryOp, ScalarFunction};
+    use pintail_types::{DataType, Value};
 
-    use super::{compare_mysql, parse_mysql_number};
+    use super::{CompiledExpr, compare_mysql, parse_mysql_number};
+    use crate::{ColumnVector, RecordBatch};
 
     #[test]
     fn parses_mysql_numeric_prefixes() {
@@ -1176,6 +1272,58 @@ mod tests {
         assert_eq!(
             compare_mysql(&Value::Int64(-1), &Value::UInt64(0)),
             Ok(Ordering::Less)
+        );
+    }
+
+    #[test]
+    fn evaluates_direct_comparison_and_between_predicates() {
+        let batch = RecordBatch::new(
+            3,
+            vec![
+                ColumnVector::new(
+                    DataType::Utf8,
+                    vec![
+                        Value::Utf8("2023-06-01".to_owned()),
+                        Value::Utf8("2024-01-01".to_owned()),
+                        Value::Null,
+                    ],
+                )
+                .expect("date values"),
+            ],
+        )
+        .expect("date batch");
+        let comparison = CompiledExpr::Binary {
+            op: BinaryOp::Less,
+            left: Box::new(CompiledExpr::Column(0)),
+            right: Box::new(CompiledExpr::Literal(Value::Utf8("2024-01-01".to_owned()))),
+            data_type: Some(DataType::Boolean),
+        };
+        let between = CompiledExpr::Scalar {
+            function: ScalarFunction::Between { negated: false },
+            args: vec![
+                CompiledExpr::Column(0),
+                CompiledExpr::Literal(Value::Utf8("2023-01-01".to_owned())),
+                CompiledExpr::Literal(Value::Utf8("2023-12-31".to_owned())),
+            ],
+            data_type: Some(DataType::Boolean),
+        };
+
+        assert_eq!(
+            comparison.evaluate_predicate_direct(&batch, 0),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            comparison.evaluate_predicate_direct(&batch, 1),
+            Ok(Some(false))
+        );
+        assert_eq!(
+            comparison.evaluate_predicate_direct(&batch, 2),
+            Ok(Some(false))
+        );
+        assert_eq!(between.evaluate_predicate_direct(&batch, 0), Ok(Some(true)));
+        assert_eq!(
+            between.evaluate_predicate_direct(&batch, 1),
+            Ok(Some(false))
         );
     }
 }
