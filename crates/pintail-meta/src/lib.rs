@@ -3,10 +3,10 @@
 //! This crate stores configuration and replication metadata only. Analytical
 //! row data belongs exclusively to `pintail-store`.
 
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -20,6 +20,59 @@ pub struct MetaStore {
 pub struct StoredSetting {
     value: String,
     inserted: bool,
+}
+
+/// Durable state of one source snapshot chunk.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SnapshotChunkStatus {
+    /// Planned but not started.
+    Pending,
+    /// Currently being read and published.
+    Running,
+    /// Segment publication and metadata checkpoint both completed.
+    Completed,
+    /// The most recent attempt failed.
+    Error,
+}
+
+impl SnapshotChunkStatus {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "error" => Ok(Self::Error),
+            other => bail!("unknown snapshot chunk status {other}"),
+        }
+    }
+}
+
+/// Persisted snapshot chunk progress.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SnapshotChunkRecord {
+    /// Stable chunk identifier.
+    pub chunk_id: String,
+    /// Serialized exclusive lower key bound.
+    pub lo_key_json: Option<String>,
+    /// Serialized inclusive upper key bound.
+    pub hi_key_json: Option<String>,
+    /// Durable execution state.
+    pub status: SnapshotChunkStatus,
+    /// Rows published by the completed chunk.
+    pub rows: u64,
+}
+
+/// Source position that owns the snapshot-to-stream handoff.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SnapshotCheckpointRecord {
+    /// `gtid`, `filepos`, or `polling`.
+    pub kind: String,
+    /// Executed GTID set for GTID-capable sources.
+    pub gtid_set: Option<String>,
+    /// Binlog file captured with a GTID or file/position source.
+    pub binlog_file: Option<String>,
+    /// Binlog byte offset captured with a GTID or file/position source.
+    pub binlog_pos: Option<u64>,
 }
 
 impl StoredSetting {
@@ -97,6 +150,386 @@ impl MetaStore {
             })
             .with_context(|| format!("failed to read metadata setting {key}"))?;
         Ok(StoredSetting { value, inserted })
+    }
+
+    /// Registers or refreshes a source database for snapshot coordination.
+    ///
+    /// The encrypted DSN is treated as opaque control-plane data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database row cannot be written.
+    pub fn upsert_database(
+        &self,
+        id: &str,
+        name: &str,
+        encrypted_dsn: &[u8],
+        now: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO databases (\
+                   id, name, mysql_dsn_encrypted, mode, effective_mode, state, \
+                   created_at, updated_at\
+                 ) VALUES (?1, ?2, ?3, 'auto', NULL, 'created', ?4, ?4) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                   name = excluded.name, \
+                   mysql_dsn_encrypted = excluded.mysql_dsn_encrypted, \
+                   updated_at = excluded.updated_at",
+                (id, name, encrypted_dsn, now),
+            )
+            .with_context(|| format!("failed to register source database {id}"))?;
+        Ok(())
+    }
+
+    /// Registers a table before its snapshot chunks are journaled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the parent database is absent or the table row
+    /// cannot be written.
+    pub fn upsert_snapshot_table(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        pk_json: Option<&str>,
+        sort_key_json: Option<&str>,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO tables (\
+                   db_id, name, state, pk_json, sort_key_json, schema_version\
+                 ) VALUES (?1, ?2, 'snapshotting', ?3, ?4, 1) \
+                 ON CONFLICT(db_id, name) DO UPDATE SET \
+                   state = CASE \
+                     WHEN tables.state IN ('streaming', 'polling') THEN tables.state \
+                     ELSE 'snapshotting' \
+                   END, \
+                   pk_json = excluded.pk_json, \
+                   sort_key_json = excluded.sort_key_json",
+                (database_id, table_name, pk_json, sort_key_json),
+            )
+            .with_context(|| {
+                format!("failed to register snapshot table {database_id}.{table_name}")
+            })?;
+        Ok(())
+    }
+
+    /// Persists the source position captured before snapshot transactions
+    /// begin.
+    ///
+    /// Exactly one of `gtid_set` or `binlog_file`/`binlog_pos` should be
+    /// populated according to `kind`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the checkpoint cannot be written.
+    pub fn upsert_snapshot_checkpoint(
+        &self,
+        database_id: &str,
+        kind: &str,
+        gtid_set: Option<&str>,
+        binlog_file: Option<&str>,
+        binlog_pos: Option<u64>,
+        now: &str,
+    ) -> Result<()> {
+        if !matches!(kind, "gtid" | "filepos") {
+            bail!("snapshot checkpoint kind must be gtid or filepos");
+        }
+        let binlog_pos = binlog_pos
+            .map(i64::try_from)
+            .transpose()
+            .context("binlog position exceeds i64")?;
+        self.connection
+            .execute(
+                "INSERT INTO checkpoints (\
+                   db_id, kind, gtid_set, binlog_file, binlog_pos, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(db_id) DO UPDATE SET \
+                   kind = excluded.kind, gtid_set = excluded.gtid_set, \
+                   binlog_file = excluded.binlog_file, \
+                   binlog_pos = excluded.binlog_pos, \
+                   updated_at = excluded.updated_at",
+                (database_id, kind, gtid_set, binlog_file, binlog_pos, now),
+            )
+            .with_context(|| format!("failed to persist snapshot checkpoint for {database_id}"))?;
+        Ok(())
+    }
+
+    /// Persists the first snapshot handoff position and leaves it unchanged on
+    /// resume.
+    ///
+    /// A new full snapshot must explicitly replace or delete the checkpoint;
+    /// a resumed snapshot must replay CDC from the original position so
+    /// changes made while Pintail was stopped are not lost.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the checkpoint is invalid or cannot be written.
+    pub fn insert_snapshot_checkpoint_if_absent(
+        &self,
+        database_id: &str,
+        kind: &str,
+        gtid_set: Option<&str>,
+        binlog_file: Option<&str>,
+        binlog_pos: Option<u64>,
+        now: &str,
+    ) -> Result<()> {
+        if !matches!(kind, "gtid" | "filepos" | "polling") {
+            bail!("snapshot checkpoint kind must be gtid, filepos, or polling");
+        }
+        let binlog_pos = binlog_pos
+            .map(i64::try_from)
+            .transpose()
+            .context("binlog position exceeds i64")?;
+        self.connection
+            .execute(
+                "INSERT INTO checkpoints (\
+                   db_id, kind, gtid_set, binlog_file, binlog_pos, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(db_id) DO NOTHING",
+                (database_id, kind, gtid_set, binlog_file, binlog_pos, now),
+            )
+            .with_context(|| {
+                format!("failed to initialize snapshot checkpoint for {database_id}")
+            })?;
+        Ok(())
+    }
+
+    /// Returns the snapshot-to-stream handoff position, when initialized.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the checkpoint cannot be read or decoded.
+    pub fn snapshot_checkpoint(
+        &self,
+        database_id: &str,
+    ) -> Result<Option<SnapshotCheckpointRecord>> {
+        let raw = self
+            .connection
+            .query_row(
+                "SELECT kind, gtid_set, binlog_file, binlog_pos \
+                 FROM checkpoints WHERE db_id = ?1",
+                [database_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .context("failed to read snapshot checkpoint")?;
+        raw.map(|(kind, gtid_set, binlog_file, binlog_pos)| {
+            let binlog_pos = binlog_pos
+                .map(u64::try_from)
+                .transpose()
+                .context("snapshot checkpoint contains a negative binlog position")?;
+            Ok(SnapshotCheckpointRecord {
+                kind,
+                gtid_set,
+                binlog_file,
+                binlog_pos,
+            })
+        })
+        .transpose()
+    }
+
+    /// Returns completed chunk identifiers for one table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when progress cannot be read.
+    pub fn completed_snapshot_chunks(
+        &self,
+        database_id: &str,
+        table_name: &str,
+    ) -> Result<BTreeSet<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT chunk_id FROM snapshot_chunks \
+                 WHERE db_id = ?1 AND table_name = ?2 AND status = 'completed' \
+                 ORDER BY chunk_id",
+            )
+            .context("failed to prepare completed snapshot chunk query")?;
+        let chunks = statement
+            .query_map((database_id, table_name), |row| row.get(0))
+            .context("failed to query completed snapshot chunks")?
+            .collect::<rusqlite::Result<BTreeSet<String>>>()
+            .context("failed to decode completed snapshot chunks")?;
+        Ok(chunks)
+    }
+
+    /// Marks a chunk running, resetting a prior failed/interrupted attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the chunk checkpoint cannot be persisted.
+    pub fn start_snapshot_chunk(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        chunk_id: &str,
+        lo_key_json: Option<&str>,
+        hi_key_json: Option<&str>,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO snapshot_chunks (\
+                   db_id, table_name, chunk_id, lo_key_json, hi_key_json, status, rows\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'running', 0) \
+                 ON CONFLICT(db_id, table_name, chunk_id) DO UPDATE SET \
+                   lo_key_json = excluded.lo_key_json, \
+                   hi_key_json = excluded.hi_key_json, \
+                   status = 'running', rows = 0 \
+                 WHERE snapshot_chunks.status != 'completed'",
+                (database_id, table_name, chunk_id, lo_key_json, hi_key_json),
+            )
+            .with_context(|| {
+                format!("failed to start snapshot chunk {database_id}.{table_name}/{chunk_id}")
+            })?;
+        Ok(())
+    }
+
+    /// Marks a durably published chunk completed and advances table progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the two control-plane updates cannot commit
+    /// atomically.
+    pub fn complete_snapshot_chunk(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        chunk_id: &str,
+        rows: u64,
+    ) -> Result<()> {
+        let rows_i64 = i64::try_from(rows).context("snapshot chunk row count exceeds i64")?;
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin snapshot chunk completion")?;
+        let changed = transaction
+            .execute(
+                "UPDATE snapshot_chunks SET status = 'completed', rows = ?4 \
+                 WHERE db_id = ?1 AND table_name = ?2 AND chunk_id = ?3 \
+                   AND status != 'completed'",
+                (database_id, table_name, chunk_id, rows_i64),
+            )
+            .context("failed to complete snapshot chunk")?;
+        if changed == 0 {
+            let status = transaction
+                .query_row(
+                    "SELECT status FROM snapshot_chunks \
+                     WHERE db_id = ?1 AND table_name = ?2 AND chunk_id = ?3",
+                    (database_id, table_name, chunk_id),
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .context("failed to inspect snapshot chunk state")?;
+            if status.as_deref() == Some("completed") {
+                return transaction
+                    .commit()
+                    .context("failed to commit idempotent snapshot chunk completion");
+            }
+            bail!("snapshot chunk {database_id}.{table_name}/{chunk_id} was not started");
+        }
+        transaction
+            .execute(
+                "UPDATE tables SET rows_synced = rows_synced + ?3 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, rows_i64),
+            )
+            .context("failed to advance snapshot table progress")?;
+        transaction
+            .commit()
+            .context("failed to commit snapshot chunk completion")
+    }
+
+    /// Marks the table snapshot complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table state cannot be updated.
+    pub fn complete_snapshot_table(&self, database_id: &str, table_name: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET state = 'pending', last_error = NULL \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name),
+            )
+            .with_context(|| {
+                format!("failed to complete snapshot table {database_id}.{table_name}")
+            })?;
+        Ok(())
+    }
+
+    /// Records a table-level snapshot error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table state cannot be updated.
+    pub fn fail_snapshot_table(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        error: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET state = 'error', last_error = ?3 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, error),
+            )
+            .with_context(|| format!("failed to record snapshot error for {table_name}"))?;
+        Ok(())
+    }
+
+    /// Reads every chunk record for verification and progress surfaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when records cannot be queried or decoded.
+    pub fn snapshot_chunks(
+        &self,
+        database_id: &str,
+        table_name: &str,
+    ) -> Result<Vec<SnapshotChunkRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT chunk_id, lo_key_json, hi_key_json, status, rows \
+                 FROM snapshot_chunks WHERE db_id = ?1 AND table_name = ?2 \
+                 ORDER BY chunk_id",
+            )
+            .context("failed to prepare snapshot chunk query")?;
+        let rows = statement
+            .query_map((database_id, table_name), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, u64>(4)?,
+                ))
+            })
+            .context("failed to query snapshot chunks")?;
+        let mut chunks = Vec::new();
+        for row in rows {
+            let (chunk_id, lo_key_json, hi_key_json, status, rows) =
+                row.context("failed to decode snapshot chunk")?;
+            chunks.push(SnapshotChunkRecord {
+                chunk_id,
+                lo_key_json,
+                hi_key_json,
+                status: SnapshotChunkStatus::parse(&status)?,
+                rows,
+            });
+        }
+        Ok(chunks)
     }
 }
 
