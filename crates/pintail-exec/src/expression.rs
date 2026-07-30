@@ -224,7 +224,16 @@ impl CompiledExpr {
                 function,
                 args,
                 data_type,
-            } => evaluate_scalar(*function, args, *data_type, batch, row),
+            } => {
+                if let ScalarFunction::DatePart(part) = function
+                    && let [argument] = args.as_slice()
+                    && let Some(value) = argument.direct_value(batch, row)
+                    && let Some(value) = evaluate_direct_date_part(value, *part)
+                {
+                    return value;
+                }
+                evaluate_scalar(*function, args, *data_type, batch, row)
+            }
         }
     }
 
@@ -401,6 +410,63 @@ fn scalar_string_upper_bound(value: &Value) -> usize {
         Value::Utf8(value) => value.len(),
         Value::Binary(value) => value.len(),
     }
+}
+
+fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Value, ExecError>> {
+    if matches!(value, Value::Null) {
+        return Some(Ok(Value::Null));
+    }
+    let Value::Utf8(value) = value else {
+        return None;
+    };
+    let bytes = value.as_bytes();
+    if bytes.len() < 10 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
+        return None;
+    }
+    let year = ascii_decimal(bytes.get(0..4)?)?;
+    let month = ascii_decimal(bytes.get(5..7)?)?;
+    let day = ascii_decimal(bytes.get(8..10)?)?;
+    let year = i32::try_from(year).ok()?;
+    let month = u32::try_from(month).ok()?;
+    let day = u32::try_from(day).ok()?;
+    if NaiveDate::from_ymd_opt(year, month, day).is_none() {
+        return Some(Err(ExecError::InvalidDateTime));
+    }
+    let date_value = match part {
+        DatePart::Year => u64::try_from(year).unwrap_or(0),
+        DatePart::Month => u64::from(month),
+        DatePart::Day => u64::from(day),
+        DatePart::Hour | DatePart::Minute | DatePart::Second => {
+            if bytes.len() < 19
+                || !matches!(bytes.get(10), Some(b' ' | b'T'))
+                || bytes.get(13) != Some(&b':')
+                || bytes.get(16) != Some(&b':')
+            {
+                return None;
+            }
+            let hour = ascii_decimal(bytes.get(11..13)?)?;
+            let minute = ascii_decimal(bytes.get(14..16)?)?;
+            let second = ascii_decimal(bytes.get(17..19)?)?;
+            if hour > 23 || minute > 59 || second > 59 {
+                return Some(Err(ExecError::InvalidDateTime));
+            }
+            match part {
+                DatePart::Hour => hour,
+                DatePart::Minute => minute,
+                DatePart::Second => second,
+                DatePart::Year | DatePart::Month | DatePart::Day => unreachable!(),
+            }
+        }
+    };
+    Some(Ok(Value::UInt64(date_value)))
+}
+
+fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
+    bytes.iter().try_fold(0_u64, |value, digit| {
+        digit
+            .is_ascii_digit()
+            .then(|| value * 10 + u64::from(digit - b'0'))
+    })
 }
 
 fn evaluate_scalar(

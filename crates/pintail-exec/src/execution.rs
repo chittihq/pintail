@@ -2269,121 +2269,200 @@ fn build_fused_inner_join_aggregate(
     let build_start = memory.used();
     let join = build_hash_join_state(right, right_key, *key_mode, memory)?;
     let build_reserved = memory.used().saturating_sub(build_start);
-    let mut groups = Vec::<AggregateGroup>::new();
-    let mut raw_index = HashMap::<u64, usize>::new();
-    let mut index_reserved = 0_usize;
-
-    while let Some(batch) = left.next_batch(memory)? {
-        let batch_bytes = batch.estimated_bytes();
-        for row in batch.selection().selected_rows() {
-            memory.ensure_transient(
-                batch_bytes.saturating_add(
-                    left_key
-                        .allocation_upper_bound(&batch, row)
-                        .saturating_mul(12),
-                ),
-            )?;
-            let Some(key) = normalized_join_key(left_key.evaluate(&batch, row)?, *key_mode)? else {
-                continue;
+    let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
+    loop {
+        let mut batches = Vec::with_capacity(8);
+        let mut batch_reserved = 0_usize;
+        while batches.len() < 8 {
+            let Some(batch) = left.next_batch(memory)? else {
+                break;
             };
-            let Some(matches) = join.build.get(&key) else {
-                continue;
-            };
-            for right_values in matches {
-                let raw_hash = joined_right_group_hash(right_values, &right_group_columns)?;
-                let existing = raw_index
-                    .get(&raw_hash)
-                    .copied()
-                    .filter(|index| {
-                        joined_right_group_matches(
-                            &groups[*index].values,
-                            right_values,
-                            &right_group_columns,
-                            true,
-                        )
-                    })
-                    .or_else(|| {
-                        groups.iter().position(|group| {
-                            joined_right_group_matches(
-                                &group.values,
-                                right_values,
-                                &right_group_columns,
-                                false,
-                            )
-                        })
-                    });
-                let group_index = if let Some(index) = existing {
-                    index
-                } else {
-                    let values = right_group_columns
-                        .iter()
-                        .map(|column| {
-                            right_values.get(*column).cloned().ok_or(
-                                ExecError::InvalidPhysicalPlan(
-                                    "join aggregate group is outside the build-side layout",
-                                ),
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let bytes = estimated_row_payload_bytes(&values).saturating_add(
-                        aggregates.len().saturating_mul(size_of::<AggregateState>()),
-                    );
-                    memory.ensure_transient(batch_bytes.saturating_add(bytes))?;
-                    reserve_vec_elements(&mut groups, 1, 64, memory)?;
-                    memory.reserve(bytes)?;
-                    let index = groups.len();
-                    groups.push(AggregateGroup {
-                        values,
-                        states: aggregates.iter().map(AggregateState::new).collect(),
-                    });
-                    index
-                };
-                if !raw_index.contains_key(&raw_hash) {
-                    index_reserved = index_reserved.saturating_add(reserve_hash_map_entries(
-                        &mut raw_index,
-                        1,
-                        size_of::<u64>()
-                            .saturating_add(size_of::<usize>())
+            let bytes = batch.estimated_bytes();
+            memory.reserve(bytes)?;
+            batch_reserved = batch_reserved.saturating_add(bytes);
+            batches.push(batch);
+        }
+        if batches.is_empty() {
+            break;
+        }
+        let selected_rows = batches
+            .iter()
+            .map(RecordBatch::visible_row_count)
+            .sum::<usize>();
+        let local_upper = selected_rows.saturating_mul(
+            right_group_columns
+                .len()
+                .saturating_mul(size_of::<Value>())
+                .saturating_mul(2)
+                .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+                .saturating_add(size_of::<AggregateGroup>())
+                .saturating_add(HASH_ENTRY_OVERHEAD)
+                .saturating_add(256),
+        );
+        memory.reserve(local_upper)?;
+        let partials = batches
+            .par_iter()
+            .map(|batch| {
+                build_local_fused_join_groups(
+                    batch,
+                    left_key,
+                    *key_mode,
+                    left_width,
+                    &right_group_columns,
+                    aggregates,
+                    &join.build,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for partial in partials {
+            for (key, partial_group) in partial {
+                if groups.len() == groups.capacity() {
+                    let growth = groups.capacity().max(64);
+                    reserve_hash_map_entries(
+                        &mut groups,
+                        growth,
+                        size_of::<Vec<Value>>()
+                            .saturating_add(size_of::<AggregateGroup>())
                             .saturating_add(HASH_ENTRY_OVERHEAD),
-                        batch_bytes,
+                        batch_reserved,
                         memory,
-                    )?);
-                    raw_index.insert(raw_hash, group_index);
+                    )?;
                 }
-                for (aggregate, aggregate_state) in
-                    aggregates.iter().zip(&mut groups[group_index].states)
+                let group = match groups.entry(key) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let bytes = estimated_row_payload_bytes(&partial_group.values)
+                            .saturating_add(estimated_row_payload_bytes(entry.key()))
+                            .saturating_add(
+                                aggregates.len().saturating_mul(size_of::<AggregateState>()),
+                            );
+                        memory.reserve(bytes)?;
+                        entry.insert(AggregateGroup {
+                            values: partial_group.values,
+                            states: aggregates.iter().map(AggregateState::new).collect(),
+                        })
+                    }
+                };
+                for ((state, partial_state), aggregate) in group
+                    .states
+                    .iter_mut()
+                    .zip(partial_group.states)
+                    .zip(aggregates)
                 {
-                    let value = match aggregate.expr.as_ref() {
-                        None => &Value::Boolean(true),
-                        Some(expression) => {
-                            let column =
-                                expression
-                                    .column_index()
-                                    .ok_or(ExecError::InvalidPhysicalPlan(
-                                        "fused join aggregate expression is not a column",
-                                    ))?;
-                            if column < left_width {
-                                direct_group_value(&batch, row, column)?
-                            } else {
-                                right_values.get(column - left_width).ok_or(
-                                    ExecError::InvalidPhysicalPlan(
-                                        "join aggregate column is outside the joined layout",
-                                    ),
-                                )?
-                            }
-                        }
-                    };
-                    aggregate_state.update(aggregate, value, memory)?;
+                    state.merge(aggregate, partial_state, memory)?;
                 }
             }
         }
+        memory.release(local_upper.saturating_add(batch_reserved));
     }
 
-    drop(raw_index);
-    memory.release(index_reserved);
     drop(join);
     memory.release(build_reserved);
-    Ok(Some(finish_aggregate_groups(groups.into_iter(), memory)?))
+    Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_local_fused_join_groups(
+    batch: &RecordBatch,
+    left_key: &CompiledExpr,
+    key_mode: JoinKeyMode,
+    left_width: usize,
+    right_group_columns: &[usize],
+    aggregates: &[CompiledAggregate],
+    build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
+) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+    let mut groups = Vec::<AggregateGroup>::new();
+    let mut raw_index = HashMap::<u64, usize>::new();
+    let mut memory = MemoryTracker::new(usize::MAX);
+    for row in batch.selection().selected_rows() {
+        let Some(key) = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? else {
+            continue;
+        };
+        let Some(matches) = build.get(&key) else {
+            continue;
+        };
+        for right_values in matches {
+            let raw_hash = joined_right_group_hash(right_values, right_group_columns)?;
+            let existing = raw_index
+                .get(&raw_hash)
+                .copied()
+                .filter(|index| {
+                    joined_right_group_matches(
+                        &groups[*index].values,
+                        right_values,
+                        right_group_columns,
+                        true,
+                    )
+                })
+                .or_else(|| {
+                    groups.iter().position(|group| {
+                        joined_right_group_matches(
+                            &group.values,
+                            right_values,
+                            right_group_columns,
+                            false,
+                        )
+                    })
+                });
+            let group_index = if let Some(index) = existing {
+                index
+            } else {
+                let values = right_group_columns
+                    .iter()
+                    .map(|column| {
+                        right_values
+                            .get(*column)
+                            .cloned()
+                            .ok_or(ExecError::InvalidPhysicalPlan(
+                                "join aggregate group is outside the build-side layout",
+                            ))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let index = groups.len();
+                groups.push(AggregateGroup {
+                    values,
+                    states: aggregates.iter().map(AggregateState::new).collect(),
+                });
+                index
+            };
+            raw_index.entry(raw_hash).or_insert(group_index);
+            for (aggregate, state) in aggregates.iter().zip(&mut groups[group_index].states) {
+                let value = match aggregate.expr.as_ref() {
+                    None => &Value::Boolean(true),
+                    Some(expression) => {
+                        let column =
+                            expression
+                                .column_index()
+                                .ok_or(ExecError::InvalidPhysicalPlan(
+                                    "fused join aggregate expression is not a column",
+                                ))?;
+                        if column < left_width {
+                            direct_group_value(batch, row, column)?
+                        } else {
+                            right_values.get(column - left_width).ok_or(
+                                ExecError::InvalidPhysicalPlan(
+                                    "join aggregate column is outside the joined layout",
+                                ),
+                            )?
+                        }
+                    }
+                };
+                state.update(aggregate, value, &mut memory)?;
+            }
+        }
+    }
+    Ok(groups
+        .into_iter()
+        .map(|group| {
+            let key = group
+                .values
+                .iter()
+                .cloned()
+                .map(normalized_collation_value)
+                .collect();
+            (key, group)
+        })
+        .collect())
 }
 
 fn joined_right_group_hash(values: &[Value], columns: &[usize]) -> Result<u64, ExecError> {
