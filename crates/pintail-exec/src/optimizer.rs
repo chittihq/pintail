@@ -510,11 +510,12 @@ fn push_limits(plan: &mut LogicalPlan) {
 
 fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
     match plan {
-        LogicalPlan::Scan(scan) => {
+        LogicalPlan::Scan(scan) if scan.predicates.is_empty() => {
             scan.limit = Some(scan.limit.map_or(rows, |existing| existing.min(rows)));
         }
         LogicalPlan::Project { input, .. } => set_input_limit(input, rows),
-        LogicalPlan::Empty
+        LogicalPlan::Scan(_)
+        | LogicalPlan::Empty
         | LogicalPlan::OneRow
         | LogicalPlan::CrossJoin { .. }
         | LogicalPlan::Filter { .. }
@@ -609,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn pushes_predicates_prunes_columns_and_propagates_limits() {
+    fn pushes_predicates_and_prunes_columns_without_unsafe_limit_pushdown() {
         let plan = optimized("SELECT name FROM events WHERE id > 10 LIMIT 5");
         let LogicalPlan::Limit { input, .. } = plan else {
             panic!("limit root");
@@ -622,6 +623,21 @@ mod tests {
         };
         assert_eq!(scan.projected_column_ids, [1, 2]);
         assert_eq!(scan.predicates.len(), 1);
+        assert_eq!(scan.limit, None);
+    }
+
+    #[test]
+    fn propagates_limits_into_predicate_free_scans() {
+        let plan = optimized("SELECT name FROM events LIMIT 5");
+        let LogicalPlan::Limit { input, .. } = plan else {
+            panic!("limit root");
+        };
+        let LogicalPlan::Project { input, .. } = *input else {
+            panic!("project");
+        };
+        let LogicalPlan::Scan(scan) = *input else {
+            panic!("scan");
+        };
         assert_eq!(scan.limit, Some(5));
     }
 
