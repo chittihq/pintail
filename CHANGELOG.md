@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A durable polling engine with automatic timestamp/created/auto-increment
+  cursor selection, inclusive boundary rereads, cheap count/maximum probes,
+  monotonic poll versions, soft-delete mapping, complete primary-key
+  reconciliation, cursor-less keyed diffs, and append-table rebuilds.
+- Secondary-UNIQUE collision audits now trigger immediate delete repair, and
+  probe-flagged cascade/SET NULL child tables can run reconciliation even when
+  their primary replication mode is CDC.
+- A binlog-disabled MySQL 8.4 gate covers polling CRUD, the count-neutral
+  delete blind spot, unique-value reuse, soft deletes, cascade reconciliation,
+  append tables, and ten idle forced scans with zero table-storage growth.
+
 ## [M4] - 2026-07-30
 
 ### Added

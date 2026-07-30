@@ -1,0 +1,111 @@
+use mysql_async::Row;
+use pintail_probe::SourceTable;
+use pintail_snapshot::map_mysql_value;
+use pintail_types::{KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
+
+use crate::PollError;
+
+pub(crate) fn decode_row(
+    table: &SourceTable,
+    row: Row,
+    append_row_id: u64,
+    version: u64,
+    deleted: bool,
+) -> Result<StoredRow, PollError> {
+    if row.len() != table.columns.len() {
+        return Err(PollError::Decode(format!(
+            "{} source row contains {} values; expected {}",
+            table.name,
+            row.len(),
+            table.columns.len()
+        )));
+    }
+    let values = row
+        .unwrap()
+        .into_iter()
+        .zip(&table.columns)
+        .map(|(value, column)| map_mysql_value(&table.name, column, value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = if table.key.mode == KeyMode::AppendRowId {
+        PrimaryKey::new(vec![KeyPart::UInt64(append_row_id)])?
+    } else {
+        physical_key(table, &values)?
+    };
+    Ok(StoredRow::new(key, values, version, deleted))
+}
+
+pub(crate) fn physical_key(table: &SourceTable, values: &[Value]) -> Result<PrimaryKey, PollError> {
+    let parts = table
+        .key
+        .columns
+        .iter()
+        .map(|key| {
+            let index = table
+                .columns
+                .iter()
+                .position(|column| column.name.eq_ignore_ascii_case(key))
+                .ok_or_else(|| {
+                    PollError::Decode(format!(
+                        "{} key column {key} is absent from its source schema",
+                        table.name
+                    ))
+                })?;
+            key_part(&values[index]).ok_or_else(|| {
+                PollError::Decode(format!("{}.{} key value is NULL", table.name, key))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    PrimaryKey::new(parts).map_err(PollError::Schema)
+}
+
+pub(crate) fn source_projection(table: &SourceTable) -> String {
+    table
+        .columns
+        .iter()
+        .map(|column| {
+            if is_geometry(&column.mysql_data_type) {
+                format!(
+                    "ST_AsWKB({}) AS {}",
+                    quote_identifier(&column.name),
+                    quote_identifier(&column.name)
+                )
+            } else {
+                quote_identifier(&column.name)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub(crate) fn quote_identifier(identifier: &str) -> String {
+    format!("`{}`", identifier.replace('`', "``"))
+}
+
+fn key_part(value: &Value) -> Option<KeyPart> {
+    match value {
+        Value::Null => None,
+        Value::Boolean(value) => Some(KeyPart::UInt64(u64::from(*value))),
+        Value::Int64(value) => Some(KeyPart::Int64(*value)),
+        Value::UInt64(value) => Some(KeyPart::UInt64(*value)),
+        Value::Float64(value) => {
+            let normalized = if value.get() == 0.0 { 0.0 } else { value.get() };
+            Some(KeyPart::Utf8(normalized.to_string()))
+        }
+        Value::Utf8(value) => Some(KeyPart::Utf8(value.clone())),
+        Value::Binary(value) => Some(KeyPart::Binary(value.clone())),
+    }
+}
+
+fn is_geometry(data_type: &str) -> bool {
+    matches!(
+        data_type.to_ascii_lowercase().as_str(),
+        "geometry"
+            | "point"
+            | "linestring"
+            | "polygon"
+            | "multipoint"
+            | "multilinestring"
+            | "multipolygon"
+            | "geometrycollection"
+    )
+}

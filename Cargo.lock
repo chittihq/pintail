@@ -1328,6 +1328,21 @@ dependencies = [
 [[package]]
 name = "pintail-poll"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mysql_async",
+ "pintail-meta",
+ "pintail-probe",
+ "pintail-snapshot",
+ "pintail-store",
+ "pintail-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "pintail-probe"
