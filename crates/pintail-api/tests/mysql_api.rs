@@ -22,32 +22,44 @@ struct MysqlContainer {
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
+        Self::start_with_binlog(false)
+    }
+
+    fn start_with_binlog(binlog: bool) -> Result<Self, String> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
         let name = format!("pintail-m6-api-{}-{nonce}", std::process::id());
-        checked_output(
-            Command::new("docker").args([
-                "run",
-                "--detach",
-                "--name",
-                &name,
-                "--publish",
-                "0:3306",
-                "--tmpfs",
-                "/var/lib/mysql:rw,size=1g",
-                "--env",
-                "MYSQL_ROOT_PASSWORD=pintail-root",
-                "--env",
-                "MYSQL_DATABASE=analytics",
-                "mysql:8.4",
-                "--skip-log-bin",
-                "--default-time-zone=+00:00",
-                "--sql-mode=NO_ENGINE_SUBSTITUTION",
-            ]),
-            "start API MySQL source",
-        )?;
+        let mut command = Command::new("docker");
+        command.args([
+            "run",
+            "--detach",
+            "--name",
+            &name,
+            "--publish",
+            "0:3306",
+            "--tmpfs",
+            "/var/lib/mysql:rw,size=1g",
+            "--env",
+            "MYSQL_ROOT_PASSWORD=pintail-root",
+            "--env",
+            "MYSQL_DATABASE=analytics",
+            "mysql:8.4",
+            "--default-time-zone=+00:00",
+            "--sql-mode=NO_ENGINE_SUBSTITUTION",
+        ]);
+        if binlog {
+            command.args([
+                "--log-bin=mysql-bin",
+                "--binlog-format=ROW",
+                "--binlog-row-image=FULL",
+                "--binlog-row-metadata=FULL",
+            ]);
+        } else {
+            command.arg("--skip-log-bin");
+        }
+        checked_output(&mut command, "start API MySQL source")?;
         let host = docker_host()?;
         let port_output = checked_output(
             Command::new("docker").args(["port", &name, "3306/tcp"]),
@@ -70,10 +82,22 @@ impl MysqlContainer {
         Err("API MySQL source did not become ready within 60 seconds".to_owned())
     }
 
+    fn stop(&self) -> Result<(), String> {
+        checked_output(
+            Command::new("docker").args(["stop", "--time", "0", &self.name]),
+            "stop API MySQL source",
+        )
+        .map(|_| ())
+    }
+
     fn dsn(&self) -> String {
+        self.dsn_for("analytics")
+    }
+
+    fn dsn_for(&self, database: &str) -> String {
         format!(
-            "mysql://pintail:pintail@{}:{}/analytics",
-            self.host, self.port
+            "mysql://pintail:pintail@{}:{}/{database}",
+            self.host, self.port,
         )
     }
 
@@ -304,6 +328,172 @@ async fn wizard_snapshot_query_reconcile_and_resync_happy_path() {
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and three mysql:8.4 containers"]
+#[allow(clippy::too_many_lines)]
+async fn three_database_supervisor_contains_one_source_failure() {
+    let cdc = MysqlContainer::start_with_binlog(true)
+        .unwrap_or_else(|error| panic!("start CDC source: {error}"));
+    let polling =
+        MysqlContainer::start().unwrap_or_else(|error| panic!("start polling source: {error}"));
+    let failing =
+        MysqlContainer::start().unwrap_or_else(|error| panic!("start failing source: {error}"));
+    for (schema, source) in [
+        ("cdc_source", &cdc),
+        ("polling_source", &polling),
+        ("failing_source", &failing),
+    ] {
+        source
+            .query_batch(&format!(
+                "CREATE USER IF NOT EXISTS 'pintail'@'%' IDENTIFIED BY 'pintail';\
+                 GRANT SELECT, RELOAD, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'pintail'@'%';\
+                 CREATE DATABASE `{schema}`;\
+                 USE `{schema}`;\
+                 CREATE TABLE events (\
+                   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,\
+                   name VARCHAR(255) NULL\
+                 ) ENGINE=InnoDB;\
+                 INSERT INTO events (name) VALUES ('launch'), ('land');"
+            ))
+            .unwrap_or_else(|error| panic!("seed source: {error}"));
+    }
+
+    let data = tempfile::tempdir().expect("API data directory");
+    let state = pintail_api::ApiState::new(
+        data.path(),
+        data.path().join("pintail-meta.db"),
+        b"test-jwt-secret-with-enough-entropy",
+        &"42".repeat(32),
+    )
+    .expect("configured API state");
+    let app = pintail_api::router_with_state(state.clone());
+    let setup = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/auth/setup",
+            None,
+            Some(json!({
+                "email": "admin@example.com",
+                "password": "correct horse battery"
+            })),
+        )
+        .await,
+    )
+    .await;
+    let authorization = format!("Bearer {}", setup["token"].as_str().expect("setup token"));
+    let mut database_ids = Vec::new();
+    for (label, source, mode) in [
+        ("cdc_source", &cdc, "cdc"),
+        ("polling_source", &polling, "polling"),
+        ("failing_source", &failing, "polling"),
+    ] {
+        let created = request(
+            &app,
+            Method::POST,
+            "/api/databases",
+            Some(&authorization),
+            Some(json!({
+                "name": label,
+                "dsn": source.dsn_for(label),
+                "mode": mode,
+                "include_tables": ["events"]
+            })),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let created = json_response(created).await;
+        assert_eq!(created["include_tables"], json!(["events"]));
+        let database_id = created["id"].as_str().expect("database ID").to_owned();
+        let probe = request(
+            &app,
+            Method::GET,
+            &format!("/api/databases/{database_id}/probe"),
+            Some(&authorization),
+            None,
+        )
+        .await;
+        assert_eq!(probe.status(), StatusCode::OK);
+        let probe = json_response(probe).await;
+        assert!(
+            probe["tables"]
+                .as_array()
+                .is_some_and(|tables| tables.iter().any(|table| table["name"] == "events")),
+            "{label} probe did not discover events: {probe}"
+        );
+        let snapshot = request(
+            &app,
+            Method::POST,
+            &format!("/api/databases/{database_id}/snapshot"),
+            Some(&authorization),
+            Some(json!({"force": false})),
+        )
+        .await;
+        assert_eq!(snapshot.status(), StatusCode::ACCEPTED);
+        let run_id = json_response(snapshot).await["run_id"]
+            .as_str()
+            .expect("snapshot run")
+            .to_owned();
+        wait_for_run(&app, &authorization, &database_id, &run_id, "completed").await;
+        database_ids.push(database_id);
+    }
+
+    let (shutdown, _) = tokio::sync::broadcast::channel(1);
+    let supervisor = pintail_api::spawn_supervisor(state, shutdown.subscribe());
+    failing.stop().expect("stop failing polling source");
+    let failed = wait_for_database_state(data.path(), &database_ids[2], "error").await;
+    assert_eq!(failed, "error");
+    wait_for_activity_kind(&app, &authorization, &database_ids[0], "cdc").await;
+    wait_for_activity_kind(&app, &authorization, &database_ids[1], "polling").await;
+    for database_id in &database_ids[..2] {
+        assert_query_rows(
+            &app,
+            &authorization,
+            database_id,
+            json!([[1, "launch"], [2, "land"]]),
+        )
+        .await;
+    }
+    let metadata = pintail_meta::MetaStore::open(&data.path().join("pintail-meta.db"))
+        .expect("metadata store");
+    assert_eq!(
+        metadata
+            .database(&database_ids[0])
+            .unwrap()
+            .expect("CDC database")
+            .state,
+        "streaming"
+    );
+    assert_eq!(
+        metadata
+            .database(&database_ids[1])
+            .unwrap()
+            .expect("second polling database")
+            .state,
+        "polling"
+    );
+    assert!(
+        metadata
+            .sync_runs(Some(&database_ids[0]), 20)
+            .unwrap()
+            .iter()
+            .any(|run| run.kind == "cdc" && run.status == "completed")
+    );
+    assert!(
+        metadata
+            .sync_runs(Some(&database_ids[1]), 20)
+            .unwrap()
+            .iter()
+            .any(|run| run.kind == "polling" && run.status == "completed")
+    );
+    drop(metadata);
+    let _ = shutdown.send(());
+    tokio::time::timeout(Duration::from_secs(5), supervisor)
+        .await
+        .expect("supervisor shutdown timeout")
+        .expect("supervisor task");
+}
+
 async fn request(
     app: &Router,
     method: Method,
@@ -375,6 +565,50 @@ async fn wait_for_run(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("API job {run_id} did not reach {expected}");
+}
+
+async fn wait_for_activity_kind(app: &Router, authorization: &str, database_id: &str, kind: &str) {
+    for _ in 0..300 {
+        let activity = json_response(
+            request(
+                app,
+                Method::GET,
+                &format!("/api/activity?db={database_id}&limit=20"),
+                Some(authorization),
+                None,
+            )
+            .await,
+        )
+        .await;
+        if activity.as_array().is_some_and(|runs| {
+            runs.iter()
+                .any(|run| run["kind"] == kind && run["status"] == "completed")
+        }) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("database {database_id} did not complete a {kind} supervisor cycle");
+}
+
+async fn wait_for_database_state(
+    data_dir: &std::path::Path,
+    database_id: &str,
+    expected: &str,
+) -> String {
+    for _ in 0..300 {
+        let state = pintail_meta::MetaStore::open(&data_dir.join("pintail-meta.db"))
+            .expect("metadata store")
+            .database(database_id)
+            .expect("database query")
+            .expect("database")
+            .state;
+        if state == expected {
+            return state;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("database {database_id} did not reach {expected}");
 }
 
 async fn assert_query_rows(app: &Router, authorization: &str, database_id: &str, expected: Value) {
