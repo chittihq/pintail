@@ -297,6 +297,14 @@ async fn run_cdc_inner(
     let mut mutations = 0_usize;
     let mut reconnect_attempts = 0_usize;
     let mut resnapshot_attempted = false;
+    let resnapshot_context = AutoResnapshotContext {
+        pool,
+        metadata_path,
+        database_id,
+        report,
+        enabled: options.auto_resnapshot,
+        snapshot_options: &options.resnapshot_options,
+    };
     loop {
         let mut stream = match open_stream(
             pool,
@@ -309,32 +317,21 @@ async fn run_cdc_inner(
         .await
         {
             Ok(stream) => stream,
-            Err(CdcError::NeedsResync { .. })
-                if options.auto_resnapshot && !resnapshot_attempted =>
-            {
-                targets = resnapshot_targets(
-                    pool,
-                    metadata_path,
-                    database_id,
-                    report,
-                    targets,
-                    options.resnapshot_options.clone(),
-                )
-                .await?;
-                let checkpoint = metadata.snapshot_checkpoint(database_id)?.ok_or_else(|| {
-                    CdcError::InvalidCheckpoint(
-                        "automatic resnapshot did not capture a source position".to_owned(),
+            Err(error @ CdcError::NeedsResync { .. }) => {
+                position = resnapshot_context
+                    .recover(
+                        error,
+                        &mut targets,
+                        &mut blocked_targets,
+                        &mut resnapshot_attempted,
                     )
-                })?;
-                position = StreamPosition::from_checkpoint(checkpoint, report.server.flavor)?;
+                    .await?;
                 pending = PendingTransaction::default();
-                blocked_targets.clear();
                 reconnect_attempts = 0;
-                resnapshot_attempted = true;
                 continue;
             }
             Err(CdcError::Mysql(error)) => {
-                position = reconnect_from_checkpoint(
+                let reconnect = reconnect_from_checkpoint(
                     &metadata,
                     database_id,
                     report.server.flavor,
@@ -342,7 +339,22 @@ async fn run_cdc_inner(
                     &mut reconnect_attempts,
                     error,
                 )
-                .await?;
+                .await;
+                position = match reconnect {
+                    Ok(position) => position,
+                    Err(error @ CdcError::NeedsResync { .. }) => {
+                        reconnect_attempts = 0;
+                        resnapshot_context
+                            .recover(
+                                error,
+                                &mut targets,
+                                &mut blocked_targets,
+                                &mut resnapshot_attempted,
+                            )
+                            .await?
+                    }
+                    Err(error) => return Err(error),
+                };
                 pending = PendingTransaction::default();
                 continue;
             }
@@ -486,7 +498,7 @@ async fn run_cdc_inner(
             }
         }
         if let Some(error) = stream_error {
-            position = reconnect_from_checkpoint(
+            let reconnect = reconnect_from_checkpoint(
                 &metadata,
                 database_id,
                 report.server.flavor,
@@ -494,7 +506,22 @@ async fn run_cdc_inner(
                 &mut reconnect_attempts,
                 error,
             )
-            .await?;
+            .await;
+            position = match reconnect {
+                Ok(position) => position,
+                Err(error @ CdcError::NeedsResync { .. }) => {
+                    reconnect_attempts = 0;
+                    resnapshot_context
+                        .recover(
+                            error,
+                            &mut targets,
+                            &mut blocked_targets,
+                            &mut resnapshot_attempted,
+                        )
+                        .await?
+                }
+                Err(error) => return Err(error),
+            };
             pending = PendingTransaction::default();
             continue;
         }
@@ -522,6 +549,49 @@ async fn run_cdc_inner(
             ));
         }
         return finish_result(commits, mutations, &position, targets);
+    }
+}
+
+struct AutoResnapshotContext<'a> {
+    pool: &'a Pool,
+    metadata_path: &'a Path,
+    database_id: &'a str,
+    report: &'a ProbeReport,
+    enabled: bool,
+    snapshot_options: &'a SnapshotOptions,
+}
+
+impl AutoResnapshotContext<'_> {
+    async fn recover(
+        &self,
+        error: CdcError,
+        targets: &mut Vec<CdcTarget>,
+        blocked_targets: &mut BTreeSet<usize>,
+        attempted: &mut bool,
+    ) -> Result<StreamPosition, CdcError> {
+        if !self.enabled || *attempted {
+            return Err(error);
+        }
+        let owned_targets = std::mem::take(targets);
+        *targets = resnapshot_targets(
+            self.pool,
+            self.metadata_path,
+            self.database_id,
+            self.report,
+            owned_targets,
+            self.snapshot_options.clone(),
+        )
+        .await?;
+        let checkpoint = MetaStore::open(self.metadata_path)?
+            .snapshot_checkpoint(self.database_id)?
+            .ok_or_else(|| {
+                CdcError::InvalidCheckpoint(
+                    "automatic resnapshot did not capture a source position".to_owned(),
+                )
+            })?;
+        blocked_targets.clear();
+        *attempted = true;
+        StreamPosition::from_checkpoint(checkpoint, self.report.server.flavor)
     }
 }
 
