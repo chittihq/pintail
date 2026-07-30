@@ -28,6 +28,8 @@ impl Scan {
 /// Logical relational operators before physical implementation choices.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LogicalPlan {
+    /// A relation known to produce no rows.
+    Empty,
     /// A single row with no input columns, used by queries such as `SELECT 1`.
     OneRow,
     /// A storage-backed relation.
@@ -71,6 +73,7 @@ impl LogicalPlan {
     #[must_use]
     pub fn estimated_rows(&self) -> Option<u64> {
         match self {
+            Self::Empty => Some(0),
             Self::OneRow => Some(1),
             Self::Scan(scan) => scan.estimated_rows(),
             Self::CrossJoin { inputs } => inputs.iter().try_fold(1_u64, |rows, input| {

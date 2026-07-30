@@ -20,6 +20,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Logical query plans with explicit one-row, scan, cross-join, filter,
   projection, distinct, and limit operators plus conservative catalog-based
   cardinality estimates.
+- Rule-based logical optimization with conservative constant folding,
+  single-table conjunct pushdown, stable-ID projection pruning,
+  cardinality-ordered cross joins, and semantics-safe scan limit propagation.
 
 ## [M1] - 2026-07-30
 

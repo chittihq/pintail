@@ -8,11 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+pintail-catalog.workspace = true
 pintail-sql.workspace = true
 pintail-types.workspace = true
-
-[dev-dependencies]
-pintail-catalog.workspace = true
 
 [lints]
 workspace = true
