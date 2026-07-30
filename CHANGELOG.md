@@ -37,6 +37,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bound and logical explicit join chains for inner, left, semi, anti, and
   cross semantics, preserving ON predicates and outer-join-safe filter
   placement for physical hash-join planning.
+- Memory-capped build-right equi hash joins with case-insensitive UTF-8 keys,
+  SQL NULL non-matching, and inner, left, semi, and anti output semantics.
 
 ## [M1] - 2026-07-30
 

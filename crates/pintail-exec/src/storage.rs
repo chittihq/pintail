@@ -329,6 +329,46 @@ mod tests {
             ]
         );
         assert!(execution.next_batch().expect("end").is_none());
+
+        let statement = parse_statement(
+            "SELECT events.name AS event_name, users.name AS user_name \
+             FROM events INNER JOIN users ON events.id = users.id",
+        )
+        .expect("parse hash join");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind hash join");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("hash plan");
+        let mut execution =
+            Execution::start(physical, &provider, 64 * 1024).expect("hash execution");
+        let batch = execution
+            .next_batch()
+            .expect("hash pull")
+            .expect("hash batch");
+        let rows = batch
+            .selection()
+            .selected_rows()
+            .map(|row| {
+                (
+                    batch.column(0).expect("event").value(row).cloned(),
+                    batch.column(1).expect("user").value(row).cloned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [
+                (
+                    Some(Value::Utf8("event-a".to_owned())),
+                    Some(Value::Utf8("user-a".to_owned()))
+                ),
+                (
+                    Some(Value::Utf8("event-b".to_owned())),
+                    Some(Value::Utf8("user-b".to_owned()))
+                )
+            ]
+        );
     }
 
     fn schema() -> TableSchema {

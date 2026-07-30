@@ -1,11 +1,13 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashMap, HashSet},
     fmt,
     mem::{size_of, size_of_val},
 };
 
 use pintail_catalog::{DatabaseId, TableId};
-use pintail_sql::{BoundColumn, BoundExpr, BoundProjection};
+use pintail_sql::{
+    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundProjection,
+};
 use pintail_types::{DataType, Value};
 
 use crate::{
@@ -43,6 +45,19 @@ pub enum PhysicalPlan {
         inputs: Vec<Self>,
         /// Catalog-derived result cardinality.
         estimated_rows: u64,
+    },
+    /// Build-right equi hash join.
+    HashJoin {
+        /// Probe input.
+        left: Box<Self>,
+        /// Build input.
+        right: Box<Self>,
+        /// Join semantics.
+        kind: BoundJoinKind,
+        /// Probe-side key.
+        left_key: BoundExpr,
+        /// Build-side key.
+        right_key: BoundExpr,
     },
     /// Applies a row-selection mask.
     Filter {
@@ -91,6 +106,21 @@ impl PhysicalPlan {
                 input.output_fields()
             }
             Self::CrossJoin { inputs, .. } => inputs.iter().flat_map(Self::output_fields).collect(),
+            Self::HashJoin {
+                left, right, kind, ..
+            } => {
+                let mut fields = left.output_fields();
+                if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
+                    let mut right_fields = right.output_fields();
+                    if *kind == BoundJoinKind::Left {
+                        for field in &mut right_fields {
+                            field.nullable = true;
+                        }
+                    }
+                    fields.extend(right_fields);
+                }
+                fields
+            }
             Self::Scan(scan) => scan
                 .projected_column_ids
                 .iter()
@@ -164,8 +194,121 @@ impl PhysicalPlanner {
             LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
                 input: Box::new(Self::plan(*input)?),
             }),
-            LogicalPlan::Join { .. } => Err(ExecError::UnsupportedOperator("HashJoin")),
+            LogicalPlan::Join {
+                left,
+                right,
+                kind,
+                condition,
+            } => {
+                if kind == BoundJoinKind::Cross
+                    || kind == BoundJoinKind::Inner && condition.is_none()
+                {
+                    let estimated_rows = left
+                        .estimated_rows()
+                        .and_then(|rows| rows.checked_mul(right.estimated_rows()?))
+                        .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
+                    if estimated_rows > MAX_CROSS_JOIN_ROWS {
+                        return Err(ExecError::CrossJoinGuardExceeded {
+                            estimated_rows,
+                            limit: MAX_CROSS_JOIN_ROWS,
+                        });
+                    }
+                    return Ok(PhysicalPlan::CrossJoin {
+                        inputs: vec![Self::plan(*left)?, Self::plan(*right)?],
+                        estimated_rows,
+                    });
+                }
+                let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
+                let (left_key, right_key) = equi_join_keys(&condition, &left, &right)
+                    .ok_or(ExecError::UnsupportedJoinCondition)?;
+                Ok(PhysicalPlan::HashJoin {
+                    left: Box::new(Self::plan(*left)?),
+                    right: Box::new(Self::plan(*right)?),
+                    kind,
+                    left_key,
+                    right_key,
+                })
+            }
         }
+    }
+}
+
+fn equi_join_keys(
+    condition: &BoundExpr,
+    left: &LogicalPlan,
+    right: &LogicalPlan,
+) -> Option<(BoundExpr, BoundExpr)> {
+    let BoundExprKind::Binary {
+        op: BinaryOp::Equal,
+        left: first,
+        right: second,
+    } = &condition.kind
+    else {
+        return None;
+    };
+    if first.data_type != second.data_type {
+        return None;
+    }
+    let left_tables = logical_tables(left);
+    let right_tables = logical_tables(right);
+    if expression_belongs_to(first, &left_tables) && expression_belongs_to(second, &right_tables) {
+        Some(((**first).clone(), (**second).clone()))
+    } else if expression_belongs_to(first, &right_tables)
+        && expression_belongs_to(second, &left_tables)
+    {
+        Some(((**second).clone(), (**first).clone()))
+    } else {
+        None
+    }
+}
+
+fn logical_tables(plan: &LogicalPlan) -> BTreeSet<(DatabaseId, TableId)> {
+    let mut tables = BTreeSet::new();
+    collect_logical_tables(plan, &mut tables);
+    tables
+}
+
+fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId, TableId)>) {
+    match plan {
+        LogicalPlan::Scan(scan) => {
+            tables.insert((scan.table.database_id, scan.table.table_id));
+        }
+        LogicalPlan::CrossJoin { inputs } => {
+            for input in inputs {
+                collect_logical_tables(input, tables);
+            }
+        }
+        LogicalPlan::Join { left, right, .. } => {
+            collect_logical_tables(left, tables);
+            collect_logical_tables(right, tables);
+        }
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Project { input, .. }
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Limit { input, .. } => collect_logical_tables(input, tables),
+        LogicalPlan::Empty | LogicalPlan::OneRow => {}
+    }
+}
+
+fn expression_belongs_to(expression: &BoundExpr, tables: &BTreeSet<(DatabaseId, TableId)>) -> bool {
+    let mut references = BTreeSet::new();
+    collect_expression_tables(expression, &mut references);
+    !references.is_empty() && references.is_subset(tables)
+}
+
+fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(DatabaseId, TableId)>) {
+    match &expression.kind {
+        BoundExprKind::Column(column) => {
+            tables.insert((column.database_id, column.table_id));
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            collect_expression_tables(expr, tables);
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            collect_expression_tables(left, tables);
+            collect_expression_tables(right, tables);
+        }
+        BoundExprKind::Literal(_) => {}
     }
 }
 
@@ -316,6 +459,16 @@ enum PullOperator {
         column_types: Vec<DataType>,
         state: Option<CrossJoinState>,
     },
+    HashJoin {
+        left: Box<Self>,
+        right: Box<Self>,
+        kind: BoundJoinKind,
+        left_key: CompiledExpr,
+        right_key: CompiledExpr,
+        column_types: Vec<DataType>,
+        right_width: usize,
+        state: Option<MaterializedRows>,
+    },
     Filter {
         input: Box<Self>,
         predicate: CompiledExpr,
@@ -381,6 +534,33 @@ impl PullOperator {
                 let batch = RecordBatch::new(rows.len(), columns)?;
                 memory.ensure_transient(batch.estimated_bytes())?;
                 Ok(Some(batch))
+            }
+            Self::HashJoin {
+                left,
+                right,
+                kind,
+                left_key,
+                right_key,
+                column_types,
+                right_width,
+                state,
+            } => {
+                if state.is_none() {
+                    *state = Some(build_hash_join(
+                        left,
+                        right,
+                        *kind,
+                        left_key,
+                        right_key,
+                        *right_width,
+                        memory,
+                    )?);
+                }
+                next_materialized_batch(
+                    state.as_mut().expect("initialized above"),
+                    column_types,
+                    memory,
+                )
             }
             Self::Filter { input, predicate } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
@@ -549,6 +729,40 @@ fn build_operator(
                 columns,
             ))
         }
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            kind,
+            left_key,
+            right_key,
+        } => {
+            let (left, left_columns) = build_operator(*left, provider)?;
+            let (right, right_columns) = build_operator(*right, provider)?;
+            let left_key = CompiledExpr::compile(&left_key, &left_columns)?;
+            let right_key = CompiledExpr::compile(&right_key, &right_columns)?;
+            let right_width = right_columns.len();
+            let mut output_columns = left_columns;
+            if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
+                output_columns.extend(right_columns);
+            }
+            let column_types = output_columns
+                .iter()
+                .map(|column| column.data_type)
+                .collect();
+            Ok((
+                PullOperator::HashJoin {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    kind,
+                    left_key,
+                    right_key,
+                    column_types,
+                    right_width,
+                    state: None,
+                },
+                output_columns,
+            ))
+        }
         PhysicalPlan::Filter { input, predicate } => {
             let (input, columns) = build_operator(*input, provider)?;
             let predicate = CompiledExpr::compile(&predicate, &columns)?;
@@ -605,6 +819,136 @@ fn build_operator(
             ))
         }
     }
+}
+
+fn build_hash_join(
+    left: &mut PullOperator,
+    right: &mut PullOperator,
+    kind: BoundJoinKind,
+    left_key: &CompiledExpr,
+    right_key: &CompiledExpr,
+    right_width: usize,
+    memory: &mut MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let mut build: HashMap<Value, Vec<Vec<Value>>> = HashMap::new();
+    while let Some(batch) = right.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            let Some(key) = normalized_hash_key(right_key.evaluate(&batch, row)?) else {
+                continue;
+            };
+            let values = batch_row(&batch, row)?;
+            let bytes = estimated_row_bytes(&values).saturating_add(key.heap_bytes());
+            memory.ensure_transient(batch.estimated_bytes().saturating_add(bytes))?;
+            memory.reserve(bytes)?;
+            build.entry(key).or_default().push(values);
+        }
+    }
+
+    let mut rows = Vec::new();
+    while let Some(batch) = left.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            let left_values = batch_row(&batch, row)?;
+            let key = normalized_hash_key(left_key.evaluate(&batch, row)?);
+            let matches = key.as_ref().and_then(|key| build.get(key));
+            match kind {
+                BoundJoinKind::Inner => {
+                    if let Some(matches) = matches {
+                        for right_values in matches {
+                            let mut output = left_values.clone();
+                            output.extend(right_values.iter().cloned());
+                            reserve_output_row(&output, &batch, memory)?;
+                            rows.push(output);
+                        }
+                    }
+                }
+                BoundJoinKind::Left => {
+                    if let Some(matches) = matches {
+                        for right_values in matches {
+                            let mut output = left_values.clone();
+                            output.extend(right_values.iter().cloned());
+                            reserve_output_row(&output, &batch, memory)?;
+                            rows.push(output);
+                        }
+                    } else {
+                        let mut output = left_values;
+                        output.extend(std::iter::repeat_n(Value::Null, right_width));
+                        reserve_output_row(&output, &batch, memory)?;
+                        rows.push(output);
+                    }
+                }
+                BoundJoinKind::Semi if matches.is_some() => {
+                    reserve_output_row(&left_values, &batch, memory)?;
+                    rows.push(left_values);
+                }
+                BoundJoinKind::Anti if matches.is_none() => {
+                    reserve_output_row(&left_values, &batch, memory)?;
+                    rows.push(left_values);
+                }
+                BoundJoinKind::Semi | BoundJoinKind::Anti => {}
+                BoundJoinKind::Cross => {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "cross semantics reached hash join",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(MaterializedRows { rows, position: 0 })
+}
+
+fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
+    batch
+        .columns()
+        .iter()
+        .map(|column| {
+            column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+                "join row is outside an input column",
+            ))
+        })
+        .collect()
+}
+
+fn normalized_hash_key(value: Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::Utf8(value) => Some(Value::Utf8(value.to_lowercase())),
+        value => Some(value),
+    }
+}
+
+fn reserve_output_row(
+    row: &[Value],
+    batch: &RecordBatch,
+    memory: &mut MemoryTracker,
+) -> Result<(), ExecError> {
+    let bytes = estimated_row_bytes(row);
+    memory.ensure_transient(batch.estimated_bytes().saturating_add(bytes))?;
+    memory.reserve(bytes)
+}
+
+struct MaterializedRows {
+    rows: Vec<Vec<Value>>,
+    position: usize,
+}
+
+fn next_materialized_batch(
+    state: &mut MaterializedRows,
+    column_types: &[DataType],
+    memory: &MemoryTracker,
+) -> Result<Option<RecordBatch>, ExecError> {
+    if state.position >= state.rows.len() {
+        return Ok(None);
+    }
+    let end = state
+        .position
+        .saturating_add(DEFAULT_BATCH_ROWS)
+        .min(state.rows.len());
+    let rows = &state.rows[state.position..end];
+    state.position = end;
+    let columns = rows_to_columns(rows, column_types)?;
+    let batch = RecordBatch::new(rows.len(), columns)?;
+    memory.ensure_transient(batch.estimated_bytes())?;
+    Ok(Some(batch))
 }
 
 fn materialize(
@@ -730,6 +1074,8 @@ fn validate_scan_batch(batch: &RecordBatch, expected_types: &[DataType]) -> Resu
 pub enum ExecError {
     /// A logical operator has no physical implementation yet.
     UnsupportedOperator(&'static str),
+    /// A join predicate is not a single cross-input equality yet.
+    UnsupportedJoinCondition,
     /// A cross join has no safe catalog cardinality estimate.
     CrossJoinCardinalityUnknown,
     /// A cross join exceeds the v1 Cartesian-product guard.
@@ -802,6 +1148,9 @@ impl fmt::Display for ExecError {
             Self::UnsupportedOperator(operator) => {
                 write!(formatter, "physical operator {operator} is not implemented")
             }
+            Self::UnsupportedJoinCondition => formatter.write_str(
+                "hash join requires one equality between left and right input expressions",
+            ),
             Self::CrossJoinCardinalityUnknown => {
                 formatter.write_str("cross join requires known catalog row counts for every input")
             }
