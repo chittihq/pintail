@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Control-plane schema version 5 adds dashboard user state, scoped API-key
   metadata, per-database polling/reconciliation cadence, and per-table
   soft-delete mapping, with typed CRUD records and an in-place v4 upgrade.
+- The HTTP control plane now supports one-time Argon2id admin setup, signed
+  JWT login/session authentication, ChaCha20-Poly1305 encrypted source DSNs,
+  database CRUD/test/probe routes, and SHA-256 hash-only database API keys
+  whose `pk_` secret is shown exactly once and enforced by scope.
 
 ## [M5] - 2026-07-30
 

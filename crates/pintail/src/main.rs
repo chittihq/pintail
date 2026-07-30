@@ -6,7 +6,7 @@ use pintail::{
     config::{AppConfig, Cli},
     secrets::{LoadedBootSecrets, generate_secret, load_or_create},
 };
-use pintail_api::router;
+use pintail_api::{ApiState, router_with_state};
 use pintail_meta::MetaStore;
 use tokio::net::TcpListener;
 
@@ -28,13 +28,19 @@ async fn main() -> Result<()> {
         eprintln!("PINTAIL_JWT_SECRET={}", jwt_secret.value());
         eprintln!("JWT secret saved to {}", metadata_path.display());
     }
+    let api_state = ApiState::new(
+        config.data_dir(),
+        &metadata_path,
+        jwt_secret.value().as_bytes(),
+        boot_secrets.secrets().dsn_encryption_key(),
+    )?;
 
     let listener = TcpListener::bind(config.http_bind())
         .await
         .with_context(|| format!("failed to bind HTTP server to {}", config.http_bind()))?;
     eprintln!("pintail listening on http://{}", config.http_bind());
 
-    axum::serve(listener, router())
+    axum::serve(listener, router_with_state(api_state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("HTTP server failed")
