@@ -337,6 +337,149 @@ impl MetaStore {
         .transpose()
     }
 
+    /// Commits a CDC source checkpoint after every touched WAL has been
+    /// synchronized.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the position is invalid or the control-plane
+    /// transaction cannot commit.
+    pub fn commit_cdc_checkpoint(
+        &mut self,
+        database_id: &str,
+        checkpoint: &SnapshotCheckpointRecord,
+        touched_tables: &[String],
+        now: &str,
+    ) -> Result<()> {
+        if !matches!(checkpoint.kind.as_str(), "gtid" | "filepos") {
+            bail!("CDC checkpoint kind must be gtid or filepos");
+        }
+        let binlog_pos = checkpoint
+            .binlog_pos
+            .map(i64::try_from)
+            .transpose()
+            .context("binlog position exceeds i64")?;
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin CDC checkpoint")?;
+        transaction
+            .execute(
+                "INSERT INTO checkpoints (\
+                   db_id, kind, gtid_set, binlog_file, binlog_pos, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(db_id) DO UPDATE SET \
+                   kind = excluded.kind, gtid_set = excluded.gtid_set, \
+                   binlog_file = excluded.binlog_file, \
+                   binlog_pos = excluded.binlog_pos, \
+                   updated_at = excluded.updated_at",
+                (
+                    database_id,
+                    &checkpoint.kind,
+                    checkpoint.gtid_set.as_deref(),
+                    checkpoint.binlog_file.as_deref(),
+                    binlog_pos,
+                    now,
+                ),
+            )
+            .context("failed to persist CDC checkpoint")?;
+        for table_name in touched_tables {
+            transaction
+                .execute(
+                    "UPDATE tables SET state = 'streaming', last_error = NULL \
+                     WHERE db_id = ?1 AND name = ?2",
+                    (database_id, table_name),
+                )
+                .with_context(|| format!("failed to mark {database_id}.{table_name} streaming"))?;
+        }
+        transaction
+            .execute(
+                "UPDATE databases SET state = 'streaming', effective_mode = 'cdc', \
+                   updated_at = ?2 WHERE id = ?1",
+                (database_id, now),
+            )
+            .context("failed to mark database streaming")?;
+        transaction
+            .commit()
+            .context("failed to commit CDC checkpoint")
+    }
+
+    /// Marks one table as requiring a new snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be persisted.
+    pub fn mark_table_needs_resync(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        error: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET state = 'needs_resync', last_error = ?3 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, error),
+            )
+            .with_context(|| format!("failed to mark {database_id}.{table_name} for resnapshot"))?;
+        Ok(())
+    }
+
+    /// Marks every included table as requiring a new snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be persisted.
+    pub fn mark_database_needs_resync(&self, database_id: &str, error: &str) -> Result<()> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin resnapshot state update")?;
+        transaction
+            .execute(
+                "UPDATE tables SET state = 'needs_resync', last_error = ?2 \
+                 WHERE db_id = ?1 AND state != 'excluded'",
+                (database_id, error),
+            )
+            .context("failed to mark tables for resnapshot")?;
+        transaction
+            .execute(
+                "UPDATE databases SET state = 'needs_resync' WHERE id = ?1",
+                [database_id],
+            )
+            .context("failed to mark database for resnapshot")?;
+        transaction
+            .commit()
+            .context("failed to commit resnapshot state")
+    }
+
+    /// Adds a failed source event to the durable dead-letter queue.
+    ///
+    /// Replaying the same binlog position is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the DLQ record cannot be written.
+    pub fn record_dlq(
+        &self,
+        id: &str,
+        database_id: &str,
+        table_name: Option<&str>,
+        event_json: &str,
+        error: &str,
+        now: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO dlq (id, db_id, table_name, event_json, error, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(id) DO UPDATE SET error = excluded.error",
+                (id, database_id, table_name, event_json, error, now),
+            )
+            .context("failed to record CDC dead-letter event")?;
+        Ok(())
+    }
+
     /// Returns completed chunk identifiers for one table.
     ///
     /// # Errors
