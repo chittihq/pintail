@@ -32,6 +32,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tombstone only stale colliding rows. An opt-in query scan policy can hide
   lower-version secondary-UNIQUE collisions until that repair completes,
   including when the unique columns were not selected by the query.
+- A reconciliation-only CDC path now repairs cascade/SET NULL child tables
+  with versions above their live binlog rows while preserving the CDC mode
+  and source checkpoint. The live gate proves the InnoDB negative control
+  first, then converges the missing child tombstone.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

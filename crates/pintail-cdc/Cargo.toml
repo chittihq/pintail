@@ -23,6 +23,7 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+pintail-poll = { path = "../pintail-poll" }
 rusqlite.workspace = true
 tempfile.workspace = true
 

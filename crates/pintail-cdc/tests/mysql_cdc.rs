@@ -13,6 +13,7 @@ use std::{
 use mysql_async::{Opts, Pool};
 use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
+use pintail_poll::{PollTarget, run_cdc_reconciliation};
 use pintail_probe::{ProbeReport, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreOptions, TableStore};
@@ -448,6 +449,178 @@ async fn ddl_evolution_add_drop_rename_create_truncate_and_orphan() {
     assert_eq!(orphan.0, "excluded");
     assert!(orphan.1.is_some());
     pool.disconnect().await.expect("disconnect DDL pool");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn cdc_cascade_negative_control_and_scheduled_repair() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE cascade_parent (id BIGINT UNSIGNED PRIMARY KEY);\
+             CREATE TABLE cascade_child (\
+               id BIGINT UNSIGNED PRIMARY KEY,\
+               parent_id BIGINT UNSIGNED NOT NULL,\
+               value VARCHAR(64) NOT NULL,\
+               CONSTRAINT cascade_fk FOREIGN KEY (parent_id) \
+                 REFERENCES cascade_parent(id) ON DELETE CASCADE\
+             );\
+             INSERT INTO cascade_parent VALUES (1),(2);\
+             INSERT INTO cascade_child VALUES (10,1,'first'),(11,2,'second');",
+        )
+        .expect("cascade source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("cascade DSN"));
+    let report = probe(&pool, "app").await.expect("probe cascade source");
+    assert!(
+        report
+            .tables
+            .iter()
+            .find(|table| table.name == "cascade_child")
+            .expect("cascade child probe")
+            .requires_reconciliation
+    );
+    let workspace = tempfile::tempdir().expect("cascade workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("cascade metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register cascade source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("cascade schema"),
+                StoreOptions::default(),
+            )
+            .expect("cascade store");
+            SnapshotTarget::new(source.clone(), store).expect("cascade snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("cascade snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("cascade CDC target")
+        })
+        .collect();
+
+    mysql
+        .query_batch("UPDATE cascade_child SET value='cdc-high' WHERE id=10;")
+        .expect("raise child CDC version");
+    let raised = finite_catch_up(&pool, &metadata_path, &report, targets)
+        .await
+        .expect("child update catch-up");
+    let raised_version = cdc_target(&raised.targets, "cascade_child")
+        .store()
+        .snapshot()
+        .scan()
+        .unwrap()
+        .iter()
+        .find(|row| row.values()[0] == Value::UInt64(10))
+        .expect("updated child")
+        .version();
+    assert!(raised_version > 0);
+
+    mysql
+        .query_batch("DELETE FROM cascade_parent WHERE id=1;")
+        .expect("cascade parent delete");
+    let negative = finite_catch_up(&pool, &metadata_path, &report, raised.targets)
+        .await
+        .expect("cascade CDC catch-up");
+    assert_eq!(
+        cdc_target(&negative.targets, "cascade_parent")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        cdc_target(&negative.targets, "cascade_child")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        2,
+        "negative control: InnoDB cascade emitted no child row event"
+    );
+    let checkpoint_before = MetaStore::open(&metadata_path)
+        .unwrap()
+        .snapshot_checkpoint(DATABASE_ID)
+        .unwrap()
+        .expect("CDC checkpoint before reconcile");
+    let child_index = negative
+        .targets
+        .iter()
+        .position(|target| target.source().name == "cascade_child")
+        .expect("child target index");
+    let mut cdc_targets = negative.targets;
+    let child = cdc_targets.remove(child_index);
+    let child_source = child.source().clone();
+    let reconciliation = run_cdc_reconciliation(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![
+            PollTarget::new(child_source, child.into_store())
+                .expect("cascade reconciliation target"),
+        ],
+        1,
+    )
+    .await
+    .expect("scheduled cascade reconciliation");
+    assert_eq!(reconciliation.tables[0].tombstones, 1);
+    assert!(reconciliation.tables[0].version > raised_version);
+    assert_eq!(
+        reconciliation.targets[0]
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        1
+    );
+    let checkpoint_after = MetaStore::open(&metadata_path)
+        .unwrap()
+        .snapshot_checkpoint(DATABASE_ID)
+        .unwrap()
+        .expect("CDC checkpoint after reconcile");
+    assert_eq!(checkpoint_after, checkpoint_before);
+    let connection = Connection::open(&metadata_path).expect("inspect cascade mode");
+    let mode: (String, String) = connection
+        .query_row(
+            "SELECT state, effective_mode FROM databases WHERE id = ?1",
+            [DATABASE_ID],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("cascade database mode");
+    assert_eq!(mode, ("streaming".to_owned(), "cdc".to_owned()));
+    pool.disconnect().await.expect("disconnect cascade pool");
 }
 
 async fn ddl_catch_up(

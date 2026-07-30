@@ -1293,6 +1293,7 @@ dependencies = [
  "futures-util",
  "mysql_async",
  "pintail-meta",
+ "pintail-poll",
  "pintail-probe",
  "pintail-snapshot",
  "pintail-store",

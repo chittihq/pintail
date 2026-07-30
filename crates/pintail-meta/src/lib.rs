@@ -547,6 +547,55 @@ impl MetaStore {
         self.commit_poll_state_inner(database_id, table_name, update, Some(chunks), now)
     }
 
+    /// Records a CDC-side key reconciliation without changing the database's
+    /// replication mode or binlog checkpoint.
+    ///
+    /// The caller synchronizes the table WAL before invoking this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when counters exceed `SQLite`'s range or the
+    /// transaction cannot commit.
+    pub fn commit_cdc_reconciliation(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        source_count: u64,
+        version: u64,
+        now: &str,
+    ) -> Result<()> {
+        let source_count =
+            i64::try_from(source_count).context("CDC reconciliation source count exceeds i64")?;
+        let version = i64::try_from(version).context("CDC reconciliation version exceeds i64")?;
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin CDC reconciliation checkpoint")?;
+        transaction
+            .execute(
+                "INSERT INTO poll_states (\
+                   db_id, table_name, source_count, version, last_reconcile_at, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
+                 ON CONFLICT(db_id, table_name) DO UPDATE SET \
+                   source_count = excluded.source_count, \
+                   version = MAX(poll_states.version, excluded.version), \
+                   last_reconcile_at = excluded.last_reconcile_at, \
+                   updated_at = excluded.updated_at",
+                (database_id, table_name, source_count, version, now),
+            )
+            .context("failed to persist CDC reconciliation state")?;
+        transaction
+            .execute(
+                "UPDATE tables SET last_reconcile_at = ?3 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, now),
+            )
+            .context("failed to update CDC table reconciliation time")?;
+        transaction
+            .commit()
+            .context("failed to commit CDC reconciliation checkpoint")
+    }
+
     fn commit_poll_state_inner(
         &mut self,
         database_id: &str,

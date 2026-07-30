@@ -185,6 +185,66 @@ fn begin_resnapshot_clears_the_old_handoff_and_chunk_journal() {
     assert_eq!(state, "snapshotting");
 }
 
+#[test]
+fn cdc_reconciliation_preserves_stream_mode_and_binlog_checkpoint() {
+    let workspace = tempfile::tempdir().expect("metadata workspace");
+    let path = workspace.path().join("pintail-meta.db");
+    let mut store = MetaStore::open(&path).expect("metadata");
+    store
+        .upsert_database("source", "app", b"mysql://source", "2026-07-30T00:00:00Z")
+        .expect("register database");
+    store
+        .upsert_snapshot_table("source", "children", Some("[\"id\"]"), Some("[\"id\"]"))
+        .expect("register table");
+    store
+        .upsert_snapshot_checkpoint(
+            "source",
+            "filepos",
+            None,
+            Some("mysql-bin.000007"),
+            Some(900),
+            "2026-07-30T01:00:00Z",
+        )
+        .expect("seed checkpoint");
+    let streaming_checkpoint = store.snapshot_checkpoint("source").unwrap().unwrap();
+    store
+        .commit_cdc_checkpoint(
+            "source",
+            &streaming_checkpoint,
+            &["children".to_owned()],
+            "2026-07-30T01:00:01Z",
+        )
+        .expect("mark streaming");
+    store
+        .commit_cdc_reconciliation("source", "children", 1, 42, "2026-07-30T02:00:00Z")
+        .expect("reconcile child");
+
+    let checkpoint = store
+        .snapshot_checkpoint("source")
+        .unwrap()
+        .expect("checkpoint");
+    assert_eq!(checkpoint.kind, "filepos");
+    assert_eq!(checkpoint.binlog_file.as_deref(), Some("mysql-bin.000007"));
+    assert_eq!(checkpoint.binlog_pos, Some(900));
+    assert_eq!(
+        store
+            .poll_state("source", "children")
+            .unwrap()
+            .unwrap()
+            .version,
+        42
+    );
+    let connection = rusqlite::Connection::open(path).expect("inspect mode");
+    let mode: (String, String) = connection
+        .query_row(
+            "SELECT state, effective_mode FROM databases WHERE id = 'source'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("database mode");
+    assert_eq!(mode, ("streaming".to_owned(), "cdc".to_owned()));
+}
+
 fn register_source(store: &MetaStore) {
     store
         .upsert_database("source", "app", b"mysql://source", "2026-07-30T00:00:00Z")

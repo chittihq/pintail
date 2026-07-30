@@ -143,6 +143,27 @@ pub struct PollResult {
     pub targets: Vec<PollTarget>,
 }
 
+/// One CDC-side key reconciliation outcome.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CdcReconcileOutcome {
+    /// Reconciled child or operator-selected table.
+    pub table: String,
+    /// Missing source keys tombstoned.
+    pub tombstones: usize,
+    /// Source keys observed.
+    pub source_count: u64,
+    /// Version assigned above all currently visible CDC rows.
+    pub version: u64,
+}
+
+/// Successful reconciliation that preserves the CDC source checkpoint.
+pub struct CdcReconcileResult {
+    /// Per-table outcomes in source-name order.
+    pub tables: Vec<CdcReconcileOutcome>,
+    /// Updated targets in source-name order.
+    pub targets: Vec<PollTarget>,
+}
+
 struct PollChunkCheckpoint {
     chunk_id: String,
     source_count: u64,
@@ -224,6 +245,100 @@ pub async fn run_poll_cycle(
         );
     }
     Ok(PollResult {
+        tables: outcomes,
+        targets,
+    })
+}
+
+/// Runs a key-only reconciliation for CDC tables whose source-side cascades
+/// are absent from row binlogs.
+///
+/// Table WALs are synchronized before reconcile metadata. The database's CDC
+/// mode and binlog checkpoint are left unchanged.
+///
+/// # Errors
+///
+/// Returns the first source, storage, schema, or metadata failure.
+pub async fn run_cdc_reconciliation(
+    pool: &Pool,
+    metadata_path: &Path,
+    database_id: &str,
+    report: &ProbeReport,
+    mut targets: Vec<PollTarget>,
+    chunk_rows: usize,
+) -> Result<CdcReconcileResult, PollError> {
+    if chunk_rows == 0 {
+        return Err(PollError::InvalidConfiguration(
+            "reconciliation chunk size must be non-zero".to_owned(),
+        ));
+    }
+    targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
+    let mut metadata = MetaStore::open(metadata_path)?;
+    let mut connection = pool.get_conn().await?;
+    let mut outcomes = Vec::with_capacity(targets.len());
+    for target in &mut targets {
+        if target.source.key.mode == KeyMode::AppendRowId {
+            return Err(PollError::InvalidConfiguration(format!(
+                "{} has no source key for CDC reconciliation",
+                target.source.name
+            )));
+        }
+        if !report
+            .tables
+            .iter()
+            .any(|source| source.name.eq_ignore_ascii_case(&target.source.name))
+        {
+            return Err(PollError::InvalidConfiguration(format!(
+                "target {} is absent from the probe report",
+                target.source.name
+            )));
+        }
+        let current = target.store.snapshot().scan()?;
+        let durable_version = metadata
+            .poll_state(database_id, &target.source.name)?
+            .map_or(0, |state| state.version);
+        let version = current
+            .iter()
+            .map(StoredRow::version)
+            .max()
+            .unwrap_or(0)
+            .max(durable_version)
+            .checked_add(1)
+            .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
+        let source_keys = fetch_source_keys(
+            &mut connection,
+            &report.database,
+            &target.source,
+            chunk_rows,
+        )
+        .await?;
+        let source_count = u64::try_from(source_keys.len())
+            .map_err(|error| PollError::Decode(error.to_string()))?;
+        let tombstones = current
+            .into_iter()
+            .filter(|row| !source_keys.contains(row.key()))
+            .map(|row| StoredRow::new(row.key().clone(), row.values().to_vec(), version, true))
+            .collect::<Vec<_>>();
+        let tombstone_count = tombstones.len();
+        target.store.ingest(tombstones)?;
+        if tombstone_count > 0 {
+            target.store.checkpoint()?;
+        }
+        metadata.commit_cdc_reconciliation(
+            database_id,
+            &target.source.name,
+            source_count,
+            version,
+            &Utc::now().to_rfc3339(),
+        )?;
+        outcomes.push(CdcReconcileOutcome {
+            table: target.source.name.clone(),
+            tombstones: tombstone_count,
+            source_count,
+            version,
+        });
+    }
+    Ok(CdcReconcileResult {
         tables: outcomes,
         targets,
     })
