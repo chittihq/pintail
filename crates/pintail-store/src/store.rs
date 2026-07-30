@@ -28,6 +28,7 @@ const WRITER_LOCK_FILE: &str = ".writer.lock";
 const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOCK_ROWS: usize = 64 * 1024;
 const DEFAULT_COMPACTION_FAN_IN: usize = 4;
+const DEFAULT_MAX_COMPACTION_ROWS: u64 = 250_000;
 const SIZE_TIER_RATIO: u64 = 4;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
 
@@ -70,6 +71,8 @@ pub struct StoreOptions {
     pub wal_sync: WalSync,
     /// Number of similarly sized overlapping segments merged in one pass.
     pub compaction_fan_in: usize,
+    /// Maximum input rows admitted to one in-memory compaction pass.
+    pub max_compaction_rows: u64,
 }
 
 impl Default for StoreOptions {
@@ -79,6 +82,7 @@ impl Default for StoreOptions {
             block_rows: DEFAULT_BLOCK_ROWS,
             wal_sync: WalSync::Checkpoint,
             compaction_fan_in: DEFAULT_COMPACTION_FAN_IN,
+            max_compaction_rows: DEFAULT_MAX_COMPACTION_ROWS,
         }
     }
 }
@@ -822,6 +826,11 @@ impl TableStore {
                 "compaction fan-in must be at least two".into(),
             ));
         }
+        if options.max_compaction_rows == 0 {
+            return Err(StoreError::FormatLimit(
+                "maximum compaction rows must be non-zero".into(),
+            ));
+        }
         std::fs::create_dir_all(directory)
             .map_err(|error| StoreError::io("create table directory", error))?;
         let directory = std::fs::canonicalize(directory)
@@ -1495,6 +1504,7 @@ impl TableStore {
             candidates.push(CompactionCandidate {
                 index,
                 size,
+                row_count: meta.row_count,
                 minimum: meta.min_key.clone(),
                 maximum: meta.max_key.clone(),
             });
@@ -1503,7 +1513,14 @@ impl TableStore {
         for window in candidates.windows(self.options.compaction_fan_in) {
             let smallest = window.first().expect("non-empty window").size;
             let largest = window.last().expect("non-empty window").size;
-            if largest > smallest.saturating_mul(SIZE_TIER_RATIO) || !ranges_overlap(window) {
+            let row_count = window
+                .iter()
+                .map(|candidate| candidate.row_count)
+                .sum::<u64>();
+            if row_count > self.options.max_compaction_rows
+                || largest > smallest.saturating_mul(SIZE_TIER_RATIO)
+                || !ranges_overlap(window)
+            {
                 continue;
             }
             return Ok(Some(CompactionPlan {
@@ -1518,6 +1535,7 @@ impl TableStore {
 struct CompactionCandidate {
     index: usize,
     size: u64,
+    row_count: u64,
     minimum: PrimaryKey,
     maximum: PrimaryKey,
 }
