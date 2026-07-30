@@ -3,11 +3,11 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestones M0 through M2 provide the
+The project is under active development. Milestones M0 through M3 provide the
 single-process skeleton, Pintail's durable PTSEG columnar storage core, and
-the in-process MySQL-dialect query engine. Snapshot replication, CDC, polling,
-the external query APIs, and the MySQL wire endpoint arrive in later
-milestones.
+the in-process MySQL-dialect query engine, plus real MySQL/MariaDB source
+probing and resumable consistent snapshots. CDC, polling, the external query
+APIs, and the MySQL wire endpoint arrive in later milestones.
 
 ## Run locally
 
@@ -59,9 +59,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --locked
 cargo test -p pintail-sqllogic --test plan_quality
 cargo test -p pintail-sqllogic --test mysql_oracle -- --ignored --nocapture
+cargo test -p pintail-snapshot --test mysql_snapshot \
+  m3_snapshot_basic_resume_type_fidelity_and_pk_matrix -- --ignored --nocapture
+cargo test -p pintail-snapshot --test mysql_snapshot \
+  snapshot_compatibility_matrix_covers_file_position_mariadb_and_polling_sources \
+  -- --ignored --nocapture
 ```
 
-The final command starts a uniquely named MySQL 8.4 Docker container and
-compares 600 generated and hand-written queries over equivalent nullable
-MySQL and Pintail data. Current compatibility boundaries are recorded in
+The oracle starts a uniquely named MySQL 8.4 container and compares 600
+generated and hand-written queries over equivalent nullable MySQL and Pintail
+data. The M3 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11, and a
+binlog-disabled source; the primary gate snapshots one million rows and kills
+a real child process mid-snapshot before resuming it. Current compatibility
+boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).

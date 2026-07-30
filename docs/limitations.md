@@ -74,8 +74,38 @@ plausible but incorrect result.
 - `EXPLAIN ANALYZE` scan counters accumulate work from all executions of a
   stable table in the statement, including uncorrelated subqueries.
 
+## M3 snapshot engine
+
+- M3 provides the probe and snapshot library surfaces plus durable chunk
+  journals; the supervisor and REST/SSE controls that invoke them arrive in
+  M6. Snapshot completion therefore leaves tables pending for the M4 CDC or M5
+  polling owner.
+- A missing `FLUSH TABLES WITH READ LOCK` privilege can be allowed explicitly.
+  Every worker still uses a repeatable-read consistent transaction, but their
+  start instants can differ and the result reports the degraded guarantee.
+- Resume preserves the first attempt's CDC handoff position and replays
+  already published chunks idempotently. This converges correctly once M4
+  replays the overlap. Before that replay, a source changed between attempts
+  can expose a mixed-time snapshot. On binlog-disabled sources, M5 polling and
+  reconciliation own convergence.
+- PK-less tables use a single-stream `LIMIT`/`OFFSET` scan and generated
+  append-row IDs. Source changes between attempts can shift offsets; polling
+  reconciliation is required because there is no stable source identity.
+- Exact MySQL logical types and parameters are retained in schemas, while
+  PTSEG v1 uses its existing physical carriers: narrow integers use 64-bit
+  values, `Float32` uses the 64-bit float carrier, and decimal/temporal/JSON
+  values use canonical UTF-8. DECIMAL values are lossless in storage, but M2
+  query arithmetic still coerces them through the existing numeric executor
+  and is not exact decimal arithmetic.
+- `DECIMAL` precision above 38 maps to text with a probe warning. ENUM and SET
+  snapshot values are textual; CDC fidelity will require full binlog row
+  metadata in M4. Virtual generated columns are skipped, while stored
+  generated columns are included.
+- Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
+  approximate for InnoDB. Durable completed row and chunk counts are exact.
+
 ## Milestone boundary
 
-M2 is an in-process query-engine milestone. The snapshot, CDC, polling, HTTP
-query API, MySQL wire server, prepared-statement compatibility, and BI-client
-smokes belong to M3 through M7 and are not claimed here.
+M3 is an in-process replication-library milestone. CDC, polling, HTTP query
+API, MySQL wire server, prepared-statement compatibility, and BI-client smokes
+belong to M4 through M7 and are not claimed here.

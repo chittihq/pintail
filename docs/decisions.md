@@ -110,3 +110,44 @@ cardinality one. Pintail does not yet catalog foreign-key or uniqueness
 relationships rich enough to prove broader join/aggregate rewrites safe.
 Rule coverage stays narrow rather than relying on optimistic cardinality
 assumptions that could change results.
+
+### M3 logical types reuse PTSEG version-one carriers
+
+M3 records exact source widths, decimal precision/scale, and temporal
+fractional precision in Pintail schemas and schema fingerprints. PTSEG and WAL
+version one continue to encode the six physical scalar carriers established in
+M1: narrow signed and unsigned integers use their 64-bit carrier, `Float32`
+uses the 64-bit float carrier, and decimal, date, date-time, time, and JSON use
+canonical UTF-8. Probe-time range validation prevents a narrow source value
+from escaping its logical width; decimal text is lossless.
+
+This deliberately avoids an after-M2 format rewrite or an unversioned tag
+reinterpretation. It deviates from the goal's proposed i128/date integer
+physical representations, so the limitation is explicit: exact decimal query
+arithmetic remains future work even though snapshot and storage fidelity are
+lossless. A future native representation requires a new storage format
+version and migration design.
+
+### Resumes retain the first snapshot handoff position
+
+The control plane inserts the snapshot-to-stream checkpoint once. A restarted
+snapshot opens new consistent source transactions and skips durable chunks,
+but it never advances that checkpoint. M4 can therefore replay every source
+change since the first attempt and make mixed-attempt chunks converge.
+Replacing the position on restart would silently lose changes made to a chunk
+that had already completed.
+
+Direct snapshot chunks publish immutable segments before atomically marking
+their SQLite journal entry complete. A crash in that narrow interval may
+publish the same version-zero keys twice on retry; mandatory merge-on-read
+makes the replay invisible, and compaction later removes the redundant
+version. Snapshot traffic consequently bypasses both the mutable table and
+WAL without weakening recovery.
+
+### mysql_async uses its minimal Rust feature set
+
+The source client is the specification-approved `mysql_async` crate. Pintail
+enables its `minimal-rust`, Rustls, and ring features instead of the default
+feature set so the workspace keeps its declared Rust 1.85 MSRV and does not
+pull a native TLS dependency. Snapshot tests exercise the resulting client
+against MySQL 5.7, MySQL 8.4, and MariaDB 11.

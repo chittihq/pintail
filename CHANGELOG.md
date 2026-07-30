@@ -6,6 +6,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M3] - 2026-07-30
+
+### Added
+
+- Read-only MySQL/MariaDB capability probing through `mysql_async`, including
+  server flavor, binlog/GTID settings, grants, source tables, columns,
+  charsets/collations, generated columns, and deterministic primary,
+  non-nullable UNIQUE, or append-row-id key selection.
+- Exact logical schema types for signed and unsigned integer widths,
+  `Float32`, bounded decimal precision/scale, dates, fractional date-times and
+  times, and canonical JSON, with probe warnings for DECIMAL precision above
+  38 and unknown source types.
+- A coordinated snapshot engine that briefly takes a global read lock,
+  captures GTID or file/position, establishes parallel repeatable-read
+  consistent transactions, then releases the lock before copying data.
+- Keyset pagination for scalar and composite source keys, single-worker
+  offset scanning for PK-less tables, explicit source projections, escaped
+  identifiers, and configurable workers and durable chunk sizes.
+- Lossless snapshot conversion for the M3 MySQL type matrix, including
+  latin1-to-UTF-8 connection transcoding, BIT, ENUM/SET, binary/blob,
+  geometry WKB, stored generated columns, JSON canonicalization, and mandatory
+  NULL normalization for zero or invalid dates and date-times.
+- Direct snapshot bulk ingest that validates, sorts, and publishes immutable
+  version-zero PTSEG runs without writing the memtable or WAL.
+- SQLite snapshot chunk journals, exact durable row totals, progress
+  callbacks with throughput bytes and ETA, idempotent chunk completion, and
+  first-position preservation across process restarts.
+- Docker gates for one million rows across ten tables, a real child-process
+  SIGKILL and resume, source/Pintail count-sum-CRC parity, the complete M3 type
+  matrix, composite/UNIQUE/append/GIPK keys, MySQL 5.7 and 8.4,
+  MariaDB 11 GTID, and a binlog-disabled polling source.
+
+### Changed
+
+- PTSEG version one now accepts exact M3 logical schemas while retaining its
+  existing six physical scalar carriers; logical parameters participate in
+  schema fingerprints and round-trip through reopen.
+- Executor vectors, scalar normalization, joins, and numeric key pruning
+  recognize the physical carrier associated with each logical M3 type.
+- Internal snapshot schemas make only physical sort-key columns required, so
+  zero dates from source `NOT NULL` columns can still normalize safely to
+  `NULL`.
+- Store recovery removes interrupted dot-prefixed segment writes as well as
+  unpublished segment orphans.
+
+### Verification
+
+- Rust formatting, strict Clippy for all targets, component tests, and the
+  complete locked workspace test suite pass.
+- Bun's frozen install, dashboard type check, and static generation pass.
+- The MySQL 8.4 gate snapshots 1,000,000 fact rows, validates exact aggregate
+  checksums, kills a live snapshot worker after durable chunks, and resumes
+  100,000 rows with no visible duplicates or gaps.
+- The compatibility gate passes against MySQL 8.4 file/position, MySQL 5.7
+  file/position, MariaDB 11 GTID, and MySQL 8.4 with binary logging disabled.
+- The 600-query MySQL differential oracle and physical plan-quality gate
+  remain green after the M3 logical type expansion.
+
 ## [M2] - 2026-07-30
 
 ### Added
