@@ -3,14 +3,17 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestones M0 through M8 provide the
+The project is under active development. Milestones M0 through M9 provide the
 single-process skeleton, Pintail's durable PTSEG columnar storage core, and
 the in-process MySQL-dialect query engine, plus real MySQL/MariaDB source
 probing, resumable consistent snapshots, native row-binlog CDC, live DDL
 tracking, binlog-disabled polling with delete reconciliation, the authenticated
 HTTP control plane and dashboard, a read-only MySQL wire endpoint,
 independently supervised databases, Prometheus metrics, safe DLQ retry, and
-native full/incremental S3-compatible backup and side-by-side restore.
+native full/incremental S3-compatible backup and side-by-side restore. The M9
+release gate adds a deterministic 30-minute CDC soak, Duckling's 20-million-row
+analytical benchmark, bounded streaming reads and compaction, and the complete
+compatibility matrix.
 
 ## Quick start with Docker
 
@@ -136,3 +139,22 @@ against MinIO and three independently supervised MySQL sources in mixed CDC
 and polling modes while one source fails.
 Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
+
+## Release evidence
+
+The checked-in benchmark and soak reports are reproducible release artifacts:
+
+- [`benchmark/results.md`](benchmark/results.md) compares the same eight
+  analytical queries over 20,000,000 MySQL, Pintail, and ClickHouse rows. The
+  aggregate gate requires Pintail to be at least 50× faster than source MySQL;
+  ClickHouse is an informational reference.
+- [`tests/loadgen/results.md`](tests/loadgen/results.md) records the exact
+  30-minute, 5,500-event/s CDC workload, source/replica checksums, lag, DLQ,
+  peak RSS, last-third RSS, and fitted memory slope.
+
+Run them with Bun:
+
+```sh
+(cd benchmark && bun install --frozen-lockfile && bun run benchmark)
+(cd tests/loadgen && bun install --frozen-lockfile && bun run soak)
+```

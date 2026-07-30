@@ -100,12 +100,24 @@ Queries do not acquire the writer lock. A reader:
    sequence;
 3. rechecks the manifest generation to exclude a publication/WAL-truncation
    race;
-4. verifies every referenced segment before exposing the snapshot.
+4. verifies each referenced segment's checksummed footer and structural
+   metadata before exposing the snapshot.
 
 Scans merge versions by physical key, keep the highest source version, and
-then remove tombstones. Segment key bounds, bloom filters, block zone maps,
-and projection pushdown avoid unrelated I/O. Old segments are reclaimed only
+then remove tombstones. Disjoint globally unique segments stream projected
+columns directly and can be prefetched in parallel under a divided memory
+budget. Large overlapping views first merge only key, version, and tombstone
+headers, then late-materialize the winning projected values in chunks of at
+most 8,192 rows. Segment key bounds, bloom filters, block zone maps, and
+projection pushdown avoid unrelated I/O. Old segments are reclaimed only
 after every reader pin releases them.
+
+Flushes use 16,384-row blocks by default. Size-tier compaction admits at most
+50,000 input rows per maintenance pass, performs a block-wise version merge,
+and partitions retained output at 128,000 rows per immutable segment. An
+oversized candidate is deferred rather than materialized opportunistically;
+queries remain correct through merge-on-read while the operator observes the
+resulting segment shape and maintenance metrics.
 
 The byte-level format and crash ordering are specified in
 [`format.md`](format.md).
@@ -116,8 +128,9 @@ HTTP and MySQL clients both construct the same catalog and open the same
 reader-only snapshots. The SQL frontend binds names and MySQL coercions,
 creates a logical plan, applies conservative correctness-preserving
 optimizations, and lowers to the vectorized executor. Execution uses
-4,096-row batches, parallel projected scans, bounded results, and one
-configurable hard memory ceiling per query.
+4,096-row batches, parallel projected scans, streaming joins and grouped
+aggregation, bounded results, and one configurable hard memory ceiling per
+query.
 
 The engine is deliberately read-only. Session setup and transaction commands
 needed by common MySQL clients are accepted as compatibility no-ops; data

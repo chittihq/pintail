@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-07-30T19:32:58.706Z",
+  "scale": 1,
+  "rows": {
+    "users": 100000,
+    "products": 10000,
+    "orders": 20000000
+  },
+  "gate": {
+    "requiredSpeedup": 50,
+    "enforced": true,
+    "passed": true
+  },
+  "queries": [
+    {
+      "name": "Q1: Full table count",
+      "mysqlMs": 2334,
+      "pintailMs": 24,
+      "clickhouseMs": 368,
+      "speedup": 97.25
+    },
+    {
+      "name": "Q2: Filtered count",
+      "mysqlMs": 1679,
+      "pintailMs": 1495,
+      "clickhouseMs": 751,
+      "speedup": 1.123076923076923
+    },
+    {
+      "name": "Q3: Group by status",
+      "mysqlMs": 68947,
+      "pintailMs": 2972,
+      "clickhouseMs": 543,
+      "speedup": 23.19885598923284
+    },
+    {
+      "name": "Q4: Region × status breakdown",
+      "mysqlMs": 23273,
+      "pintailMs": 3036,
+      "clickhouseMs": 594,
+      "speedup": 7.665678524374177
+    },
+    {
+      "name": "Q5: Monthly revenue (2023)",
+      "mysqlMs": 11042,
+      "pintailMs": 2064,
+      "clickhouseMs": 857,
+      "speedup": 5.349806201550388
+    },
+    {
+      "name": "Q6: Top 10 spenders",
+      "mysqlMs": 1977816,
+      "pintailMs": 3146,
+      "clickhouseMs": 852,
+      "speedup": 628.6764144945963
+    },
+    {
+      "name": "Q7: Regional analytics",
+      "mysqlMs": 117478,
+      "pintailMs": 4649,
+      "clickhouseMs": 585,
+      "speedup": 25.269520326952033
+    },
+    {
+      "name": "Q8: Join users + orders",
+      "mysqlMs": 1638868,
+      "pintailMs": 4819,
+      "clickhouseMs": 641,
+      "speedup": 340.08466486822994
+    }
+  ],
+  "totals": {
+    "mysqlMs": 3841437,
+    "pintailMs": 22205,
+    "clickhouseMs": 5191,
+    "speedup": 172.99873902274263
+  }
+}

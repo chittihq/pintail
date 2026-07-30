@@ -63,6 +63,10 @@ plausible but incorrect result.
   late-materialization work on a Pintail-owned Rayon pool. A snapshot
   containing only one relevant segment has no smaller storage morsels to
   parallelize.
+- Large overlapping scans merge key/version/tombstone headers and
+  late-materialize winners in chunks of at most 8,192 rows. Views below
+  65,536 candidate rows still use the simpler materialized merge path, which
+  remains covered by the query memory ceiling.
 - Hash joins, hash aggregation, sorting, distinct state, subquery
   materialization, retained projected scans, and cross joins obey a hard
   per-query memory cap. The cap is process-configurable but applies
@@ -223,6 +227,13 @@ plausible but incorrect result.
   permanently attached stream. Its five-second cadence bounds idle resource
   ownership and source failure blast radius, but a newly committed event may
   wait for the next cycle before ingestion starts.
+- Default size-tier maintenance admits at most 50,000 input rows per
+  compaction pass and partitions output at 128,000 rows. A candidate above
+  the admission limit remains as overlapping immutable segments and is
+  resolved correctly by streaming merge-on-read. The current compaction-debt
+  metric reports the next eligible plan, so it does not quantify an
+  oversized deferred window. These storage limits are engine options rather
+  than TOML/CLI settings in v1.
 - RSS is obtained from the host `ps` process table. Sandboxed or minimal
   environments without a compatible `ps` command report zero rather than
   guessing. Storage and segment metrics walk the local data directory and can

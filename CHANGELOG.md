@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M9] - 2026-07-30
+
+### Added
+
+- A deterministic Bun release workload ports Duckling's eight-query,
+  20-million-order analytical suite to isolated MySQL 8.4, Pintail, and
+  ClickHouse 25.8 instances, with exact row checks and a required aggregate
+  speedup of at least 50× over source MySQL.
+- A deterministic 30-minute CDC soak owns its MySQL 8.4 source, generates
+  insert/update/delete traffic at a 5,500-event/s target, and records every
+  lag, DLQ, RSS, convergence, and checksum sample as checked-in JSON and
+  Markdown release evidence.
+- An M9 release report and Duckling known-limit parity table make the v1
+  compatibility boundary, operational tradeoffs, and full validation matrix
+  explicit.
+
+### Changed
+
+- Immutable scans verify segment structure without whole-file reads, stream
+  disjoint projected columns directly, and resolve large overlapping views by
+  merging system-column headers before late-materializing winning values in
+  bounded chunks.
+- Joins, grouped aggregation, row accounting, storage-key scans, and projected
+  segment prefetch use bounded streaming or parallel paths under the shared
+  hard query-memory ceiling.
+- Compaction merges checksummed input blocks incrementally, moves winners
+  instead of cloning them, bounds admitted input rows, and partitions output
+  segments so background maintenance remains inside the release RSS envelope.
+- Oversized CDC source transactions spill to anonymous temporary storage
+  without weakening atomic publication or checkpoint-before-replay safety.
+
+### Verification
+
+- The exact 20-million-order benchmark verified equal row counts across MySQL
+  8.4, Pintail, and ClickHouse 25.8. MySQL's eight queries took 3,841,437 ms,
+  Pintail took 22,205 ms, and ClickHouse took 5,191 ms; Pintail's 173.0×
+  aggregate speedup passed the required 50× gate.
+- The 30-minute soak generated 9,898,625 row events at 5,499.2 events/s,
+  converged on an exact 2,576,375-row source/replica checksum with zero DLQ,
+  observed at most 27 seconds of lag, peaked at 291.2 MiB RSS, and fitted a
+  46.6 MiB/hour RSS slope. Every enforced gate passed.
+
 ## [M8] - 2026-07-30
 
 ### Added

@@ -30,6 +30,8 @@ Set `PINTAIL_BENCHMARK_BINARY` to reuse an existing release binary. Otherwise
 the harness builds `pintail` in release mode. Pintail runs with an explicit
 256 MiB per-query memory ceiling. Results are written to
 `results.md` and `results.json`; non-full runs use `results-smoke.*`.
+The full artifacts are checked in as release evidence and include exact row
+counts, per-query timings, aggregate speedup, and the gate outcome.
 
 ## Workload
 

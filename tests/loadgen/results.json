@@ -1,0 +1,3330 @@
+{
+  "generatedAt": "2026-07-30T18:11:13.645Z",
+  "configuration": {
+    "durationSeconds": 1800,
+    "targetEventsPerSecond": 5500,
+    "insertsPerBatch": 2750,
+    "updatesPerBatch": 1375,
+    "deletesPerBatch": 1375
+  },
+  "outcome": {
+    "writerSeconds": 1800.001322417,
+    "generatedEvents": 9898625,
+    "throughput": 5499.232070956679,
+    "maxEventLag": 159500,
+    "maxLagSeconds": 27,
+    "initialRss": 96698368,
+    "maxRss": 305381376,
+    "firstThirdRss": 120539660.69421488,
+    "lastThirdRss": 132765374.41322315,
+    "rssSlopeBytesPerHour": 48817407.10818378,
+    "maxDeadLetters": 0,
+    "source": {
+      "rows": 2576375,
+      "idChecksum": 1232014637974,
+      "revisions": 2475000,
+      "minimumId": 1,
+      "maximumId": 5949999
+    },
+    "replica": {
+      "rows": 2576375,
+      "idChecksum": 1232014637974,
+      "revisions": 2475000,
+      "minimumId": 1,
+      "maximumId": 5949999
+    }
+  },
+  "gate": {
+    "enforced": true,
+    "passed": true,
+    "checks": {
+      "duration": true,
+      "throughput": true,
+      "convergence": true,
+      "eventLag": true,
+      "timeLag": true,
+      "deadLetters": true,
+      "rssLastThird": true,
+      "rssMaximum": true,
+      "rssSlope": true
+    }
+  },
+  "samples": [
+    {
+      "elapsedSeconds": 0.008843250000005356,
+      "generatedEvents": 0,
+      "ingestedEvents": 0,
+      "eventLag": 0,
+      "lagSeconds": 0,
+      "rssBytes": 96698368,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 4.195289708000004,
+      "generatedEvents": 26125,
+      "ingestedEvents": 0,
+      "eventLag": 26125,
+      "lagSeconds": 4,
+      "rssBytes": 37765120,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 9.222540625,
+      "generatedEvents": 53625,
+      "ingestedEvents": 31625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 48087040,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 14.194617958000002,
+      "generatedEvents": 81125,
+      "ingestedEvents": 31625,
+      "eventLag": 49500,
+      "lagSeconds": 1,
+      "rssBytes": 40189952,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 19.197565792000002,
+      "generatedEvents": 108625,
+      "ingestedEvents": 31625,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 37552128,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 24.196055542000003,
+      "generatedEvents": 136125,
+      "ingestedEvents": 119625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 101810176,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 29.194094583000005,
+      "generatedEvents": 163625,
+      "ingestedEvents": 152625,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 90800128,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 34.201573542,
+      "generatedEvents": 191125,
+      "ingestedEvents": 152625,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 126402560,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 39.27585245800001,
+      "generatedEvents": 218625,
+      "ingestedEvents": 196625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 146653184,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 44.203780583,
+      "generatedEvents": 246125,
+      "ingestedEvents": 229625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 171917312,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 49.289688125,
+      "generatedEvents": 273625,
+      "ingestedEvents": 229625,
+      "eventLag": 44000,
+      "lagSeconds": 7,
+      "rssBytes": 21921792,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 54.212116167,
+      "generatedEvents": 301125,
+      "ingestedEvents": 229625,
+      "eventLag": 71500,
+      "lagSeconds": 0,
+      "rssBytes": 44597248,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 59.21842116700001,
+      "generatedEvents": 328625,
+      "ingestedEvents": 317625,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 172605440,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 64.2589455,
+      "generatedEvents": 356125,
+      "ingestedEvents": 328625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 53805056,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 69.74794691700001,
+      "generatedEvents": 383625,
+      "ingestedEvents": 378125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 63619072,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 74.21863804200001,
+      "generatedEvents": 411125,
+      "ingestedEvents": 378125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 84819968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 79.20287404199999,
+      "generatedEvents": 438625,
+      "ingestedEvents": 422125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 118816768,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 84.192761375,
+      "generatedEvents": 466125,
+      "ingestedEvents": 449625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 134463488,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 89.27193525,
+      "generatedEvents": 493625,
+      "ingestedEvents": 471625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 153452544,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 94.2047265,
+      "generatedEvents": 521125,
+      "ingestedEvents": 499125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 121929728,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 99.234682375,
+      "generatedEvents": 548625,
+      "ingestedEvents": 526625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 154157056,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 104.20497220799999,
+      "generatedEvents": 576125,
+      "ingestedEvents": 548625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 209256448,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 109.21364304200002,
+      "generatedEvents": 603625,
+      "ingestedEvents": 548625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 151977984,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 115.18859566700002,
+      "generatedEvents": 631125,
+      "ingestedEvents": 603625,
+      "eventLag": 27500,
+      "lagSeconds": 5,
+      "rssBytes": 32342016,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 119.203541875,
+      "generatedEvents": 658625,
+      "ingestedEvents": 653125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 59392000,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 124.231299458,
+      "generatedEvents": 686125,
+      "ingestedEvents": 653125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 84688896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 129.66745975,
+      "generatedEvents": 713625,
+      "ingestedEvents": 653125,
+      "eventLag": 60500,
+      "lagSeconds": 10,
+      "rssBytes": 44498944,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 134.20234629200002,
+      "generatedEvents": 741125,
+      "ingestedEvents": 653125,
+      "eventLag": 88000,
+      "lagSeconds": 0,
+      "rssBytes": 55508992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 139.235277542,
+      "generatedEvents": 768625,
+      "ingestedEvents": 746625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 146997248,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 144.20327091700003,
+      "generatedEvents": 796125,
+      "ingestedEvents": 746625,
+      "eventLag": 49500,
+      "lagSeconds": 7,
+      "rssBytes": 126795776,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 149.21647491700003,
+      "generatedEvents": 823625,
+      "ingestedEvents": 746625,
+      "eventLag": 77000,
+      "lagSeconds": 12,
+      "rssBytes": 16449536,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 154.2051745,
+      "generatedEvents": 851125,
+      "ingestedEvents": 746625,
+      "eventLag": 104500,
+      "lagSeconds": 17,
+      "rssBytes": 14483456,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 159.19983529200002,
+      "generatedEvents": 878625,
+      "ingestedEvents": 746625,
+      "eventLag": 132000,
+      "lagSeconds": 22,
+      "rssBytes": 13090816,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 164.20660229199999,
+      "generatedEvents": 906125,
+      "ingestedEvents": 746625,
+      "eventLag": 159500,
+      "lagSeconds": 27,
+      "rssBytes": 13565952,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 169.214200125,
+      "generatedEvents": 933625,
+      "ingestedEvents": 917125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 194232320,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 174.19136220800002,
+      "generatedEvents": 961125,
+      "ingestedEvents": 939125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 76922880,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 179.321071542,
+      "generatedEvents": 988625,
+      "ingestedEvents": 939125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 28508160,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 184.6599265,
+      "generatedEvents": 1016125,
+      "ingestedEvents": 939125,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 38846464,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 189.21617225,
+      "generatedEvents": 1043625,
+      "ingestedEvents": 1027125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 148815872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 194.19023579199998,
+      "generatedEvents": 1071125,
+      "ingestedEvents": 1027125,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 125026304,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 199.19101004200002,
+      "generatedEvents": 1098625,
+      "ingestedEvents": 1027125,
+      "eventLag": 71500,
+      "lagSeconds": 0,
+      "rssBytes": 131104768,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 204.254839917,
+      "generatedEvents": 1126125,
+      "ingestedEvents": 1104125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 201375744,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 209.202349958,
+      "generatedEvents": 1153625,
+      "ingestedEvents": 1142625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 253935616,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 214.637126125,
+      "generatedEvents": 1181125,
+      "ingestedEvents": 1142625,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 75530240,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 219.20106270800002,
+      "generatedEvents": 1208625,
+      "ingestedEvents": 1142625,
+      "eventLag": 66000,
+      "lagSeconds": 1,
+      "rssBytes": 80789504,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 224.204595958,
+      "generatedEvents": 1236125,
+      "ingestedEvents": 1142625,
+      "eventLag": 93500,
+      "lagSeconds": 0,
+      "rssBytes": 95420416,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 229.196961,
+      "generatedEvents": 1263625,
+      "ingestedEvents": 1241625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 148471808,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 234.19407825,
+      "generatedEvents": 1291125,
+      "ingestedEvents": 1274625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 125861888,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 239.193618417,
+      "generatedEvents": 1318625,
+      "ingestedEvents": 1313125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 112640000,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 244.26926729199997,
+      "generatedEvents": 1346125,
+      "ingestedEvents": 1313125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 158892032,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 249.19493675,
+      "generatedEvents": 1373625,
+      "ingestedEvents": 1313125,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 142508032,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 254.65623425,
+      "generatedEvents": 1401125,
+      "ingestedEvents": 1368125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 195379200,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 259.192837417,
+      "generatedEvents": 1428625,
+      "ingestedEvents": 1368125,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 226754560,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 264.1915252499999,
+      "generatedEvents": 1456125,
+      "ingestedEvents": 1423125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 205340672,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 269.258223958,
+      "generatedEvents": 1483625,
+      "ingestedEvents": 1423125,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 71450624,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 274.67995016699996,
+      "generatedEvents": 1511125,
+      "ingestedEvents": 1478125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 87736320,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 279.2135038750001,
+      "generatedEvents": 1538625,
+      "ingestedEvents": 1527625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 94240768,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 284.200516292,
+      "generatedEvents": 1566125,
+      "ingestedEvents": 1527625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 105644032,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 289.19387816700004,
+      "generatedEvents": 1593625,
+      "ingestedEvents": 1527625,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 84295680,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 294.198733708,
+      "generatedEvents": 1621125,
+      "ingestedEvents": 1604625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 145276928,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 299.19685958299993,
+      "generatedEvents": 1648625,
+      "ingestedEvents": 1632125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 185270272,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 304.19167470800005,
+      "generatedEvents": 1676125,
+      "ingestedEvents": 1654125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 199147520,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 309.20317524999996,
+      "generatedEvents": 1703625,
+      "ingestedEvents": 1687125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 233930752,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 314.19417845799995,
+      "generatedEvents": 1731125,
+      "ingestedEvents": 1714625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 198901760,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 319.24159883300007,
+      "generatedEvents": 1758625,
+      "ingestedEvents": 1731125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 155156480,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 324.197608708,
+      "generatedEvents": 1786125,
+      "ingestedEvents": 1775125,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 94224384,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 329.204709292,
+      "generatedEvents": 1813625,
+      "ingestedEvents": 1775125,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 83869696,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 334.2683460829999,
+      "generatedEvents": 1841125,
+      "ingestedEvents": 1819125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 110460928,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 339.200768667,
+      "generatedEvents": 1868625,
+      "ingestedEvents": 1857625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 117522432,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 344.236757125,
+      "generatedEvents": 1896125,
+      "ingestedEvents": 1857625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 131284992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 349.196340292,
+      "generatedEvents": 1923625,
+      "ingestedEvents": 1857625,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 80035840,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 354.199742917,
+      "generatedEvents": 1951125,
+      "ingestedEvents": 1923625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 183369728,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 359.652843625,
+      "generatedEvents": 1978625,
+      "ingestedEvents": 1956625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 173457408,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 364.19680016700005,
+      "generatedEvents": 2006125,
+      "ingestedEvents": 2000625,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 212615168,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 369.207641958,
+      "generatedEvents": 2033625,
+      "ingestedEvents": 2000625,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 164528128,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 374.201878042,
+      "generatedEvents": 2061125,
+      "ingestedEvents": 2000625,
+      "eventLag": 60500,
+      "lagSeconds": 10,
+      "rssBytes": 69844992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 379.21347279200006,
+      "generatedEvents": 2088625,
+      "ingestedEvents": 2000625,
+      "eventLag": 88000,
+      "lagSeconds": 0,
+      "rssBytes": 41025536,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 384.26354654200003,
+      "generatedEvents": 2116125,
+      "ingestedEvents": 2105125,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 79659008,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 389.68255462499997,
+      "generatedEvents": 2143625,
+      "ingestedEvents": 2105125,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 117440512,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 394.29196875,
+      "generatedEvents": 2171125,
+      "ingestedEvents": 2105125,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 106708992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 399.28452858299994,
+      "generatedEvents": 2198625,
+      "ingestedEvents": 2171125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 162365440,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 404.194233417,
+      "generatedEvents": 2226125,
+      "ingestedEvents": 2171125,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 167952384,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 409.24022791699997,
+      "generatedEvents": 2253625,
+      "ingestedEvents": 2226125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 200327168,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 414.193851042,
+      "generatedEvents": 2281125,
+      "ingestedEvents": 2275625,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 206225408,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 419.729423833,
+      "generatedEvents": 2308625,
+      "ingestedEvents": 2275625,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 177881088,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 424.199500708,
+      "generatedEvents": 2336125,
+      "ingestedEvents": 2308625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 177750016,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 429.191515292,
+      "generatedEvents": 2363625,
+      "ingestedEvents": 2308625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 145227776,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 434.19998045799997,
+      "generatedEvents": 2391125,
+      "ingestedEvents": 2363625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 107118592,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 439.194136708,
+      "generatedEvents": 2418625,
+      "ingestedEvents": 2396625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 137232384,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 444.201226042,
+      "generatedEvents": 2446125,
+      "ingestedEvents": 2396625,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 111951872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 449.26934050000006,
+      "generatedEvents": 2473625,
+      "ingestedEvents": 2446125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 159760384,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 454.19605299999995,
+      "generatedEvents": 2501125,
+      "ingestedEvents": 2446125,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 92635136,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 459.235582333,
+      "generatedEvents": 2528625,
+      "ingestedEvents": 2495625,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 189743104,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 464.28747716699996,
+      "generatedEvents": 2556125,
+      "ingestedEvents": 2534125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 215597056,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 469.191457333,
+      "generatedEvents": 2583625,
+      "ingestedEvents": 2534125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 176472064,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 474.6523785,
+      "generatedEvents": 2611125,
+      "ingestedEvents": 2594625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 59490304,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 479.195515417,
+      "generatedEvents": 2638625,
+      "ingestedEvents": 2622125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 87064576,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 484.222026083,
+      "generatedEvents": 2666125,
+      "ingestedEvents": 2649625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 107020288,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 489.19523641700005,
+      "generatedEvents": 2693625,
+      "ingestedEvents": 2666125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 115752960,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 494.21332595800004,
+      "generatedEvents": 2721125,
+      "ingestedEvents": 2666125,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 67796992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 499.2016930000001,
+      "generatedEvents": 2748625,
+      "ingestedEvents": 2726625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 156450816,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 504.65974920800005,
+      "generatedEvents": 2776125,
+      "ingestedEvents": 2754125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 177684480,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 509.1888856670001,
+      "generatedEvents": 2803625,
+      "ingestedEvents": 2754125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 132169728,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 514.2937068330001,
+      "generatedEvents": 2831125,
+      "ingestedEvents": 2809125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 222461952,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 519.1909633330001,
+      "generatedEvents": 2858625,
+      "ingestedEvents": 2809125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 150765568,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 524.248264583,
+      "generatedEvents": 2886125,
+      "ingestedEvents": 2858625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 120258560,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 529.1995677080001,
+      "generatedEvents": 2913625,
+      "ingestedEvents": 2858625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 50348032,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 534.2176075,
+      "generatedEvents": 2941125,
+      "ingestedEvents": 2858625,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 52920320,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 539.2645505419999,
+      "generatedEvents": 2968625,
+      "ingestedEvents": 2946625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 117735424,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 544.1993700830001,
+      "generatedEvents": 2996125,
+      "ingestedEvents": 2974125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 136937472,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 549.226463875,
+      "generatedEvents": 3023625,
+      "ingestedEvents": 3007125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 159694848,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 554.1966435830001,
+      "generatedEvents": 3051125,
+      "ingestedEvents": 3007125,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 120438784,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 559.1973024170001,
+      "generatedEvents": 3078625,
+      "ingestedEvents": 3056625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 187285504,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 564.656245292,
+      "generatedEvents": 3106125,
+      "ingestedEvents": 3089625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 213188608,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 569.1940231250001,
+      "generatedEvents": 3133625,
+      "ingestedEvents": 3117125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 116424704,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 574.1946786670001,
+      "generatedEvents": 3161125,
+      "ingestedEvents": 3117125,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 118095872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 579.192283375,
+      "generatedEvents": 3188625,
+      "ingestedEvents": 3172125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 74432512,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 584.194606292,
+      "generatedEvents": 3216125,
+      "ingestedEvents": 3188625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 100433920,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 589.2584592500001,
+      "generatedEvents": 3243625,
+      "ingestedEvents": 3188625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 53248000,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 594.6260240830001,
+      "generatedEvents": 3271125,
+      "ingestedEvents": 3243625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 125517824,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 600.1387077080001,
+      "generatedEvents": 3298625,
+      "ingestedEvents": 3243625,
+      "eventLag": 55000,
+      "lagSeconds": 1,
+      "rssBytes": 48873472,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 604.2737987920001,
+      "generatedEvents": 3326125,
+      "ingestedEvents": 3243625,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 39927808,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 609.1991765,
+      "generatedEvents": 3353625,
+      "ingestedEvents": 3243625,
+      "eventLag": 110000,
+      "lagSeconds": 0,
+      "rssBytes": 53297152,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 614.244482625,
+      "generatedEvents": 3381125,
+      "ingestedEvents": 3348125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 186826752,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 619.664891708,
+      "generatedEvents": 3408625,
+      "ingestedEvents": 3381125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 227016704,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 624.197783292,
+      "generatedEvents": 3436125,
+      "ingestedEvents": 3419625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 177668096,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 629.200596208,
+      "generatedEvents": 3463625,
+      "ingestedEvents": 3419625,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 104071168,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 634.1941245,
+      "generatedEvents": 3491125,
+      "ingestedEvents": 3469125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 78725120,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 639.201042375,
+      "generatedEvents": 3518625,
+      "ingestedEvents": 3496625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 95617024,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 644.315629625,
+      "generatedEvents": 3546125,
+      "ingestedEvents": 3518625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 108003328,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 649.677839208,
+      "generatedEvents": 3573625,
+      "ingestedEvents": 3551625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 129744896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 654.269381458,
+      "generatedEvents": 3601125,
+      "ingestedEvents": 3579125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 144162816,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 659.202583,
+      "generatedEvents": 3628625,
+      "ingestedEvents": 3606625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 188530688,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 664.229476333,
+      "generatedEvents": 3656125,
+      "ingestedEvents": 3650625,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 224821248,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 669.197746208,
+      "generatedEvents": 3683625,
+      "ingestedEvents": 3650625,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 178667520,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 674.1974364170001,
+      "generatedEvents": 3711125,
+      "ingestedEvents": 3694625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 44974080,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 679.6412391670001,
+      "generatedEvents": 3738625,
+      "ingestedEvents": 3716625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 68206592,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 684.19947475,
+      "generatedEvents": 3766125,
+      "ingestedEvents": 3744125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 73416704,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 689.207588625,
+      "generatedEvents": 3793625,
+      "ingestedEvents": 3771625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 90324992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 694.189585167,
+      "generatedEvents": 3821125,
+      "ingestedEvents": 3771625,
+      "eventLag": 49500,
+      "lagSeconds": 1,
+      "rssBytes": 83197952,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 699.203950125,
+      "generatedEvents": 3848625,
+      "ingestedEvents": 3771625,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 52527104,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 704.2189650000001,
+      "generatedEvents": 3876125,
+      "ingestedEvents": 3848625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 151420928,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 709.666864083,
+      "generatedEvents": 3903625,
+      "ingestedEvents": 3892625,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 130695168,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 714.203890792,
+      "generatedEvents": 3931125,
+      "ingestedEvents": 3892625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 155910144,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 719.281447625,
+      "generatedEvents": 3958625,
+      "ingestedEvents": 3953125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 213663744,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 724.192332667,
+      "generatedEvents": 3986125,
+      "ingestedEvents": 3953125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 134529024,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 729.23310425,
+      "generatedEvents": 4013625,
+      "ingestedEvents": 4002625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 53985280,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 734.1947112500001,
+      "generatedEvents": 4041125,
+      "ingestedEvents": 4002625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 55279616,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 739.214902875,
+      "generatedEvents": 4068625,
+      "ingestedEvents": 4002625,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 62291968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 744.2629424170001,
+      "generatedEvents": 4096125,
+      "ingestedEvents": 4068625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 119652352,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 749.1948961250001,
+      "generatedEvents": 4123625,
+      "ingestedEvents": 4101625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 119390208,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 754.222614375,
+      "generatedEvents": 4151125,
+      "ingestedEvents": 4129125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 169295872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 759.200013917,
+      "generatedEvents": 4178625,
+      "ingestedEvents": 4167625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 176750592,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 764.2045487920001,
+      "generatedEvents": 4206125,
+      "ingestedEvents": 4167625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 225574912,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 769.6643575,
+      "generatedEvents": 4233625,
+      "ingestedEvents": 4167625,
+      "eventLag": 66000,
+      "lagSeconds": 10,
+      "rssBytes": 211730432,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 774.194342708,
+      "generatedEvents": 4261125,
+      "ingestedEvents": 4167625,
+      "eventLag": 93500,
+      "lagSeconds": 0,
+      "rssBytes": 211943424,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 779.19443825,
+      "generatedEvents": 4288625,
+      "ingestedEvents": 4272125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 277331968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 784.193167292,
+      "generatedEvents": 4316125,
+      "ingestedEvents": 4294125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 289718272,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 789.195076458,
+      "generatedEvents": 4343625,
+      "ingestedEvents": 4294125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 290865152,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 794.263092208,
+      "generatedEvents": 4371125,
+      "ingestedEvents": 4343625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 279183360,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 799.20281175,
+      "generatedEvents": 4398625,
+      "ingestedEvents": 4382125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 282443776,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 804.223529292,
+      "generatedEvents": 4426125,
+      "ingestedEvents": 4415125,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 277856256,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 809.271811583,
+      "generatedEvents": 4453625,
+      "ingestedEvents": 4415125,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 278904832,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 814.193293417,
+      "generatedEvents": 4481125,
+      "ingestedEvents": 4415125,
+      "eventLag": 66000,
+      "lagSeconds": 10,
+      "rssBytes": 264454144,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 819.2788414170001,
+      "generatedEvents": 4508625,
+      "ingestedEvents": 4415125,
+      "eventLag": 93500,
+      "lagSeconds": 0,
+      "rssBytes": 191234048,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 824.712924875,
+      "generatedEvents": 4536125,
+      "ingestedEvents": 4514125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 241205248,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 829.584013208,
+      "generatedEvents": 4563625,
+      "ingestedEvents": 4541625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 247873536,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 834.1978864170001,
+      "generatedEvents": 4591125,
+      "ingestedEvents": 4541625,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 238419968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 839.19175,
+      "generatedEvents": 4618625,
+      "ingestedEvents": 4585625,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 219807744,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 844.189959375,
+      "generatedEvents": 4646125,
+      "ingestedEvents": 4624125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 229605376,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 849.639549708,
+      "generatedEvents": 4673625,
+      "ingestedEvents": 4651625,
+      "eventLag": 22000,
+      "lagSeconds": 4,
+      "rssBytes": 204587008,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 854.6418456250001,
+      "generatedEvents": 4701125,
+      "ingestedEvents": 4684625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 177356800,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 859.252916333,
+      "generatedEvents": 4728625,
+      "ingestedEvents": 4701125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 209371136,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 864.200929417,
+      "generatedEvents": 4756125,
+      "ingestedEvents": 4701125,
+      "eventLag": 55000,
+      "lagSeconds": 1,
+      "rssBytes": 210288640,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 869.224836708,
+      "generatedEvents": 4783625,
+      "ingestedEvents": 4701125,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 198803456,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 874.187828125,
+      "generatedEvents": 4811125,
+      "ingestedEvents": 4805625,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 260308992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 879.1872557080001,
+      "generatedEvents": 4838625,
+      "ingestedEvents": 4805625,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 260653056,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 884.6387904170001,
+      "generatedEvents": 4866125,
+      "ingestedEvents": 4805625,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 241909760,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 889.194287417,
+      "generatedEvents": 4893625,
+      "ingestedEvents": 4871625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 244580352,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 894.2089765,
+      "generatedEvents": 4921125,
+      "ingestedEvents": 4899125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 213237760,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 899.188493792,
+      "generatedEvents": 4948625,
+      "ingestedEvents": 4899125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 196984832,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 904.196340083,
+      "generatedEvents": 4976125,
+      "ingestedEvents": 4943125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 168083456,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 909.1929822920001,
+      "generatedEvents": 5003625,
+      "ingestedEvents": 4981625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 204521472,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 914.198545375,
+      "generatedEvents": 5031125,
+      "ingestedEvents": 4981625,
+      "eventLag": 49500,
+      "lagSeconds": 8,
+      "rssBytes": 197378048,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 919.202588625,
+      "generatedEvents": 5058625,
+      "ingestedEvents": 4981625,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 197476352,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 924.278750833,
+      "generatedEvents": 5086125,
+      "ingestedEvents": 5069625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 260063232,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 929.2127374580001,
+      "generatedEvents": 5113625,
+      "ingestedEvents": 5069625,
+      "eventLag": 44000,
+      "lagSeconds": 6,
+      "rssBytes": 222576640,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 934.242967958,
+      "generatedEvents": 5141125,
+      "ingestedEvents": 5069625,
+      "eventLag": 71500,
+      "lagSeconds": 0,
+      "rssBytes": 147062784,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 939.6589216250001,
+      "generatedEvents": 5168625,
+      "ingestedEvents": 5135625,
+      "eventLag": 33000,
+      "lagSeconds": 0,
+      "rssBytes": 102940672,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 944.201529292,
+      "generatedEvents": 5196125,
+      "ingestedEvents": 5168625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 113393664,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 949.257504833,
+      "generatedEvents": 5223625,
+      "ingestedEvents": 5201625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 125812736,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 954.207995292,
+      "generatedEvents": 5251125,
+      "ingestedEvents": 5201625,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 106364928,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 959.2231314170001,
+      "generatedEvents": 5278625,
+      "ingestedEvents": 5201625,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 117932032,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 964.199292333,
+      "generatedEvents": 5306125,
+      "ingestedEvents": 5278625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 180649984,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 969.199473917,
+      "generatedEvents": 5333625,
+      "ingestedEvents": 5322625,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 173113344,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 974.196253917,
+      "generatedEvents": 5361125,
+      "ingestedEvents": 5322625,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 239943680,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 979.190386375,
+      "generatedEvents": 5388625,
+      "ingestedEvents": 5366625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 305381376,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 984.207732417,
+      "generatedEvents": 5416125,
+      "ingestedEvents": 5366625,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 289472512,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 989.2045848330001,
+      "generatedEvents": 5443625,
+      "ingestedEvents": 5366625,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 261881856,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 994.198584125,
+      "generatedEvents": 5471125,
+      "ingestedEvents": 5449125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 231653376,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 999.2546225000001,
+      "generatedEvents": 5498625,
+      "ingestedEvents": 5487625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 217858048,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1004.2097322920001,
+      "generatedEvents": 5526125,
+      "ingestedEvents": 5487625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 116719616,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1009.2175681670001,
+      "generatedEvents": 5553625,
+      "ingestedEvents": 5548125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 119357440,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1014.2690512500001,
+      "generatedEvents": 5581125,
+      "ingestedEvents": 5548125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 175702016,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1019.2065090000001,
+      "generatedEvents": 5608625,
+      "ingestedEvents": 5548125,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 185171968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1024.233829583,
+      "generatedEvents": 5636125,
+      "ingestedEvents": 5608625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 224608256,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1029.6665659169998,
+      "generatedEvents": 5663625,
+      "ingestedEvents": 5608625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 223395840,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1034.21118575,
+      "generatedEvents": 5691125,
+      "ingestedEvents": 5608625,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 153485312,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1039.209308833,
+      "generatedEvents": 5718625,
+      "ingestedEvents": 5685625,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 146833408,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1044.211511958,
+      "generatedEvents": 5746125,
+      "ingestedEvents": 5735125,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 144998400,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1049.201825042,
+      "generatedEvents": 5773625,
+      "ingestedEvents": 5735125,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 168935424,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1054.206257125,
+      "generatedEvents": 5801125,
+      "ingestedEvents": 5790125,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 147668992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1059.649384833,
+      "generatedEvents": 5828625,
+      "ingestedEvents": 5790125,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 191594496,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1064.268877875,
+      "generatedEvents": 5856125,
+      "ingestedEvents": 5845125,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 165281792,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1069.207439125,
+      "generatedEvents": 5883625,
+      "ingestedEvents": 5845125,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 217448448,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1074.219654,
+      "generatedEvents": 5911125,
+      "ingestedEvents": 5889125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 294944768,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1079.2785826250001,
+      "generatedEvents": 5938625,
+      "ingestedEvents": 5916625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 282443776,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1085.1270650420001,
+      "generatedEvents": 5966125,
+      "ingestedEvents": 5916625,
+      "eventLag": 49500,
+      "lagSeconds": 8,
+      "rssBytes": 251101184,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1089.245771375,
+      "generatedEvents": 5993625,
+      "ingestedEvents": 5916625,
+      "eventLag": 77000,
+      "lagSeconds": 1,
+      "rssBytes": 211795968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1094.2012825420002,
+      "generatedEvents": 6021125,
+      "ingestedEvents": 5916625,
+      "eventLag": 104500,
+      "lagSeconds": 0,
+      "rssBytes": 184811520,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1099.204885458,
+      "generatedEvents": 6048625,
+      "ingestedEvents": 6021125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 191545344,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1104.2036960829998,
+      "generatedEvents": 6076125,
+      "ingestedEvents": 6048625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 130203648,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1109.197198667,
+      "generatedEvents": 6103625,
+      "ingestedEvents": 6081625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 179322880,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1115.685853042,
+      "generatedEvents": 6131125,
+      "ingestedEvents": 6120125,
+      "eventLag": 11000,
+      "lagSeconds": 2,
+      "rssBytes": 186302464,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1119.198917375,
+      "generatedEvents": 6158625,
+      "ingestedEvents": 6120125,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 203964416,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1124.201664167,
+      "generatedEvents": 6186125,
+      "ingestedEvents": 6169625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 264683520,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1129.268839542,
+      "generatedEvents": 6213625,
+      "ingestedEvents": 6169625,
+      "eventLag": 44000,
+      "lagSeconds": 6,
+      "rssBytes": 261537792,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1134.197789083,
+      "generatedEvents": 6241125,
+      "ingestedEvents": 6219125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 220364800,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1139.233818292,
+      "generatedEvents": 6268625,
+      "ingestedEvents": 6246625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 194658304,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1144.652711708,
+      "generatedEvents": 6296125,
+      "ingestedEvents": 6274125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 123207680,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1149.1938399169999,
+      "generatedEvents": 6323625,
+      "ingestedEvents": 6307125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 147406848,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1154.254486792,
+      "generatedEvents": 6351125,
+      "ingestedEvents": 6323625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 158580736,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1159.193442417,
+      "generatedEvents": 6378625,
+      "ingestedEvents": 6356625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 187957248,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1164.740840042,
+      "generatedEvents": 6406125,
+      "ingestedEvents": 6389625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 195428352,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1169.197804792,
+      "generatedEvents": 6433625,
+      "ingestedEvents": 6406125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 197459968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1174.701555125,
+      "generatedEvents": 6461125,
+      "ingestedEvents": 6450125,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 241958912,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1179.1928050830002,
+      "generatedEvents": 6488625,
+      "ingestedEvents": 6450125,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 241532928,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1184.194043083,
+      "generatedEvents": 6516125,
+      "ingestedEvents": 6499625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 168919040,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1189.206108625,
+      "generatedEvents": 6543625,
+      "ingestedEvents": 6499625,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 154238976,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1194.197114583,
+      "generatedEvents": 6571125,
+      "ingestedEvents": 6499625,
+      "eventLag": 71500,
+      "lagSeconds": 0,
+      "rssBytes": 65994752,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1199.195372792,
+      "generatedEvents": 6598625,
+      "ingestedEvents": 6571125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 103186432,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1204.247245958,
+      "generatedEvents": 6626125,
+      "ingestedEvents": 6609625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 145063936,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1209.200902,
+      "generatedEvents": 6653625,
+      "ingestedEvents": 6642625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 151420928,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1214.2043065,
+      "generatedEvents": 6681125,
+      "ingestedEvents": 6642625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 189775872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1219.2928571250002,
+      "generatedEvents": 6708625,
+      "ingestedEvents": 6642625,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 192741376,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1224.1949515,
+      "generatedEvents": 6736125,
+      "ingestedEvents": 6725125,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 161726464,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1229.224280458,
+      "generatedEvents": 6763625,
+      "ingestedEvents": 6725125,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 233799680,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1234.195669292,
+      "generatedEvents": 6791125,
+      "ingestedEvents": 6725125,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 263438336,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1239.194403042,
+      "generatedEvents": 6818625,
+      "ingestedEvents": 6785625,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 222150656,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1244.1996725000001,
+      "generatedEvents": 6846125,
+      "ingestedEvents": 6785625,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 172720128,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1249.194866417,
+      "generatedEvents": 6873625,
+      "ingestedEvents": 6846125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 117407744,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1254.191186333,
+      "generatedEvents": 6901125,
+      "ingestedEvents": 6846125,
+      "eventLag": 55000,
+      "lagSeconds": 9,
+      "rssBytes": 101072896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1259.6504709580001,
+      "generatedEvents": 6928625,
+      "ingestedEvents": 6846125,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 102842368,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1264.197311125,
+      "generatedEvents": 6956125,
+      "ingestedEvents": 6923125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 152272896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1269.2641277080002,
+      "generatedEvents": 6983625,
+      "ingestedEvents": 6972625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 159694848,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1274.196855,
+      "generatedEvents": 7011125,
+      "ingestedEvents": 6972625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 184254464,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1279.222419125,
+      "generatedEvents": 7038625,
+      "ingestedEvents": 7027625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 263061504,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1284.2829107920002,
+      "generatedEvents": 7066125,
+      "ingestedEvents": 7027625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 103415808,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1290.082468583,
+      "generatedEvents": 7093625,
+      "ingestedEvents": 7071625,
+      "eventLag": 22000,
+      "lagSeconds": 0,
+      "rssBytes": 129859584,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1294.235931292,
+      "generatedEvents": 7121125,
+      "ingestedEvents": 7104625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 92487680,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1299.195148042,
+      "generatedEvents": 7148625,
+      "ingestedEvents": 7137625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 94273536,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1304.202584292,
+      "generatedEvents": 7176125,
+      "ingestedEvents": 7137625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 109625344,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1309.195620917,
+      "generatedEvents": 7203625,
+      "ingestedEvents": 7137625,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 88031232,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1314.196371792,
+      "generatedEvents": 7231125,
+      "ingestedEvents": 7214625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 175112192,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1319.624833375,
+      "generatedEvents": 7258625,
+      "ingestedEvents": 7242125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 172310528,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1324.196989042,
+      "generatedEvents": 7286125,
+      "ingestedEvents": 7264125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 193560576,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1329.192624542,
+      "generatedEvents": 7313625,
+      "ingestedEvents": 7291625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 209633280,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1334.269071917,
+      "generatedEvents": 7341125,
+      "ingestedEvents": 7324625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 139935744,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1339.197750792,
+      "generatedEvents": 7368625,
+      "ingestedEvents": 7324625,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 47693824,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1344.239461542,
+      "generatedEvents": 7396125,
+      "ingestedEvents": 7368625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 76038144,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1349.6589900420001,
+      "generatedEvents": 7423625,
+      "ingestedEvents": 7396125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 103251968,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1354.18775075,
+      "generatedEvents": 7451125,
+      "ingestedEvents": 7429125,
+      "eventLag": 22000,
+      "lagSeconds": 1,
+      "rssBytes": 109641728,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1359.9359447079999,
+      "generatedEvents": 7478625,
+      "ingestedEvents": 7429125,
+      "eventLag": 49500,
+      "lagSeconds": 1,
+      "rssBytes": 61521920,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1364.191683042,
+      "generatedEvents": 7506125,
+      "ingestedEvents": 7495125,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 101466112,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1369.210484875,
+      "generatedEvents": 7533625,
+      "ingestedEvents": 7495125,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 157630464,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1375.386476375,
+      "generatedEvents": 7561125,
+      "ingestedEvents": 7533625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 156024832,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1379.20188125,
+      "generatedEvents": 7588625,
+      "ingestedEvents": 7533625,
+      "eventLag": 55000,
+      "lagSeconds": 8,
+      "rssBytes": 131186688,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1384.186177,
+      "generatedEvents": 7616125,
+      "ingestedEvents": 7533625,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 220676096,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1389.1960011249998,
+      "generatedEvents": 7643625,
+      "ingestedEvents": 7621625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 101531648,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1394.197470458,
+      "generatedEvents": 7671125,
+      "ingestedEvents": 7654625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 77266944,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1399.279588917,
+      "generatedEvents": 7698625,
+      "ingestedEvents": 7682125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 108920832,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1404.67170775,
+      "generatedEvents": 7726125,
+      "ingestedEvents": 7698625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 107790336,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1409.239408292,
+      "generatedEvents": 7753625,
+      "ingestedEvents": 7698625,
+      "eventLag": 55000,
+      "lagSeconds": 1,
+      "rssBytes": 84295680,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1414.191892833,
+      "generatedEvents": 7781125,
+      "ingestedEvents": 7698625,
+      "eventLag": 82500,
+      "lagSeconds": 0,
+      "rssBytes": 89767936,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1419.199881667,
+      "generatedEvents": 7808625,
+      "ingestedEvents": 7803125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 115392512,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1424.264801333,
+      "generatedEvents": 7836125,
+      "ingestedEvents": 7803125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 168656896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1429.201554,
+      "generatedEvents": 7863625,
+      "ingestedEvents": 7803125,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 127614976,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1434.9180376250001,
+      "generatedEvents": 7891125,
+      "ingestedEvents": 7858125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 171917312,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1439.677976958,
+      "generatedEvents": 7918625,
+      "ingestedEvents": 7858125,
+      "eventLag": 60500,
+      "lagSeconds": 10,
+      "rssBytes": 150945792,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1444.733425292,
+      "generatedEvents": 7946125,
+      "ingestedEvents": 7858125,
+      "eventLag": 88000,
+      "lagSeconds": 0,
+      "rssBytes": 105906176,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1449.2019217499999,
+      "generatedEvents": 7973625,
+      "ingestedEvents": 7957125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 92913664,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1454.205504583,
+      "generatedEvents": 8001125,
+      "ingestedEvents": 7984625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 105988096,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1459.1906075830002,
+      "generatedEvents": 8028625,
+      "ingestedEvents": 7984625,
+      "eventLag": 44000,
+      "lagSeconds": 6,
+      "rssBytes": 87752704,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1464.645098458,
+      "generatedEvents": 8056125,
+      "ingestedEvents": 7984625,
+      "eventLag": 71500,
+      "lagSeconds": 0,
+      "rssBytes": 67158016,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1469.1932838330001,
+      "generatedEvents": 8083625,
+      "ingestedEvents": 8067125,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 167247872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1474.293712625,
+      "generatedEvents": 8111125,
+      "ingestedEvents": 8089125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 182665216,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1479.1859458330002,
+      "generatedEvents": 8138625,
+      "ingestedEvents": 8116625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 175865856,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1484.216533542,
+      "generatedEvents": 8166125,
+      "ingestedEvents": 8138625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 202850304,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1489.277133167,
+      "generatedEvents": 8193625,
+      "ingestedEvents": 8138625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 141344768,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1494.6984803750001,
+      "generatedEvents": 8221125,
+      "ingestedEvents": 8199125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 104136704,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1499.2834279170002,
+      "generatedEvents": 8248625,
+      "ingestedEvents": 8199125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 67796992,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1504.196611542,
+      "generatedEvents": 8276125,
+      "ingestedEvents": 8259625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 108199936,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1509.268013083,
+      "generatedEvents": 8303625,
+      "ingestedEvents": 8259625,
+      "eventLag": 44000,
+      "lagSeconds": 0,
+      "rssBytes": 89063424,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1514.1901495420002,
+      "generatedEvents": 8331125,
+      "ingestedEvents": 8303625,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 120995840,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1519.206568,
+      "generatedEvents": 8358625,
+      "ingestedEvents": 8331125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 130809856,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1525.101377167,
+      "generatedEvents": 8386125,
+      "ingestedEvents": 8358625,
+      "eventLag": 27500,
+      "lagSeconds": 0,
+      "rssBytes": 146063360,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1529.191945208,
+      "generatedEvents": 8413625,
+      "ingestedEvents": 8386125,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 159744000,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1534.2069086249999,
+      "generatedEvents": 8441125,
+      "ingestedEvents": 8413625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 218415104,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1539.266761042,
+      "generatedEvents": 8468625,
+      "ingestedEvents": 8413625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 144441344,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1544.1902713329998,
+      "generatedEvents": 8496125,
+      "ingestedEvents": 8474125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 120569856,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1549.221222458,
+      "generatedEvents": 8523625,
+      "ingestedEvents": 8474125,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 50692096,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1554.290546417,
+      "generatedEvents": 8551125,
+      "ingestedEvents": 8474125,
+      "eventLag": 77000,
+      "lagSeconds": 0,
+      "rssBytes": 54247424,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1559.188869958,
+      "generatedEvents": 8578625,
+      "ingestedEvents": 8474125,
+      "eventLag": 104500,
+      "lagSeconds": 0,
+      "rssBytes": 63455232,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1564.2451613750002,
+      "generatedEvents": 8606125,
+      "ingestedEvents": 8573125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 107872256,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1569.1872795830002,
+      "generatedEvents": 8633625,
+      "ingestedEvents": 8611625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 134561792,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1574.207849417,
+      "generatedEvents": 8661125,
+      "ingestedEvents": 8644625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 183402496,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1579.668068792,
+      "generatedEvents": 8688625,
+      "ingestedEvents": 8661125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 161234944,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1584.1967932500002,
+      "generatedEvents": 8716125,
+      "ingestedEvents": 8699625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 221904896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1589.203748042,
+      "generatedEvents": 8743625,
+      "ingestedEvents": 8721625,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 132366336,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1594.1938649580002,
+      "generatedEvents": 8771125,
+      "ingestedEvents": 8754625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 124911616,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1599.202031625,
+      "generatedEvents": 8798625,
+      "ingestedEvents": 8754625,
+      "eventLag": 44000,
+      "lagSeconds": 7,
+      "rssBytes": 65765376,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1604.278934708,
+      "generatedEvents": 8826125,
+      "ingestedEvents": 8754625,
+      "eventLag": 71500,
+      "lagSeconds": 0,
+      "rssBytes": 61194240,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1609.651255125,
+      "generatedEvents": 8853625,
+      "ingestedEvents": 8820625,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 89964544,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1614.2352471670001,
+      "generatedEvents": 8881125,
+      "ingestedEvents": 8820625,
+      "eventLag": 60500,
+      "lagSeconds": 0,
+      "rssBytes": 92012544,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1619.1952049170002,
+      "generatedEvents": 8908625,
+      "ingestedEvents": 8881125,
+      "eventLag": 27500,
+      "lagSeconds": 4,
+      "rssBytes": 148291584,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1624.211004625,
+      "generatedEvents": 8936125,
+      "ingestedEvents": 8881125,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 124190720,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1629.258427833,
+      "generatedEvents": 8963625,
+      "ingestedEvents": 8930625,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 144080896,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1634.2068789999998,
+      "generatedEvents": 8991125,
+      "ingestedEvents": 8930625,
+      "eventLag": 60500,
+      "lagSeconds": 9,
+      "rssBytes": 107905024,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1639.63922725,
+      "generatedEvents": 9018625,
+      "ingestedEvents": 8930625,
+      "eventLag": 88000,
+      "lagSeconds": 0,
+      "rssBytes": 216350720,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1644.199498333,
+      "generatedEvents": 9046125,
+      "ingestedEvents": 9018625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 205914112,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1649.198625208,
+      "generatedEvents": 9073625,
+      "ingestedEvents": 9018625,
+      "eventLag": 55000,
+      "lagSeconds": 0,
+      "rssBytes": 99418112,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1654.192955875,
+      "generatedEvents": 9101125,
+      "ingestedEvents": 9084625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 94519296,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1659.190384417,
+      "generatedEvents": 9128625,
+      "ingestedEvents": 9117625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 81920000,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1664.204997917,
+      "generatedEvents": 9156125,
+      "ingestedEvents": 9117625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 95240192,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1669.195019125,
+      "generatedEvents": 9183625,
+      "ingestedEvents": 9172625,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 84361216,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1674.190064958,
+      "generatedEvents": 9211125,
+      "ingestedEvents": 9172625,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 125681664,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1679.2508395,
+      "generatedEvents": 9238625,
+      "ingestedEvents": 9222125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 186974208,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1684.1993926250002,
+      "generatedEvents": 9266125,
+      "ingestedEvents": 9249625,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 223707136,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1689.2207417500001,
+      "generatedEvents": 9293625,
+      "ingestedEvents": 9288125,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 182059008,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1694.277297042,
+      "generatedEvents": 9321125,
+      "ingestedEvents": 9288125,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 114769920,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1699.195469917,
+      "generatedEvents": 9348625,
+      "ingestedEvents": 9332125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 73367552,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1704.233524792,
+      "generatedEvents": 9376125,
+      "ingestedEvents": 9348625,
+      "eventLag": 27500,
+      "lagSeconds": 3,
+      "rssBytes": 72794112,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1709.1980492080002,
+      "generatedEvents": 9403625,
+      "ingestedEvents": 9381625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 107544576,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1714.200276958,
+      "generatedEvents": 9431125,
+      "ingestedEvents": 9381625,
+      "eventLag": 49500,
+      "lagSeconds": 0,
+      "rssBytes": 88244224,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1719.191212125,
+      "generatedEvents": 9458625,
+      "ingestedEvents": 9425625,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 136708096,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1724.678751042,
+      "generatedEvents": 9486125,
+      "ingestedEvents": 9475125,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 100122624,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1729.1965982079998,
+      "generatedEvents": 9513625,
+      "ingestedEvents": 9475125,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 171343872,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1734.196635333,
+      "generatedEvents": 9541125,
+      "ingestedEvents": 9519125,
+      "eventLag": 22000,
+      "lagSeconds": 2,
+      "rssBytes": 185286656,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1739.1910035419999,
+      "generatedEvents": 9568625,
+      "ingestedEvents": 9546625,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 213663744,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1744.637377958,
+      "generatedEvents": 9596125,
+      "ingestedEvents": 9579625,
+      "eventLag": 16500,
+      "lagSeconds": 2,
+      "rssBytes": 136609792,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1749.1966805420002,
+      "generatedEvents": 9623625,
+      "ingestedEvents": 9607125,
+      "eventLag": 16500,
+      "lagSeconds": 1,
+      "rssBytes": 66535424,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1754.239479792,
+      "generatedEvents": 9651125,
+      "ingestedEvents": 9645625,
+      "eventLag": 5500,
+      "lagSeconds": 0,
+      "rssBytes": 67272704,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1759.286708458,
+      "generatedEvents": 9678625,
+      "ingestedEvents": 9645625,
+      "eventLag": 33000,
+      "lagSeconds": 5,
+      "rssBytes": 87719936,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1764.197093042,
+      "generatedEvents": 9706125,
+      "ingestedEvents": 9695125,
+      "eventLag": 11000,
+      "lagSeconds": 0,
+      "rssBytes": 90210304,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1769.242901875,
+      "generatedEvents": 9733625,
+      "ingestedEvents": 9695125,
+      "eventLag": 38500,
+      "lagSeconds": 5,
+      "rssBytes": 130646016,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1774.203932875,
+      "generatedEvents": 9761125,
+      "ingestedEvents": 9739125,
+      "eventLag": 22000,
+      "lagSeconds": 3,
+      "rssBytes": 165478400,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1779.205830542,
+      "generatedEvents": 9788625,
+      "ingestedEvents": 9777625,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 128827392,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1784.632490708,
+      "generatedEvents": 9816125,
+      "ingestedEvents": 9777625,
+      "eventLag": 38500,
+      "lagSeconds": 6,
+      "rssBytes": 149733376,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1789.199028125,
+      "generatedEvents": 9843625,
+      "ingestedEvents": 9777625,
+      "eventLag": 66000,
+      "lagSeconds": 0,
+      "rssBytes": 207994880,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1794.1983586669999,
+      "generatedEvents": 9871125,
+      "ingestedEvents": 9838125,
+      "eventLag": 33000,
+      "lagSeconds": 4,
+      "rssBytes": 81248256,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1799.1980635,
+      "generatedEvents": 9898625,
+      "ingestedEvents": 9887625,
+      "eventLag": 11000,
+      "lagSeconds": 1,
+      "rssBytes": 51691520,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1808.757023875,
+      "generatedEvents": 9898625,
+      "ingestedEvents": 9887625,
+      "eventLag": 11000,
+      "lagSeconds": 10,
+      "rssBytes": 158613504,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1814.136669292,
+      "generatedEvents": 9898625,
+      "ingestedEvents": 9898625,
+      "eventLag": 0,
+      "lagSeconds": 2,
+      "rssBytes": 189169664,
+      "deadLetters": 0
+    },
+    {
+      "elapsedSeconds": 1817.358881542,
+      "generatedEvents": 9898625,
+      "ingestedEvents": 9898625,
+      "eventLag": 0,
+      "lagSeconds": 1,
+      "rssBytes": 190447616,
+      "deadLetters": 0
+    }
+  ]
+}

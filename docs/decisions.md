@@ -288,3 +288,22 @@ the second client and owns the protocol-facing result model. It delegates all
 SQL semantics to `pintail-sql` and `pintail-exec`; it is not a dialect
 translation layer. If another native client arrives, the facade can move to a
 small client-neutral crate without changing either engine.
+
+### Release memory bounds favor merge-on-read over forced compaction
+
+The release soak exposed that whole-segment verification, overlapping scan
+materialization, and large size-tier merges could each create an RSS spike
+despite the executor's query budget. M9 changes these paths independently:
+segment readers verify and seek through checksummed structures, overlapping
+queries choose winners from system-column headers before late materializing
+projected values, and compaction merges block-wise into bounded output
+segments.
+
+Default maintenance admits at most 50,000 input rows to one compaction pass.
+An oversized candidate is deliberately left as immutable segments and remains
+correct through merge-on-read. This is a throughput and segment-count tradeoff,
+not a semantic relaxation: forcing every eligible size tier to compact would
+make the maintenance path exceed the memory behavior enforced by the release
+gate. The limit can remain an engine option in v1 because exposing it without
+a scheduler/debt model for deferred windows would imply an operational
+contract Pintail does not yet provide.

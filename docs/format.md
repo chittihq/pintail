@@ -235,9 +235,12 @@ retain their old manifest and memtable `Arc`s across flush and compaction.
 Point reads prune manifest entries by key bounds and bloom filters before
 touching segment files. Inclusive range reads prune disjoint manifest entries
 by their persisted key bounds. Projected range scans then use checksummed key
-block zone maps, decode only surviving key/version/tombstone blocks plus the
-requested user columns, and return segment/block pruning counters for query
-statistics.
+block zone maps and return segment/block pruning counters for query
+statistics. Disjoint globally unique segments decode requested columns
+directly. A large overlapping view streams only key/version/tombstone headers
+to choose winners, then reads the winning physical rows' requested columns in
+chunks of at most 8,192 rows. Neither path requires loading a complete PTSEG
+file into memory.
 
 A higher schema version may add nullable columns; old segment and WAL rows
 materialize those columns as `NULL`. Stable-ID renames and segment-backed
@@ -263,13 +266,18 @@ only after manifest publication; replaying an interrupted chunk is
 at-least-once and merge-on-read hides duplicate keys.
 
 Compaction selects a bounded fan-in of overlapping files whose sizes differ
-by at most fourfold. The debt value is the selected input bytes. Partial
-merges retain tombstones because unselected older versions may remain. A
-merge covering the complete manifest drops tombstones immediately and emits
-zstd. Publication uses the same segment-before-manifest ordering as flush.
-Obsolete files are deleted only after every snapshot pinning their manifest
-generation releases it; a process restart can immediately remove files not
-listed by the durable manifest.
+by at most fourfold. The default planner admits no more than 50,000 total
+input rows to one pass; an oversized window is deferred rather than exceeding
+the maintenance memory envelope. The merge advances one checksummed input
+block at a time, moves the winning row into the output buffer, and publishes
+at most 128,000 retained rows per output segment. The debt value for an
+eligible plan is the selected input bytes. Partial merges retain tombstones
+because unselected older versions may remain. A merge covering the complete
+manifest drops tombstones immediately and emits zstd. Publication uses the
+same segment-before-manifest ordering as flush. Obsolete files are deleted
+only after every snapshot pinning their manifest generation releases it; a
+process restart can immediately remove files not listed by the durable
+manifest.
 Full-merge output is marked globally unique in the manifest. A snapshot with
 that single segment and no memtable rows returns its already-sorted rows
 without allocating merge-on-read state.

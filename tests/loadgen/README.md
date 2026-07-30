@@ -22,8 +22,10 @@ The gate requires:
   greater than 128 MiB/hour.
 
 The harness records every sample and gate outcome in `results.json` and
-`results.md`. A shorter run validates orchestration without claiming the
-release gate:
+`results.md`. The full artifacts are checked in as release evidence; the JSON
+retains every five-second sample so the slope and third-window checks are
+auditable. A shorter run validates orchestration without claiming the release
+gate:
 
 ```sh
 SOAK_DURATION_SECONDS=30 bun run smoke
