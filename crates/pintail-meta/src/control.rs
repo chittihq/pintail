@@ -397,6 +397,229 @@ impl MetaStore {
         }
         Ok(())
     }
+
+    /// Persists one hash-only database API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database is absent or key metadata cannot be
+    /// stored.
+    pub fn create_api_key(&self, key: &NewApiKey<'_>) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO api_keys (\
+                   id, db_id, name, sha256, scopes_json, expires_at, created_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    key.id,
+                    key.database_id,
+                    key.name,
+                    key.sha256,
+                    key.scopes_json,
+                    key.expires_at,
+                    key.now,
+                ],
+            )
+            .context("failed to create API key")?;
+        Ok(())
+    }
+
+    /// Lists API keys for one database without exposing their secret.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when API-key records cannot be read or decoded.
+    pub fn api_keys(&self, database_id: &str) -> Result<Vec<ApiKeyRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "{} WHERE db_id = ?1 ORDER BY created_at DESC, id",
+                api_key_select_sql()
+            ))
+            .context("failed to prepare API-key query")?;
+        statement
+            .query_map([database_id], decode_api_key)
+            .context("failed to query API keys")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to decode API keys")
+    }
+
+    /// Finds an API key by its SHA-256 digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the API-key record cannot be read or decoded.
+    pub fn api_key_by_sha256(&self, sha256: &[u8]) -> Result<Option<ApiKeyRecord>> {
+        self.connection
+            .query_row(
+                &format!("{} WHERE sha256 = ?1", api_key_select_sql()),
+                [sha256],
+                decode_api_key,
+            )
+            .optional()
+            .context("failed to read API key")
+    }
+
+    /// Enables or disables an API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the key is absent or cannot be updated.
+    pub fn set_api_key_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE api_keys SET enabled = ?2 WHERE id = ?1",
+                (id, enabled),
+            )
+            .context("failed to update API key")?;
+        if changed == 0 {
+            bail!("API key {id} does not exist");
+        }
+        Ok(())
+    }
+
+    /// Records successful API-key authentication.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the key cannot be updated.
+    pub fn touch_api_key(&self, id: &str, now: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE api_keys SET last_used_at = ?2 WHERE id = ?1",
+                (id, now),
+            )
+            .context("failed to update API-key usage")?;
+        Ok(())
+    }
+
+    /// Deletes one API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the key cannot be deleted.
+    pub fn delete_api_key(&self, id: &str) -> Result<bool> {
+        self.connection
+            .execute("DELETE FROM api_keys WHERE id = ?1", [id])
+            .map(|changed| changed == 1)
+            .context("failed to delete API key")
+    }
+
+    /// Starts one durable activity record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the parent database is absent or the run cannot
+    /// be stored.
+    pub fn start_sync_run(
+        &self,
+        id: &str,
+        database_id: &str,
+        table_name: Option<&str>,
+        kind: &str,
+        now: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO sync_runs (\
+                   id, db_id, table_name, kind, status, started_at\
+                 ) VALUES (?1, ?2, ?3, ?4, 'running', ?5)",
+                (id, database_id, table_name, kind, now),
+            )
+            .context("failed to start sync run")?;
+        Ok(())
+    }
+
+    /// Completes one durable activity record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when counters exceed `SQLite`'s range, the run is
+    /// absent, or it cannot be updated.
+    pub fn finish_sync_run(
+        &self,
+        id: &str,
+        status: &str,
+        rows: u64,
+        bytes: u64,
+        duration_ms: u64,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let rows = i64::try_from(rows).context("sync rows exceed SQLite range")?;
+        let bytes = i64::try_from(bytes).context("sync bytes exceed SQLite range")?;
+        let duration = i64::try_from(duration_ms).context("sync duration exceeds SQLite range")?;
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE sync_runs SET status = ?2, rows = ?3, bytes = ?4, \
+                   duration_ms = ?5, error = ?6 WHERE id = ?1",
+                (id, status, rows, bytes, duration, error),
+            )
+            .context("failed to complete sync run")?;
+        if changed == 0 {
+            bail!("sync run {id} does not exist");
+        }
+        Ok(())
+    }
+
+    /// Lists recent sync activity, optionally limited to one database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when activity records cannot be read or decoded.
+    pub fn sync_runs(&self, database_id: Option<&str>, limit: u64) -> Result<Vec<SyncRunRecord>> {
+        let limit = i64::try_from(limit).context("sync-run limit exceeds SQLite range")?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, db_id, table_name, kind, status, rows, bytes, duration_ms, \
+                        error, started_at \
+                 FROM sync_runs \
+                 WHERE (?1 IS NULL OR db_id = ?1) \
+                 ORDER BY started_at DESC, id LIMIT ?2",
+            )
+            .context("failed to prepare sync-run query")?;
+        statement
+            .query_map((database_id, limit), decode_sync_run)
+            .context("failed to query sync runs")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to decode sync runs")
+    }
+
+    /// Lists recent dead-letter records, optionally limited to one database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dead-letter records cannot be read or decoded.
+    pub fn dlq_records(&self, database_id: Option<&str>, limit: u64) -> Result<Vec<DlqRecord>> {
+        let limit = i64::try_from(limit).context("DLQ limit exceeds SQLite range")?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, db_id, table_name, event_json, error, created_at \
+                 FROM dlq WHERE (?1 IS NULL OR db_id = ?1) \
+                 ORDER BY created_at DESC, id LIMIT ?2",
+            )
+            .context("failed to prepare DLQ query")?;
+        statement
+            .query_map((database_id, limit), decode_dlq)
+            .context("failed to query DLQ records")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to decode DLQ records")
+    }
+
+    /// Discards one dead-letter record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the record cannot be deleted.
+    pub fn delete_dlq_record(&self, id: &str) -> Result<bool> {
+        self.connection
+            .execute("DELETE FROM dlq WHERE id = ?1", [id])
+            .map(|changed| changed == 1)
+            .context("failed to delete DLQ record")
+    }
 }
 
 fn decode_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
@@ -478,6 +701,64 @@ fn decode_table(row: &rusqlite::Row<'_>) -> rusqlite::Result<TableRecord> {
         })?,
         orphaned_at: row.get(10)?,
         soft_delete_column: row.get(11)?,
+    })
+}
+
+fn api_key_select_sql() -> &'static str {
+    "SELECT id, db_id, name, sha256, enabled, scopes_json, expires_at, \
+            last_used_at, created_at FROM api_keys"
+}
+
+fn decode_api_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
+    Ok(ApiKeyRecord {
+        id: row.get(0)?,
+        database_id: row.get(1)?,
+        name: row.get(2)?,
+        sha256: row.get(3)?,
+        enabled: row.get(4)?,
+        scopes_json: row.get(5)?,
+        expires_at: row.get(6)?,
+        last_used_at: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+fn decode_sync_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncRunRecord> {
+    let rows: i64 = row.get(5)?;
+    let bytes: i64 = row.get(6)?;
+    let duration: Option<i64> = row.get(7)?;
+    Ok(SyncRunRecord {
+        id: row.get(0)?,
+        database_id: row.get(1)?,
+        table_name: row.get(2)?,
+        kind: row.get(3)?,
+        status: row.get(4)?,
+        rows: decode_u64(5, rows)?,
+        bytes: decode_u64(6, bytes)?,
+        duration_ms: duration.map(|value| decode_u64(7, value)).transpose()?,
+        error: row.get(8)?,
+        started_at: row.get(9)?,
+    })
+}
+
+fn decode_dlq(row: &rusqlite::Row<'_>) -> rusqlite::Result<DlqRecord> {
+    Ok(DlqRecord {
+        id: row.get(0)?,
+        database_id: row.get(1)?,
+        table_name: row.get(2)?,
+        event_json: row.get(3)?,
+        error: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+fn decode_u64(index: usize, value: i64) -> rusqlite::Result<u64> {
+    u64::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
     })
 }
 

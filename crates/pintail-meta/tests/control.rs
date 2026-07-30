@@ -1,4 +1,4 @@
-use pintail_meta::{DatabaseUpdate, MetaStore};
+use pintail_meta::{DatabaseUpdate, MetaStore, NewApiKey};
 
 #[test]
 fn users_databases_and_table_controls_round_trip() {
@@ -95,6 +95,71 @@ fn users_databases_and_table_controls_round_trip() {
         metadata.database("db-1").unwrap().unwrap().effective_mode,
         None
     );
+
     assert!(metadata.delete_database("db-1").unwrap());
     assert!(metadata.databases().unwrap().is_empty());
+}
+
+#[test]
+fn api_keys_activity_and_dead_letters_round_trip() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let metadata = MetaStore::open(&database_path).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-07-30T00:00:00Z")
+        .unwrap();
+
+    metadata
+        .create_api_key(&NewApiKey {
+            id: "key-1",
+            database_id: "db-1",
+            name: "Metabase",
+            sha256: &[7; 32],
+            scopes_json: "[\"query\",\"read\"]",
+            expires_at: None,
+            now: "2026-07-30T00:06:00Z",
+        })
+        .unwrap();
+    let key = metadata
+        .api_key_by_sha256(&[7; 32])
+        .unwrap()
+        .expect("API key");
+    assert!(key.enabled);
+    assert_eq!(metadata.api_keys("db-1").unwrap().len(), 1);
+    metadata
+        .touch_api_key("key-1", "2026-07-30T00:07:00Z")
+        .unwrap();
+    metadata.set_api_key_enabled("key-1", false).unwrap();
+    assert!(!metadata.api_keys("db-1").unwrap()[0].enabled);
+
+    metadata
+        .start_sync_run(
+            "run-1",
+            "db-1",
+            Some("events"),
+            "snapshot",
+            "2026-07-30T00:08:00Z",
+        )
+        .unwrap();
+    metadata
+        .finish_sync_run("run-1", "completed", 10, 2048, 50, None)
+        .unwrap();
+    let run = &metadata.sync_runs(Some("db-1"), 10).unwrap()[0];
+    assert_eq!((run.rows, run.bytes, run.duration_ms), (10, 2048, Some(50)));
+
+    metadata
+        .record_dlq(
+            "dlq-1",
+            "db-1",
+            Some("events"),
+            "{\"event\":1}",
+            "decode failed",
+            "2026-07-30T00:09:00Z",
+        )
+        .unwrap();
+    let dlq = metadata.dlq_records(Some("db-1"), 10).unwrap();
+    assert_eq!(dlq.len(), 1);
+    assert!(metadata.delete_dlq_record(&dlq[0].id).unwrap());
+    assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
+    assert!(metadata.delete_api_key("key-1").unwrap());
 }
