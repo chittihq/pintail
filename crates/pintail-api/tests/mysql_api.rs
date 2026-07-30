@@ -11,7 +11,9 @@ use axum::{
     response::Response,
 };
 use http_body_util::BodyExt as _;
+use mysql_async::{Opts, Pool, prelude::Queryable as _};
 use serde_json::{Value, json};
+use tokio::{net::TcpListener, sync::oneshot};
 use tower::ServiceExt as _;
 
 struct MysqlContainer {
@@ -326,6 +328,228 @@ async fn wizard_snapshot_query_reconcile_and_resync_happy_path() {
         json!([[2, "touchdown"], [3, "orbit"], [4, "return"]]),
     )
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn one_mysql_type_matrix_reaches_http_and_wire() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER IF NOT EXISTS 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'pintail'@'%';\
+             CREATE TABLE type_fidelity (\
+               id BIGINT UNSIGNED NOT NULL PRIMARY KEY,\
+               unsigned_max BIGINT UNSIGNED NOT NULL,\
+               decimal_exact DECIMAL(38,10) NOT NULL,\
+               date_value DATE NULL,\
+               datetime_value DATETIME(6) NULL,\
+               time_value TIME(6) NULL,\
+               json_value JSON NULL,\
+               text_value VARCHAR(128) CHARACTER SET utf8mb4 NULL,\
+               enum_value ENUM('alpha','βeta') NULL,\
+               set_value SET('red','green','blue') NULL,\
+               bit_value BIT(9) NULL,\
+               binary_value VARBINARY(8) NULL,\
+               blob_value BLOB NULL\
+             ) ENGINE=InnoDB;\
+             INSERT INTO type_fidelity VALUES (\
+               1,18446744073709551615,\
+               1234567890123456789012345678.1234567890,\
+               '1000-01-01','2024-02-29 12:34:56.123456','-51:04:05.600000',\
+               JSON_OBJECT('a',1,'b',JSON_ARRAY(TRUE,NULL)),\
+               'café βeta red,blue 🪿','βeta','red,blue',\
+               b'101010101',0x00FF10,0xDEADBEEF\
+             ),(\
+               2,0,0.0000000000,\
+               '0000-00-00','0000-00-00 00:00:00.000000','00:00:00.000000',\
+               JSON_OBJECT(),'','alpha','',b'0',X'',X''\
+             );",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let data = tempfile::tempdir().expect("type-fidelity API data");
+    let metadata_path = data.path().join("pintail-meta.db");
+    let state = pintail_api::ApiState::new(
+        data.path(),
+        &metadata_path,
+        b"test-jwt-secret-with-enough-entropy",
+        &"42".repeat(32),
+    )
+    .expect("configured API state");
+    let app = pintail_api::router_with_state(state);
+    let setup = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/auth/setup",
+            None,
+            Some(json!({
+                "email": "types@example.com",
+                "password": "correct horse battery"
+            })),
+        )
+        .await,
+    )
+    .await;
+    let authorization = format!("Bearer {}", setup["token"].as_str().expect("setup token"));
+    let created = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/databases",
+            Some(&authorization),
+            Some(json!({
+                "name": "analytics",
+                "dsn": mysql.dsn(),
+                "mode": "polling",
+                "include_tables": ["type_fidelity"]
+            })),
+        )
+        .await,
+    )
+    .await;
+    let database_id = created["id"].as_str().expect("database ID");
+    assert_eq!(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/databases/{database_id}/probe"),
+            Some(&authorization),
+            None,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let snapshot = json_response(
+        request(
+            &app,
+            Method::POST,
+            &format!("/api/databases/{database_id}/snapshot"),
+            Some(&authorization),
+            Some(json!({"force": false})),
+        )
+        .await,
+    )
+    .await;
+    wait_for_run(
+        &app,
+        &authorization,
+        database_id,
+        snapshot["run_id"].as_str().expect("snapshot run"),
+        "completed",
+    )
+    .await;
+
+    let http = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/query",
+            Some(&authorization),
+            Some(json!({
+                "db": database_id,
+                "sql": "SELECT id, unsigned_max, decimal_exact, date_value, \
+                        datetime_value, time_value, json_value, text_value, \
+                        enum_value, set_value, bit_value, binary_value, blob_value \
+                        FROM type_fidelity ORDER BY id"
+            })),
+        )
+        .await,
+    )
+    .await;
+    let rows = http["rows"].as_array().expect("HTTP type rows");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], json!(1));
+    assert_eq!(rows[0][1], json!(18_446_744_073_709_551_615_u64));
+    assert_eq!(rows[0][2], json!("1234567890123456789012345678.1234567890"));
+    assert_eq!(rows[0][3], json!("1000-01-01"));
+    assert_eq!(rows[0][4], json!("2024-02-29 12:34:56.123456"));
+    assert_eq!(rows[0][5], json!("-51:04:05.600000"));
+    assert_eq!(rows[0][6], json!(r#"{"a":1,"b":[true,null]}"#));
+    assert_eq!(rows[0][7], json!("café βeta red,blue 🪿"));
+    assert_eq!(rows[0][8], json!("βeta"));
+    assert_eq!(rows[0][9], json!("red,blue"));
+    assert_eq!(rows[0][10], json!(341));
+    assert_eq!(rows[0][11], json!("0x00ff10"));
+    assert_eq!(rows[0][12], json!("0xdeadbeef"));
+    assert!(rows[1][3].is_null());
+    assert!(rows[1][4].is_null());
+
+    let key = json_response(
+        request(
+            &app,
+            Method::POST,
+            &format!("/api/databases/{database_id}/api-keys"),
+            Some(&authorization),
+            Some(json!({"name": "type gate", "scopes": ["read", "query"]})),
+        )
+        .await,
+    )
+    .await;
+    let secret = key["secret"].as_str().expect("one-time query key");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server_metadata = metadata_path.clone();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until(listener, data_dir, server_metadata, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+    let dsn = format!("mysql://analytics:{secret}@{address}/analytics");
+    let pool = Pool::new(Opts::from_url(&dsn).expect("wire DSN"));
+    let mut connection = pool.get_conn().await.expect("wire connection");
+    let wire = connection
+        .exec_first::<mysql_async::Row, _, _>(
+            "SELECT unsigned_max, decimal_exact, date_value, datetime_value, \
+                    time_value, json_value, text_value, enum_value, set_value, \
+                    bit_value, binary_value, blob_value \
+             FROM type_fidelity WHERE id = ?",
+            (1_u64,),
+        )
+        .await
+        .expect("prepared wire query")
+        .expect("wire type row")
+        .unwrap();
+    assert_eq!(
+        wire,
+        vec![
+            mysql_async::Value::UInt(u64::MAX),
+            mysql_async::Value::Bytes(b"1234567890123456789012345678.1234567890".to_vec()),
+            mysql_async::Value::Date(1000, 1, 1, 0, 0, 0, 0),
+            mysql_async::Value::Date(2024, 2, 29, 12, 34, 56, 123_456),
+            mysql_async::Value::Time(true, 2, 3, 4, 5, 600_000),
+            mysql_async::Value::Bytes(br#"{"a":1,"b":[true,null]}"#.to_vec()),
+            mysql_async::Value::Bytes("café βeta red,blue 🪿".as_bytes().to_vec()),
+            mysql_async::Value::Bytes("βeta".as_bytes().to_vec()),
+            mysql_async::Value::Bytes(b"red,blue".to_vec()),
+            mysql_async::Value::Int(341),
+            mysql_async::Value::Bytes(vec![0, 255, 16]),
+            mysql_async::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+        ]
+    );
+    let normalized = connection
+        .exec_first::<(Option<String>, Option<String>), _, _>(
+            "SELECT date_value, datetime_value FROM type_fidelity WHERE id = ?",
+            (2_u64,),
+        )
+        .await
+        .expect("normalized zero dates");
+    assert_eq!(normalized, Some((None, None)));
+    drop(connection);
+    pool.disconnect().await.expect("disconnect wire client");
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
 }
 
 #[tokio::test(flavor = "multi_thread")]
