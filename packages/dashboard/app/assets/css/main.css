@@ -1180,6 +1180,36 @@ tbody tr:hover td {
   gap: 1rem;
 }
 
+.backup-operations {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+}
+
+.backup-operations > p {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.backup-operations hr {
+  width: 100%;
+  margin: 0.25rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.backup-history {
+  margin-top: 0.9rem;
+}
+
+.backup-error {
+  max-width: 18rem;
+  color: var(--red);
+  font-size: 0.68rem;
+  white-space: normal;
+}
+
 .wizard-page {
   max-width: 64rem;
 }

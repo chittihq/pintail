@@ -135,6 +135,32 @@ export interface DlqRecord {
   created_at: string
 }
 
+export interface BackupConfig {
+  configured: boolean
+  bucket: string
+  prefix: string
+  endpoint: string | null
+  region: string
+  schedule_minutes: number
+  enabled: boolean
+  credentials_configured: boolean
+  updated_at: string
+}
+
+export interface BackupRecord {
+  id: string
+  database_id: string
+  kind: 'full' | 'incremental'
+  parent_id: string | null
+  object_prefix: string
+  status: 'running' | 'completed' | 'error'
+  bytes: number
+  object_count: number
+  error: string | null
+  started_at: string
+  completed_at: string | null
+}
+
 export interface ApiKeyRecord {
   id: string
   database_id: string

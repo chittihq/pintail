@@ -26,6 +26,7 @@ type EncryptedCredentials = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 #[derive(Serialize)]
 pub(crate) struct BackupConfigResponse {
+    configured: bool,
     bucket: String,
     prefix: String,
     endpoint: Option<String>,
@@ -140,9 +141,10 @@ pub(crate) async fn get_config(
     let config = state
         .metadata()?
         .backup_config(&database_id)
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("backup configuration does not exist"))?;
-    Ok(Json(config.into()))
+        .map_err(ApiError::internal)?;
+    Ok(Json(
+        config.map_or_else(BackupConfigResponse::default, Into::into),
+    ))
 }
 
 pub(crate) async fn put_config(
@@ -716,6 +718,7 @@ fn finish_backup_error(
 impl From<BackupConfigRecord> for BackupConfigResponse {
     fn from(config: BackupConfigRecord) -> Self {
         Self {
+            configured: true,
             credentials_configured: config.encrypted_access_key_id.is_some(),
             bucket: config.bucket,
             prefix: config.prefix,
@@ -724,6 +727,22 @@ impl From<BackupConfigRecord> for BackupConfigResponse {
             schedule_minutes: config.schedule_minutes,
             enabled: config.enabled,
             updated_at: config.updated_at,
+        }
+    }
+}
+
+impl Default for BackupConfigResponse {
+    fn default() -> Self {
+        Self {
+            configured: false,
+            bucket: String::new(),
+            prefix: "pintail".to_owned(),
+            endpoint: None,
+            region: default_region(),
+            schedule_minutes: default_schedule(),
+            enabled: false,
+            credentials_configured: false,
+            updated_at: String::new(),
         }
     }
 }

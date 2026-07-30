@@ -35,6 +35,8 @@ import { Badge } from '@/components/ui/badge'
 import type {
   ActivityRecord,
   ApiKeyRecord,
+  BackupConfig,
+  BackupRecord,
   DatabaseRecord,
   DatabaseStatus,
   DlqRecord,
@@ -132,6 +134,22 @@ const revealedSecret = ref('')
 const connectKey = ref('pk_your_key')
 const connectHost = ref('127.0.0.1')
 const connectPort = ref('3306')
+const backupDatabaseId = ref('')
+const backups = ref<BackupRecord[]>([])
+const backupLoading = ref(false)
+const backupConfigLoaded = ref(false)
+const backupForm = reactive({
+  bucket: '',
+  prefix: 'pintail',
+  endpoint: '',
+  region: 'us-east-1',
+  accessKeyId: '',
+  secretAccessKey: '',
+  scheduleMinutes: 1_440,
+  enabled: true,
+})
+const restoreBackupId = ref('')
+const restoreName = ref('')
 
 const selectedDatabase = computed(
   () => databases.value.find((database) => database.id === selectedDatabaseId.value) ?? null,
@@ -258,6 +276,7 @@ async function loadControlPlane() {
     if (!validIds.has(selectedDatabaseId.value)) selectedDatabaseId.value = fallbackId
     if (!validIds.has(sqlDatabaseId.value)) sqlDatabaseId.value = fallbackId
     if (!validIds.has(keyDatabaseId.value)) keyDatabaseId.value = fallbackId
+    if (!validIds.has(backupDatabaseId.value)) backupDatabaseId.value = fallbackId
     if (activityDatabase.value && !validIds.has(activityDatabase.value)) {
       activityDatabase.value = ''
     }
@@ -293,6 +312,9 @@ async function refreshLiveData() {
     deadLetters.value = dlqRows
     if (page.value === 'database' && selectedDatabaseId.value) {
       await loadDatabaseDetail(false)
+    }
+    if (page.value === 'backups' && backupDatabaseId.value) {
+      await loadBackups(false)
     }
   } catch {
     // Keep the last coherent live view; the top-level health indicator shows staleness.
@@ -330,6 +352,7 @@ function go(target: Page) {
   page.value = target
   error.value = ''
   if (target === 'keys') void loadKeys()
+  if (target === 'backups') void loadBackups()
 }
 
 async function openDatabase(database: DatabaseRecord) {
@@ -618,6 +641,118 @@ async function discardDlq(record: DlqRecord) {
     await refreshLiveData()
   } catch (failure) {
     error.value = messageOf(failure)
+  }
+}
+
+async function retryDlq(record: DlqRecord) {
+  try {
+    await request(`/dlq/${record.id}/retry`, { method: 'POST' })
+    toast(`${record.table || 'Database'} recovered; dead letter cleared`)
+    await refreshLiveData()
+  } catch (failure) {
+    error.value = messageOf(failure)
+  }
+}
+
+async function loadBackups(showLoading = true) {
+  if (!backupDatabaseId.value) {
+    backups.value = []
+    backupConfigLoaded.value = false
+    return
+  }
+  if (showLoading) backupLoading.value = true
+  try {
+    backups.value = await request<BackupRecord[]>(
+      `/databases/${backupDatabaseId.value}/backups`,
+    )
+    const completed = backups.value.find((backup) => backup.status === 'completed')
+    if (!restoreBackupId.value || !backups.value.some((backup) => backup.id === restoreBackupId.value)) {
+      restoreBackupId.value = completed?.id || ''
+    }
+    const config = await request<BackupConfig>(
+      `/databases/${backupDatabaseId.value}/backup-config`,
+    )
+    backupForm.bucket = config.bucket
+    backupForm.prefix = config.prefix
+    backupForm.endpoint = config.endpoint || ''
+    backupForm.region = config.region
+    backupForm.scheduleMinutes = config.schedule_minutes
+    backupForm.enabled = config.enabled
+    backupForm.accessKeyId = ''
+    backupForm.secretAccessKey = ''
+    backupConfigLoaded.value = config.configured
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    if (showLoading) backupLoading.value = false
+  }
+}
+
+async function saveBackupConfig() {
+  if (!backupDatabaseId.value || !backupForm.bucket.trim() || !backupForm.prefix.trim()) return
+  backupLoading.value = true
+  try {
+    await request<BackupConfig>(
+      `/databases/${backupDatabaseId.value}/backup-config`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          bucket: backupForm.bucket.trim(),
+          prefix: backupForm.prefix.trim(),
+          endpoint: backupForm.endpoint.trim() || null,
+          region: backupForm.region.trim() || 'us-east-1',
+          access_key_id: backupForm.accessKeyId.trim() || null,
+          secret_access_key: backupForm.secretAccessKey || null,
+          schedule_minutes: Math.max(1, backupForm.scheduleMinutes),
+          enabled: backupForm.enabled,
+        }),
+      },
+    )
+    toast('Backup destination saved')
+    await loadBackups(false)
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    backupLoading.value = false
+  }
+}
+
+async function runBackup(full: boolean) {
+  if (!backupDatabaseId.value) return
+  backupLoading.value = true
+  try {
+    await request(`/databases/${backupDatabaseId.value}/backups`, {
+      method: 'POST',
+      body: JSON.stringify({ full }),
+    })
+    toast(full ? 'Full backup started' : 'Backup started')
+    await loadBackups(false)
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    backupLoading.value = false
+  }
+}
+
+async function restoreSelectedBackup() {
+  if (!backupDatabaseId.value || !restoreBackupId.value || !restoreName.value.trim()) return
+  backupLoading.value = true
+  try {
+    await request(`/databases/${backupDatabaseId.value}/backups/restore`, {
+      method: 'POST',
+      body: JSON.stringify({
+        backup_id: restoreBackupId.value,
+        name: restoreName.value.trim(),
+      }),
+    })
+    restoreName.value = ''
+    toast('Backup restored as a new detached database')
+    await loadControlPlane()
+    await loadBackups(false)
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    backupLoading.value = false
   }
 }
 
@@ -1053,7 +1188,7 @@ function describeTable(table: TableSummary) {
           <article class="panel">
             <div class="panel-heading"><h2>Dead-letter queue</h2><Badge :class="deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length ? 'tone-negative' : 'tone-positive'">{{ deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length }}</Badge></div>
             <div v-if="!deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length" class="empty-state compact-empty"><Check :size="24" /><strong>No rejected events</strong><span>Decoder and storage errors appear here.</span></div>
-            <div v-for="record in deadLetters.filter((item) => item.database_id === selectedDatabase?.id)" :key="record.id" class="dlq-card"><strong>{{ record.table || 'database' }}</strong><p>{{ record.error }}</p><button class="text-button" @click="discardDlq(record)">Discard</button></div>
+            <div v-for="record in deadLetters.filter((item) => item.database_id === selectedDatabase?.id)" :key="record.id" class="dlq-card"><strong>{{ record.table || 'database' }}</strong><p>{{ record.error }}</p><div class="row-actions"><button class="button compact primary" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw :size="13" /> Retry safely</button><button class="text-button danger" @click="discardDlq(record)">Discard</button></div></div>
           </article>
         </div>
 
@@ -1131,7 +1266,7 @@ function describeTable(table: TableSummary) {
           <div v-if="!filteredActivity.length" class="empty-state"><Activity :size="28" /><h2>No matching activity</h2><p>Completed and failed replication work appears after the first snapshot.</p></div>
           <div v-else class="table-scroll"><table><thead><tr><th>Started</th><th>Database</th><th>Kind</th><th>Status</th><th>Rows</th><th>Bytes</th><th>Duration</th></tr></thead><tbody><tr v-for="record in filteredActivity" :key="record.id"><td class="muted">{{ formatDate(record.started_at) }}</td><td><strong>{{ databases.find((item) => item.id === record.database_id)?.name || record.database_id }}</strong><small v-if="record.table">{{ record.table }}</small></td><td>{{ record.kind }}</td><td><Badge :class="`tone-${stateTone(record.status)}`">{{ record.status }}</Badge></td><td class="mono">{{ record.rows.toLocaleString() }}</td><td class="mono">{{ formatBytes(record.bytes) }}</td><td class="mono">{{ record.duration_ms === null ? '—' : `${record.duration_ms} ms` }}</td></tr></tbody></table></div>
         </article>
-        <article v-if="deadLetters.length" class="panel dlq-panel"><div class="panel-heading"><div><p class="kicker">Requires judgment</p><h2>Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div><div class="dlq-grid"><div v-for="record in deadLetters" :key="record.id" class="dlq-card"><div><strong>{{ record.table || 'Database event' }}</strong><span>{{ formatDate(record.created_at) }}</span></div><p>{{ record.error }}</p><pre>{{ JSON.stringify(record.event, null, 2) }}</pre><button class="button compact" @click="discardDlq(record)">Discard</button></div></div></article>
+        <article v-if="deadLetters.length" class="panel dlq-panel"><div class="panel-heading"><div><p class="kicker">Requires judgment</p><h2>Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div><div class="dlq-grid"><div v-for="record in deadLetters" :key="record.id" class="dlq-card"><div><strong>{{ record.table || 'Database event' }}</strong><span>{{ formatDate(record.created_at) }}</span></div><p>{{ record.error }}</p><pre>{{ JSON.stringify(record.event, null, 2) }}</pre><div class="row-actions"><button class="button compact primary" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw :size="13" /> Retry safely</button><button class="button compact danger" @click="discardDlq(record)">Discard</button></div></div></div></article>
       </section>
 
       <section v-else-if="page === 'keys'" class="content">
@@ -1142,11 +1277,12 @@ function describeTable(table: TableSummary) {
       </section>
 
       <section v-else-if="page === 'backups'" class="content">
-        <header class="page-heading"><p class="kicker">Recovery plane</p><h1>Backups</h1><p class="muted">Full and incremental artifacts will preserve manifests, segments, and metadata as one unit.</p></header>
+        <header class="page-heading split"><div><p class="kicker">Recovery plane</p><h1>Backups</h1><p class="muted">Checksum-verified manifests, immutable segments, and control-plane state restore side-by-side.</p></div><div class="select-wrap"><Database :size="15" /><select v-model="backupDatabaseId" @change="loadBackups()"><option disabled value="">Choose database</option><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></div></header>
         <div class="two-column">
-          <article class="panel settings-form"><div class="panel-heading"><div><p class="kicker">S3 destination</p><h2>Backup configuration</h2></div><Badge class="tone-warning">M8 activation</Badge></div><label><span>Database</span><select v-model="keyDatabaseId"><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></label><label><span>Bucket URL</span><input disabled placeholder="s3://analytics-backups/pintail"></label><label><span>Schedule</span><select disabled><option>Daily at 02:00</option></select></label><button class="button primary" disabled>Save configuration</button><p class="muted panel-note">The page is deliberately read-only until the M8 backup/restore gate proves round-trip recovery.</p></article>
-          <article class="panel"><div class="panel-heading"><h2>Backup history</h2><Archive :size="19" /></div><div class="empty-state compact-empty"><Archive :size="26" /><strong>No backup artifacts</strong><span>Backup execution and restore-as arrive with the verified M8 operations engine.</span></div></article>
+          <article class="panel settings-form"><div class="panel-heading"><div><p class="kicker">S3-compatible destination</p><h2>Backup configuration</h2></div><Badge :class="backupConfigLoaded ? 'tone-positive' : 'tone-neutral'">{{ backupConfigLoaded ? 'Configured' : 'Not configured' }}</Badge></div><div class="form-grid"><label><span>Bucket</span><input v-model="backupForm.bucket" autocomplete="off" placeholder="analytics-backups"></label><label><span>Object prefix</span><input v-model="backupForm.prefix" autocomplete="off" placeholder="pintail/production"></label><label class="full"><span>Endpoint <small>optional for AWS</small></span><input v-model="backupForm.endpoint" autocomplete="url" placeholder="http://minio.internal:9000"></label><label><span>Region</span><input v-model="backupForm.region" autocomplete="off" placeholder="us-east-1"></label><label><span>Schedule cadence</span><select v-model.number="backupForm.scheduleMinutes"><option :value="60">Hourly</option><option :value="360">Every 6 hours</option><option :value="1440">Daily</option><option :value="10080">Weekly</option></select></label><label><span>Access key ID</span><input v-model="backupForm.accessKeyId" autocomplete="off" placeholder="Leave blank to preserve"></label><label><span>Secret access key</span><input v-model="backupForm.secretAccessKey" type="password" autocomplete="new-password" placeholder="Leave blank to preserve"></label></div><button type="button" class="setting-row" @click="backupForm.enabled = !backupForm.enabled"><span><strong>Scheduled backups</strong><small>Runs after the next healthy supervised cycle when due.</small></span><span class="switch" :class="{ on: backupForm.enabled }"><span /></span></button><button class="button primary" :disabled="backupLoading || !backupDatabaseId || !backupForm.bucket.trim() || !backupForm.prefix.trim()" @click="saveBackupConfig"><LoaderCircle v-if="backupLoading" class="spin" :size="15" /><HardDrive v-else :size="15" /> Save destination</button><p class="muted panel-note">Prefix validation prevents accidental broad writes; it is not a tenant-isolation boundary. Use bucket IAM for isolation.</p></article>
+          <article class="panel backup-operations"><div class="panel-heading"><div><p class="kicker">Manual recovery point</p><h2>Backup now</h2></div><Archive :size="19" /></div><p class="muted">The first run is full. Later runs reuse unchanged immutable segment objects unless you force a new full chain.</p><div class="row-actions"><button class="button primary" :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(false)"><Play :size="14" /> Backup now</button><button class="button" :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(true)"><RefreshCw :size="14" /> Force full</button></div><hr><div><p class="kicker">Side-by-side restore</p><h2>Restore as new database</h2></div><label><span>Completed backup</span><select v-model="restoreBackupId"><option disabled value="">Choose recovery point</option><option v-for="backup in backups.filter((item) => item.status === 'completed')" :key="backup.id" :value="backup.id">{{ formatDate(backup.completed_at) }} · {{ backup.kind }}</option></select></label><label><span>New database name</span><input v-model="restoreName" placeholder="analytics recovery"></label><button class="button" :disabled="backupLoading || !restoreBackupId || !restoreName.trim()" @click="restoreSelectedBackup"><HardDrive :size="14" /> Verify and restore</button><p class="muted panel-note">Restore never overwrites a live mirror. The new database is detached from ingestion until new source credentials are supplied.</p></article>
         </div>
+        <article class="panel table-panel backup-history"><div class="panel-heading"><div><p class="kicker">Durable audit</p><h2>Backup history</h2></div><button class="icon-button" :disabled="backupLoading" aria-label="Refresh backup history" @click="loadBackups()"><RefreshCw :size="15" /></button></div><div v-if="!backups.length" class="empty-state compact-empty"><Archive :size="26" /><strong>No backup artifacts</strong><span>Save a destination, then create the first full recovery point.</span></div><div v-else class="table-scroll"><table><thead><tr><th>Started</th><th>Kind</th><th>Status</th><th>Objects</th><th>Uploaded</th><th>Chain</th><th>Error</th></tr></thead><tbody><tr v-for="backup in backups" :key="backup.id"><td><strong>{{ formatDate(backup.started_at) }}</strong><small class="mono">{{ backup.id }}</small></td><td><Badge :class="backup.kind === 'full' ? 'tone-positive' : 'tone-neutral'">{{ backup.kind }}</Badge></td><td><Badge :class="`tone-${stateTone(backup.status)}`">{{ backup.status }}</Badge></td><td class="mono">{{ backup.object_count }}</td><td class="mono">{{ formatBytes(backup.bytes) }}</td><td><span v-if="backup.parent_id" class="mono">{{ backup.parent_id }}</span><span v-else class="muted">root</span></td><td class="backup-error">{{ backup.error || '—' }}</td></tr></tbody></table></div></article>
       </section>
 
       <section v-else-if="page === 'settings'" class="content">
@@ -1155,7 +1291,7 @@ function describeTable(table: TableSummary) {
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Operator</p><h2>Current session</h2></div><Server :size="19" /></div><dl class="definition-grid"><div><dt>Subject</dt><dd class="mono">{{ session.subject }}</dd></div><div><dt>Role</dt><dd>{{ session.role }}</dd></div><div><dt>Scopes</dt><dd>{{ session.scopes.join(', ') }}</dd></div><div><dt>Session</dt><dd>12-hour signed JWT</dd></div></dl></article>
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Appearance</p><h2>Interface</h2></div><button class="icon-button" @click="toggleTheme"><Sun v-if="dark" :size="16" /><Moon v-else :size="16" /></button></div><button class="setting-row" @click="toggleTheme"><span><strong>Dark instrument panel</strong><small>Stored only in this browser.</small></span><span class="switch" :class="{ on: dark }"><span /></span></button></article>
           <article class="panel wire-status"><div class="panel-heading"><div><p class="kicker">MySQL wire</p><h2>Client endpoint</h2></div><Badge :class="nodeStatus?.wire.enabled ? 'tone-positive' : 'tone-negative'">{{ nodeStatus?.wire.enabled ? 'Live' : 'Unavailable' }}</Badge></div><div class="endpoint-line"><span class="endpoint-pulse" :class="{ live: nodeStatus?.wire.enabled }" /><code>{{ nodeStatus?.wire.bind || 'Endpoint unavailable' }}</code></div><dl class="definition-grid"><div><dt>Mode</dt><dd>Read-only</dd></div><div><dt>Authentication</dt><dd>Database API key</dd></div><div><dt>Username</dt><dd>Database name</dd></div><div><dt>Protocol</dt><dd>MySQL native</dd></div></dl></article>
-          <article class="panel"><div class="panel-heading"><div><p class="kicker">Telemetry</p><h2>Operations</h2></div><Badge class="tone-warning">M8</Badge></div><dl class="definition-grid"><div><dt>Metrics</dt><dd>/metrics</dd></div><div><dt>Exposure</dt><dd>Loopback</dd></div><div><dt>Log level</dt><dd>info</dd></div><div><dt>Supervisor</dt><dd>Finite handoff</dd></div></dl></article>
+          <article class="panel"><div class="panel-heading"><div><p class="kicker">Telemetry</p><h2>Operations</h2></div><Badge class="tone-positive">Live</Badge></div><dl class="definition-grid"><div><dt>Metrics</dt><dd><a href="/metrics" target="_blank">/metrics</a></dd></div><div><dt>Format</dt><dd>Prometheus text</dd></div><div><dt>Supervisor</dt><dd>Isolated per database</dd></div><div><dt>Recovery</dt><dd>Scheduled + manual</dd></div></dl></article>
         </div>
       </section>
 

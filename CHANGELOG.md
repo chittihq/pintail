@@ -26,6 +26,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   query latency/rows, ingest cycles and errors, replication lag, storage and
   compaction debt, memory, DLQ pressure, and backup outcomes; DLQ entries can
   be retried through a safe table reconciliation before removal.
+- The Backups dashboard is fully active with S3/MinIO destination and schedule
+  controls, encrypted-credential handoff, manual/full actions, recovery-chain
+  history, and side-by-side restore. Activity and database views offer
+  retry-before-discard DLQ controls, while Settings links the live Prometheus
+  surface and reports the isolated supervisor policy.
 
 ## [M7] - 2026-07-30
 
