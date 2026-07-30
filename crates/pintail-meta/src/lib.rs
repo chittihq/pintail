@@ -15,7 +15,7 @@ pub use control::{
     UserRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 5;
+const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1286,6 +1286,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 5 {
         migration_v5(connection.transaction()?)?;
     }
+    if found < 6 {
+        migration_v6(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1332,4 +1335,13 @@ fn migration_v5(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 5")
+}
+
+fn migration_v6(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/006_wire_auth.sql"))
+        .context("failed to apply metadata migration 6")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 6")
 }

@@ -6,6 +6,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use pintail_meta::{ApiKeyRecord, NewApiKey};
 use serde::{Deserialize, Serialize};
+use sha1::{Digest as _, Sha1};
 use sha2::{Digest as _, Sha256};
 
 use crate::{ApiState, auth::AuthPrincipal, error::ApiError, state::random_identifier};
@@ -91,6 +92,7 @@ pub(crate) async fn create(
     let id = random_identifier("key_", 16);
     let secret = random_identifier("pk_", 32);
     let digest = Sha256::digest(secret.as_bytes());
+    let native_password_hash = Sha1::digest(Sha1::digest(secret.as_bytes()));
     let scopes_json = serde_json::to_string(&request.scopes).map_err(ApiError::internal)?;
     let now = Utc::now().to_rfc3339();
     let metadata = state.metadata()?;
@@ -100,6 +102,7 @@ pub(crate) async fn create(
             database_id: &database_id,
             name: request.name.trim(),
             sha256: &digest,
+            mysql_native_password_hash: Some(&native_password_hash),
             scopes_json: &scopes_json,
             expires_at: request.expires_at.as_deref(),
             now: &now,

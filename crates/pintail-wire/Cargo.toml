@@ -7,5 +7,16 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+anyhow.workspace = true
+opensrv-mysql.workspace = true
+pintail-catalog.workspace = true
+pintail-exec.workspace = true
+pintail-meta.workspace = true
+pintail-sql.workspace = true
+pintail-store.workspace = true
+pintail-types.workspace = true
+tokio.workspace = true
+
 [lints]
 workspace = true

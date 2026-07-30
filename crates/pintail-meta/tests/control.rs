@@ -120,6 +120,7 @@ fn api_keys_activity_and_dead_letters_round_trip() {
             database_id: "db-1",
             name: "Metabase",
             sha256: &[7; 32],
+            mysql_native_password_hash: Some(&[8; 20]),
             scopes_json: "[\"query\",\"read\"]",
             expires_at: None,
             now: "2026-07-30T00:06:00Z",
@@ -130,6 +131,10 @@ fn api_keys_activity_and_dead_letters_round_trip() {
         .unwrap()
         .expect("API key");
     assert!(key.enabled);
+    assert_eq!(
+        key.mysql_native_password_hash.as_deref(),
+        Some(&[8; 20][..])
+    );
     assert_eq!(metadata.api_keys("db-1").unwrap().len(), 1);
     metadata
         .touch_api_key("key-1", "2026-07-30T00:07:00Z")

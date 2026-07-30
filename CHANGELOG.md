@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Control-plane schema version 6 stores the `mysql_native_password`
+  double-SHA-1 verifier alongside each new hash-only API key, enabling standard
+  MySQL challenge-response authentication without retaining or recovering the
+  one-time plaintext secret.
+
 ## [M6] - 2026-07-30
 
 ### Added

@@ -259,3 +259,17 @@ The dashboard calls this behavior out in the action tooltip and acceptance
 toast. `reconcile` remains genuinely table-local because it assigns versions
 above the table's visible rows, synchronizes storage before metadata, and does
 not advance the CDC source checkpoint.
+
+### Wire authentication stores a protocol verifier
+
+The MySQL native password handshake cannot be validated from the API key's
+SHA-256 lookup digest: it requires `SHA1(SHA1(secret))` to recover and verify
+the challenge response. New API keys therefore persist that 20-byte
+double-SHA-1 verifier in addition to the existing SHA-256 digest. The plaintext
+secret is still shown once and never stored, and HTTP bearer authentication
+continues to use SHA-256.
+
+Keys created before metadata schema version 6 have no recoverable native
+verifier and must be rotated before use on the wire endpoint. This avoids a
+cleartext-password plugin, which would require client-specific opt-ins or TLS
+just to complete the standard compatibility gate.

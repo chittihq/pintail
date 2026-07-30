@@ -40,6 +40,7 @@ jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["rus
 lz4_flex = "0.11.5"
 mime_guess = "2.0.5"
 mysql_async = { version = "0.37.0", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
+opensrv-mysql = { version = "0.7.0", default-features = false }
 pintail-api = { path = "crates/pintail-api" }
 pintail-catalog = { path = "crates/pintail-catalog" }
 pintail-cdc = { path = "crates/pintail-cdc" }
@@ -58,6 +59,7 @@ rust-embed = { version = "8.7.2", features = ["compression"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 sha2 = "0.11.0"
+sha1 = "0.10.6"
 sqlparser = "0.62.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
