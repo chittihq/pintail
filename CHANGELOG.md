@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M5] - 2026-07-30
+
 ### Added
 
 - A durable polling engine with automatic timestamp/created/auto-increment
@@ -32,10 +34,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tombstone only stale colliding rows. An opt-in query scan policy can hide
   lower-version secondary-UNIQUE collisions until that repair completes,
   including when the unique columns were not selected by the query.
-- A reconciliation-only CDC path now repairs cascade/SET NULL child tables
-  with versions above their live binlog rows while preserving the CDC mode
-  and source checkpoint. The live gate proves the InnoDB negative control
-  first, then converges the missing child tombstone.
+- A reconciliation-only CDC path now repairs cascade/SET NULL child deletes
+  and payload updates with versions above their live binlog rows while
+  preserving the CDC mode and source checkpoint. The live gate proves both
+  InnoDB negative controls before converging the child rows.
 - Delete reconciliation now uses composite-safe keyset pagination. Poll syncs
   still run cursor-boundary, checksum, or append checks when count/MAX is
   unchanged, closing same-timestamp and count-neutral update windows without
@@ -46,6 +48,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A binlog-disabled MySQL 8.4 gate covers polling CRUD, the count-neutral
   delete blind spot, unique-value reuse, soft deletes, cascade reconciliation,
   append tables, and ten idle forced scans with zero table-storage growth.
+
+### Changed
+
+- Count/MAX polling tokens are advisory: an unchanged token still runs the
+  strategy-specific cursor boundary, aggregate checksum, or append-generation
+  check. Delete reconciliation uses composite-safe keyset pagination.
+- Pure ADD/DROP column changes preserve stable source-column IDs through live
+  schema generations. Other ALTER operations conservatively quarantine only
+  the affected table instead of risking a storage reinterpretation.
+
+### Verification
+
+- Rust formatting, strict workspace Clippy, the locked workspace tests, Bun's
+  frozen install/typecheck/static generation, the plan-quality suite, and the
+  600-query MySQL differential oracle pass.
+- The MySQL 8.4 DDL gate passes ADD/DROP across restart, table-local rename
+  quarantine, TRUNCATE, CREATE auto-snapshot, and retained DROP orphan checks.
+- The binlog-disabled polling gate passes cursor and cursor-less CRUD,
+  composite keys, exact unchanged-token delete/insert repair, unique reuse,
+  soft deletes, append rebuild, and ten byte-stable idle cycles.
+- The CDC cascade gate proves missing InnoDB child delete and update events
+  before scheduled full-row reconciliation, preserving both CDC mode and its
+  source checkpoint.
 
 ## [M4] - 2026-07-30
 

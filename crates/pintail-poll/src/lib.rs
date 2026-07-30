@@ -74,7 +74,7 @@ pub struct PollOptions {
     pub chunk_rows: usize,
     /// Run the slower complete key reconciliation scheduled independently.
     pub reconcile: bool,
-    /// Ignore an unchanged cheap-probe token.
+    /// Report the cycle as changed even when its cheap-probe token is stable.
     pub force: bool,
     /// Operator-selected cursor columns by case-insensitive table name.
     pub cursor_overrides: BTreeMap<String, String>,
@@ -148,6 +148,8 @@ pub struct PollResult {
 pub struct CdcReconcileOutcome {
     /// Reconciled child or operator-selected table.
     pub table: String,
+    /// Source rows inserted or refreshed after an invisible cascade update.
+    pub ingested: usize,
     /// Missing source keys tombstoned.
     pub tombstones: usize,
     /// Source keys observed.
@@ -250,7 +252,7 @@ pub async fn run_poll_cycle(
     })
 }
 
-/// Runs a key-only reconciliation for CDC tables whose source-side cascades
+/// Runs a full-row reconciliation for CDC tables whose source-side cascades
 /// are absent from row binlogs.
 ///
 /// Table WALs are synchronized before reconcile metadata. The database's CDC
@@ -293,54 +295,106 @@ pub async fn run_cdc_reconciliation(
                 target.source.name
             )));
         }
-        let current = target.store.snapshot().scan()?;
-        let durable_version = metadata
-            .poll_state(database_id, &target.source.name)?
-            .map_or(0, |state| state.version);
-        let version = current
-            .iter()
-            .map(StoredRow::version)
-            .max()
-            .unwrap_or(0)
-            .max(durable_version)
-            .checked_add(1)
-            .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
-        let source_keys = fetch_source_keys(
-            &mut connection,
-            &report.database,
-            &target.source,
-            chunk_rows,
-        )
-        .await?;
-        let source_count = u64::try_from(source_keys.len())
-            .map_err(|error| PollError::Decode(error.to_string()))?;
-        let tombstones = current
-            .into_iter()
-            .filter(|row| !source_keys.contains(row.key()))
-            .map(|row| StoredRow::new(row.key().clone(), row.values().to_vec(), version, true))
-            .collect::<Vec<_>>();
-        let tombstone_count = tombstones.len();
-        target.store.ingest(tombstones)?;
-        if tombstone_count > 0 {
-            target.store.checkpoint()?;
-        }
-        metadata.commit_cdc_reconciliation(
-            database_id,
-            &target.source.name,
-            source_count,
-            version,
-            &Utc::now().to_rfc3339(),
-        )?;
-        outcomes.push(CdcReconcileOutcome {
-            table: target.source.name.clone(),
-            tombstones: tombstone_count,
-            source_count,
-            version,
-        });
+        outcomes.push(
+            reconcile_cdc_target(
+                &mut connection,
+                &mut metadata,
+                database_id,
+                &report.database,
+                target,
+                chunk_rows,
+            )
+            .await?,
+        );
     }
     Ok(CdcReconcileResult {
         tables: outcomes,
         targets,
+    })
+}
+
+async fn reconcile_cdc_target(
+    connection: &mut Conn,
+    metadata: &mut MetaStore,
+    database_id: &str,
+    source_database: &str,
+    target: &mut PollTarget,
+    chunk_rows: usize,
+) -> Result<CdcReconcileOutcome, PollError> {
+    let current = target
+        .store
+        .snapshot()
+        .scan()?
+        .into_iter()
+        .map(|row| (row.key().clone(), row))
+        .collect::<BTreeMap<_, _>>();
+    let durable_version = metadata
+        .poll_state(database_id, &target.source.name)?
+        .map_or(0, |state| state.version);
+    let version = current
+        .values()
+        .map(StoredRow::version)
+        .max()
+        .unwrap_or(0)
+        .max(durable_version)
+        .checked_add(1)
+        .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
+    let rows = fetch_rows(
+        connection,
+        source_database,
+        &target.source,
+        "",
+        Vec::new(),
+        &poll_order(&target.source, None),
+        chunk_rows,
+    )
+    .await?;
+    let source_count =
+        u64::try_from(rows.len()).map_err(|error| PollError::Decode(error.to_string()))?;
+    let mut source_keys = BTreeSet::new();
+    let mut mutations = Vec::new();
+    let mut ingested = 0;
+    for (index, row) in rows.into_iter().enumerate() {
+        let decoded = decode_row(
+            &target.source,
+            row,
+            u64::try_from(index + 1).map_err(|error| PollError::Decode(error.to_string()))?,
+            version,
+            false,
+        )?;
+        source_keys.insert(decoded.key().clone());
+        if current
+            .get(decoded.key())
+            .is_none_or(|stored| stored.values() != decoded.values())
+        {
+            ingested += 1;
+            mutations.push(decoded);
+        }
+    }
+    let tombstones = current
+        .into_values()
+        .filter(|row| !source_keys.contains(row.key()))
+        .map(|row| StoredRow::new(row.key().clone(), row.values().to_vec(), version, true))
+        .collect::<Vec<_>>();
+    let tombstone_count = tombstones.len();
+    mutations.extend(tombstones);
+    target.store.ingest(mutations)?;
+    if ingested > 0 || tombstone_count > 0 {
+        target.store.checkpoint()?;
+    }
+    metadata.commit_cdc_reconciliation(
+        database_id,
+        &target.source.name,
+        source_count,
+        version,
+        &Utc::now().to_rfc3339(),
+    )?;
+    Ok(CdcReconcileOutcome {
+        table: target.source.name.clone(),
+        ingested,
+        tombstones: tombstone_count,
+        source_count,
+        version,
     })
 }
 

@@ -467,7 +467,8 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
                parent_id BIGINT UNSIGNED NOT NULL,\
                value VARCHAR(64) NOT NULL,\
                CONSTRAINT cascade_fk FOREIGN KEY (parent_id) \
-                 REFERENCES cascade_parent(id) ON DELETE CASCADE\
+                 REFERENCES cascade_parent(id) \
+                 ON DELETE CASCADE ON UPDATE CASCADE\
              );\
              INSERT INTO cascade_parent VALUES (1),(2);\
              INSERT INTO cascade_child VALUES (10,1,'first'),(11,2,'second');",
@@ -544,8 +545,11 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
     assert!(raised_version > 0);
 
     mysql
-        .query_batch("DELETE FROM cascade_parent WHERE id=1;")
-        .expect("cascade parent delete");
+        .query_batch(
+            "DELETE FROM cascade_parent WHERE id=1;\
+             UPDATE cascade_parent SET id=20 WHERE id=2;",
+        )
+        .expect("cascade parent delete and key update");
     let negative = finite_catch_up(&pool, &metadata_path, &report, raised.targets)
         .await
         .expect("cascade CDC catch-up");
@@ -567,6 +571,19 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
             .len(),
         2,
         "negative control: InnoDB cascade emitted no child row event"
+    );
+    assert_eq!(
+        cdc_target(&negative.targets, "cascade_child")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .iter()
+            .find(|row| row.values()[0] == Value::UInt64(11))
+            .expect("cascade-updated child remains visible")
+            .values()[1],
+        Value::UInt64(2),
+        "negative control: InnoDB cascade update emitted no child row event"
     );
     let checkpoint_before = MetaStore::open(&metadata_path)
         .unwrap()
@@ -594,6 +611,7 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
     )
     .await
     .expect("scheduled cascade reconciliation");
+    assert_eq!(reconciliation.tables[0].ingested, 1);
     assert_eq!(reconciliation.tables[0].tombstones, 1);
     assert!(reconciliation.tables[0].version > raised_version);
     assert_eq!(
@@ -604,6 +622,10 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
             .unwrap()
             .len(),
         1
+    );
+    assert_eq!(
+        reconciliation.targets[0].store().snapshot().scan().unwrap()[0].values()[1],
+        Value::UInt64(20)
     );
     let checkpoint_after = MetaStore::open(&metadata_path)
         .unwrap()
