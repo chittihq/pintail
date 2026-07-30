@@ -11,6 +11,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MySQL-dialect SQL parsing façade with backtick identifiers, MySQL
   offset/count limits, metadata statements, explain, common table expressions,
   and explicit single-statement request validation.
+- Immutable catalog snapshots with stable database and table identities,
+  case-insensitive name indexes, deterministic metadata iteration, versioned
+  table schemas, and exact row-count statistics for planning.
 
 ## [M1] - 2026-07-30
 

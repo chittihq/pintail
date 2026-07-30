@@ -776,6 +776,9 @@ version = "0.1.0"
 [[package]]
 name = "pintail-catalog"
 version = "0.1.0"
+dependencies = [
+ "pintail-types",
+]
 
 [[package]]
 name = "pintail-cdc"
