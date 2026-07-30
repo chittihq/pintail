@@ -658,6 +658,50 @@ impl TableStore {
         self.wal.sync()
     }
 
+    /// Publishes a compatible metadata-only schema evolution.
+    ///
+    /// Existing rows are flushed first. Segment readers then project columns
+    /// by stable ID: dropped columns disappear, while newly added nullable
+    /// columns read as `NULL` in older segments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the version does not advance, physical key mode
+    /// changes, an old segment is incompatible, or durable publication fails.
+    pub fn evolve_schema(&mut self, schema: TableSchema) -> Result<(), StoreError> {
+        if schema.version() <= self.schema.version() {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "schema version {} must advance beyond {}",
+                schema.version(),
+                self.schema.version()
+            )));
+        }
+        if schema.key_mode() != self.schema.key_mode() {
+            return Err(StoreError::IncompatibleSchema(
+                "physical key mode changed".to_owned(),
+            ));
+        }
+        self.flush()?;
+        for segment in &self.manifest.segments {
+            segment::read(&self.directory, segment, &schema)?;
+        }
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = next_manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.schema_version = schema.version();
+        next_manifest.schema_fingerprint = segment::schema_fingerprint(&schema);
+        manifest::publish(&self.directory, &next_manifest)?;
+        self.schema = schema;
+        self.manifest = Arc::new(next_manifest);
+        Ok(())
+    }
+
     /// Publishes an empty table generation before a full resnapshot.
     ///
     /// Existing reader snapshots retain their old immutable segments until

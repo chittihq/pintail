@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cursor-less tables compare source-side aggregate fingerprints with durable
   source/replica fingerprints and fetch full rows only for mismatched chunks;
   key-only sweeps repair deletes without re-shipping unchanged row payloads.
+- Live table writers can publish compatible nullable-column additions and
+  column drops by stable ID without closing the store; pinned readers retain
+  their original schema view.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

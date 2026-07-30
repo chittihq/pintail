@@ -133,6 +133,41 @@ fn dropped_columns_are_projected_out_of_unflushed_wal_rows_by_stable_id() {
     );
 }
 
+#[test]
+fn live_writer_evolves_nullable_additions_and_drops_without_reopen() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table =
+        TableStore::open(directory.path(), schema_v1(), StoreOptions::default()).expect("open v1");
+    table.ingest(vec![row_v1(1, "old", 1)]).expect("v1 ingest");
+    let old_reader = table.snapshot();
+
+    table
+        .evolve_schema(schema_v2_nullable())
+        .expect("live nullable addition");
+    assert_eq!(
+        table.snapshot().scan().expect("scan added schema"),
+        vec![row_v2(1, "old", Value::Null, 1)]
+    );
+    assert_eq!(
+        old_reader.scan().expect("pinned old reader"),
+        vec![row_v1(1, "old", 1)]
+    );
+    table
+        .ingest(vec![row_v2(2, "new", Value::Boolean(true), 2)])
+        .expect("v2 ingest");
+
+    let dropped = TableSchema::new(3, vec![Column::new(1, "id", DataType::UInt64, false)])
+        .expect("v3 dropped schema");
+    table.evolve_schema(dropped).expect("live drop");
+    assert_eq!(
+        table.snapshot().scan().expect("scan dropped schema"),
+        vec![
+            StoredRow::new(key(1), vec![Value::UInt64(1)], 1, false),
+            StoredRow::new(key(2), vec![Value::UInt64(2)], 2, false),
+        ]
+    );
+}
+
 fn schema_v1() -> TableSchema {
     TableSchema::new(
         1,
