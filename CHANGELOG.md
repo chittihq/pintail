@@ -69,6 +69,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Typed lowering for uncorrelated constant scalar subqueries and `IN` subqueries
   over `UNION ALL`, including empty scalar results, multi-row scalar errors, and
   SQL NULL membership semantics.
+- A Docker-backed 600-query MySQL 8.4 differential oracle covering nine
+  deterministic scalar, date, subquery, scan, sort, aggregation, join, and
+  `UNION ALL` workload families over equivalent pinned storage snapshots.
 
 ## [M1] - 2026-07-30
 

@@ -1,0 +1,19 @@
+[package]
+name = "pintail-sqllogic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dev-dependencies]
+pintail-catalog.workspace = true
+pintail-exec.workspace = true
+pintail-sql.workspace = true
+pintail-store.workspace = true
+pintail-types.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

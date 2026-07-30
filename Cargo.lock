@@ -909,6 +909,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pintail-sqllogic"
+version = "0.1.0"
+dependencies = [
+ "pintail-catalog",
+ "pintail-exec",
+ "pintail-sql",
+ "pintail-store",
+ "pintail-types",
+ "tempfile",
+]
+
+[[package]]
 name = "pintail-store"
 version = "0.1.0"
 dependencies = [

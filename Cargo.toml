@@ -14,6 +14,7 @@ members = [
     "crates/pintail-store",
     "crates/pintail-types",
     "crates/pintail-wire",
+    "tests/sqllogic",
 ]
 resolver = "3"
 
