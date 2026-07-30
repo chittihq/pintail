@@ -13,12 +13,13 @@ use std::{
     hash::{Hash as _, Hasher as _},
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 
 use chrono::Utc;
 use futures_util::StreamExt as _;
 use mysql_async::{
-    BinlogStreamRequest, Error as MysqlError, Pool,
+    BinlogStream, BinlogStreamRequest, Error as MysqlError, Pool,
     binlog::{
         RowsEventFlags,
         events::{EventData, RowsEventData},
@@ -92,6 +93,11 @@ pub struct CdcOptions {
     pub max_commits: Option<usize>,
     /// Maximum retained bytes for one uncommitted source transaction.
     pub max_transaction_bytes: usize,
+    /// Consecutive connection failures tolerated before surfacing an error.
+    pub max_reconnect_attempts: usize,
+    /// First reconnect delay. Subsequent failures use bounded exponential
+    /// backoff.
+    pub reconnect_initial_delay: Duration,
 }
 
 impl Default for CdcOptions {
@@ -101,6 +107,8 @@ impl Default for CdcOptions {
             blocking: true,
             max_commits: None,
             max_transaction_bytes: 64 * 1024 * 1024,
+            max_reconnect_attempts: 8,
+            reconnect_initial_delay: Duration::from_millis(100),
         }
     }
 }
@@ -258,6 +266,11 @@ async fn run_cdc_inner(
         .map(|(index, target)| (target.source.name.to_ascii_lowercase(), index))
         .collect::<BTreeMap<_, _>>();
     let mut metadata = MetaStore::open(metadata_path)?;
+    let mut blocked_targets = metadata
+        .tables_needing_resync(database_id)?
+        .iter()
+        .filter_map(|name| target_indexes.get(&name.to_ascii_lowercase()).copied())
+        .collect::<BTreeSet<_>>();
     let checkpoint = metadata
         .snapshot_checkpoint(database_id)?
         .ok_or_else(|| CdcError::InvalidCheckpoint("snapshot position is absent".to_owned()))?;
@@ -267,86 +280,119 @@ async fn run_cdc_inner(
     } else {
         options.server_id
     };
-    let connection = pool.get_conn().await?;
-    let request = position.request(server_id, options.blocking)?;
-    let mut stream = match connection.get_binlog_stream(request).await {
-        Ok(stream) => stream,
-        Err(error) => {
-            return Err(classify_stream_error(&metadata, database_id, error)?);
-        }
-    };
-
     let mut pending = PendingTransaction::default();
     let mut commits = 0_usize;
     let mut mutations = 0_usize;
-    while let Some(event) = stream.next().await {
-        let event = match event {
-            Ok(event) => event,
-            Err(error) => {
-                return Err(classify_stream_error(&metadata, database_id, error)?);
-            }
-        };
-        let event_position = u64::from(event.header().log_pos());
-        let event_type = event.header().event_type_raw();
-        let Some(data) = event
-            .read_data()
-            .map_err(|error| CdcError::Decode(error.to_string()))?
-        else {
-            continue;
-        };
-        match data {
-            EventData::GtidEvent(gtid) => {
-                position.pending_gtid = Some(GtidIdentity {
-                    sid: gtid.sid(),
-                    tag: gtid.tag().map(ToString::to_string),
-                    sequence: gtid.gno(),
-                });
-                pending.ordinal = 0;
-            }
-            EventData::RotateEvent(rotate) => {
-                if !rotate.is_fake() {
-                    position.file = rotate.name().into_owned();
-                    position.pos = rotate.position();
-                }
-            }
-            EventData::RowsEvent(rows_event) => {
-                let table_map = stream.get_tme(rows_event.table_id()).ok_or_else(|| {
-                    CdcError::Decode(format!(
-                        "row event references unknown table-map ID {}",
-                        rows_event.table_id()
-                    ))
-                })?;
-                if !table_map
-                    .database_name()
-                    .eq_ignore_ascii_case(&report.database)
-                {
-                    continue;
-                }
-                let table_name = table_map.table_name().into_owned();
-                let Some(&target_index) = target_indexes.get(&table_name.to_ascii_lowercase())
-                else {
-                    continue;
-                };
-                let non_transactional = targets[target_index]
-                    .source
-                    .engine
-                    .as_deref()
-                    .is_some_and(|engine| !engine.eq_ignore_ascii_case("InnoDB"));
-                decode_rows_event(
-                    &rows_event,
-                    table_map,
-                    &targets[target_index].source,
-                    target_index,
-                    &position,
-                    event_position,
-                    event_type,
-                    database_id,
+    let mut reconnect_attempts = 0_usize;
+    loop {
+        let mut stream = match open_stream(pool, &position, server_id, options.blocking).await {
+            Ok(stream) => stream,
+            Err(CdcError::Mysql(error)) => {
+                position = reconnect_from_checkpoint(
                     &metadata,
-                    &mut pending,
-                    options.max_transaction_bytes,
-                )?;
-                position.pos = event_position;
-                if non_transactional && rows_event.flags().contains(RowsEventFlags::STMT_END) {
+                    database_id,
+                    report.server.flavor,
+                    &options,
+                    &mut reconnect_attempts,
+                    error,
+                )
+                .await?;
+                pending = PendingTransaction::default();
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let mut stream_error = None;
+        while let Some(event) = stream.next().await {
+            let event = match event {
+                Ok(event) => {
+                    reconnect_attempts = 0;
+                    event
+                }
+                Err(error) => {
+                    stream_error = Some(error);
+                    break;
+                }
+            };
+            let event_position = u64::from(event.header().log_pos());
+            let event_type = event.header().event_type_raw();
+            let Some(data) = event
+                .read_data()
+                .map_err(|error| CdcError::Decode(error.to_string()))?
+            else {
+                continue;
+            };
+            match data {
+                EventData::GtidEvent(gtid) => {
+                    position.pending_gtid = Some(GtidIdentity {
+                        sid: gtid.sid(),
+                        tag: gtid.tag().map(ToString::to_string),
+                        sequence: gtid.gno(),
+                    });
+                    pending.ordinal = 0;
+                }
+                EventData::RotateEvent(rotate) => {
+                    if !rotate.is_fake() {
+                        position.file = rotate.name().into_owned();
+                        position.pos = rotate.position();
+                    }
+                }
+                EventData::RowsEvent(rows_event) => {
+                    let table_map = stream.get_tme(rows_event.table_id()).ok_or_else(|| {
+                        CdcError::Decode(format!(
+                            "row event references unknown table-map ID {}",
+                            rows_event.table_id()
+                        ))
+                    })?;
+                    if !table_map
+                        .database_name()
+                        .eq_ignore_ascii_case(&report.database)
+                    {
+                        continue;
+                    }
+                    let table_name = table_map.table_name().into_owned();
+                    let Some(&target_index) = target_indexes.get(&table_name.to_ascii_lowercase())
+                    else {
+                        continue;
+                    };
+                    let non_transactional = targets[target_index]
+                        .source
+                        .engine
+                        .as_deref()
+                        .is_some_and(|engine| !engine.eq_ignore_ascii_case("InnoDB"));
+                    if !blocked_targets.contains(&target_index)
+                        && decode_rows_event(
+                            &rows_event,
+                            table_map,
+                            &targets[target_index].source,
+                            target_index,
+                            &position,
+                            event_position,
+                            event_type,
+                            database_id,
+                            &metadata,
+                            &mut pending,
+                            options.max_transaction_bytes,
+                        )?
+                    {
+                        blocked_targets.insert(target_index);
+                    }
+                    position.pos = event_position;
+                    if non_transactional && rows_event.flags().contains(RowsEventFlags::STMT_END) {
+                        let outcome = commit_pending(
+                            &mut targets,
+                            &mut metadata,
+                            database_id,
+                            &mut position,
+                            &mut pending,
+                        )?;
+                        commits += 1;
+                        mutations += outcome;
+                        emit_progress(&progress, commits, mutations, &position)?;
+                    }
+                }
+                EventData::XidEvent(_) => {
+                    position.pos = event_position;
                     let outcome = commit_pending(
                         &mut targets,
                         &mut metadata,
@@ -358,61 +404,121 @@ async fn run_cdc_inner(
                     mutations += outcome;
                     emit_progress(&progress, commits, mutations, &position)?;
                 }
-            }
-            EventData::XidEvent(_) => {
-                position.pos = event_position;
-                let outcome = commit_pending(
-                    &mut targets,
-                    &mut metadata,
-                    database_id,
-                    &mut position,
-                    &mut pending,
-                )?;
-                commits += 1;
-                mutations += outcome;
-                emit_progress(&progress, commits, mutations, &position)?;
-            }
-            EventData::QueryEvent(query) => {
-                let statement = query.query();
-                let normalized = statement.trim().to_ascii_uppercase();
-                position.pos = event_position;
-                if normalized == "BEGIN" {
-                    continue;
-                }
-                if normalized == "ROLLBACK" {
-                    pending = PendingTransaction::default();
-                }
-                let outcome = commit_pending(
-                    &mut targets,
-                    &mut metadata,
-                    database_id,
-                    &mut position,
-                    &mut pending,
-                )?;
-                commits += 1;
-                mutations += outcome;
-                emit_progress(&progress, commits, mutations, &position)?;
-            }
-            _ => {
-                if event_position > 0 {
+                EventData::QueryEvent(query) => {
+                    let statement = query.query();
+                    let normalized = statement.trim().to_ascii_uppercase();
                     position.pos = event_position;
+                    if normalized == "BEGIN" {
+                        continue;
+                    }
+                    if normalized == "ROLLBACK" {
+                        pending = PendingTransaction::default();
+                    }
+                    let outcome = commit_pending(
+                        &mut targets,
+                        &mut metadata,
+                        database_id,
+                        &mut position,
+                        &mut pending,
+                    )?;
+                    commits += 1;
+                    mutations += outcome;
+                    emit_progress(&progress, commits, mutations, &position)?;
+                }
+                _ => {
+                    if event_position > 0 {
+                        position.pos = event_position;
+                    }
                 }
             }
+            if options
+                .max_commits
+                .is_some_and(|maximum| commits >= maximum)
+            {
+                stream.close().await?;
+                return finish_result(commits, mutations, &position, targets);
+            }
         }
-        if options
-            .max_commits
-            .is_some_and(|maximum| commits >= maximum)
-        {
-            stream.close().await?;
-            return finish_result(commits, mutations, &position, targets);
+        if let Some(error) = stream_error {
+            position = reconnect_from_checkpoint(
+                &metadata,
+                database_id,
+                report.server.flavor,
+                &options,
+                &mut reconnect_attempts,
+                error,
+            )
+            .await?;
+            pending = PendingTransaction::default();
+            continue;
         }
+        if options.blocking {
+            let error = std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "blocking binlog stream ended",
+            )
+            .into();
+            position = reconnect_from_checkpoint(
+                &metadata,
+                database_id,
+                report.server.flavor,
+                &options,
+                &mut reconnect_attempts,
+                error,
+            )
+            .await?;
+            pending = PendingTransaction::default();
+            continue;
+        }
+        if !pending.mutations.is_empty() {
+            return Err(CdcError::Decode(
+                "binlog stream ended inside a source transaction".to_owned(),
+            ));
+        }
+        return finish_result(commits, mutations, &position, targets);
     }
-    if !pending.mutations.is_empty() {
-        return Err(CdcError::Decode(
-            "binlog stream ended inside a source transaction".to_owned(),
-        ));
+}
+
+async fn open_stream(
+    pool: &Pool,
+    position: &StreamPosition,
+    server_id: u32,
+    blocking: bool,
+) -> Result<BinlogStream, CdcError> {
+    let connection = pool.get_conn().await?;
+    let request = position.request(server_id, blocking)?;
+    connection
+        .get_binlog_stream(request)
+        .await
+        .map_err(CdcError::Mysql)
+}
+
+async fn reconnect_from_checkpoint(
+    metadata: &MetaStore,
+    database_id: &str,
+    flavor: SourceFlavor,
+    options: &CdcOptions,
+    attempts: &mut usize,
+    error: MysqlError,
+) -> Result<StreamPosition, CdcError> {
+    if matches!(&error, MysqlError::Server(server) if server.code == 1236) {
+        return Err(classify_stream_error(metadata, database_id, error)?);
     }
-    finish_result(commits, mutations, &position, targets)
+    if !options.blocking || *attempts >= options.max_reconnect_attempts {
+        return Err(CdcError::Mysql(error));
+    }
+    let exponent = u32::try_from((*attempts).min(6))
+        .map_err(|conversion| CdcError::Decode(conversion.to_string()))?;
+    let delay = options
+        .reconnect_initial_delay
+        .saturating_mul(1_u32 << exponent)
+        .min(Duration::from_secs(5));
+    *attempts += 1;
+    tokio::time::sleep(delay).await;
+    let checkpoint = metadata
+        .snapshot_checkpoint(database_id)?
+        .ok_or_else(|| CdcError::InvalidCheckpoint("CDC position disappeared".to_owned()))?;
+    StreamPosition::from_checkpoint(checkpoint, flavor)
 }
 
 fn validate_configuration(
@@ -485,7 +591,8 @@ fn decode_rows_event(
     metadata: &MetaStore,
     pending: &mut PendingTransaction,
     maximum_bytes: usize,
-) -> Result<(), CdcError> {
+) -> Result<bool, CdcError> {
+    let mut failed = false;
     for (row_index, row) in rows_event.rows(table_map).enumerate() {
         let row = match row {
             Ok(row) => row,
@@ -502,6 +609,8 @@ fn decode_rows_event(
                     },
                     &error.to_string(),
                 )?;
+                metadata.mark_table_needs_resync(database_id, &source.name, &error.to_string())?;
+                failed = true;
                 continue;
             }
         };
@@ -527,9 +636,28 @@ fn decode_rows_event(
                 &error.to_string(),
             )?;
             metadata.mark_table_needs_resync(database_id, &source.name, &error.to_string())?;
+            failed = true;
         }
     }
-    Ok(())
+    if failed {
+        discard_target_mutations(pending, target_index);
+    }
+    Ok(failed)
+}
+
+fn discard_target_mutations(pending: &mut PendingTransaction, target_index: usize) {
+    let mut removed_bytes = 0_usize;
+    pending.mutations.retain(|mutation| {
+        if mutation.target_index == target_index {
+            removed_bytes = removed_bytes
+                .saturating_add(mutation.row.estimated_bytes())
+                .saturating_add(std::mem::size_of::<PendingMutation>());
+            false
+        } else {
+            true
+        }
+    });
+    pending.retained_bytes = pending.retained_bytes.saturating_sub(removed_bytes);
 }
 
 fn decode_row_pair(
