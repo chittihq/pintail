@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- MySQL-dialect SQL parsing façade with backtick identifiers, MySQL
+  offset/count limits, metadata statements, explain, common table expressions,
+  and explicit single-statement request validation.
+
 ## [M1] - 2026-07-30
 
 ### Added

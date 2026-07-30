@@ -7,5 +7,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+sqlparser.workspace = true
+
 [lints]
 workspace = true
