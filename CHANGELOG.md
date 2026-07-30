@@ -20,6 +20,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Live table writers can publish compatible nullable-column additions and
   column drops by stable ID without closing the store; pinned readers retain
   their original schema view.
+- Source DDL generations and serialized columns are persisted idempotently;
+  dropped source tables are marked as retained orphans instead of deleting
+  replica data.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 
-const CURRENT_SCHEMA_VERSION: u32 = 3;
+const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -131,6 +131,19 @@ pub struct PollChunkStateUpdate<'a> {
     pub source_checksum: &'a str,
     /// Replica-side normalized checksum after the completed cycle.
     pub replica_checksum: &'a str,
+}
+
+/// One persisted source-table schema generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaHistoryRecord {
+    /// Monotonic table schema generation.
+    pub version: u32,
+    /// Source DDL that produced this generation, when available.
+    pub ddl_text: Option<String>,
+    /// Serialized probed source columns.
+    pub columns_json: String,
+    /// Time at which the generation was applied or quarantined.
+    pub applied_at: String,
 }
 
 impl StoredSetting {
@@ -747,6 +760,126 @@ impl MetaStore {
             .context("failed to decode resnapshot tables")
     }
 
+    /// Persists a table schema generation and advances the table catalog
+    /// version in one transaction.
+    ///
+    /// Replaying the same generation is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the parent table is absent or the transaction
+    /// cannot commit.
+    pub fn record_schema_history(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        version: u32,
+        ddl_text: Option<&str>,
+        columns_json: &str,
+        applied_at: &str,
+    ) -> Result<()> {
+        let version = i64::from(version);
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin schema-history update")?;
+        transaction
+            .execute(
+                "INSERT INTO schema_history (\
+                   db_id, table_name, version, ddl_text, columns_json, applied_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(db_id, table_name, version) DO UPDATE SET \
+                   ddl_text = excluded.ddl_text, \
+                   columns_json = excluded.columns_json, \
+                   applied_at = excluded.applied_at",
+                (
+                    database_id,
+                    table_name,
+                    version,
+                    ddl_text,
+                    columns_json,
+                    applied_at,
+                ),
+            )
+            .context("failed to persist schema history")?;
+        transaction
+            .execute(
+                "UPDATE tables SET schema_version = MAX(schema_version, ?3) \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, version),
+            )
+            .context("failed to advance table schema version")?;
+        transaction
+            .commit()
+            .context("failed to commit schema-history update")
+    }
+
+    /// Returns a table's persisted schema generations in version order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when history cannot be queried or contains an invalid
+    /// version.
+    pub fn schema_history(
+        &self,
+        database_id: &str,
+        table_name: &str,
+    ) -> Result<Vec<SchemaHistoryRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT version, ddl_text, columns_json, applied_at \
+                 FROM schema_history WHERE db_id = ?1 AND table_name = ?2 \
+                 ORDER BY version",
+            )
+            .context("failed to prepare schema-history query")?;
+        statement
+            .query_map((database_id, table_name), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .context("failed to query schema history")?
+            .map(|row| {
+                let (version, ddl_text, columns_json, applied_at) =
+                    row.context("failed to decode schema history")?;
+                Ok(SchemaHistoryRecord {
+                    version: u32::try_from(version)
+                        .context("schema history contains an invalid version")?,
+                    ddl_text,
+                    columns_json,
+                    applied_at,
+                })
+            })
+            .collect()
+    }
+
+    /// Marks a dropped source table as retained, read-only orphaned data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table state cannot be persisted.
+    pub fn mark_table_orphaned(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        ddl_text: &str,
+        now: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET state = 'excluded', orphaned_at = ?4, \
+                   last_error = ?3 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, ddl_text, now),
+            )
+            .with_context(|| format!("failed to mark {database_id}.{table_name} orphaned"))?;
+        Ok(())
+    }
+
     /// Clears prior snapshot progress and prepares a fresh source handoff.
     ///
     /// The caller resets table storage before invoking the snapshot engine.
@@ -1091,6 +1224,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 3 {
         migration_v3(connection.transaction()?)?;
     }
+    if found < 4 {
+        migration_v4(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1119,4 +1255,13 @@ fn migration_v3(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 3")
+}
+
+fn migration_v4(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/004_schema_tracking.sql"))
+        .context("failed to apply metadata migration 4")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 4")
 }
