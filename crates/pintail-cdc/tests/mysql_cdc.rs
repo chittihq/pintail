@@ -1,9 +1,13 @@
 use std::{
     collections::BTreeMap,
-    io::Write as _,
+    fmt::Write as _,
+    io::{Read as _, Write as _},
+    net::{TcpListener, TcpStream},
     path::Path,
-    process::{Command, Output, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Child, Command, Output, Stdio},
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use mysql_async::{Opts, Pool};
@@ -166,6 +170,145 @@ impl Drop for MysqlContainer {
             .stderr(Stdio::null())
             .status();
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn cdc_restart_survives_sigkill_during_sustained_writes() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE restart_events (\
+               id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64)\
+             );",
+        )
+        .expect("restart source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("restart DSN"));
+    let report = probe(&pool, "app").await.expect("probe restart source");
+    let workspace = tempfile::tempdir().expect("restart workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("restart metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register restart source");
+    let source = report.tables.first().expect("restart table");
+    let store = TableStore::open(
+        workspace.path().join("restart_events"),
+        source.table_schema().expect("restart schema"),
+        StoreOptions::default(),
+    )
+    .expect("restart store");
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![SnapshotTarget::new(source.clone(), store).expect("restart snapshot target")],
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("restart baseline snapshot");
+    drop(snapshot);
+
+    let mut writer = spawn_sustained_writes(&mysql, 200);
+    kill_cdc_worker(&mysql.dsn(), &metadata_path, workspace.path(), DATABASE_ID);
+    assert!(
+        writer
+            .try_wait()
+            .expect("inspect sustained writer")
+            .is_none(),
+        "source writer must still be active when CDC is killed"
+    );
+    assert!(
+        writer.wait().expect("wait sustained writer").success(),
+        "sustained source writes must complete"
+    );
+
+    let store = TableStore::open(
+        workspace.path().join("restart_events"),
+        source.table_schema().expect("recovery schema"),
+        StoreOptions::default(),
+    )
+    .expect("reopen killed store");
+    let recovered = finite_catch_up(
+        &pool,
+        &metadata_path,
+        &report,
+        vec![CdcTarget::new(source.clone(), store).expect("recovery target")],
+    )
+    .await
+    .expect("restart catch-up");
+    let rows = recovered.targets[0]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("restart rows");
+    assert_eq!(rows.len(), 200);
+    assert_eq!(
+        rows.iter()
+            .map(|row| match row.values()[0] {
+                Value::UInt64(id) => id,
+                ref value => panic!("unexpected restart ID {value:?}"),
+            })
+            .sum::<u64>(),
+        19_900
+    );
+    pool.disconnect().await.expect("disconnect restart pool");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "helper process for the cdc-restart SIGKILL gate"]
+async fn cdc_crash_worker() {
+    let Ok(dsn) = std::env::var("PINTAIL_CDC_CRASH_DSN") else {
+        return;
+    };
+    let metadata_path = std::env::var("PINTAIL_CDC_CRASH_META").expect("crash metadata");
+    let workspace = std::env::var("PINTAIL_CDC_CRASH_WORKSPACE").expect("crash workspace");
+    let database_id = std::env::var("PINTAIL_CDC_CRASH_DATABASE").expect("crash database");
+    let acknowledgement = std::env::var("PINTAIL_CDC_CRASH_ACK").expect("crash acknowledgement");
+    let acknowledgement = Arc::new(Mutex::new(
+        TcpStream::connect(acknowledgement).expect("connect crash acknowledgement"),
+    ));
+    let pool = Pool::new(Opts::from_url(&dsn).expect("crash worker DSN"));
+    let report = probe(&pool, "app").await.expect("crash worker probe");
+    let targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                Path::new(&workspace).join(&source.name),
+                source.table_schema().expect("crash source schema"),
+                StoreOptions::default(),
+            )
+            .expect("crash worker store");
+            CdcTarget::new(source.clone(), store).expect("crash worker target")
+        })
+        .collect();
+    let _result = pintail_cdc::run_cdc_with_progress(
+        &pool,
+        Path::new(&metadata_path),
+        &database_id,
+        &report,
+        targets,
+        CdcOptions::default(),
+        move |_| {
+            acknowledgement
+                .lock()
+                .expect("crash acknowledgement lock")
+                .write_all(&[1])
+                .expect("write crash acknowledgement");
+            thread::sleep(Duration::from_millis(20));
+        },
+    )
+    .await;
 }
 
 struct CompatibilityVariant {
@@ -906,6 +1049,84 @@ fn cdc_mutations() -> &'static str {
        _latin1 0x636166E9,'βeta','red,blue',\
        JSON_OBJECT('b',JSON_ARRAY(TRUE,NULL),'a',1),0x00FF10,0xDEADBEEF\
      );"
+}
+
+fn spawn_sustained_writes(mysql: &MysqlContainer, rows: u64) -> Child {
+    let sql = (0..rows).fold(String::new(), |mut sql, id| {
+        write!(
+            sql,
+            "INSERT INTO restart_events VALUES ({id},'event-{id}');\
+                 DO SLEEP(0.02);"
+        )
+        .expect("build sustained source writes");
+        sql
+    });
+    Command::new("docker")
+        .args([
+            "exec",
+            &mysql.name,
+            &mysql.client,
+            "--user=root",
+            "--password=pintail-root",
+            "--database=app",
+            "--execute",
+            &sql,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn sustained source writer")
+}
+
+fn kill_cdc_worker(dsn: &str, metadata_path: &Path, workspace: &Path, database_id: &str) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind CDC acknowledgement");
+    let address = listener.local_addr().expect("CDC acknowledgement address");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking CDC acknowledgement");
+    let executable = std::env::current_exe().expect("CDC test executable");
+    let mut child = Command::new(executable)
+        .args(["--exact", "cdc_crash_worker", "--ignored"])
+        .env("PINTAIL_CDC_CRASH_DSN", dsn)
+        .env("PINTAIL_CDC_CRASH_META", metadata_path)
+        .env("PINTAIL_CDC_CRASH_WORKSPACE", workspace)
+        .env("PINTAIL_CDC_CRASH_DATABASE", database_id)
+        .env("PINTAIL_CDC_CRASH_ACK", address.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn CDC crash worker");
+    let mut acknowledgement = None;
+    for _ in 0..3_000 {
+        if let Some(status) = child.try_wait().expect("poll CDC crash worker") {
+            panic!("CDC crash worker exited before SIGKILL: {status}");
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                acknowledgement = Some(stream);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("accept CDC acknowledgement: {error}"),
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut acknowledgement = acknowledgement.unwrap_or_else(|| {
+        let _kill = child.kill();
+        panic!("CDC crash worker did not connect its acknowledgement socket")
+    });
+    acknowledgement
+        .set_nonblocking(false)
+        .expect("blocking CDC acknowledgement");
+    acknowledgement
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("CDC acknowledgement timeout");
+    acknowledgement
+        .read_exact(&mut [0_u8; 10])
+        .expect("ten durable CDC checkpoints");
+    child.kill().expect("SIGKILL CDC worker");
+    let status = child.wait().expect("reap CDC crash worker");
+    assert!(!status.success(), "SIGKILLed CDC worker must fail");
 }
 
 fn checked_output(command: &mut Command, action: &str) -> Result<Output, String> {
