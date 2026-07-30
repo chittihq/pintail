@@ -1566,6 +1566,41 @@ tbody tr:hover td {
   align-items: start;
 }
 
+.wire-status {
+  overflow: hidden;
+}
+
+.endpoint-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--panel-hover);
+}
+
+.endpoint-line code {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+}
+
+.endpoint-pulse {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 0.22rem color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.endpoint-pulse.live {
+  background: var(--green);
+  box-shadow: 0 0 0 0.22rem color-mix(in srgb, var(--green) 14%, transparent);
+}
+
 .setting-row {
   display: flex;
   width: 100%;
@@ -1618,6 +1653,44 @@ tbody tr:hover td {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.8rem;
   margin-bottom: 0.9rem;
+}
+
+.protocol-note {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--line);
+  color: var(--muted-text);
+  background: var(--panel-hover);
+}
+
+.protocol-note > svg {
+  color: var(--signal);
+}
+
+.protocol-note > div {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.protocol-note strong {
+  color: var(--text);
+  font-size: 0.7rem;
+}
+
+.protocol-note span {
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
+.protocol-note .text-button {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  white-space: nowrap;
 }
 
 .snippet pre {
@@ -1859,6 +1932,15 @@ tbody tr:hover td {
 
   .pipeline {
     grid-template-columns: 1fr;
+  }
+
+  .protocol-note {
+    grid-template-columns: auto 1fr;
+  }
+
+  .protocol-note .text-button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .pipeline-track {

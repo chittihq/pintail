@@ -236,6 +236,30 @@ async fn health_endpoint_reports_that_pintail_is_ready() {
 }
 
 #[tokio::test]
+async fn status_reports_the_live_wire_endpoint() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let state =
+        configured_state(data.path()).with_wire_bind("0.0.0.0:4406".parse().expect("wire bind"));
+    let response = pintail_api::router_with_state(state)
+        .oneshot(
+            Request::builder()
+                .uri("/status")
+                .body(Body::empty())
+                .expect("status request"),
+        )
+        .await
+        .expect("status response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let status = json_response(response).await;
+    assert_eq!(status["status"], "ready");
+    assert_eq!(status["wire"]["enabled"], true);
+    assert_eq!(status["wire"]["bind"], "0.0.0.0:4406");
+    assert_eq!(status["wire"]["host"], "0.0.0.0");
+    assert_eq!(status["wire"]["port"], 4406);
+    assert_eq!(status["wire"]["read_only"], true);
+}
+
+#[tokio::test]
 async fn root_serves_the_embedded_dashboard() {
     let response = pintail_api::router()
         .oneshot(

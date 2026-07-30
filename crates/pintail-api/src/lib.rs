@@ -14,7 +14,7 @@ mod state;
 use axum::{
     Json, Router,
     body::Body,
-    extract::Path,
+    extract::{Path, State},
     http::{StatusCode, header},
     middleware,
     response::Response,
@@ -113,19 +113,39 @@ struct Health {
 }
 
 #[derive(Serialize)]
-struct Status {
+struct NodeStatusResponse {
     status: &'static str,
     version: &'static str,
+    wire: WireStatus,
+}
+
+#[derive(Serialize)]
+struct WireStatus {
+    enabled: bool,
+    bind: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    read_only: bool,
+    authentication: &'static str,
 }
 
 async fn health() -> Json<Health> {
     Json(Health { status: "ok" })
 }
 
-async fn status() -> Json<Status> {
-    Json(Status {
+async fn status(State(state): State<ApiState>) -> Json<NodeStatusResponse> {
+    let wire_bind = state.wire_bind();
+    Json(NodeStatusResponse {
         status: "ready",
         version: env!("CARGO_PKG_VERSION"),
+        wire: WireStatus {
+            enabled: wire_bind.is_some(),
+            bind: wire_bind.map(|bind| bind.to_string()),
+            host: wire_bind.map(|bind| bind.ip().to_string()),
+            port: wire_bind.map(|bind| bind.port()),
+            read_only: true,
+            authentication: "database_api_key",
+        },
     })
 }
 

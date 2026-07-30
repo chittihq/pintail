@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -21,6 +22,7 @@ const NONCE_BYTES: usize = 12;
 #[derive(Clone)]
 pub struct ApiState {
     inner: Option<Arc<ApiStateInner>>,
+    wire_bind: Option<SocketAddr>,
 }
 
 struct ApiStateInner {
@@ -58,11 +60,26 @@ impl ApiState {
                 events,
                 active_jobs: Mutex::new(BTreeSet::new()),
             })),
+            wire_bind: None,
         })
     }
 
     pub(crate) const fn unconfigured() -> Self {
-        Self { inner: None }
+        Self {
+            inner: None,
+            wire_bind: None,
+        }
+    }
+
+    /// Records the wire endpoint exposed by the process hosting this API.
+    #[must_use]
+    pub const fn with_wire_bind(mut self, wire_bind: SocketAddr) -> Self {
+        self.wire_bind = Some(wire_bind);
+        self
+    }
+
+    pub(crate) const fn wire_bind(&self) -> Option<SocketAddr> {
+        self.wire_bind
     }
 
     pub(crate) fn metadata(&self) -> Result<MetaStore, ApiError> {

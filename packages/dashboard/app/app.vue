@@ -57,6 +57,19 @@ type Page =
   | 'settings'
   | 'connect'
 
+type NodeStatus = {
+  status: string
+  version: string
+  wire: {
+    enabled: boolean
+    bind: string | null
+    host: string | null
+    port: number | null
+    read_only: boolean
+    authentication: string
+  }
+}
+
 const nav = [
   { id: 'overview' as Page, label: 'Overview', icon: LayoutDashboard },
   { id: 'databases' as Page, label: 'Databases', icon: Database },
@@ -78,6 +91,7 @@ const error = ref('')
 const notice = ref('')
 const dark = ref(false)
 const session = ref<Session | null>(null)
+const nodeStatus = ref<NodeStatus | null>(null)
 const authForm = reactive({ email: '', password: '' })
 const databases = ref<DatabaseRecord[]>([])
 const statuses = ref<Record<string, DatabaseStatus>>({})
@@ -156,6 +170,7 @@ onMounted(async () => {
   restoreToken()
   dark.value = window.localStorage.getItem('pintail.theme') === 'dark'
   applyTheme()
+  await loadNodeStatus()
   try {
     const setup = await request<{ required: boolean }>('/auth/setup/status')
     authMode.value = setup.required ? 'setup' : 'login'
@@ -199,6 +214,20 @@ async function submitAuth() {
     error.value = messageOf(failure)
   } finally {
     authenticating.value = false
+  }
+}
+
+async function loadNodeStatus() {
+  try {
+    const response = await fetch('/status')
+    if (!response.ok) return
+    nodeStatus.value = (await response.json()) as NodeStatus
+    connectHost.value = window.location.hostname || '127.0.0.1'
+    if (nodeStatus.value.wire.port) {
+      connectPort.value = String(nodeStatus.value.wire.port)
+    }
+  } catch {
+    // Connection help remains editable when runtime discovery is unavailable.
   }
 }
 
@@ -663,13 +692,49 @@ function snapshotPercent(table: SnapshotStatus['tables'][number]) {
 
 function connectSnippet(kind: 'mysql' | 'node' | 'python') {
   const database = selectedConnectDatabase.value?.name || 'analytics'
+  const host = connectHost.value || '127.0.0.1'
+  const port = Math.min(65_535, Math.max(1, Number.parseInt(connectPort.value, 10) || 3306))
   if (kind === 'node') {
-    return `mysql.createConnection({ host: '${connectHost.value}', port: ${connectPort.value}, user: '${database}', password: '${connectKey.value}' })`
+    return `// bun add mysql2
+import mysql from 'mysql2/promise'
+
+const db = await mysql.createConnection({
+  host: ${JSON.stringify(host)},
+  port: ${port},
+  user: ${JSON.stringify(database)},
+  password: ${JSON.stringify(connectKey.value)},
+  database: ${JSON.stringify(database)},
+})
+const [rows] = await db.query('SELECT * FROM events LIMIT 10')
+console.table(rows)
+await db.end()`
   }
   if (kind === 'python') {
-    return `mysql.connector.connect(host="${connectHost.value}", port=${connectPort.value}, user="${database}", password="${connectKey.value}")`
+    return `# uv run --with pymysql python connect.py
+import pymysql
+
+db = pymysql.connect(
+    host=${JSON.stringify(host)},
+    port=${port},
+    user=${JSON.stringify(database)},
+    password=${JSON.stringify(connectKey.value)},
+    database=${JSON.stringify(database)},
+)
+with db.cursor() as cursor:
+    cursor.execute("SELECT * FROM events LIMIT 10")
+    print(cursor.fetchall())
+db.close()`
   }
-  return `mysql -h ${connectHost.value} -P ${connectPort.value} -u ${database} -p${connectKey.value}`
+  return `MYSQL_PWD=${shellQuote(connectKey.value)} mysql \\
+  --protocol=tcp \\
+  --host=${shellQuote(host)} \\
+  --port=${port} \\
+  --user=${shellQuote(database)} \\
+  --database=${shellQuote(database)}`
+}
+
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`
 }
 
 function describeTable(table: TableSummary) {
@@ -1089,17 +1154,18 @@ function describeTable(table: TableSummary) {
         <div class="settings-grid">
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Operator</p><h2>Current session</h2></div><Server :size="19" /></div><dl class="definition-grid"><div><dt>Subject</dt><dd class="mono">{{ session.subject }}</dd></div><div><dt>Role</dt><dd>{{ session.role }}</dd></div><div><dt>Scopes</dt><dd>{{ session.scopes.join(', ') }}</dd></div><div><dt>Session</dt><dd>12-hour signed JWT</dd></div></dl></article>
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Appearance</p><h2>Interface</h2></div><button class="icon-button" @click="toggleTheme"><Sun v-if="dark" :size="16" /><Moon v-else :size="16" /></button></div><button class="setting-row" @click="toggleTheme"><span><strong>Dark instrument panel</strong><small>Stored only in this browser.</small></span><span class="switch" :class="{ on: dark }"><span /></span></button></article>
-          <article class="panel"><div class="panel-heading"><div><p class="kicker">MySQL wire</p><h2>Client endpoint</h2></div><Badge class="tone-warning">M7</Badge></div><dl class="definition-grid"><div><dt>Listen</dt><dd>127.0.0.1:3306</dd></div><div><dt>Writes</dt><dd>Rejected</dd></div><div><dt>Identity</dt><dd>Database + API key</dd></div><div><dt>Status</dt><dd>Not activated</dd></div></dl></article>
+          <article class="panel wire-status"><div class="panel-heading"><div><p class="kicker">MySQL wire</p><h2>Client endpoint</h2></div><Badge :class="nodeStatus?.wire.enabled ? 'tone-positive' : 'tone-negative'">{{ nodeStatus?.wire.enabled ? 'Live' : 'Unavailable' }}</Badge></div><div class="endpoint-line"><span class="endpoint-pulse" :class="{ live: nodeStatus?.wire.enabled }" /><code>{{ nodeStatus?.wire.bind || 'Endpoint unavailable' }}</code></div><dl class="definition-grid"><div><dt>Mode</dt><dd>Read-only</dd></div><div><dt>Authentication</dt><dd>Database API key</dd></div><div><dt>Username</dt><dd>Database name</dd></div><div><dt>Protocol</dt><dd>MySQL native</dd></div></dl></article>
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Telemetry</p><h2>Operations</h2></div><Badge class="tone-warning">M8</Badge></div><dl class="definition-grid"><div><dt>Metrics</dt><dd>/metrics</dd></div><div><dt>Exposure</dt><dd>Loopback</dd></div><div><dt>Log level</dt><dd>info</dd></div><div><dt>Supervisor</dt><dd>Finite handoff</dd></div></dl></article>
         </div>
       </section>
 
       <section v-else-if="page === 'connect'" class="content">
         <header class="page-heading"><p class="kicker">Client handoff</p><h1>Connect to Pintail</h1><p class="muted">The database name is the username; its scoped API key is the password.</p></header>
-        <article class="panel connect-controls"><label><span>Database</span><select v-model="keyDatabaseId"><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></label><label><span>Host</span><input v-model="connectHost"></label><label><span>Port</span><input v-model="connectPort" inputmode="numeric"></label><label><span>API key</span><input v-model="connectKey" type="password"></label></article>
+        <form class="panel connect-controls" @submit.prevent><label><span>Database</span><select v-model="keyDatabaseId"><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></label><label><span>Client host</span><input v-model="connectHost" autocomplete="url"></label><label><span>Wire port</span><input v-model="connectPort" inputmode="numeric"></label><label><span>Query-scoped API key</span><input v-model="connectKey" type="password" autocomplete="off"></label></form>
+        <div class="protocol-note"><Radio :size="17" /><div><strong>Native challenge, no stored plaintext.</strong><span>Use MySQL 8.4, mysql2, PyMySQL, DBeaver, or Metabase. Oracle's MySQL 9.x CLI removed its native-password client plugin.</span></div><button class="text-button" @click="go('keys')">Create or rotate key <ArrowRight :size="13" /></button></div>
         <div class="snippet-grid">
           <article v-for="kind in (['mysql', 'node', 'python'] as const)" :key="kind" class="panel snippet"><div class="panel-heading"><h2>{{ kind === 'mysql' ? 'MySQL CLI' : kind === 'node' ? 'Node.js' : 'Python' }}</h2><button class="icon-button" @click="copy(connectSnippet(kind))"><Copy :size="15" /></button></div><pre>{{ connectSnippet(kind) }}</pre></article>
-          <article class="panel snippet"><div class="panel-heading"><h2>DBeaver / Metabase</h2><CircleHelp :size="17" /></div><dl class="definition-grid"><div><dt>Driver</dt><dd>MySQL 8</dd></div><div><dt>User</dt><dd>{{ selectedConnectDatabase?.name || 'analytics' }}</dd></div><div><dt>Password</dt><dd>Database API key</dd></div><div><dt>SSL</dt><dd>As configured at ingress</dd></div></dl></article>
+          <article class="panel snippet"><div class="panel-heading"><h2>DBeaver / Metabase</h2><CircleHelp :size="17" /></div><dl class="definition-grid"><div><dt>Driver</dt><dd>MySQL 8</dd></div><div><dt>Host / port</dt><dd>{{ connectHost }}:{{ connectPort }}</dd></div><div><dt>Database / user</dt><dd>{{ selectedConnectDatabase?.name || 'analytics' }}</dd></div><div><dt>Password</dt><dd>Query-scoped API key</dd></div></dl><p class="muted panel-note">Keep SSL disabled for a loopback endpoint. Terminate TLS at your private ingress when clients connect across a network.</p></article>
         </div>
       </section>
     </div>

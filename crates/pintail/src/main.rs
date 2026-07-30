@@ -42,14 +42,13 @@ async fn main() -> Result<()> {
     let wire_listener = TcpListener::bind(config.wire_bind())
         .await
         .with_context(|| format!("failed to bind MySQL wire server to {}", config.wire_bind()))?;
+    let wire_address = wire_listener.local_addr()?;
+    let api_state = api_state.with_wire_bind(wire_address);
     eprintln!(
         "pintail listening on http://{}",
         http_listener.local_addr()?
     );
-    eprintln!(
-        "pintail MySQL wire listening on {}",
-        wire_listener.local_addr()?
-    );
+    eprintln!("pintail MySQL wire listening on {wire_address}");
 
     let (shutdown, _) = tokio::sync::broadcast::channel::<()>(1);
     let shutdown_signal_sender = shutdown.clone();

@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SHOW`, `DESCRIBE`, `information_schema`, BI-style aggregates, EXPLAIN,
   session setup commands, bounded results, typed binary rows, and clear write
   rejection are covered by the compatibility gate.
+- Node status now reports the active wire bind and read-only authentication
+  policy. The dashboard marks that endpoint live and generates complete,
+  copyable MySQL CLI, Bun/mysql2, and PyMySQL examples plus DBeaver and
+  Metabase connection fields from the selected database, host, port, and key.
 
 ### Verification
 
