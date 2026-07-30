@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Query binder for table aliases, qualified and ambiguous columns, wildcard
   expansion, literals, core scalar operators, predicates, DISTINCT, and
   normalized MySQL limits, with stable catalog IDs in every bound reference.
+- Logical query plans with explicit one-row, scan, cross-join, filter,
+  projection, distinct, and limit operators plus conservative catalog-based
+  cardinality estimates.
 
 ## [M1] - 2026-07-30
 

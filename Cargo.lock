@@ -787,6 +787,11 @@ version = "0.1.0"
 [[package]]
 name = "pintail-exec"
 version = "0.1.0"
+dependencies = [
+ "pintail-catalog",
+ "pintail-sql",
+ "pintail-types",
+]
 
 [[package]]
 name = "pintail-meta"

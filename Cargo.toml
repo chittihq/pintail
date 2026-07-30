@@ -34,8 +34,10 @@ lz4_flex = "0.11.5"
 mime_guess = "2.0.5"
 pintail-api = { path = "crates/pintail-api" }
 pintail-catalog = { path = "crates/pintail-catalog" }
+pintail-exec = { path = "crates/pintail-exec" }
 pintail-meta = { path = "crates/pintail-meta" }
 pintail-store = { path = "crates/pintail-store" }
+pintail-sql = { path = "crates/pintail-sql" }
 pintail-types = { path = "crates/pintail-types" }
 rand = "0.9.1"
 rusqlite = { version = "0.37.0", features = ["bundled"] }

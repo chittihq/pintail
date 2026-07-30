@@ -7,5 +7,12 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+pintail-sql.workspace = true
+pintail-types.workspace = true
+
+[dev-dependencies]
+pintail-catalog.workspace = true
+
 [lints]
 workspace = true
