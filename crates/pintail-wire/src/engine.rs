@@ -382,6 +382,7 @@ fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, Q
     let mut provider = SnapshotScanProvider::new(indexed)
         .map_err(|error| QueryError::Internal(error.to_string()))?;
     for (index, target) in replica.targets.iter().enumerate() {
+        let storage_key = target.source.key_column_ids();
         let unique_keys = target
             .source
             .unique_keys
@@ -399,6 +400,7 @@ fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, Q
                     .collect::<Vec<_>>()
             })
             .filter(|key| !key.is_empty())
+            .filter(|key| *key != storage_key)
             .collect::<Vec<_>>();
         if !unique_keys.is_empty() {
             provider
