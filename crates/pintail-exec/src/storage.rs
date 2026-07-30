@@ -182,6 +182,31 @@ mod tests {
             ]
         );
         assert!(execution.next_batch().expect("end").is_none());
+
+        let statement = parse_statement(
+            "WITH recent AS (\
+               SELECT id, name AS label FROM events WHERE id >= 2\
+             ) \
+             SELECT label FROM recent WHERE id <= 2",
+        )
+        .expect("parse CTE");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind CTE");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("CTE physical plan");
+        let mut execution =
+            Execution::start(physical, &provider, 64 * 1024).expect("CTE execution");
+        let batch = execution
+            .next_batch()
+            .expect("CTE pull")
+            .expect("CTE result");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(1)),
+            Some(&Value::Utf8("Beta".to_owned()))
+        );
+        assert_eq!(batch.visible_row_count(), 1);
+        assert!(execution.next_batch().expect("CTE end").is_none());
     }
 
     #[test]
@@ -367,6 +392,39 @@ mod tests {
                     Some(Value::Utf8("event-b".to_owned())),
                     Some(Value::Utf8("user-b".to_owned()))
                 )
+            ]
+        );
+
+        let statement = parse_statement(
+            "WITH named_events AS (SELECT id, name AS event_name FROM events) \
+             SELECT named_events.event_name, users.name \
+             FROM named_events INNER JOIN users ON named_events.id = users.id \
+             ORDER BY named_events.event_name",
+        )
+        .expect("parse CTE join");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind CTE join");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("CTE join plan");
+        let mut execution =
+            Execution::start(physical, &provider, 64 * 1024).expect("CTE join execution");
+        let batch = execution
+            .next_batch()
+            .expect("CTE join pull")
+            .expect("CTE join batch");
+        assert_eq!(
+            batch.column(0).expect("events").values(),
+            [
+                Value::Utf8("event-a".to_owned()),
+                Value::Utf8("event-b".to_owned()),
+            ]
+        );
+        assert_eq!(
+            batch.column(1).expect("users").values(),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
             ]
         );
     }

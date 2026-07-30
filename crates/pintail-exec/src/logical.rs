@@ -1,5 +1,5 @@
 use pintail_sql::{
-    BoundAggregate, BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundOrderKey,
+    BoundAggregate, BoundColumn, BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundOrderKey,
     BoundProjection, BoundQuery, BoundTable,
 };
 
@@ -37,6 +37,13 @@ pub enum LogicalPlan {
     OneRow,
     /// A storage-backed relation.
     Scan(Scan),
+    /// A derived query exposed through a fresh typed relation layout.
+    Derived {
+        /// Complete inner query plan.
+        input: Box<LogicalPlan>,
+        /// Synthetic columns visible to the containing query.
+        columns: Vec<BoundColumn>,
+    },
     /// Cartesian product of two or more inputs.
     CrossJoin {
         /// Inputs in semantic source order.
@@ -128,7 +135,8 @@ impl LogicalPlan {
                     .checked_mul(right.estimated_rows()?.max(1)),
                 BoundJoinKind::Semi | BoundJoinKind::Anti => left.estimated_rows(),
             },
-            Self::Filter { input, .. }
+            Self::Derived { input, .. }
+            | Self::Filter { input, .. }
             | Self::Distinct { input }
             | Self::Project { input, .. }
             | Self::Aggregate { input, .. }
@@ -223,11 +231,11 @@ fn source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
     let mut inputs = from
         .into_iter()
         .map(|source| {
-            let mut plan = scan_plan(source.base);
+            let mut plan = relation_plan(source.base);
             for join in source.joins {
                 plan = LogicalPlan::Join {
                     left: Box::new(plan),
-                    right: Box::new(scan_plan(join.table)),
+                    right: Box::new(relation_plan(join.table)),
                     kind: join.kind,
                     condition: join.condition,
                 };
@@ -243,7 +251,13 @@ fn source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
     }
 }
 
-fn scan_plan(table: BoundTable) -> LogicalPlan {
+fn relation_plan(mut table: BoundTable) -> LogicalPlan {
+    if let Some(input) = table.input.take() {
+        return LogicalPlan::Derived {
+            input: Box::new(LogicalPlanner::plan(*input)),
+            columns: table.columns,
+        };
+    }
     let projected_column_ids = table
         .columns
         .iter()

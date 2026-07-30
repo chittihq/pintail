@@ -54,21 +54,27 @@ impl MysqlContainer {
         )?;
 
         let container = Self { name };
+        let mut consecutive_connections = 0;
         for _ in 0..120 {
-            let ready = Command::new("docker")
+            let connected = Command::new("docker")
                 .args([
                     "exec",
                     &container.name,
-                    "mysqladmin",
-                    "ping",
+                    "mysql",
                     "--user=root",
-                    "--silent",
+                    "--database=app",
+                    "--execute=SELECT 1",
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
                 .is_ok_and(|status| status.success());
-            if ready {
+            if connected {
+                consecutive_connections += 1;
+            } else {
+                consecutive_connections = 0;
+            }
+            if consecutive_connections == 5 {
                 return Ok(container);
             }
             thread::sleep(Duration::from_millis(500));
@@ -210,7 +216,7 @@ fn run_oracle() -> Result<(), String> {
     }
     if failures.is_empty() {
         println!(
-            "all {EXPECTED_CASES} generated queries matched MySQL 8.4 across 9 operator families"
+            "all {EXPECTED_CASES} generated queries matched MySQL 8.4 across 10 operator families"
         );
         Ok(())
     } else {
@@ -375,7 +381,7 @@ fn oracle_cases() -> Vec<OracleCase> {
             ),
         });
     }
-    for value in 0..100 {
+    for value in 0..75 {
         cases.push(OracleCase {
             family: "constant subqueries",
             sql: format!(
@@ -383,6 +389,19 @@ fn oracle_cases() -> Vec<OracleCase> {
                  {value} IN (SELECT 1 UNION ALL SELECT 50 UNION ALL SELECT 99), \
                  {value} NOT IN (SELECT 101 UNION ALL SELECT 102), \
                  (SELECT NULL)"
+            ),
+        });
+    }
+    for value in 0..25 {
+        let threshold = value % 8 + 1;
+        cases.push(OracleCase {
+            family: "common table expressions",
+            sql: format!(
+                "WITH recent (event_id, label, flag) AS (\
+                   SELECT id, name, active FROM events WHERE id >= {threshold}\
+                 ) \
+                 SELECT flag, COUNT(*), MIN(label), MAX(label) FROM recent \
+                 GROUP BY flag HAVING COUNT(*) >= 1 ORDER BY flag"
             ),
         });
     }

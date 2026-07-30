@@ -41,6 +41,13 @@ pub enum PhysicalPlan {
     OneRow,
     /// Reads a projected and pruned storage relation.
     Scan(Scan),
+    /// Relabels a derived query's positional result columns.
+    Derived {
+        /// Complete inner query.
+        input: Box<Self>,
+        /// Synthetic layout visible to the containing query.
+        columns: Vec<BoundColumn>,
+    },
     /// Guarded Cartesian product.
     CrossJoin {
         /// Inputs in physical execution order.
@@ -182,6 +189,14 @@ impl PhysicalPlan {
                     nullable: column.nullable,
                 })
                 .collect(),
+            Self::Derived { columns, .. } => columns
+                .iter()
+                .map(|column| OutputField {
+                    name: column.name.clone(),
+                    data_type: Some(column.data_type),
+                    nullable: column.nullable,
+                })
+                .collect(),
             Self::Empty | Self::OneRow => Vec::new(),
         }
     }
@@ -203,6 +218,10 @@ impl PhysicalPlanner {
             LogicalPlan::Empty => Ok(PhysicalPlan::Empty),
             LogicalPlan::OneRow => Ok(PhysicalPlan::OneRow),
             LogicalPlan::Scan(scan) => Ok(PhysicalPlan::Scan(scan)),
+            LogicalPlan::Derived { input, columns } => Ok(PhysicalPlan::Derived {
+                input: Box::new(Self::plan(*input)?),
+                columns,
+            }),
             LogicalPlan::Filter { input, predicate } => Ok(PhysicalPlan::Filter {
                 input: Box::new(Self::plan(*input)?),
                 predicate,
@@ -359,6 +378,11 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
         LogicalPlan::Join { left, right, .. } => {
             collect_logical_tables(left, tables);
             collect_logical_tables(right, tables);
+        }
+        LogicalPlan::Derived { columns, .. } => {
+            for column in columns {
+                tables.insert((column.database_id, column.table_id));
+            }
         }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
@@ -848,6 +872,21 @@ fn build_operator(
                 };
             }
             Ok((operator, columns))
+        }
+        PhysicalPlan::Derived { input, columns } => {
+            let fields = input.output_fields();
+            if fields.len() != columns.len()
+                || fields
+                    .iter()
+                    .zip(&columns)
+                    .any(|(field, column)| field.data_type != Some(column.data_type))
+            {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "derived input layout does not match its bound columns",
+                ));
+            }
+            let (input, _) = build_operator(*input, provider)?;
+            Ok((input, columns))
         }
         PhysicalPlan::CrossJoin {
             inputs,

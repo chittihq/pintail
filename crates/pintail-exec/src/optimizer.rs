@@ -72,6 +72,10 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(replace_metadata_counts).collect(),
         },
+        LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
+            input: Box::new(replace_metadata_counts(*input)),
+            columns,
+        },
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(replace_metadata_counts).collect(),
         },
@@ -121,6 +125,10 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
 fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
+            input: Box::new(fold_constants(*input)),
+            columns,
+        },
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(fold_constants).collect(),
         },
@@ -428,6 +436,10 @@ fn scalar_truth(value: &Value) -> Option<bool> {
 fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
+            input: Box::new(push_predicates(*input)),
+            columns,
+        },
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(push_predicates).collect(),
         },
@@ -573,6 +585,12 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
 fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
     match plan {
         LogicalPlan::Scan(scan) => table_key(&scan.table) == table,
+        LogicalPlan::Derived { input, columns } => {
+            columns
+                .iter()
+                .any(|column| (column.database_id, column.table_id) == table)
+                || contains_table(input, table)
+        }
         LogicalPlan::CrossJoin { inputs } => {
             inputs.iter().any(|input| contains_table(input, table))
         }
@@ -600,6 +618,10 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             inputs.sort_by_key(|input| input.estimated_rows().unwrap_or(u64::MAX));
             LogicalPlan::CrossJoin { inputs }
         }
+        LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
+            input: Box::new(reorder_cross_joins(*input)),
+            columns,
+        },
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(reorder_cross_joins).collect(),
         },
@@ -659,6 +681,7 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
                 collect_expr_columns(predicate, required);
             }
         }
+        LogicalPlan::Derived { input, .. } => collect_plan_columns(input, required),
         LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
                 collect_plan_columns(input, required);
@@ -730,7 +753,8 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
             prune_scan_columns(left, required);
             prune_scan_columns(right, required);
         }
-        LogicalPlan::Filter { input, .. }
+        LogicalPlan::Derived { input, .. }
+        | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
@@ -756,7 +780,8 @@ fn push_limits(plan: &mut LogicalPlan) {
             push_limits(left);
             push_limits(right);
         }
-        LogicalPlan::Filter { input, .. }
+        LogicalPlan::Derived { input, .. }
+        | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Sort { input, .. }
@@ -781,6 +806,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
+        | LogicalPlan::Derived { .. }
         | LogicalPlan::Limit { .. } => {}
     }
 }

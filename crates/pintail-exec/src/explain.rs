@@ -59,6 +59,18 @@ fn write_plan(plan: &PhysicalPlan, depth: usize, output: &mut String) -> fmt::Re
             scan.predicates.len(),
             scan.limit
         ),
+        PhysicalPlan::Derived { input, columns } => {
+            writeln!(
+                output,
+                "Derived columns=[{}]",
+                columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+            write_plan(input, depth + 1, output)
+        }
         PhysicalPlan::CrossJoin {
             inputs,
             estimated_rows,

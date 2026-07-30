@@ -20,6 +20,10 @@ pub struct BoundTable {
     pub columns: Vec<BoundColumn>,
     /// Exact catalog row count, when available.
     pub row_count: Option<u64>,
+    /// Bound input for a derived table or common table expression.
+    ///
+    /// Catalog-backed tables leave this empty and become storage scans.
+    pub input: Option<Box<BoundQuery>>,
 }
 
 /// A column made unambiguous against one catalog snapshot.

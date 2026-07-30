@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::Cell, fmt};
 
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
@@ -20,6 +20,14 @@ use crate::bound::{
 pub struct Binder<'catalog> {
     catalog: &'catalog CatalogSnapshot,
     current_database: Option<&'catalog str>,
+    next_derived_id: Cell<u64>,
+}
+
+#[derive(Clone)]
+struct BoundCte {
+    name: String,
+    column_names: Vec<String>,
+    query: BoundQuery,
 }
 
 impl<'catalog> Binder<'catalog> {
@@ -32,6 +40,7 @@ impl<'catalog> Binder<'catalog> {
         Self {
             catalog,
             current_database,
+            next_derived_id: Cell::new(u64::MAX),
         }
     }
 
@@ -45,12 +54,11 @@ impl<'catalog> Binder<'catalog> {
         let Statement::Query(query) = statement else {
             return Err(BindError::UnsupportedStatement(statement.to_string()));
         };
-        self.bind_query(query)
+        self.bind_query(query, &[])
     }
 
-    fn bind_query(&self, query: &Query) -> Result<BoundQuery, BindError> {
-        if query.with.is_some()
-            || query.fetch.is_some()
+    fn bind_query(&self, query: &Query, outer_ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
+        if query.fetch.is_some()
             || !query.locks.is_empty()
             || query.for_clause.is_some()
             || query.settings.is_some()
@@ -60,24 +68,67 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedQueryClause(query.to_string()));
         }
 
-        let mut bound = self.bind_set_expr(&query.body)?;
+        let mut ctes = outer_ctes.to_vec();
+        if let Some(with) = &query.with {
+            if with.recursive {
+                return Err(BindError::UnsupportedQueryClause(with.to_string()));
+            }
+            for cte in &with.cte_tables {
+                if cte.from.is_some() || cte.materialized.is_some() {
+                    return Err(BindError::UnsupportedQueryClause(cte.to_string()));
+                }
+                if ctes
+                    .iter()
+                    .any(|existing| existing.name.eq_ignore_ascii_case(&cte.alias.name.value))
+                {
+                    return Err(BindError::DuplicateRelation(cte.alias.name.value.clone()));
+                }
+                let bound = self.bind_query(&cte.query, &ctes)?;
+                if !cte.alias.columns.is_empty()
+                    && cte.alias.columns.len() != bound.projection.len()
+                {
+                    return Err(BindError::IncompatibleSetOperation(format!(
+                        "CTE {} declares {} columns but produces {}",
+                        cte.alias.name.value,
+                        cte.alias.columns.len(),
+                        bound.projection.len()
+                    )));
+                }
+                ctes.push(BoundCte {
+                    name: cte.alias.name.value.clone(),
+                    column_names: cte
+                        .alias
+                        .columns
+                        .iter()
+                        .map(|column| column.name.value.clone())
+                        .collect(),
+                    query: bound,
+                });
+            }
+        }
+
+        let mut bound = self.bind_set_expr(&query.body, &ctes)?;
         bound.order_by = bind_order_by(query, &bound.projection)?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         Ok(bound)
     }
 
-    fn bind_set_expr(&self, expression: &SetExpr) -> Result<BoundQuery, BindError> {
+    fn bind_set_expr(
+        &self,
+        expression: &SetExpr,
+        ctes: &[BoundCte],
+    ) -> Result<BoundQuery, BindError> {
         match expression {
-            SetExpr::Select(select) => self.bind_select(select),
-            SetExpr::Query(query) => self.bind_query(query),
+            SetExpr::Select(select) => self.bind_select(select, ctes),
+            SetExpr::Query(query) => self.bind_query(query, ctes),
             SetExpr::SetOperation {
                 left,
                 op: SetOperator::Union,
                 set_quantifier: SetQuantifier::All,
                 right,
             } => {
-                let mut left = self.bind_set_expr(left)?;
-                let right = self.bind_set_expr(right)?;
+                let mut left = self.bind_set_expr(left, ctes)?;
+                let right = self.bind_set_expr(right, ctes)?;
                 validate_union_layout(&left, &right)?;
                 left.union_all.push(right);
                 Ok(left)
@@ -86,10 +137,10 @@ impl<'catalog> Binder<'catalog> {
         }
     }
 
-    fn bind_select(&self, select: &Select) -> Result<BoundQuery, BindError> {
+    fn bind_select(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
         validate_select_shape(select)?;
 
-        let (from, tables) = self.bind_from(select)?;
+        let (from, tables) = self.bind_from(select, ctes)?;
         let filter = select
             .selection
             .as_ref()
@@ -151,11 +202,15 @@ impl<'catalog> Binder<'catalog> {
         })
     }
 
-    fn bind_from(&self, select: &Select) -> Result<(Vec<BoundFrom>, Vec<BoundTable>), BindError> {
+    fn bind_from(
+        &self,
+        select: &Select,
+        ctes: &[BoundCte],
+    ) -> Result<(Vec<BoundFrom>, Vec<BoundTable>), BindError> {
         let mut from = Vec::with_capacity(select.from.len());
         let mut tables = Vec::new();
         for table_with_joins in &select.from {
-            let base = self.bind_table(&table_with_joins.relation)?;
+            let base = self.bind_table(&table_with_joins.relation, ctes)?;
             reject_duplicate_relation(&tables, &base)?;
             tables.push(base.clone());
 
@@ -164,7 +219,7 @@ impl<'catalog> Binder<'catalog> {
                 if join.global {
                     return Err(BindError::UnsupportedQueryClause(join.to_string()));
                 }
-                let table = self.bind_table(&join.relation)?;
+                let table = self.bind_table(&join.relation, ctes)?;
                 reject_duplicate_relation(&tables, &table)?;
                 tables.push(table.clone());
                 let (kind, constraint) = bind_join_operator(&join.join_operator)?;
@@ -196,7 +251,33 @@ impl<'catalog> Binder<'catalog> {
         Ok((from, tables))
     }
 
-    fn bind_table(&self, factor: &TableFactor) -> Result<BoundTable, BindError> {
+    #[allow(clippy::too_many_lines)]
+    fn bind_table(&self, factor: &TableFactor, ctes: &[BoundCte]) -> Result<BoundTable, BindError> {
+        if let TableFactor::Derived {
+            lateral,
+            subquery,
+            alias,
+            sample,
+        } = factor
+        {
+            if *lateral || sample.is_some() {
+                return Err(BindError::UnsupportedTableFactor(factor.to_string()));
+            }
+            let alias = alias
+                .as_ref()
+                .ok_or_else(|| BindError::UnsupportedTableFactor(factor.to_string()))?;
+            if !alias.columns.is_empty() || alias.at.is_some() {
+                return Err(BindError::UnsupportedTableFactor(factor.to_string()));
+            }
+            let input = self.bind_query(subquery, ctes)?;
+            return Ok(self.bind_derived_table(
+                alias.name.value.clone(),
+                alias.name.value.clone(),
+                &[],
+                input,
+            ));
+        }
+
         let TableFactor::Table {
             name,
             alias,
@@ -229,6 +310,24 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedTableFactor(factor.to_string()));
         }
 
+        let parts = object_name_parts(name)?;
+        if let [name] = parts.as_slice()
+            && let Some(cte) = ctes
+                .iter()
+                .rev()
+                .find(|cte| cte.name.eq_ignore_ascii_case(name))
+        {
+            let relation_name = alias
+                .as_ref()
+                .map_or_else(|| cte.name.clone(), |alias| alias.name.value.clone());
+            return Ok(self.bind_derived_table(
+                cte.name.clone(),
+                relation_name,
+                &cte.column_names,
+                cte.query.clone(),
+            ));
+        }
+
         let (database, table) = self.resolve_table(name)?;
         let relation_name = alias
             .as_ref()
@@ -257,7 +356,49 @@ impl<'catalog> Binder<'catalog> {
             schema_version: table.schema().version(),
             columns,
             row_count: table.statistics().row_count(),
+            input: None,
         })
+    }
+
+    fn bind_derived_table(
+        &self,
+        table_name: String,
+        relation_name: String,
+        column_names: &[String],
+        input: BoundQuery,
+    ) -> BoundTable {
+        let table_id = self.next_derived_id.get();
+        self.next_derived_id.set(table_id.saturating_sub(1));
+        let table_id = pintail_catalog::TableId::new(table_id);
+        let database_id = pintail_catalog::DatabaseId::new(u64::MAX);
+        let columns = input
+            .projection
+            .iter()
+            .enumerate()
+            .map(|(index, projection)| BoundColumn {
+                database_id,
+                table_id,
+                column_id: u32::try_from(index + 1).unwrap_or(u32::MAX - 3),
+                relation_name: relation_name.clone(),
+                name: column_names
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| projection.name.clone()),
+                data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
+                nullable: projection.expr.nullable,
+            })
+            .collect();
+        BoundTable {
+            database_id,
+            table_id,
+            database_name: String::new(),
+            table_name,
+            relation_name,
+            schema_version: 0,
+            columns,
+            row_count: None,
+            input: Some(Box::new(input)),
+        }
     }
 
     fn resolve_table(&self, name: &ObjectName) -> Result<(&DatabaseEntry, &TableEntry), BindError> {
@@ -2028,6 +2169,32 @@ mod tests {
             bind("SELECT (SELECT 1 UNION ALL SELECT 2)"),
             Err(BindError::InvalidScalarSubqueryRows(2))
         );
+    }
+
+    #[test]
+    fn binds_non_recursive_ctes_as_typed_relations() {
+        let query = bind(
+            "WITH recent AS (\
+               SELECT id, Name AS label FROM Events WHERE id >= 10\
+             ) \
+             SELECT recent.id, recent.label FROM recent WHERE recent.id < 20",
+        )
+        .expect("plain CTE");
+
+        assert_eq!(query.tables.len(), 1);
+        assert_eq!(query.from[0].base.relation_name, "recent");
+        assert_eq!(
+            query
+                .projection
+                .iter()
+                .map(|projection| projection.name.as_str())
+                .collect::<Vec<_>>(),
+            ["id", "label"]
+        );
+        assert!(matches!(
+            bind("WITH RECURSIVE numbers AS (SELECT 1) SELECT * FROM numbers"),
+            Err(BindError::UnsupportedQueryClause(_))
+        ));
     }
 
     #[test]
