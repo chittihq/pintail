@@ -273,3 +273,18 @@ Keys created before metadata schema version 6 have no recoverable native
 verifier and must be rotated before use on the wire endpoint. This avoids a
 cleartext-password plugin, which would require client-specific opt-ins or TLS
 just to complete the standard compatibility gate.
+
+### HTTP and wire share one replica query facade
+
+Opening table stores, pinning snapshots, rebuilding the catalog, enforcing
+query ceilings, and translating execution counters are client-independent
+operations. M7 extracts them into `ReplicaEngine`; HTTP and MySQL protocol
+handlers only authorize a database and encode the same typed `QueryOutput`.
+This prevents metadata statements, read-only enforcement, visibility policy,
+and pruning statistics from drifting between client surfaces.
+
+The facade currently lives in `pintail-wire` because that milestone introduced
+the second client and owns the protocol-facing result model. It delegates all
+SQL semantics to `pintail-sql` and `pintail-exec`; it is not a dialect
+translation layer. If another native client arrives, the facade can move to a
+small client-neutral crate without changing either engine.

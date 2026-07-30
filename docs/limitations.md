@@ -129,9 +129,11 @@ plausible but incorrect result.
   per runner invocation. It resets every included target because one global
   source coordinate cannot safely advance while a table retains an
   unfillable gap.
-- The M4 type gate asserts source-to-storage fidelity. HTTP and MySQL wire
-  assertions cannot exist before their M6 and M7 server surfaces and remain
-  future gates.
+- The M4 type gate asserts source-to-storage fidelity. M7 additionally checks
+  wire text and prepared-result encoding for exact decimal text, valid and
+  normalized-zero temporal values, negative TIME, JSON, Unicode, binary data,
+  Boolean values, and narrow integers. A single source-to-both-surfaces Docker
+  matrix remains part of the M9 full-matrix closure.
 
 ## M5 DDL and polling
 
@@ -180,9 +182,44 @@ plausible but incorrect result.
   arrive with the supervisor/API surface. DROP TABLE retains the replica as an
   orphan; M5 does not provide an operator purge action.
 
+## M6 HTTP API and dashboard
+
+- HTTP and wire query responses share the same reader-pinned execution facade,
+  row ceiling, memory ceiling, catalog construction, and physical scan
+  counters. The HTTP surface serializes binary values as lowercase `0x` hex
+  strings; JSON columns remain canonical JSON text rather than being silently
+  retyped as nested response objects.
+- The embedded dashboard is a local control plane, not a multi-tenant security
+  boundary. Its first-boot admin and signed sessions protect operations, while
+  network exposure and TLS remain deployment responsibilities.
+
+## M7 MySQL wire protocol
+
+- Pintail implements `mysql_native_password` challenge authentication from a
+  stored double-SHA-1 verifier; plaintext API keys are never retained. Keys
+  created before metadata schema version 6 lack that verifier and must be
+  rotated before wire use.
+- Oracle's MySQL 9.x CLI removed its native-password client plugin. Use the
+  MySQL 8.4 CLI, a compatible MariaDB CLI, mysql2, PyMySQL, DBeaver, or
+  Metabase. Pintail does not fall back to cleartext password exchange.
+- The wire endpoint is read-only. `SET`, transaction boundaries, and common
+  capability probes are accepted for client compatibility but do not create a
+  mutable session transaction. Multiple SQL statements in one command are not
+  supported.
+- Prepared result rows preserve MySQL numeric, decimal, temporal, JSON, text,
+  and binary type tags. Prepared parameters support NULL, integers, floats,
+  UTF-8 strings, and binary strings; DATE/DATETIME/TIME parameters are
+  explicitly rejected until their literal binder is implemented.
+- The server does not terminate TLS. Keep the default loopback bind or put a
+  private TLS-capable ingress in front of Pintail before exposing the endpoint
+  across a network.
+- The automated compatibility gate runs `mysql_async`, MySQL 8.4 CLI, mysql2,
+  and PyMySQL. DBeaver and Metabase use the same documented MySQL 8 connection
+  profile, but their full application-level smokes are not automated on this
+  workstation.
+
 ## Milestone boundary
 
-M5 completes snapshot, CDC, DDL-evolution, and polling/reconciliation library
-behavior. HTTP query APIs, the dashboard, the MySQL wire server,
-prepared-statement compatibility, BI-client smokes, and supervised scheduling
-belong to M6 through M8 and are not claimed here.
+M7 completes the authenticated HTTP/dashboard and read-only MySQL client
+surfaces. Multi-database lifetime supervision, scheduled reconciliation,
+backups, metrics, and operational DLQ controls belong to M8.

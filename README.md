@@ -3,12 +3,12 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestones M0 through M5 provide the
+The project is under active development. Milestones M0 through M7 provide the
 single-process skeleton, Pintail's durable PTSEG columnar storage core, and
 the in-process MySQL-dialect query engine, plus real MySQL/MariaDB source
 probing, resumable consistent snapshots, native row-binlog CDC, live DDL
-tracking, and binlog-disabled polling with delete reconciliation. The external
-query APIs and MySQL wire endpoint arrive in later milestones.
+tracking, binlog-disabled polling with delete reconciliation, the authenticated
+HTTP control plane and dashboard, and a read-only MySQL wire endpoint.
 
 ## Run locally
 
@@ -24,6 +24,25 @@ permissions on Unix.
 
 Configuration precedence is CLI arguments, `PINTAIL_*` environment variables,
 `pintail.toml`, then defaults. See `pintail.example.toml`.
+
+The MySQL wire endpoint listens on `127.0.0.1:3306` by default. In the
+dashboard, create a database API key with the `query` scope, then open
+**Connect** for complete client snippets. The database name is both the MySQL
+username and selected database; the API key is the password. For example:
+
+```sh
+MYSQL_PWD='pk_your_key' mysql \
+  --protocol=tcp \
+  --host=127.0.0.1 \
+  --port=3306 \
+  --user=analytics \
+  --database=analytics
+```
+
+Use a MySQL 8.4 or compatible MariaDB CLI. Oracle's MySQL 9.x CLI no longer
+ships the `mysql_native_password` client plugin used by Pintail's hash-only
+challenge authentication. mysql2, PyMySQL, DBeaver, and Metabase remain
+compatible.
 
 ## Run with Docker Compose
 
@@ -75,6 +94,9 @@ cargo test -p pintail-cdc --test mysql_cdc \
   -- --ignored --nocapture
 cargo test -p pintail-poll --test mysql_poll \
   -- --ignored --nocapture
+PINTAIL_EXTERNAL_WIRE_CLIENTS=1 \
+PINTAIL_MYSQL_CLI=/opt/homebrew/opt/mysql-client@8.4/bin/mysql \
+cargo test -p pintail-wire --test wire_compat -- --nocapture
 ```
 
 The oracle starts a uniquely named MySQL 8.4 container and compares 600
@@ -87,5 +109,9 @@ purge the captured log before automatic resnapshot recovery. The M5 gates
 add live ADD/DROP/RENAME/CREATE/TRUNCATE/DROP tracking, binlog-disabled CRUD,
 same-token delete/insert repair, composite-key reconciliation, secondary
 UNIQUE reuse, CDC-invisible cascades, and idle-cycle storage invariance.
+The M7 wire gate additionally covers native challenge authentication, metadata
+discovery, prepared statements, BI-style aggregates, read-only errors, and
+typed binary results with a Rust client, MySQL CLI, mysql2 under Bun, and
+PyMySQL.
 Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
