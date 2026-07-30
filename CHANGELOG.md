@@ -88,7 +88,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A process-level crash-fuzz test performs 100 kill/reopen cycles while a
   separate writer loops two tables through the shared database WAL, flush,
   manifest, and compaction paths; each reopen is checked against an external
-  acknowledged-commit oracle for the full two-table state.
+  acknowledged-commit oracle for the full two-table state. A dedicated
+  child-to-parent acknowledgement pipe prevents test-harness output capture
+  from making that oracle stale.
 
 ## [M0] - 2026-07-30
 

@@ -1,5 +1,11 @@
 use std::{
+    io::{ErrorKind, Read, Write},
+    net::{TcpListener, TcpStream},
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -9,7 +15,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const WORKER_ENV: &str = "PINTAIL_CRASH_FUZZ_WORKER";
 const DIRECTORY_ENV: &str = "PINTAIL_CRASH_FUZZ_DIRECTORY";
-const ACK_PREFIX: &str = "crash-fuzz-ack-";
+const ACK_ADDRESS_ENV: &str = "PINTAIL_CRASH_FUZZ_ACK_ADDRESS";
 const ITERATIONS: usize = 100;
 const USERS: u64 = 17;
 const ORDERS: u64 = 29;
@@ -22,6 +28,10 @@ fn short_kill9_crash_fuzz_matches_the_acknowledged_commit_oracle() {
     let mut recovered_version = 0_u64;
 
     for iteration in 0..ITERATIONS {
+        let ack_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind acknowledgement pipe");
+        let ack_address = ack_listener
+            .local_addr()
+            .expect("acknowledgement pipe address");
         let mut child = Command::new(&executable)
             .args([
                 "--ignored",
@@ -31,16 +41,33 @@ fn short_kill9_crash_fuzz_matches_the_acknowledged_commit_oracle() {
             ])
             .env(WORKER_ENV, "1")
             .env(DIRECTORY_ENV, directory.path())
+            .env(ACK_ADDRESS_ENV, ack_address.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn crash worker");
+        let acknowledged = Arc::new(AtomicU64::new(recovered_version));
+        let reader_acknowledged = Arc::clone(&acknowledged);
+        let (mut ack_stream, _) = ack_listener.accept().expect("accept acknowledgement pipe");
+        let ack_reader = std::thread::spawn(move || {
+            loop {
+                let mut bytes = [0_u8; size_of::<u64>()];
+                match ack_stream.read_exact(&mut bytes) {
+                    Ok(()) => {
+                        reader_acknowledged.store(u64::from_le_bytes(bytes), Ordering::Release);
+                    }
+                    Err(error) if error.kind() == ErrorKind::UnexpectedEof => break,
+                    Err(error) => panic!("read worker acknowledgement: {error}"),
+                }
+            }
+        });
         std::thread::sleep(Duration::from_millis(random.random_range(8..40)));
         child.kill().expect("kill crash worker");
         child.wait().expect("reap crash worker");
+        ack_reader.join().expect("join acknowledgement reader");
 
-        let acknowledged_version = latest_acknowledged_version(directory.path());
+        let acknowledged_version = acknowledged.load(Ordering::Acquire);
         let database = DatabaseStore::open(directory.path(), schemas(), options())
             .unwrap_or_else(|error| panic!("iteration {iteration} failed to reopen: {error}"));
         let actual = database_state(&database)
@@ -78,6 +105,8 @@ fn crash_fuzz_worker() {
         return;
     }
     let directory = std::env::var_os(DIRECTORY_ENV).expect("worker directory");
+    let ack_address = std::env::var(ACK_ADDRESS_ENV).expect("acknowledgement pipe address");
+    let mut ack_stream = TcpStream::connect(ack_address).expect("connect acknowledgement pipe");
     let mut database = DatabaseStore::open(&directory, schemas(), options()).expect("worker open");
     let mut version = database_state(&database)
         .expect("worker initial scan")
@@ -92,33 +121,18 @@ fn crash_fuzz_worker() {
         database
             .ingest(table_id, vec![versioned_row(table_id, version)])
             .expect("worker ingest");
-        acknowledge_version(std::path::Path::new(&directory), version);
+        acknowledge_version(&mut ack_stream, version);
         database.flush(table_id).expect("worker flush");
         database.compact(table_id).expect("worker compact");
         std::thread::yield_now();
     }
 }
 
-fn acknowledge_version(directory: &std::path::Path, version: u64) {
-    let path = directory.join(format!("{ACK_PREFIX}{version:020}"));
-    std::fs::File::create(path)
-        .and_then(|file| file.sync_all())
-        .expect("persist crash-fuzz acknowledgement");
-}
-
-fn latest_acknowledged_version(directory: &std::path::Path) -> u64 {
-    std::fs::read_dir(directory)
-        .expect("read crash-fuzz directory")
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.strip_prefix(ACK_PREFIX))
-                .and_then(|version| version.parse::<u64>().ok())
-        })
-        .max()
-        .unwrap_or(0)
+fn acknowledge_version(stream: &mut TcpStream, version: u64) {
+    stream
+        .write_all(&version.to_le_bytes())
+        .and_then(|()| stream.flush())
+        .expect("send crash-fuzz acknowledgement");
 }
 
 fn options() -> StoreOptions {

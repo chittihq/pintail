@@ -51,3 +51,13 @@ maintenance API from its managed worker. This is a deliberate staging
 deviation from §5.1's final “background, per table” topology: M1 has no
 executor, query scheduler, or supervisor lifetime to own and stop those
 threads safely.
+
+### Codec chunks are independently checksummed blocks
+
+PTSEG treats each target-sized, independently checksummed block as the codec
+chunk. Dictionary selection and dictionary bytes therefore belong to one
+block rather than being shared across every block of a physical column. This
+narrows corruption and decode scope, keeps block pruning independently
+seekable, and bounds dictionary memory. It is the storage format's explicit
+interpretation of §5.2's “dict per chunk”; `docs/format.md` uses “block”
+consistently for that unit.
