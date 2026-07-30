@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M6] - 2026-07-30
+
 ### Added
 
 - Control-plane schema version 5 adds dashboard user state, scoped API-key
@@ -32,6 +34,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reconciliation for CDC and polling mirrors. Table resync actions use the
   safe database-wide snapshot handoff because source checkpoints are shared;
   both operations are durable activity records and publish scoped events.
+
+### Verification
+
+- Rust formatting, strict workspace Clippy, the locked workspace tests, Bun's
+  frozen install, dashboard type checking, and static generation pass.
+- The MySQL 8.4 HTTP gate passes connection test, capability probe, snapshot,
+  polling handoff, typed SQL query, table-local reconciliation, and safe
+  resnapshot through authenticated routes.
+- The Playwright smoke passes first-boot setup, the four-step source wizard,
+  snapshot-to-streaming progress, live query results, desktop and mobile
+  layouts, accessible icon navigation, and a zero-error browser console.
 
 ## [M5] - 2026-07-30
 
