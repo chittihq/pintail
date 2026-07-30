@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M2] - 2026-07-30
+
 ### Added
 
 - MySQL-dialect SQL parsing façade with backtick identifiers, MySQL
@@ -94,6 +96,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `UNION ALL` workload families over equivalent pinned storage snapshots.
 - A plan-quality gate proving a selective predicate reads one of two segments
   and one of two key blocks while returning the MySQL-equivalent result.
+
+### Changed
+
+- UTF-8 `MIN` and `MAX` now use Pintail's case-insensitive comparison
+  semantics, matching text predicates, grouping, joins, and ordering.
+
+### Verification
+
+- Rust formatting, workspace Clippy with warnings denied, and the complete
+  locked workspace test suite pass.
+- Bun's frozen install, dashboard type check, and static generation pass.
+- The Docker-backed differential corpus matches all 600 queries against
+  MySQL 8.4 across eleven operator families.
+- The plan-quality gate proves a selective key predicate reads one of two
+  segments and one of two logical key blocks.
 
 ## [M1] - 2026-07-30
 

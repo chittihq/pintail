@@ -3,9 +3,11 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestone M0 provides the process
-skeleton: configuration, SQLite control-plane migrations, first-boot secrets,
-an embedded Nuxt dashboard placeholder, and the `/health` endpoint.
+The project is under active development. Milestones M0 through M2 provide the
+single-process skeleton, Pintail's durable PTSEG columnar storage core, and
+the in-process MySQL-dialect query engine. Snapshot replication, CDC, polling,
+the external query APIs, and the MySQL wire endpoint arrive in later
+milestones.
 
 ## Run locally
 
@@ -45,3 +47,21 @@ bun run dev
 the resulting static assets in the Rust binary. Set
 `PINTAIL_DASHBOARD_PREBUILT=1` only when the output was generated immediately
 before the Cargo invocation, as the container and CI builds do.
+
+## Verify the current milestone
+
+```sh
+(cd packages/dashboard && bun install --frozen-lockfile)
+(cd packages/dashboard && bun run typecheck)
+(cd packages/dashboard && bun run generate)
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo test -p pintail-sqllogic --test plan_quality
+cargo test -p pintail-sqllogic --test mysql_oracle -- --ignored --nocapture
+```
+
+The final command starts a uniquely named MySQL 8.4 Docker container and
+compares 600 deterministic queries over equivalent MySQL and Pintail data.
+Current compatibility boundaries are recorded in
+[`docs/limitations.md`](docs/limitations.md).
