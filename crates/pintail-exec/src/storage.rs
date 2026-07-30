@@ -5,7 +5,9 @@ use std::{
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction};
-use pintail_store::{ProjectedRow, ProjectedScanStream, ScanStats, StoreError, TableSnapshot};
+use pintail_store::{
+    ProjectedColumnChunk, ProjectedRow, ProjectedScanStream, ScanStats, StoreError, TableSnapshot,
+};
 use pintail_types::{KeyPart, PrimaryKey, Value};
 
 use crate::{
@@ -216,6 +218,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
+                prefetched: VecDeque::new(),
                 stream: None,
                 types,
                 retained_bytes: stream_overhead,
@@ -248,6 +251,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
+                prefetched: VecDeque::new(),
                 stream: Some(stream),
                 types,
                 retained_bytes: stream_overhead,
@@ -314,6 +318,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             rows: rows.into(),
             columns: Vec::new(),
             column_rows: 0,
+            prefetched: VecDeque::new(),
             stream: None,
             types,
             retained_bytes,
@@ -574,6 +579,7 @@ struct SnapshotStream {
     rows: VecDeque<Vec<Value>>,
     columns: Vec<Vec<Value>>,
     column_rows: usize,
+    prefetched: VecDeque<ProjectedColumnChunk>,
     stream: Option<ProjectedScanStream>,
     types: Vec<pintail_types::DataType>,
     retained_bytes: usize,
@@ -589,19 +595,32 @@ impl BatchStream for SnapshotStream {
             && let Some(stream) = &mut self.stream
         {
             let batch_overhead = batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS);
-            let Some(chunk) = stream
-                .next_column_chunk(available_memory.saturating_sub(batch_overhead))
-                .map_err(|error| ExecError::Source(error.to_string()))?
-            else {
-                self.stream = None;
-                break;
-            };
+            if self.prefetched.is_empty() {
+                let prefetch_width = if self.types.len() <= 2 { 8 } else { 4 };
+                let chunks = stream
+                    .next_column_chunks(
+                        prefetch_width,
+                        available_memory.saturating_sub(batch_overhead),
+                    )
+                    .map_err(|error| ExecError::Source(error.to_string()))?;
+                if chunks.is_empty() {
+                    self.stream = None;
+                    break;
+                }
+                for chunk in chunks {
+                    self.retained_bytes = self.retained_bytes.saturating_add(
+                        chunk
+                            .retained_bytes()
+                            .saturating_sub(std::mem::size_of_val(&chunk)),
+                    );
+                    self.prefetched.push_back(chunk);
+                }
+            }
+            let chunk = self
+                .prefetched
+                .pop_front()
+                .expect("non-empty prefetch batch");
             self.column_rows = chunk.row_count();
-            self.retained_bytes = self.retained_bytes.saturating_add(
-                chunk
-                    .retained_bytes()
-                    .saturating_sub(std::mem::size_of_val(&chunk)),
-            );
             self.columns = chunk.into_columns();
             for column in &mut self.columns {
                 column.reverse();
@@ -680,6 +699,10 @@ impl BatchStream for SnapshotStream {
                         ));
                 self.columns.clear();
                 self.column_rows = 0;
+                self.retained_bytes = self
+                    .retained_bytes
+                    .saturating_sub(prefetched_retained_bytes(&self.prefetched));
+                self.prefetched.clear();
                 self.stream = None;
             }
         }
@@ -759,6 +782,17 @@ fn projected_columns_retained_bytes(outer_capacity: usize, columns: &[Vec<Value>
                 })
                 .sum(),
         )
+}
+
+fn prefetched_retained_bytes(chunks: &VecDeque<ProjectedColumnChunk>) -> usize {
+    chunks
+        .iter()
+        .map(|chunk| {
+            chunk
+                .retained_bytes()
+                .saturating_sub(std::mem::size_of_val(chunk))
+        })
+        .sum()
 }
 
 fn batch_memory_upper_bound(types: &[pintail_types::DataType], row_count: usize) -> usize {

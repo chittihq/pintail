@@ -512,6 +512,64 @@ impl ProjectedScanStream {
             return Ok(None);
         };
         self.next_segment += 1;
+        self.decode_column_chunk(segment, memory_limit).map(Some)
+    }
+
+    /// Decodes several independently visible segments concurrently.
+    ///
+    /// The supplied memory budget is divided across the selected segments, so
+    /// their aggregate temporary and retained memory cannot exceed it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise storage, corruption, schema, or memory-limit error.
+    pub fn next_column_chunks(
+        &mut self,
+        max_chunks: usize,
+        memory_limit: usize,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        let max_chunks = if memory_limit < 64 * 1024 * 1024 {
+            1
+        } else {
+            max_chunks
+        };
+        let chunk_count = max_chunks
+            .max(1)
+            .min(self.segments.len().saturating_sub(self.next_segment));
+        if chunk_count == 0 {
+            return Ok(Vec::new());
+        }
+        let first_segment = self.next_segment;
+        let segments = self.segments
+            [self.next_segment..self.next_segment.saturating_add(chunk_count)]
+            .to_vec();
+        self.next_segment = self.next_segment.saturating_add(chunk_count);
+        if chunk_count == 1 {
+            return segments
+                .into_iter()
+                .map(|segment| self.decode_column_chunk(segment, memory_limit))
+                .collect();
+        }
+        let per_chunk_limit = memory_limit / chunk_count;
+        let decoded = projected_scan_pool()?.install(|| {
+            segments
+                .into_par_iter()
+                .map(|segment| self.decode_column_chunk(segment, per_chunk_limit))
+                .collect()
+        });
+        if matches!(decoded, Err(StoreError::MemoryLimitExceeded { .. })) {
+            self.next_segment = first_segment;
+            return self.next_column_chunks(chunk_count.div_ceil(2), memory_limit);
+        }
+        decoded
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn decode_column_chunk(
+        &self,
+        segment: segment::SegmentMeta,
+        memory_limit: usize,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
         if self.start <= segment.min_key && self.end >= segment.max_key {
             let projection = self
                 .column_ids
@@ -566,7 +624,7 @@ impl ProjectedScanStream {
                 );
             scan_budget.release(fetch.reserved_bytes);
             scan_budget.reserve(retained_bytes)?;
-            return Ok(Some(ProjectedColumnChunk {
+            return Ok(ProjectedColumnChunk {
                 columns: fetch.columns,
                 row_count,
                 stats: ScanStats {
@@ -575,7 +633,7 @@ impl ProjectedScanStream {
                     ..ScanStats::default()
                 },
                 retained_bytes,
-            }));
+            });
         }
         let mut manifest = self.snapshot.manifest.as_ref().clone();
         manifest.segments = vec![segment];
@@ -618,12 +676,12 @@ impl ProjectedScanStream {
                     })
                     .sum(),
             );
-        Ok(Some(ProjectedColumnChunk {
+        Ok(ProjectedColumnChunk {
             columns,
             row_count,
             stats,
             retained_bytes,
-        }))
+        })
     }
 
     /// Returns immutable segments that will be decoded.

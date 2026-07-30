@@ -78,6 +78,21 @@ fn non_overlapping_snapshot_segments_stream_with_bounded_memory() {
             .expect("stream end")
             .is_none()
     );
+    let mut parallel_stream = snapshot
+        .scan_projected_range_stream(&start, &end, &[1])
+        .expect("open parallel projected stream")
+        .expect("parallel non-overlapping snapshot fast path");
+    let chunks = parallel_stream
+        .next_column_chunks(2, 128 * 1024 * 1024)
+        .expect("parallel segment chunks");
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(
+        chunks
+            .iter()
+            .map(pintail_store::ProjectedColumnChunk::row_count)
+            .sum::<usize>(),
+        100
+    );
 
     writer
         .ingest(vec![StoredRow::new(
