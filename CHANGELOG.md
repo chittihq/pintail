@@ -61,6 +61,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   arithmetic and invalid-date errors.
 - Optimizer metadata substitution for predicate-free global `COUNT(*)`,
   returning exact catalog row counts without opening a storage scan.
+- Stable physical `EXPLAIN` output for optimized queries, including operator
+  hierarchy, scan estimates, stable projected column IDs, pushed-predicate
+  counts, scan limits, join and aggregation strategies, and top-K bounds.
 
 ## [M1] - 2026-07-30
 
