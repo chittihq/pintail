@@ -467,8 +467,9 @@ pub(crate) struct ProjectedSegmentRow {
 
 #[derive(Default)]
 pub(crate) struct SegmentReadStats {
-    pub(crate) blocks_decoded: usize,
-    pub(crate) blocks_pruned: usize,
+    pub(crate) read: usize,
+    pub(crate) decoded: usize,
+    pub(crate) pruned: usize,
 }
 
 pub(crate) struct ProjectedSegmentScan {
@@ -582,8 +583,9 @@ pub(crate) fn read_row_headers_range(
                         Ok(minimum <= *end && maximum >= *start)
                     })?;
                 let selected = block.cells.is_some();
-                stats.blocks_decoded += usize::from(selected);
-                stats.blocks_pruned += usize::from(!selected);
+                stats.read += usize::from(selected);
+                stats.decoded += usize::from(selected);
+                stats.pruned += usize::from(!selected);
                 selected_blocks.push(selected);
                 block_row_counts.push(block.row_count);
                 if let Some(cells) = block.cells {
@@ -638,7 +640,7 @@ pub(crate) fn read_row_headers_range(
                     "column block row count mismatch",
                 ));
             }
-            stats.blocks_decoded += usize::from(block.cells.is_some());
+            stats.decoded += usize::from(block.cells.is_some());
             if let Some(cells) = block.cells {
                 column_cells.extend(cells);
             }

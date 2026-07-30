@@ -286,6 +286,7 @@ fn projected_range_scan_prunes_key_blocks_and_decodes_only_requested_columns() {
     assert_eq!(scan.stats().segments_read(), 1);
     assert_eq!(scan.stats().segments_pruned(), 0);
     assert_eq!(scan.stats().blocks_pruned(), 2);
+    assert_eq!(scan.stats().blocks_read(), 1);
     assert_eq!(
         scan.stats().blocks_decoded(),
         4,

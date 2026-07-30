@@ -15,3 +15,9 @@ Run the explicit Docker-backed gate with:
 ```sh
 cargo test -p pintail-sqllogic --test mysql_oracle -- --ignored --nocapture
 ```
+
+Run the physical pruning gate with:
+
+```sh
+cargo test -p pintail-sqllogic --test plan_quality
+```

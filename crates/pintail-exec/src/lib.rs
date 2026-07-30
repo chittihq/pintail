@@ -15,7 +15,10 @@ pub use execution::{
     BatchStream, ExecError, Execution, MAX_CROSS_JOIN_ROWS, MemoryTracker, OutputField,
     PhysicalPlan, PhysicalPlanner, ScanProvider,
 };
-pub use explain::{ExplainError, explain_statement, format_physical_plan};
+pub use explain::{
+    ExplainError, explain_analyze_statement, explain_statement, format_physical_plan,
+    format_physical_plan_with_stats,
+};
 pub use logical::{LogicalPlan, LogicalPlanner, Scan};
 pub use optimizer::Optimizer;
-pub use storage::SnapshotScanProvider;
+pub use storage::{PhysicalScanStats, SnapshotScanProvider};

@@ -64,6 +64,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stable physical `EXPLAIN` output for optimized queries, including operator
   hierarchy, scan estimates, stable projected column IDs, pushed-predicate
   counts, scan limits, join and aggregation strategies, and top-K bounds.
+- `EXPLAIN ANALYZE` execution with actual segment and logical key-block
+  read/prune counts plus decoded-block work, backed by projected range scans
+  that translate supported single-component primary-key predicates into
+  inclusive storage bounds.
 - Deterministic catalog-backed `SHOW DATABASES`, `SHOW TABLES`, `SHOW COLUMNS`,
   and `DESCRIBE` responses with MySQL-compatible field names and type strings.
 - Typed lowering for uncorrelated constant scalar subqueries and `IN` subqueries
@@ -75,6 +79,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A Docker-backed 600-query MySQL 8.4 differential oracle covering ten
   deterministic scalar, date, subquery, scan, sort, aggregation, join, and
   `UNION ALL` workload families over equivalent pinned storage snapshots.
+- A plan-quality gate proving a selective predicate reads one of two segments
+  and one of two key blocks while returning the MySQL-equivalent result.
 
 ## [M1] - 2026-07-30
 

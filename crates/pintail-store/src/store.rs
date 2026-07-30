@@ -213,6 +213,7 @@ pub struct ScanStats {
     segments_pruned: usize,
     segments_read: usize,
     blocks_pruned: usize,
+    blocks_read: usize,
     blocks_decoded: usize,
 }
 
@@ -233,6 +234,12 @@ impl ScanStats {
     #[must_use]
     pub fn blocks_pruned(self) -> usize {
         self.blocks_pruned
+    }
+
+    /// Returns logical primary-key blocks selected by range zone maps.
+    #[must_use]
+    pub fn blocks_read(self) -> usize {
+        self.blocks_read
     }
 
     /// Returns blocks whose encoded values were decompressed and decoded.
@@ -844,6 +851,39 @@ impl TableSnapshot {
         &self.schema
     }
 
+    /// Returns the minimum and maximum retained storage keys in this snapshot.
+    ///
+    /// Bounds can include tombstoned keys; they are intended for safe scan
+    /// planning rather than visible-row cardinality.
+    #[must_use]
+    pub fn key_bounds(&self) -> Option<(PrimaryKey, PrimaryKey)> {
+        let segment_minimum = self
+            .manifest
+            .segments
+            .iter()
+            .map(|segment| &segment.min_key)
+            .min();
+        let segment_maximum = self
+            .manifest
+            .segments
+            .iter()
+            .map(|segment| &segment.max_key)
+            .max();
+        let memtable_minimum = self.memtable.keys().next();
+        let memtable_maximum = self.memtable.keys().next_back();
+        let minimum = segment_minimum
+            .into_iter()
+            .chain(memtable_minimum)
+            .min()?
+            .clone();
+        let maximum = segment_maximum
+            .into_iter()
+            .chain(memtable_maximum)
+            .max()?
+            .clone();
+        Some((minimum, maximum))
+    }
+
     /// Returns visible rows in primary-key order, excluding tombstones.
     ///
     /// # Errors
@@ -1022,8 +1062,9 @@ impl TableSnapshot {
                 start,
                 end,
             )?;
-            stats.blocks_pruned += scan.stats.blocks_pruned;
-            stats.blocks_decoded += scan.stats.blocks_decoded;
+            stats.blocks_pruned += scan.stats.pruned;
+            stats.blocks_read += scan.stats.read;
+            stats.blocks_decoded += scan.stats.decoded;
             for row in scan.rows {
                 apply_projected_latest(
                     &mut latest,

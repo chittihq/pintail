@@ -3,7 +3,10 @@ use std::fmt::{self, Write};
 use pintail_catalog::CatalogSnapshot;
 use pintail_sql::{BindError, Binder, BoundJoinKind, Statement};
 
-use crate::{ExecError, LogicalPlanner, Optimizer, PhysicalPlan, PhysicalPlanner};
+use crate::{
+    ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlan, PhysicalPlanner,
+    SnapshotScanProvider,
+};
 
 /// Binds, optimizes, and formats one non-analyzing `EXPLAIN` statement.
 ///
@@ -34,31 +37,99 @@ pub fn explain_statement(
     Ok(format_physical_plan(&physical))
 }
 
+/// Executes an `EXPLAIN ANALYZE` query and includes actual storage-pruning
+/// counters in its physical plan.
+///
+/// # Errors
+///
+/// Returns an explicit statement-shape, binding, planning, scan, or execution
+/// error.
+pub fn explain_analyze_statement(
+    statement: &Statement,
+    catalog: &CatalogSnapshot,
+    current_database: Option<&str>,
+    provider: &SnapshotScanProvider<'_>,
+    memory_limit: usize,
+) -> Result<String, ExplainError> {
+    let Statement::Explain {
+        analyze: true,
+        verbose: false,
+        query_plan: false,
+        estimate: false,
+        statement,
+        format: None,
+        options: None,
+        ..
+    } = statement
+    else {
+        return Err(ExplainError::Unsupported(statement.to_string()));
+    };
+    let bound = Binder::new(catalog, current_database).bind(statement)?;
+    let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
+    let physical = PhysicalPlanner::plan(logical)?;
+    let mut execution = Execution::start(physical.clone(), provider, memory_limit)?;
+    while execution.next_batch()?.is_some() {}
+    Ok(format_physical_plan_with_stats(&physical, provider))
+}
+
 /// Produces a stable, indented physical-plan representation.
 #[must_use]
 pub fn format_physical_plan(plan: &PhysicalPlan) -> String {
     let mut output = String::new();
-    let _ = write_plan(plan, 0, &mut output);
+    let _ = write_plan(plan, 0, &mut output, None);
     output
 }
 
-fn write_plan(plan: &PhysicalPlan, depth: usize, output: &mut String) -> fmt::Result {
+/// Produces a stable physical plan with accumulated storage scan counters.
+#[must_use]
+pub fn format_physical_plan_with_stats(
+    plan: &PhysicalPlan,
+    provider: &SnapshotScanProvider<'_>,
+) -> String {
+    let mut output = String::new();
+    let _ = write_plan(plan, 0, &mut output, Some(provider));
+    output
+}
+
+#[allow(clippy::too_many_lines)]
+fn write_plan(
+    plan: &PhysicalPlan,
+    depth: usize,
+    output: &mut String,
+    provider: Option<&SnapshotScanProvider<'_>>,
+) -> fmt::Result {
     for _ in 0..depth {
         output.push_str("  ");
     }
     match plan {
         PhysicalPlan::Empty => writeln!(output, "Empty"),
         PhysicalPlan::OneRow => writeln!(output, "OneRow"),
-        PhysicalPlan::Scan(scan) => writeln!(
-            output,
-            "Scan table={}.{} rows={:?} columns={:?} predicates={} limit={:?}",
-            scan.table.database_name,
-            scan.table.table_name,
-            scan.estimated_rows(),
-            scan.projected_column_ids,
-            scan.predicates.len(),
-            scan.limit
-        ),
+        PhysicalPlan::Scan(scan) => {
+            write!(
+                output,
+                "Scan table={}.{} rows={:?} columns={:?} predicates={} limit={:?}",
+                scan.table.database_name,
+                scan.table.table_name,
+                scan.estimated_rows(),
+                scan.projected_column_ids,
+                scan.predicates.len(),
+                scan.limit
+            )?;
+            if let Some(stats) = provider.and_then(|provider| {
+                provider.scan_stats(scan.table.database_id, scan.table.table_id)
+            }) {
+                write!(
+                    output,
+                    " actual_segments={}/{} actual_blocks={}/{} decoded_blocks={}",
+                    stats.segments_read,
+                    stats.segments_total(),
+                    stats.blocks_read,
+                    stats.blocks_total(),
+                    stats.blocks_decoded
+                )?;
+            }
+            writeln!(output)
+        }
         PhysicalPlan::Derived { input, columns } => {
             writeln!(
                 output,
@@ -69,29 +140,29 @@ fn write_plan(plan: &PhysicalPlan, depth: usize, output: &mut String) -> fmt::Re
                     .collect::<Vec<_>>()
                     .join(", ")
             )?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::CrossJoin {
             inputs,
             estimated_rows,
         } => {
             writeln!(output, "CrossJoin estimated_rows={estimated_rows}")?;
-            write_inputs(inputs, depth, output)
+            write_inputs(inputs, depth, output, provider)
         }
         PhysicalPlan::UnionAll { inputs } => {
             writeln!(output, "UnionAll inputs={}", inputs.len())?;
-            write_inputs(inputs, depth, output)
+            write_inputs(inputs, depth, output, provider)
         }
         PhysicalPlan::HashJoin {
             left, right, kind, ..
         } => {
             writeln!(output, "HashJoin kind={}", join_name(*kind))?;
-            write_plan(left, depth + 1, output)?;
-            write_plan(right, depth + 1, output)
+            write_plan(left, depth + 1, output, provider)?;
+            write_plan(right, depth + 1, output, provider)
         }
         PhysicalPlan::Filter { input, .. } => {
             writeln!(output, "Filter")?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::HashAggregate {
             input,
@@ -104,7 +175,7 @@ fn write_plan(plan: &PhysicalPlan, depth: usize, output: &mut String) -> fmt::Re
                 group_by.len(),
                 aggregates.len()
             )?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::Project { input, expressions } => {
             writeln!(
@@ -116,15 +187,15 @@ fn write_plan(plan: &PhysicalPlan, depth: usize, output: &mut String) -> fmt::Re
                     .collect::<Vec<_>>()
                     .join(", ")
             )?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::Distinct { input } => {
             writeln!(output, "Distinct")?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::Sort { input, keys, top_k } => {
             writeln!(output, "Sort keys={keys:?} top_k={top_k:?}")?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::Limit {
             input,
@@ -132,14 +203,19 @@ fn write_plan(plan: &PhysicalPlan, depth: usize, output: &mut String) -> fmt::Re
             count,
         } => {
             writeln!(output, "Limit offset={offset} count={count}")?;
-            write_plan(input, depth + 1, output)
+            write_plan(input, depth + 1, output, provider)
         }
     }
 }
 
-fn write_inputs(inputs: &[PhysicalPlan], depth: usize, output: &mut String) -> fmt::Result {
+fn write_inputs(
+    inputs: &[PhysicalPlan],
+    depth: usize,
+    output: &mut String,
+    provider: Option<&SnapshotScanProvider<'_>>,
+) -> fmt::Result {
     for input in inputs {
-        write_plan(input, depth + 1, output)?;
+        write_plan(input, depth + 1, output, provider)?;
     }
     Ok(())
 }
