@@ -226,7 +226,8 @@ impl CompiledExpr {
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
                     | ScalarFunction::DateDiff
-                    | ScalarFunction::UnixTimestamp => 0,
+                    | ScalarFunction::UnixTimestamp
+                    | ScalarFunction::Round => 0,
                 };
                 argument_memory.saturating_add(output)
             }
@@ -289,7 +290,8 @@ impl CompiledExpr {
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
                     | ScalarFunction::DateDiff
-                    | ScalarFunction::UnixTimestamp => 24,
+                    | ScalarFunction::UnixTimestamp
+                    | ScalarFunction::Round => 24,
                 }
             }
         }
@@ -430,6 +432,29 @@ fn evaluate_eager_scalar(
         ScalarFunction::InList { negated } => evaluate_in_list(values, negated),
         ScalarFunction::Between { negated } => evaluate_between(values, negated),
         ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
+        ScalarFunction::Round => {
+            let value = mysql_f64(&values[0])?;
+            let decimals = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
+            let decimals =
+                i32::try_from(decimals.clamp(-308, 308)).map_err(|_| ExecError::NumericOverflow)?;
+            let rounded = if decimals >= 0 {
+                let factor = 10_f64.powi(decimals);
+                let scaled = value * factor;
+                if scaled.is_finite() {
+                    scaled.round() / factor
+                } else {
+                    value
+                }
+            } else {
+                let factor = 10_f64.powi(-decimals);
+                (value / factor).round() * factor
+            };
+            if rounded.is_finite() {
+                Ok(Value::float64(rounded))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
         ScalarFunction::Now => Ok(Value::Utf8(
             Local::now()
                 .naive_local()

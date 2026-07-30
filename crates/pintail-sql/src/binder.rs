@@ -156,12 +156,17 @@ impl<'catalog> Binder<'catalog> {
                 actual: filter.data_type,
             });
         }
-        let group_by = bind_group_by(&select.group_by, &tables, Some(&resolve_subquery))?;
         let mut aggregates = Vec::new();
         let mut projection = bind_projection(
             &select.projection,
             &tables,
             Some(&mut aggregates),
+            Some(&resolve_subquery),
+        )?;
+        let group_by = bind_group_by(
+            &select.group_by,
+            &select.projection,
+            &tables,
             Some(&resolve_subquery),
         )?;
         let mut having = select
@@ -574,6 +579,7 @@ fn bind_projection(
 
 fn bind_group_by(
     group_by: &GroupByExpr,
+    projection: &[SelectItem],
     tables: &[BoundTable],
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<Vec<BoundExpr>, BindError> {
@@ -585,7 +591,30 @@ fn bind_group_by(
     }
     expressions
         .iter()
-        .map(|expr| bind_expr(expr, tables, subqueries))
+        .map(|expr| {
+            let Expr::Identifier(identifier) = expr else {
+                return bind_expr(expr, tables, subqueries);
+            };
+            let aliases = projection
+                .iter()
+                .filter_map(|item| match item {
+                    SelectItem::ExprWithAlias { expr, alias }
+                        if alias.value.eq_ignore_ascii_case(&identifier.value) =>
+                    {
+                        Some(expr)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            match aliases.as_slice() {
+                [aliased] => bind_expr(aliased, tables, subqueries),
+                [] => bind_expr(expr, tables, subqueries),
+                _ => Err(BindError::InvalidGrouping(format!(
+                    "GROUP BY alias {} is ambiguous",
+                    identifier.value
+                ))),
+            }
+        })
         .collect()
 }
 
@@ -1172,6 +1201,7 @@ fn bind_scalar_function(
         "IFNULL" if args.len() == 2 => ScalarFunction::Coalesce,
         "COALESCE" if !args.is_empty() => ScalarFunction::Coalesce,
         "NULLIF" if args.len() == 2 => ScalarFunction::NullIf,
+        "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round,
         "NOW" if args.is_empty() => ScalarFunction::Now,
         "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
         "DATE" if args.len() == 1 => ScalarFunction::Date,
@@ -1461,6 +1491,10 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             args.iter().all(|argument| argument.nullable),
         ),
         ScalarFunction::NullIf => (args[0].data_type, true),
+        ScalarFunction::Round => (
+            Some(DataType::Float64),
+            args.iter().any(|argument| argument.nullable),
+        ),
         ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
         ScalarFunction::Now | ScalarFunction::CurrentDate => (Some(DataType::Utf8), false),
         ScalarFunction::Date
@@ -1634,10 +1668,11 @@ fn aggregate_result_type(
         AggregateFunction::Count => Ok((Some(DataType::UInt64), false)),
         AggregateFunction::Average if is_numeric(input_type) => Ok((Some(DataType::Float64), true)),
         AggregateFunction::Sum if is_numeric(input_type) => {
-            let result = if input_type == Some(DataType::UInt64) {
+            let carrier = input_type.map(DataType::storage_type);
+            let result = if carrier == Some(DataType::UInt64) {
                 DataType::UInt64
-            } else if input_type == Some(DataType::Float64)
-                || matches!(input_type, Some(DataType::Utf8 | DataType::Binary))
+            } else if carrier == Some(DataType::Float64)
+                || matches!(carrier, Some(DataType::Utf8 | DataType::Binary))
             {
                 DataType::Float64
             } else {
@@ -1719,7 +1754,15 @@ fn comparable(left: Option<DataType>, right: Option<DataType>) -> bool {
 }
 
 fn is_numeric(data_type: Option<DataType>) -> bool {
-    is_mysql_scalar(data_type)
+    matches!(
+        data_type,
+        None | Some(DataType::Boolean)
+            | Some(DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64)
+            | Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
+            | Some(DataType::Float32 | DataType::Float64)
+            | Some(DataType::Decimal { .. })
+            | Some(DataType::Utf8 | DataType::Binary)
+    )
 }
 
 fn is_truth_value(data_type: Option<DataType>) -> bool {
@@ -1729,14 +1772,13 @@ fn is_truth_value(data_type: Option<DataType>) -> bool {
 fn is_mysql_scalar(data_type: Option<DataType>) -> bool {
     matches!(
         data_type,
-        None | Some(
-            DataType::Boolean
-                | DataType::Int64
-                | DataType::UInt64
-                | DataType::Float64
-                | DataType::Utf8
-                | DataType::Binary
-        )
+        None | Some(DataType::Boolean)
+            | Some(DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64)
+            | Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
+            | Some(DataType::Float32 | DataType::Float64)
+            | Some(DataType::Decimal { .. })
+            | Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
+            | Some(DataType::Utf8 | DataType::Binary | DataType::Json)
     )
 }
 
@@ -2090,8 +2132,28 @@ mod tests {
             TableStatistics::default(),
         )
         .expect("table");
+        let payments = TableEntry::new(
+            TableId::new(13),
+            "payments",
+            TableSchema::new(
+                1,
+                vec![Column::new(
+                    1,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    false,
+                )],
+            )
+            .expect("schema"),
+            TableStatistics::default(),
+        )
+        .expect("table");
         let database =
-            DatabaseEntry::new(DatabaseId::new(7), "Analytics", [events, users]).expect("database");
+            DatabaseEntry::new(DatabaseId::new(7), "Analytics", [events, users, payments])
+                .expect("database");
         CatalogSnapshot::new([database]).expect("catalog")
     }
 
@@ -2374,6 +2436,29 @@ mod tests {
             BoundExprKind::Aggregate(1)
         ));
         assert!(query.having.is_some());
+    }
+
+    #[test]
+    fn resolves_grouping_aliases_to_projection_expressions() {
+        let query = bind(
+            "SELECT active AS state, COUNT(*) AS rows \
+             FROM Events GROUP BY state ORDER BY rows DESC",
+        )
+        .expect("grouping alias");
+
+        assert_eq!(query.group_by.len(), 1);
+        assert!(matches!(
+            query.projection[0].expr.kind,
+            BoundExprKind::GroupKey(0)
+        ));
+    }
+
+    #[test]
+    fn decimal_aggregates_use_the_numeric_executor_carrier() {
+        let query = bind("SELECT SUM(amount), AVG(amount) FROM payments").expect("decimal bind");
+
+        assert_eq!(query.aggregates[0].data_type, Some(DataType::Float64));
+        assert_eq!(query.aggregates[1].data_type, Some(DataType::Float64));
     }
 
     #[test]

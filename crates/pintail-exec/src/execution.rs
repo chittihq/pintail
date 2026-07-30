@@ -2908,7 +2908,7 @@ mod tests {
              NULLIF(1, 1), 2 IN (1, 2, NULL), 3 NOT IN (1, 2, NULL), \
              'Alphabet' LIKE 'a%bet', 5 BETWEEN 2 AND 8, \
              CAST('12x' AS SIGNED), CONVERT('34x', SIGNED), \
-             CONVERT('MiXeD' USING utf8mb4)",
+             CONVERT('MiXeD' USING utf8mb4), ROUND(12.345, 2), ROUND(149, -2)",
         );
         let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
@@ -2933,6 +2933,8 @@ mod tests {
                 Value::Int64(12),
                 Value::Int64(34),
                 Value::Utf8("MiXeD".to_owned()),
+                Value::float64(12.35),
+                Value::float64(100.0),
             ]
         );
     }

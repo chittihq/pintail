@@ -143,6 +143,8 @@ pub enum ScalarFunction {
     Coalesce,
     /// Return NULL when two arguments compare equal.
     NullIf,
+    /// Round a numeric value to an optional decimal precision.
+    Round,
     /// Case-insensitive SQL pattern matching.
     Like {
         /// Whether the result is negated.
