@@ -575,7 +575,105 @@ fn bind_expr_inner(
             ScalarFunction::Trim,
             vec![bind_expr_inner(expr, tables, aggregates)?],
         ),
+        Expr::Subquery(query) => bind_constant_scalar_subquery(query),
+        Expr::InSubquery {
+            expr,
+            subquery,
+            negated,
+        } => bind_constant_in_subquery(expr, subquery, *negated, tables, aggregates),
         _ => Err(BindError::UnsupportedExpression(expr.to_string())),
+    }
+}
+
+fn bind_constant_scalar_subquery(query: &Query) -> Result<BoundExpr, BindError> {
+    let values = bind_constant_subquery(query)?;
+    match values.as_slice() {
+        [] => Ok(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Null),
+            data_type: None,
+            nullable: true,
+        }),
+        [value] => Ok(value.clone()),
+        _ => Err(BindError::InvalidScalarSubqueryRows(values.len())),
+    }
+}
+
+fn bind_constant_in_subquery(
+    expr: &Expr,
+    query: &Query,
+    negated: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    let mut args = vec![bind_expr_inner(expr, tables, aggregates)?];
+    args.extend(bind_constant_subquery(query)?);
+    if args[1..]
+        .iter()
+        .any(|value| !comparable(args[0].data_type, value.data_type))
+    {
+        return Err(BindError::InvalidScalarFunction("IN subquery".to_owned()));
+    }
+    bind_scalar(ScalarFunction::InList { negated }, args)
+}
+
+fn bind_constant_subquery(query: &Query) -> Result<Vec<BoundExpr>, BindError> {
+    if query.with.is_some()
+        || query.order_by.is_some()
+        || query.fetch.is_some()
+        || !query.locks.is_empty()
+        || query.for_clause.is_some()
+        || query.settings.is_some()
+        || query.format_clause.is_some()
+        || !query.pipe_operators.is_empty()
+    {
+        return Err(BindError::UnsupportedSubquery(query.to_string()));
+    }
+    let mut values = bind_constant_set_expr(&query.body)?;
+    if let Some(limit) = &query.limit_clause {
+        let limit = bind_limit(limit)?;
+        let start = usize::try_from(limit.offset)
+            .unwrap_or(usize::MAX)
+            .min(values.len());
+        let end = start
+            .saturating_add(usize::try_from(limit.count).unwrap_or(usize::MAX))
+            .min(values.len());
+        values = values[start..end].to_vec();
+    }
+    Ok(values)
+}
+
+fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindError> {
+    match expression {
+        SetExpr::Select(select) if select.from.is_empty() && select.selection.is_none() => {
+            validate_select_shape(select)?;
+            if select.distinct.is_some() {
+                return Err(BindError::UnsupportedSubquery(select.to_string()));
+            }
+            let [item] = select.projection.as_slice() else {
+                return Err(BindError::UnsupportedSubquery(select.to_string()));
+            };
+            let (SelectItem::UnnamedExpr(expression)
+            | SelectItem::ExprWithAlias {
+                expr: expression, ..
+            }) = item
+            else {
+                return Err(BindError::UnsupportedSubquery(select.to_string()));
+            };
+            let mut aggregates = None;
+            Ok(vec![bind_expr_inner(expression, &[], &mut aggregates)?])
+        }
+        SetExpr::SetOperation {
+            left,
+            op: SetOperator::Union,
+            set_quantifier: SetQuantifier::All,
+            right,
+        } => {
+            let mut values = bind_constant_set_expr(left)?;
+            values.extend(bind_constant_set_expr(right)?);
+            Ok(values)
+        }
+        SetExpr::Query(query) => bind_constant_subquery(query),
+        _ => Err(BindError::UnsupportedSubquery(expression.to_string())),
     }
 }
 
@@ -1497,6 +1595,8 @@ pub enum BindError {
     UnsupportedJoinConstraint(String),
     /// A scalar expression is not implemented yet.
     UnsupportedExpression(String),
+    /// A subquery requires relational execution not implemented by this path.
+    UnsupportedSubquery(String),
     /// An aggregate call uses an unsupported shape or modifier.
     UnsupportedAggregate(String),
     /// A literal representation is not implemented yet.
@@ -1553,6 +1653,8 @@ pub enum BindError {
     },
     /// A scalar function has invalid arguments or result types.
     InvalidScalarFunction(String),
+    /// A scalar subquery produced more than one row.
+    InvalidScalarSubqueryRows(usize),
     /// A selected column is neither grouped nor aggregated.
     UngroupedColumn(String),
     /// GROUP BY and HAVING have an invalid combination.
@@ -1598,6 +1700,9 @@ impl fmt::Display for BindError {
             Self::UnsupportedExpression(value) => {
                 write!(formatter, "unsupported expression: {value}")
             }
+            Self::UnsupportedSubquery(value) => {
+                write!(formatter, "unsupported subquery: {value}")
+            }
             Self::UnsupportedAggregate(value) => {
                 write!(formatter, "unsupported aggregate: {value}")
             }
@@ -1640,6 +1745,9 @@ impl fmt::Display for BindError {
             }
             Self::InvalidScalarFunction(function) => {
                 write!(formatter, "invalid scalar function {function}")
+            }
+            Self::InvalidScalarSubqueryRows(rows) => {
+                write!(formatter, "scalar subquery produced {rows} rows")
             }
             Self::UngroupedColumn(column) => {
                 write!(
@@ -1905,6 +2013,21 @@ mod tests {
         assert_eq!(query.projection[1].expr.data_type, Some(DataType::Float64));
         assert_eq!(query.projection[3].expr.data_type, Some(DataType::Boolean));
         assert_eq!(query.projection[5].expr.data_type, Some(DataType::Utf8));
+    }
+
+    #[test]
+    fn lowers_uncorrelated_constant_scalar_and_in_subqueries() {
+        let query = bind(
+            "SELECT (SELECT 1 + 2) AS scalar_value, \
+             id IN (SELECT 1 UNION ALL SELECT 2) AS included FROM Events",
+        )
+        .expect("constant subqueries");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Int64));
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
+        assert_eq!(
+            bind("SELECT (SELECT 1 UNION ALL SELECT 2)"),
+            Err(BindError::InvalidScalarSubqueryRows(2))
+        );
     }
 
     #[test]

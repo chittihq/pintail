@@ -66,6 +66,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   counts, scan limits, join and aggregation strategies, and top-K bounds.
 - Deterministic catalog-backed `SHOW DATABASES`, `SHOW TABLES`, `SHOW COLUMNS`,
   and `DESCRIBE` responses with MySQL-compatible field names and type strings.
+- Typed lowering for uncorrelated constant scalar subqueries and `IN` subqueries
+  over `UNION ALL`, including empty scalar results, multi-row scalar errors, and
+  SQL NULL membership semantics.
 
 ## [M1] - 2026-07-30
 

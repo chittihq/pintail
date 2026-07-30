@@ -1950,6 +1950,35 @@ mod tests {
     }
 
     #[test]
+    fn executes_lowered_constant_scalar_and_in_subqueries() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT (SELECT 1 + 2), \
+             2 IN (SELECT 1 UNION ALL SELECT 2), \
+             3 NOT IN (SELECT 1 UNION ALL SELECT NULL), \
+             (SELECT 9 LIMIT 0)",
+        );
+        let mut execution = Execution::start(plan, &provider, 16 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let values = batch
+            .columns()
+            .iter()
+            .map(|column| column.value(0).cloned().expect("value"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                Value::Int64(3),
+                Value::Boolean(true),
+                Value::Null,
+                Value::Null,
+            ]
+        );
+    }
+
+    #[test]
     fn executes_mysql_date_time_functions_and_interval_arithmetic() {
         let provider = StaticProvider {
             batches: Mutex::new(Vec::new()),
