@@ -26,9 +26,9 @@ enum AppendKeyPolicy {
 }
 const WRITER_LOCK_FILE: &str = ".writer.lock";
 const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
-const DEFAULT_BLOCK_ROWS: usize = 64 * 1024;
+const DEFAULT_BLOCK_ROWS: usize = 16 * 1024;
 const DEFAULT_COMPACTION_FAN_IN: usize = 4;
-const DEFAULT_MAX_COMPACTION_ROWS: u64 = 250_000;
+const DEFAULT_MAX_COMPACTION_ROWS: u64 = 128_000;
 const SIZE_TIER_RATIO: u64 = 4;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
 
