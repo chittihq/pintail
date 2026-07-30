@@ -3,12 +3,12 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestones M0 through M4 provide the
+The project is under active development. Milestones M0 through M5 provide the
 single-process skeleton, Pintail's durable PTSEG columnar storage core, and
 the in-process MySQL-dialect query engine, plus real MySQL/MariaDB source
-probing, resumable consistent snapshots, and native row-binlog CDC. Polling,
-the external query APIs, and the MySQL wire endpoint arrive in later
-milestones.
+probing, resumable consistent snapshots, native row-binlog CDC, live DDL
+tracking, and binlog-disabled polling with delete reconciliation. The external
+query APIs and MySQL wire endpoint arrive in later milestones.
 
 ## Run locally
 
@@ -67,6 +67,14 @@ cargo test -p pintail-snapshot --test mysql_snapshot \
   -- --ignored --nocapture
 cargo test -p pintail-cdc --test mysql_cdc \
   -- --ignored --nocapture --test-threads=1
+cargo test -p pintail-cdc --test mysql_cdc \
+  ddl_evolution_add_drop_rename_create_truncate_and_orphan \
+  -- --ignored --nocapture
+cargo test -p pintail-cdc --test mysql_cdc \
+  cdc_cascade_negative_control_and_scheduled_repair \
+  -- --ignored --nocapture
+cargo test -p pintail-poll --test mysql_poll \
+  -- --ignored --nocapture
 ```
 
 The oracle starts a uniquely named MySQL 8.4 container and compares 600
@@ -75,6 +83,9 @@ data. The M3 and M4 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
 and a binlog-disabled source. They snapshot one million rows, SIGKILL real
 snapshot and CDC worker processes, verify restart replay, exercise GTID and
 file/position CRUD plus MyISAM boundaries, quarantine a decode failure, and
-purge the captured log before automatic resnapshot recovery. Current
-compatibility boundaries are recorded in
+purge the captured log before automatic resnapshot recovery. The M5 gates
+add live ADD/DROP/RENAME/CREATE/TRUNCATE/DROP tracking, binlog-disabled CRUD,
+same-token delete/insert repair, composite-key reconciliation, secondary
+UNIQUE reuse, CDC-invisible cascades, and idle-cycle storage invariance.
+Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).

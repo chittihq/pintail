@@ -197,3 +197,51 @@ new consistent snapshot. Existing readers retain the previous manifest and
 segments until their snapshots release; new readers see only the replacement
 generation. One automatic attempt per runner prevents an unbounded resnapshot
 loop on a source whose retention policy is still unsafe.
+
+### Cheap polling tokens are advisory
+
+Count plus maximum cursor/key is a low-cost activity signal, not a correctness
+proof. A delete and insert can leave both values unchanged, and a new row can
+reuse the current maximum timestamp. Pintail therefore records and reports the
+cheap token but does not use an unchanged value to skip the strategy-specific
+check: cursor tables reread their inclusive boundary, keyed cursor-less tables
+compare aggregate chunks, and append tables compare their complete generation.
+No-op suppression keeps these checks from adding row-storage writes when the
+source is unchanged.
+
+This deliberately strengthens §9's “only then sync” wording. Treating the token
+as a hard gate would reproduce the count-neutral blind spot that Pintail exists
+to close.
+
+### Live DDL evolution preserves source-column identity
+
+Pure ADD COLUMN and DROP COLUMN events re-probe the source, retain stable IDs
+for unchanged columns, allocate new IDs monotonically, and publish a new table
+schema generation. Old segments resolve an added nullable column as NULL and
+retain dropped bytes until normal rewriting. Pinned readers continue using the
+schema generation they opened.
+
+Any ALTER operation other than a pure add/drop, a physical-key change, or a
+same-name physical-type change quarantines only that table and records the DDL
+as durable schema history. This is more conservative than trying to infer
+compatible index/default-only changes from SQL text, but preserves the
+per-database stream for unrelated tables and cannot silently reinterpret stored
+bytes.
+
+### Reconciliation is paginated but currently materializes keysets
+
+M5 reads source keys with composite-safe keyset pagination, then compares the
+complete source and visible-replica keysets in memory before emitting
+tombstones. This provides exact delete repair and avoids OFFSET instability,
+but does not yet implement the bloom-assisted streaming anti-join suggested in
+§9. The later operations milestone may bound memory by partitioning or a
+disk-backed/bloom-assisted comparison without changing reconciliation
+semantics.
+
+### Poll cadence belongs to the replication supervisor
+
+`pintail-poll` executes one deterministic cycle and accepts explicit requests
+for full reconciliation or CDC-side cascade repair. It does not spawn timers.
+The M8 per-database supervised task tree owns the 1-second probe, 5-second sync,
+10-minute delete-reconcile, and hourly CDC-cascade defaults so pause, shutdown,
+backoff, and blast-radius behavior have one lifetime owner.

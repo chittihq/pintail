@@ -22,5 +22,28 @@ cargo test -p pintail-cdc --test mysql_cdc \
 It covers MySQL 8.4 GTID and file/position, MySQL 5.7, MariaDB 11 fallback,
 transactional CRUD, MyISAM, GIPK, append replay, type fidelity, DLQ
 continuation, real CDC-worker SIGKILL during paced writes, and
-purge-to-automatic-resnapshot recovery. Later end-to-end supervisor/API suites
-will compose these gates from this directory.
+purge-to-automatic-resnapshot recovery.
+
+M5 adds one DDL case to that file and a polling matrix at
+`crates/pintail-poll/tests/mysql_poll.rs`:
+
+```sh
+cargo test -p pintail-cdc --test mysql_cdc \
+  ddl_evolution_add_drop_rename_create_truncate_and_orphan \
+  -- --ignored --nocapture
+cargo test -p pintail-cdc --test mysql_cdc \
+  cdc_cascade_negative_control_and_scheduled_repair \
+  -- --ignored --nocapture
+cargo test -p pintail-poll --test mysql_poll \
+  -- --ignored --nocapture
+```
+
+The DDL gate tracks live ADD/DROP columns across restart, table-local rename
+quarantine, TRUNCATE, matching CREATE auto-snapshot, and retained DROP orphans.
+The CDC cascade gate first proves that InnoDB emits neither child delete nor
+update row events, then repairs both through the scheduled full-row
+reconciliation path without changing the CDC checkpoint. The binlog-disabled
+polling gate covers cursor and cursor-less CRUD, composite keys, count-neutral
+same-token changes, full delete repair, unique-value reuse, soft deletes,
+append generations, and ten idle cycles with no row-storage growth. Later
+end-to-end supervisor/API suites will compose these gates from this directory.

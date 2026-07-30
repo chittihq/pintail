@@ -133,9 +133,56 @@ plausible but incorrect result.
   assertions cannot exist before their M6 and M7 server surfaces and remain
   future gates.
 
+## M5 DDL and polling
+
+- M5 remains an in-process library surface. The M8 supervisor owns the default
+  1-second cheap probe, 5-second cursor sync, 10-minute delete reconcile, and
+  hourly CDC-cascade schedules. The M6 dashboard will expose their state and
+  polling-mode warning banner.
+- Polling converges source state; it cannot reproduce intermediate states that
+  exist entirely between cycles. Hard deletes on cursor tables remain visible
+  until a scheduled key reconciliation, except when a secondary-UNIQUE
+  collision triggers immediate targeted repair. Soft-delete mappings arrive
+  through ordinary cursor sync.
+- Count/MAX tokens are diagnostic only. Pintail still performs an inclusive
+  cursor-boundary read, aggregate-chunk comparison, or append-generation check
+  when the token is unchanged. This closes count-neutral and same-timestamp
+  windows at the cost of source-side check queries on every scheduled sync.
+- Source-key reconciliation uses composite-safe keyset pagination but currently
+  materializes the full source and replica keysets in memory. Very large tables
+  therefore need memory proportional to their key inventory until a
+  bloom-assisted or partitioned anti-join is implemented.
+- CDC-side cascade/SET NULL reconciliation compares complete source and replica
+  rows so it can repair invisible payload updates as well as deletes. It
+  currently materializes that table-sized comparison in memory.
+- Cursor-less keyed checksums use ordered source chunks and MySQL-side CRC32
+  aggregates. Inserts or deletes that shift chunk boundaries can cause adjacent
+  chunks to be re-dumped; correctness is preserved, but repair work can exceed
+  the number of rows that changed.
+- Tables without a stable source key use append-generation replacement. They
+  converge to the current source contents, but individual source UPDATE or
+  DELETE identities and intermediate history are unknowable.
+- The optional secondary-UNIQUE read policy uses Pintail's current
+  case-insensitive Unicode-lowercase approximation. It does not reproduce the
+  full MySQL collation matrix, binary/nonbinary coercibility, or pad-space
+  behavior.
+- Pure ADD COLUMN and DROP COLUMN events evolve live. Other ALTER operations,
+  including rename, type/key changes, index-only changes, and default-only
+  changes, conservatively mark that table `needs_resync` while unrelated
+  tables continue.
+- DDL catch-up re-probes the source after each observed query event. If several
+  schema changes occur while Pintail is offline and the final source schema no
+  longer represents an event's intermediate shape, Pintail quarantines an
+  incompatible table rather than reconstructing missing historical layouts
+  from SQL text. A table resnapshot is then required.
+- Auto-inclusion of a new table uses case-insensitive exact allow/deny names
+  and requires a writable target root. Glob patterns and dashboard rule editing
+  arrive with the supervisor/API surface. DROP TABLE retains the replica as an
+  orphan; M5 does not provide an operator purge action.
+
 ## Milestone boundary
 
-M4 completes native snapshot plus CDC replication-library behavior. Polling,
-DDL evolution, HTTP query APIs, the MySQL wire server, prepared-statement
-compatibility, and BI-client smokes belong to M5 through M7 and are not
-claimed here.
+M5 completes snapshot, CDC, DDL-evolution, and polling/reconciliation library
+behavior. HTTP query APIs, the dashboard, the MySQL wire server,
+prepared-statement compatibility, BI-client smokes, and supervised scheduling
+belong to M6 through M8 and are not claimed here.
