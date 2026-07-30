@@ -2365,6 +2365,7 @@ dependencies = [
  "jsonwebtoken",
  "mime_guess",
  "mysql_async",
+ "pintail-backup",
  "pintail-catalog",
  "pintail-cdc",
  "pintail-exec",

@@ -2,6 +2,7 @@
 
 mod activity;
 mod auth;
+mod backup;
 mod controls;
 mod databases;
 mod error;
@@ -27,6 +28,10 @@ pub use state::ApiState;
 
 use crate::activity::{activity, dead_letters, discard_dead_letter};
 use crate::auth::{login, require_auth, session, setup, setup_status};
+use crate::backup::{
+    get_config as get_backup_config, list as list_backups, put_config as put_backup_config,
+    restore as restore_backup, start as start_backup,
+};
 use crate::controls::{reconcile, resync};
 use crate::databases::{
     create as create_database, delete as delete_database, get as get_database,
@@ -65,6 +70,15 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/databases/{id}/probe", get(probe_database))
         .route("/databases/{id}/mode", post(set_mode))
         .route("/databases/{id}/status", get(database_status))
+        .route(
+            "/databases/{id}/backup-config",
+            get(get_backup_config).put(put_backup_config),
+        )
+        .route(
+            "/databases/{id}/backups",
+            get(list_backups).post(start_backup),
+        )
+        .route("/databases/{id}/backups/restore", post(restore_backup))
         .route(
             "/databases/{id}/api-keys",
             get(list_api_keys).post(create_api_key),

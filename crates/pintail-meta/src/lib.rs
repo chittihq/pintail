@@ -11,7 +11,10 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 mod backup;
 mod control;
 
-pub use backup::{BackupConfigRecord, BackupRecord, NewBackup, NewBackupConfig};
+pub use backup::{
+    BackupConfigRecord, BackupRecord, NewBackup, NewBackupConfig, RestoredCheckpoint,
+    RestoredDatabase, RestoredTable,
+};
 pub use control::{
     ApiKeyRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, NewApiKey, SyncRunRecord, TableRecord,
     UserRecord,

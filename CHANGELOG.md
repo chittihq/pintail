@@ -16,6 +16,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   checksum-addressed immutable segments, reuse unchanged objects in
   incremental chains, publish portable JSON manifests last, and restore only
   into new side-by-side directories after SHA-256 verification.
+- Authenticated backup APIs encrypt credentials at rest, configure per-database
+  schedules, launch and audit manual full/incremental jobs, list their history,
+  and restore a completed backup as a new detached, queryable database without
+  exporting the source DSN.
 
 ## [M7] - 2026-07-30
 

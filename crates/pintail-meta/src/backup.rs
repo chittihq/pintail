@@ -58,6 +58,36 @@ pub struct NewBackup<'a> {
     pub started_at: &'a str,
 }
 
+/// Control-plane values restored alongside verified table objects.
+pub struct RestoredDatabase<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub probe_json: &'a str,
+    pub effective_mode: &'a str,
+    pub tables: &'a [RestoredTable<'a>],
+    pub checkpoint: Option<RestoredCheckpoint<'a>>,
+    pub now: &'a str,
+}
+
+/// One restored table control-plane row.
+pub struct RestoredTable<'a> {
+    pub name: &'a str,
+    pub primary_key_json: Option<&'a str>,
+    pub cursor_column: Option<&'a str>,
+    pub sort_key_json: Option<&'a str>,
+    pub rows_synced: u64,
+    pub schema_version: u32,
+    pub soft_delete_column: Option<&'a str>,
+}
+
+/// One restored source checkpoint retained for audit and optional recovery.
+pub struct RestoredCheckpoint<'a> {
+    pub kind: &'a str,
+    pub gtid_set: Option<&'a str>,
+    pub binlog_file: Option<&'a str>,
+    pub binlog_pos: Option<u64>,
+}
+
 impl MetaStore {
     /// Creates or replaces one database's encrypted backup configuration.
     ///
@@ -225,6 +255,91 @@ impl MetaStore {
             )
             .optional()
             .context("failed to load latest completed backup")
+    }
+
+    /// Registers verified backup objects as a new, paused database.
+    ///
+    /// The source DSN is intentionally not present in backups. A restored
+    /// replica is queryable side-by-side but remains detached from ingestion
+    /// until an operator supplies source credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid state, duplicate identity, out-of-range
+    /// counters, or a transactional storage failure.
+    pub fn register_restored_database(&self, restored: &RestoredDatabase<'_>) -> Result<()> {
+        if !matches!(restored.effective_mode, "cdc" | "polling") {
+            bail!("restored effective mode must be cdc or polling");
+        }
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin restored database registration")?;
+        transaction
+            .execute(
+                "INSERT INTO databases (\
+                   id, name, mysql_dsn_encrypted, mode, effective_mode, state, \
+                   probe_json, created_at, updated_at\
+                 ) VALUES (?1, ?2, X'', 'paused', ?3, 'restored', ?4, ?5, ?5)",
+                (
+                    restored.id,
+                    restored.name,
+                    restored.effective_mode,
+                    restored.probe_json,
+                    restored.now,
+                ),
+            )
+            .context("failed to register restored database")?;
+        for table in restored.tables {
+            let rows =
+                i64::try_from(table.rows_synced).context("restored row count exceeds SQLite")?;
+            transaction
+                .execute(
+                    "INSERT INTO tables (\
+                       db_id, name, state, pk_json, cursor_column, sort_key_json, \
+                       rows_synced, schema_version, soft_delete_column\
+                     ) VALUES (?1, ?2, 'restored', ?3, ?4, ?5, ?6, ?7, ?8)",
+                    (
+                        restored.id,
+                        table.name,
+                        table.primary_key_json,
+                        table.cursor_column,
+                        table.sort_key_json,
+                        rows,
+                        i64::from(table.schema_version),
+                        table.soft_delete_column,
+                    ),
+                )
+                .with_context(|| format!("failed to register restored table {}", table.name))?;
+        }
+        if let Some(checkpoint) = &restored.checkpoint {
+            if !matches!(checkpoint.kind, "gtid" | "filepos" | "polling") {
+                bail!("restored checkpoint kind is invalid");
+            }
+            let position = checkpoint
+                .binlog_pos
+                .map(i64::try_from)
+                .transpose()
+                .context("restored binlog position exceeds SQLite")?;
+            transaction
+                .execute(
+                    "INSERT INTO checkpoints (\
+                       db_id, kind, gtid_set, binlog_file, binlog_pos, updated_at\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    (
+                        restored.id,
+                        checkpoint.kind,
+                        checkpoint.gtid_set,
+                        checkpoint.binlog_file,
+                        position,
+                        restored.now,
+                    ),
+                )
+                .context("failed to register restored checkpoint")?;
+        }
+        transaction
+            .commit()
+            .context("failed to commit restored database registration")
     }
 }
 

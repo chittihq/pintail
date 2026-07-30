@@ -112,6 +112,10 @@ impl ApiState {
     }
 
     pub(crate) fn encrypt_dsn(&self, dsn: &str) -> Result<Vec<u8>, ApiError> {
+        self.encrypt_secret(dsn)
+    }
+
+    pub(crate) fn encrypt_secret(&self, secret: &str) -> Result<Vec<u8>, ApiError> {
         let inner = self
             .inner
             .as_ref()
@@ -122,7 +126,7 @@ impl ApiState {
         rand::rng().fill_bytes(&mut nonce);
         let nonce_array = Nonce::try_from(nonce.as_slice()).map_err(ApiError::internal)?;
         let encrypted = cipher
-            .encrypt(&nonce_array, dsn.as_bytes())
+            .encrypt(&nonce_array, secret.as_bytes())
             .map_err(ApiError::internal)?;
         let mut encoded = Vec::with_capacity(NONCE_BYTES + encrypted.len());
         encoded.extend_from_slice(&nonce);
@@ -131,13 +135,17 @@ impl ApiState {
     }
 
     pub(crate) fn decrypt_dsn(&self, encrypted: &[u8]) -> Result<String, ApiError> {
+        self.decrypt_secret(encrypted)
+    }
+
+    pub(crate) fn decrypt_secret(&self, encrypted: &[u8]) -> Result<String, ApiError> {
         let inner = self
             .inner
             .as_ref()
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
         let (nonce, ciphertext) = encrypted
             .split_at_checked(NONCE_BYTES)
-            .ok_or_else(|| ApiError::internal("encrypted DSN is truncated"))?;
+            .ok_or_else(|| ApiError::internal("encrypted secret is truncated"))?;
         let cipher =
             ChaCha20Poly1305::new_from_slice(&inner.dsn_key).map_err(ApiError::internal)?;
         let nonce = Nonce::try_from(nonce).map_err(ApiError::internal)?;

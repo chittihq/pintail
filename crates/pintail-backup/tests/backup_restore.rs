@@ -76,12 +76,12 @@ async fn full_and_incremental_backups_restore_with_verified_objects() {
         .expect("restore");
     assert_eq!(restored.restored_objects, 3);
     assert_eq!(
-        std::fs::read(destination.join("tables/6f7264657273/segment-1.pts"))
+        std::fs::read(destination.join("tables/table-orders/segment-1.pts"))
             .expect("restored first"),
         b"first immutable segment"
     );
     assert_eq!(
-        std::fs::read(destination.join("tables/6f7264657273/segment-2.pts"))
+        std::fs::read(destination.join("tables/table-orders/segment-2.pts"))
             .expect("restored second"),
         b"second immutable segment"
     );
@@ -142,6 +142,7 @@ fn source(backup_id: &str, parent_id: Option<&str>, segments: Vec<SourceSegment>
         }),
         tables: vec![SourceTable {
             name: "orders".into(),
+            directory_name: "table-orders".into(),
             manifest: b"manifest".to_vec(),
             segments,
         }],

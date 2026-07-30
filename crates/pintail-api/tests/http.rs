@@ -260,6 +260,74 @@ async fn status_reports_the_live_wire_endpoint() {
 }
 
 #[tokio::test]
+async fn backup_configuration_encrypts_credentials_and_never_reads_them_back() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let token = setup_admin(&app).await;
+    let authorization = format!("Bearer {token}");
+    let database = create_database(&app, &authorization, "analytics").await;
+    let database_id = database["id"].as_str().expect("database ID");
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/databases/{database_id}/backup-config"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, &authorization)
+                .body(Body::from(
+                    r#"{
+                      "bucket":"pintail",
+                      "prefix":"production/analytics",
+                      "endpoint":"http://127.0.0.1:9000",
+                      "region":"us-east-1",
+                      "access_key_id":"minioadmin",
+                      "secret_access_key":"minio-secret",
+                      "schedule_minutes":60,
+                      "enabled":true
+                    }"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    let saved = json_response(saved).await;
+    assert_eq!(saved["prefix"], "production/analytics");
+    assert_eq!(saved["credentials_configured"], true);
+    assert!(saved.get("access_key_id").is_none());
+    assert!(saved.get("secret_access_key").is_none());
+
+    let metadata = pintail_meta::MetaStore::open(&data.path().join("pintail-meta.db")).unwrap();
+    let encrypted = metadata
+        .backup_config(database_id)
+        .unwrap()
+        .expect("backup config");
+    assert_ne!(
+        encrypted.encrypted_access_key_id.as_deref(),
+        Some(b"minioadmin".as_slice())
+    );
+    assert_ne!(
+        encrypted.encrypted_secret_access_key.as_deref(),
+        Some(b"minio-secret".as_slice())
+    );
+
+    let loaded = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/databases/{database_id}/backup-config"))
+                .header(header::AUTHORIZATION, authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(loaded.status(), StatusCode::OK);
+    assert_eq!(json_response(loaded).await["credentials_configured"], true);
+}
+
+#[tokio::test]
 async fn root_serves_the_embedded_dashboard() {
     let response = pintail_api::router()
         .oneshot(

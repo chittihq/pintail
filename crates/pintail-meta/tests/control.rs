@@ -1,4 +1,7 @@
-use pintail_meta::{DatabaseUpdate, MetaStore, NewApiKey, NewBackup, NewBackupConfig};
+use pintail_meta::{
+    DatabaseUpdate, MetaStore, NewApiKey, NewBackup, NewBackupConfig, RestoredCheckpoint,
+    RestoredDatabase, RestoredTable,
+};
 
 #[test]
 fn users_databases_and_table_controls_round_trip() {
@@ -254,4 +257,60 @@ fn backup_configuration_and_runs_round_trip() {
         .unwrap()
         .expect("latest completed");
     assert_eq!(latest.id, "backup-1");
+}
+
+#[test]
+fn restored_database_is_registered_side_by_side_without_source_credentials() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    metadata
+        .upsert_database("source", "app", b"encrypted", "2026-07-30T00:00:00Z")
+        .unwrap();
+    let tables = [RestoredTable {
+        name: "events",
+        primary_key_json: Some("[\"id\"]"),
+        cursor_column: Some("updated_at"),
+        sort_key_json: Some("[\"id\"]"),
+        rows_synced: 42,
+        schema_version: 3,
+        soft_delete_column: Some("deleted_at"),
+    }];
+    metadata
+        .register_restored_database(&RestoredDatabase {
+            id: "restored",
+            name: "app recovery",
+            probe_json: "{\"database\":\"app\"}",
+            effective_mode: "cdc",
+            tables: &tables,
+            checkpoint: Some(RestoredCheckpoint {
+                kind: "gtid",
+                gtid_set: Some("server:1-9"),
+                binlog_file: None,
+                binlog_pos: None,
+            }),
+            now: "2026-07-30T01:00:00Z",
+        })
+        .unwrap();
+
+    let source = metadata.database("source").unwrap().expect("source");
+    let restored = metadata.database("restored").unwrap().expect("restore");
+    assert_eq!(source.encrypted_dsn, b"encrypted");
+    assert!(restored.encrypted_dsn.is_empty());
+    assert_eq!(restored.mode, "paused");
+    assert_eq!(restored.state, "restored");
+    assert_eq!(restored.effective_mode.as_deref(), Some("cdc"));
+    let table = &metadata.tables("restored").unwrap()[0];
+    assert_eq!(table.state, "restored");
+    assert_eq!(table.rows_synced, 42);
+    assert_eq!(table.schema_version, 3);
+    assert_eq!(
+        metadata
+            .snapshot_checkpoint("restored")
+            .unwrap()
+            .expect("checkpoint")
+            .gtid_set
+            .as_deref(),
+        Some("server:1-9")
+    );
 }

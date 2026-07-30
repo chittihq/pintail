@@ -46,6 +46,7 @@ pub struct SourceSegment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceTable {
     pub name: String,
+    pub directory_name: String,
     pub manifest: Vec<u8>,
     pub segments: Vec<SourceSegment>,
 }
@@ -73,6 +74,7 @@ pub struct ObjectReference {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct BackupTable {
     pub name: String,
+    pub directory_name: String,
     pub manifest: ObjectReference,
     pub segments: Vec<ObjectReference>,
 }
@@ -187,6 +189,7 @@ pub async fn create_backup(
 
     for table in source.tables {
         validate_component(&table.name, "table name")?;
+        validate_component(&table.directory_name, "table directory name")?;
         let table_key = hex_component(&table.name);
         let manifest_key = format!("{root}/tables/{table_key}/manifest.ptm");
         let manifest_ref = put_bytes(
@@ -228,6 +231,7 @@ pub async fn create_backup(
         }
         tables.push(BackupTable {
             name: table.name,
+            directory_name: table.directory_name,
             manifest: manifest_ref,
             segments,
         });
@@ -381,7 +385,8 @@ async fn restore_objects(
     let mut objects = 0_u64;
     for table in &manifest.tables {
         validate_component(&table.name, "table name")?;
-        let table_dir = tables_root.join(hex_component(&table.name));
+        validate_component(&table.directory_name, "table directory name")?;
+        let table_dir = tables_root.join(&table.directory_name);
         std::fs::create_dir(&table_dir)
             .with_context(|| format!("failed to create restored table {}", table.name))?;
         let manifest_bytes = verified_object(store, &table.manifest).await?;

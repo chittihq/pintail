@@ -1,0 +1,735 @@
+use std::{collections::BTreeMap, time::Instant};
+
+use axum::{
+    Extension, Json,
+    extract::{Path, State},
+    http::StatusCode,
+};
+use chrono::Utc;
+use pintail_backup::{
+    BackupSource, S3Destination, SourceSegment, SourceTable, build_s3, create_backup,
+    load_manifest, restore_backup, validate_prefix,
+};
+use pintail_meta::{
+    BackupConfigRecord, BackupRecord, NewBackup, NewBackupConfig, RestoredCheckpoint,
+    RestoredDatabase, RestoredTable, TableRecord,
+};
+use pintail_probe::ProbeReport;
+use pintail_store::{StoreOptions, TableSnapshot, TableStore};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    ApiState, auth::AuthPrincipal, error::ApiError, events::ApiEvent, snapshot::table_directory,
+};
+
+type EncryptedCredentials = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+#[derive(Serialize)]
+pub(crate) struct BackupConfigResponse {
+    bucket: String,
+    prefix: String,
+    endpoint: Option<String>,
+    region: String,
+    schedule_minutes: u64,
+    enabled: bool,
+    credentials_configured: bool,
+    updated_at: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BackupConfigRequest {
+    bucket: String,
+    prefix: String,
+    endpoint: Option<String>,
+    #[serde(default = "default_region")]
+    region: String,
+    access_key_id: Option<String>,
+    secret_access_key: Option<String>,
+    #[serde(default)]
+    clear_credentials: bool,
+    #[serde(default = "default_schedule")]
+    schedule_minutes: u64,
+    #[serde(default = "enabled")]
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct StartBackupRequest {
+    #[serde(default)]
+    full: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct AcceptedBackup {
+    id: String,
+    kind: String,
+    state: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct BackupResponse {
+    id: String,
+    database_id: String,
+    kind: String,
+    parent_id: Option<String>,
+    object_prefix: String,
+    status: String,
+    bytes: u64,
+    object_count: u64,
+    error: Option<String>,
+    started_at: String,
+    completed_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RestoreRequest {
+    backup_id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct RestoreResponse {
+    database_id: String,
+    backup_id: String,
+    state: &'static str,
+    restored_bytes: u64,
+    restored_objects: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ControlPlane {
+    database: ControlDatabase,
+    tables: Vec<ControlTable>,
+    checkpoint: Option<ControlCheckpoint>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ControlDatabase {
+    name: String,
+    effective_mode: String,
+    probe_json: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ControlTable {
+    name: String,
+    primary_key_json: Option<String>,
+    cursor_column: Option<String>,
+    sort_key_json: Option<String>,
+    rows_synced: u64,
+    schema_version: u32,
+    soft_delete_column: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ControlCheckpoint {
+    kind: String,
+    gtid_set: Option<String>,
+    binlog_file: Option<String>,
+    binlog_pos: Option<u64>,
+}
+
+pub(crate) async fn get_config(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(database_id): Path<String>,
+) -> Result<Json<BackupConfigResponse>, ApiError> {
+    principal.require_scope("read")?;
+    principal.authorize_database(&database_id)?;
+    ensure_database(&state, &database_id)?;
+    let config = state
+        .metadata()?
+        .backup_config(&database_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("backup configuration does not exist"))?;
+    Ok(Json(config.into()))
+}
+
+pub(crate) async fn put_config(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(database_id): Path<String>,
+    Json(request): Json<BackupConfigRequest>,
+) -> Result<Json<BackupConfigResponse>, ApiError> {
+    principal.require_operator()?;
+    principal.authorize_database(&database_id)?;
+    ensure_database(&state, &database_id)?;
+    validate_prefix(&request.prefix).map_err(bad_request)?;
+    if request.schedule_minutes == 0 {
+        return Err(ApiError::bad_request(
+            "backup schedule must be at least one minute",
+        ));
+    }
+    if request.access_key_id.is_some() != request.secret_access_key.is_some() {
+        return Err(ApiError::bad_request(
+            "backup access key ID and secret must be provided together",
+        ));
+    }
+    let metadata = state.metadata()?;
+    let existing = metadata
+        .backup_config(&database_id)
+        .map_err(ApiError::internal)?;
+    let (access_key, secret) = encrypted_credentials(&state, &request, existing.as_ref())?;
+    let now = Utc::now().to_rfc3339();
+    metadata
+        .upsert_backup_config(&NewBackupConfig {
+            database_id: &database_id,
+            bucket: request.bucket.trim(),
+            prefix: &request.prefix,
+            endpoint: request.endpoint.as_deref(),
+            region: request.region.trim(),
+            encrypted_access_key_id: access_key.as_deref(),
+            encrypted_secret_access_key: secret.as_deref(),
+            schedule_minutes: request.schedule_minutes,
+            enabled: request.enabled,
+            now: &now,
+        })
+        .map_err(bad_request)?;
+    let saved = metadata
+        .backup_config(&database_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::internal("saved backup configuration disappeared"))?;
+    Ok(Json(saved.into()))
+}
+
+pub(crate) async fn list(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(database_id): Path<String>,
+) -> Result<Json<Vec<BackupResponse>>, ApiError> {
+    principal.require_scope("read")?;
+    principal.authorize_database(&database_id)?;
+    ensure_database(&state, &database_id)?;
+    let backups = state
+        .metadata()?
+        .backups(&database_id, 100)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(BackupResponse::from)
+        .collect();
+    Ok(Json(backups))
+}
+
+pub(crate) async fn start(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(database_id): Path<String>,
+    payload: Option<Json<StartBackupRequest>>,
+) -> Result<(StatusCode, Json<AcceptedBackup>), ApiError> {
+    principal.require_operator()?;
+    principal.authorize_database(&database_id)?;
+    state.acquire_job(&database_id)?;
+    let metadata = state
+        .metadata()
+        .inspect_err(|_| state.release_job(&database_id))?;
+    let configured = metadata
+        .backup_config(&database_id)
+        .inspect_err(|_| state.release_job(&database_id))
+        .map_err(ApiError::internal)?;
+    if configured.is_none() {
+        state.release_job(&database_id);
+        return Err(ApiError::conflict(
+            "configure a backup destination before starting a backup",
+        ));
+    }
+    let parent = metadata
+        .latest_completed_backup(&database_id)
+        .inspect_err(|_| state.release_job(&database_id))
+        .map_err(ApiError::internal)?;
+    let force_full = payload.is_some_and(|Json(request)| request.full);
+    let kind = if force_full || parent.is_none() {
+        "full"
+    } else {
+        "incremental"
+    };
+    let parent_id = (kind == "incremental")
+        .then(|| parent.as_ref().map(|record| record.id.clone()))
+        .flatten();
+    let id = crate::state::random_identifier("backup_", 16);
+    let config = metadata
+        .backup_config(&database_id)
+        .inspect_err(|_| state.release_job(&database_id))
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| {
+            state.release_job(&database_id);
+            ApiError::internal("backup configuration disappeared")
+        })?;
+    let object_prefix = format!("{}/{database_id}/{id}", config.prefix);
+    metadata
+        .start_backup(&NewBackup {
+            id: &id,
+            database_id: &database_id,
+            kind,
+            parent_id: parent_id.as_deref(),
+            object_prefix: &object_prefix,
+            started_at: &Utc::now().to_rfc3339(),
+        })
+        .inspect_err(|_| state.release_job(&database_id))
+        .map_err(ApiError::internal)?;
+
+    let job_state = state.clone();
+    let job_database = database_id.clone();
+    let job_id = id.clone();
+    let job_kind = kind.to_owned();
+    let failure_state = state.clone();
+    let failure_database = database_id.clone();
+    let failure_id = id.clone();
+    std::thread::Builder::new()
+        .name(format!("pintail-backup-{database_id}"))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => runtime.block_on(complete_backup_job(
+                    job_state,
+                    job_database,
+                    job_id,
+                    job_kind,
+                )),
+                Err(error) => {
+                    finish_backup_error(&failure_state, &failure_database, &failure_id, &error);
+                }
+            }
+        })
+        .map_err(|error| {
+            finish_backup_error(&state, &database_id, &id, &error);
+            ApiError::unavailable(format!("could not start backup worker: {error}"))
+        })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedBackup {
+            id,
+            kind: kind.to_owned(),
+            state: "running",
+        }),
+    ))
+}
+
+pub(crate) async fn restore(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(database_id): Path<String>,
+    Json(request): Json<RestoreRequest>,
+) -> Result<(StatusCode, Json<RestoreResponse>), ApiError> {
+    principal.require_operator()?;
+    principal.authorize_database(&database_id)?;
+    ensure_database(&state, &database_id)?;
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::bad_request(
+            "restored database name cannot be empty",
+        ));
+    }
+    let metadata = state.metadata()?;
+    let record = metadata
+        .backups(&database_id, 1_000)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|backup| backup.id == request.backup_id && backup.status == "completed")
+        .ok_or_else(|| ApiError::not_found("completed backup does not exist"))?;
+    let config = metadata
+        .backup_config(&database_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("backup configuration does not exist"))?;
+    let destination = destination(&state, &config)?;
+    let store = build_s3(&destination).map_err(bad_request)?;
+    let manifest = load_manifest(store.as_ref(), &config.prefix, &database_id, &record.id)
+        .await
+        .map_err(unavailable)?;
+    let control: ControlPlane =
+        serde_json::from_value(manifest.control_plane.clone()).map_err(ApiError::internal)?;
+    let restored_id = crate::state::random_identifier("db_", 12);
+    let target = state.data_dir()?.join("databases").join(&restored_id);
+    let restored = restore_backup(store.as_ref(), manifest, &target)
+        .await
+        .map_err(unavailable)?;
+    register_restore(&metadata, &restored_id, name, &control).map_err(ApiError::internal)?;
+    state.publish(ApiEvent::database(
+        "backup.restored",
+        &restored_id,
+        format!("restored backup {} side-by-side", record.id),
+    ));
+    Ok((
+        StatusCode::CREATED,
+        Json(RestoreResponse {
+            database_id: restored_id,
+            backup_id: record.id,
+            state: "restored",
+            restored_bytes: restored.restored_bytes,
+            restored_objects: restored.restored_objects,
+        }),
+    ))
+}
+
+async fn complete_backup_job(
+    state: ApiState,
+    database_id: String,
+    backup_id: String,
+    kind: String,
+) {
+    let started = Instant::now();
+    let result = run_backup_job(&state, &database_id, &backup_id, &kind).await;
+    match result {
+        Ok(summary) => {
+            if let Ok(metadata) = state.metadata() {
+                let _ = metadata.finish_backup(
+                    &backup_id,
+                    "completed",
+                    summary.uploaded_bytes,
+                    summary.uploaded_objects,
+                    None,
+                    &Utc::now().to_rfc3339(),
+                );
+            }
+            state.publish(ApiEvent::database(
+                "backup.completed",
+                &database_id,
+                format!(
+                    "{kind} backup {backup_id} uploaded {} objects in {} ms",
+                    summary.uploaded_objects,
+                    elapsed_ms(started)
+                ),
+            ));
+        }
+        Err(error) => finish_backup_error(&state, &database_id, &backup_id, &error),
+    }
+    state.release_job(&database_id);
+}
+
+async fn run_backup_job(
+    state: &ApiState,
+    database_id: &str,
+    backup_id: &str,
+    kind: &str,
+) -> Result<pintail_backup::BackupSummary, ApiError> {
+    let metadata = state.metadata()?;
+    let database = metadata
+        .database(database_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("database does not exist"))?;
+    let report: ProbeReport = serde_json::from_str(
+        database
+            .probe_json
+            .as_deref()
+            .ok_or_else(|| ApiError::conflict("database has not been probed"))?,
+    )
+    .map_err(ApiError::internal)?;
+    let records = metadata.tables(database_id).map_err(ApiError::internal)?;
+    let checkpoint = metadata
+        .snapshot_checkpoint(database_id)
+        .map_err(ApiError::internal)?;
+    let control = control_plane(&database, &records, checkpoint.as_ref())?;
+    let config = metadata
+        .backup_config(database_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("backup configuration does not exist"))?;
+    let destination = destination(state, &config)?;
+    let object_store = build_s3(&destination).map_err(bad_request)?;
+    let parent_record = (kind == "incremental")
+        .then(|| {
+            metadata
+                .latest_completed_backup(database_id)
+                .map_err(ApiError::internal)
+        })
+        .transpose()?
+        .flatten();
+    let parent = if let Some(parent) = &parent_record {
+        Some(
+            load_manifest(
+                object_store.as_ref(),
+                &config.prefix,
+                database_id,
+                &parent.id,
+            )
+            .await
+            .map_err(unavailable)?,
+        )
+    } else {
+        None
+    };
+    drop(metadata);
+
+    let (tables, _pins) = pinned_tables(state, database_id, &report, &records)?;
+    let source = BackupSource {
+        database_id: database_id.to_owned(),
+        backup_id: backup_id.to_owned(),
+        parent_id: parent_record.map(|record| record.id),
+        control_plane: serde_json::to_value(control).map_err(ApiError::internal)?,
+        tables,
+    };
+    let (_, summary) = create_backup(object_store, &config.prefix, source, parent.as_ref())
+        .await
+        .map_err(unavailable)?;
+    Ok(summary)
+}
+
+fn pinned_tables(
+    state: &ApiState,
+    database_id: &str,
+    report: &ProbeReport,
+    records: &[TableRecord],
+) -> Result<(Vec<SourceTable>, Vec<TableSnapshot>), ApiError> {
+    let by_name = records
+        .iter()
+        .map(|record| (record.name.to_ascii_lowercase(), record))
+        .collect::<BTreeMap<_, _>>();
+    let root = state
+        .data_dir()?
+        .join("databases")
+        .join(database_id)
+        .join("tables");
+    let mut tables = Vec::new();
+    let mut pins = Vec::new();
+    for source in &report.tables {
+        if !by_name.contains_key(&source.name.to_ascii_lowercase()) {
+            continue;
+        }
+        let directory = table_directory(&root, &source.name);
+        let directory_name = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| ApiError::internal("table directory is not valid UTF-8"))?
+            .to_owned();
+        let mut store = TableStore::open(
+            &directory,
+            source.table_schema().map_err(ApiError::internal)?,
+            StoreOptions::default(),
+        )
+        .map_err(unavailable)?;
+        store.flush().map_err(unavailable)?;
+        let snapshot = store.snapshot();
+        let artifacts = snapshot.backup_artifacts().map_err(ApiError::internal)?;
+        let segments = artifacts
+            .segments()
+            .iter()
+            .map(|segment| SourceSegment {
+                file_name: segment.file_name().to_owned(),
+                path: segment.path().to_path_buf(),
+            })
+            .collect();
+        tables.push(SourceTable {
+            name: source.name.clone(),
+            directory_name,
+            manifest: artifacts.manifest().to_vec(),
+            segments,
+        });
+        pins.push(snapshot);
+    }
+    Ok((tables, pins))
+}
+
+fn control_plane(
+    database: &pintail_meta::DatabaseRecord,
+    tables: &[TableRecord],
+    checkpoint: Option<&pintail_meta::SnapshotCheckpointRecord>,
+) -> Result<ControlPlane, ApiError> {
+    Ok(ControlPlane {
+        database: ControlDatabase {
+            name: database.name.clone(),
+            effective_mode: database
+                .effective_mode
+                .clone()
+                .filter(|mode| matches!(mode.as_str(), "cdc" | "polling"))
+                .ok_or_else(|| ApiError::conflict("database is not ready for backup"))?,
+            probe_json: database
+                .probe_json
+                .clone()
+                .ok_or_else(|| ApiError::conflict("database has not been probed"))?,
+        },
+        tables: tables
+            .iter()
+            .map(|table| ControlTable {
+                name: table.name.clone(),
+                primary_key_json: table.primary_key_json.clone(),
+                cursor_column: table.cursor_column.clone(),
+                sort_key_json: table.sort_key_json.clone(),
+                rows_synced: table.rows_synced,
+                schema_version: table.schema_version,
+                soft_delete_column: table.soft_delete_column.clone(),
+            })
+            .collect(),
+        checkpoint: checkpoint.map(|checkpoint| ControlCheckpoint {
+            kind: checkpoint.kind.clone(),
+            gtid_set: checkpoint.gtid_set.clone(),
+            binlog_file: checkpoint.binlog_file.clone(),
+            binlog_pos: checkpoint.binlog_pos,
+        }),
+    })
+}
+
+fn register_restore(
+    metadata: &pintail_meta::MetaStore,
+    database_id: &str,
+    name: &str,
+    control: &ControlPlane,
+) -> anyhow::Result<()> {
+    let tables = control
+        .tables
+        .iter()
+        .map(|table| RestoredTable {
+            name: &table.name,
+            primary_key_json: table.primary_key_json.as_deref(),
+            cursor_column: table.cursor_column.as_deref(),
+            sort_key_json: table.sort_key_json.as_deref(),
+            rows_synced: table.rows_synced,
+            schema_version: table.schema_version,
+            soft_delete_column: table.soft_delete_column.as_deref(),
+        })
+        .collect::<Vec<_>>();
+    let checkpoint = control
+        .checkpoint
+        .as_ref()
+        .map(|checkpoint| RestoredCheckpoint {
+            kind: &checkpoint.kind,
+            gtid_set: checkpoint.gtid_set.as_deref(),
+            binlog_file: checkpoint.binlog_file.as_deref(),
+            binlog_pos: checkpoint.binlog_pos,
+        });
+    metadata.register_restored_database(&RestoredDatabase {
+        id: database_id,
+        name,
+        probe_json: &control.database.probe_json,
+        effective_mode: &control.database.effective_mode,
+        tables: &tables,
+        checkpoint,
+        now: &Utc::now().to_rfc3339(),
+    })
+}
+
+fn destination(state: &ApiState, config: &BackupConfigRecord) -> Result<S3Destination, ApiError> {
+    let access_key_id = config
+        .encrypted_access_key_id
+        .as_deref()
+        .map(|secret| state.decrypt_secret(secret))
+        .transpose()?;
+    let secret_access_key = config
+        .encrypted_secret_access_key
+        .as_deref()
+        .map(|secret| state.decrypt_secret(secret))
+        .transpose()?;
+    Ok(S3Destination {
+        bucket: config.bucket.clone(),
+        prefix: config.prefix.clone(),
+        endpoint: config.endpoint.clone(),
+        region: config.region.clone(),
+        access_key_id,
+        secret_access_key,
+    })
+}
+
+fn encrypted_credentials(
+    state: &ApiState,
+    request: &BackupConfigRequest,
+    existing: Option<&BackupConfigRecord>,
+) -> Result<EncryptedCredentials, ApiError> {
+    if request.clear_credentials {
+        return Ok((None, None));
+    }
+    if let (Some(access_key), Some(secret)) = (
+        request.access_key_id.as_deref(),
+        request.secret_access_key.as_deref(),
+    ) {
+        return Ok((
+            Some(state.encrypt_secret(access_key)?),
+            Some(state.encrypt_secret(secret)?),
+        ));
+    }
+    Ok(existing.map_or((None, None), |config| {
+        (
+            config.encrypted_access_key_id.clone(),
+            config.encrypted_secret_access_key.clone(),
+        )
+    }))
+}
+
+fn ensure_database(state: &ApiState, database_id: &str) -> Result<(), ApiError> {
+    if state
+        .metadata()?
+        .database(database_id)
+        .map_err(ApiError::internal)?
+        .is_some()
+    {
+        Ok(())
+    } else {
+        Err(ApiError::not_found("database does not exist"))
+    }
+}
+
+fn finish_backup_error(
+    state: &ApiState,
+    database_id: &str,
+    backup_id: &str,
+    error: &impl std::fmt::Display,
+) {
+    let message = error.to_string();
+    if let Ok(metadata) = state.metadata() {
+        let _ = metadata.finish_backup(
+            backup_id,
+            "error",
+            0,
+            0,
+            Some(&message),
+            &Utc::now().to_rfc3339(),
+        );
+    }
+    state.publish(ApiEvent::database("backup.error", database_id, message));
+    state.release_job(database_id);
+}
+
+impl From<BackupConfigRecord> for BackupConfigResponse {
+    fn from(config: BackupConfigRecord) -> Self {
+        Self {
+            credentials_configured: config.encrypted_access_key_id.is_some(),
+            bucket: config.bucket,
+            prefix: config.prefix,
+            endpoint: config.endpoint,
+            region: config.region,
+            schedule_minutes: config.schedule_minutes,
+            enabled: config.enabled,
+            updated_at: config.updated_at,
+        }
+    }
+}
+
+impl From<BackupRecord> for BackupResponse {
+    fn from(backup: BackupRecord) -> Self {
+        Self {
+            id: backup.id,
+            database_id: backup.database_id,
+            kind: backup.kind,
+            parent_id: backup.parent_id,
+            object_prefix: backup.object_prefix,
+            status: backup.status,
+            bytes: backup.bytes,
+            object_count: backup.object_count,
+            error: backup.error,
+            started_at: backup.started_at,
+            completed_at: backup.completed_at,
+        }
+    }
+}
+
+fn default_region() -> String {
+    "us-east-1".to_owned()
+}
+
+const fn default_schedule() -> u64 {
+    1_440
+}
+
+const fn enabled() -> bool {
+    true
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn bad_request(error: impl std::fmt::Display) -> ApiError {
+    ApiError::bad_request(error.to_string())
+}
+
+fn unavailable(error: impl std::fmt::Display) -> ApiError {
+    ApiError::unavailable(error.to_string())
+}

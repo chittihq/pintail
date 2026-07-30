@@ -45,6 +45,7 @@ mysql_async = { version = "0.37.0", default-features = false, features = ["binlo
 opensrv-mysql = { version = "0.7.0", default-features = false }
 object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
 pintail-api = { path = "crates/pintail-api" }
+pintail-backup = { path = "crates/pintail-backup" }
 pintail-catalog = { path = "crates/pintail-catalog" }
 pintail-cdc = { path = "crates/pintail-cdc" }
 pintail-exec = { path = "crates/pintail-exec" }
