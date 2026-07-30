@@ -20,9 +20,10 @@ Each physical table directory owns:
 - `segment-{id:020}.ptseg`: immutable columnar data;
 - dot-prefixed temporary files used only until `fsync` plus atomic rename.
 
-Opening a database locks its writer, verifies every live segment footer,
-removes unreferenced `.ptseg` crash orphans, then routes WAL records by stable
-table ID and replays sequences newer than each table's manifest checkpoint.
+Opening a database locks its writer and validates or repairs the shared WAL
+record framing. It then verifies each table's live segment footers, removes
+unreferenced `.ptseg` crash orphans, routes records by stable table ID, and
+replays sequences newer than that table's manifest checkpoint.
 Flushing one table leaves the shared WAL intact while any other table has
 unpublished rows. The compatibility `TableStore` API uses the same format for
 one table with ID `0` and a local `table.wal`.

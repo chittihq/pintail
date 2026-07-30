@@ -224,7 +224,7 @@ fn point_and_range_reads_prune_disjoint_corrupt_segments_before_block_decode() {
 }
 
 #[test]
-fn as_of_range_reads_prune_segments_wholly_newer_than_the_snapshot() {
+fn version_filtered_range_reads_prune_disjoint_segment_version_bounds() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
@@ -247,8 +247,8 @@ fn as_of_range_reads_prune_segments_wholly_newer_than_the_snapshot() {
 
     assert_eq!(
         snapshot
-            .scan_range_as_of(&key(1), &key(1), 10)
-            .expect("as-of scan"),
+            .scan_range_versions(&key(1), &key(1), 0, 10)
+            .expect("version-filtered scan"),
         vec![row(1, "as-of", 5)]
     );
     assert!(

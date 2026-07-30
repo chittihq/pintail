@@ -48,6 +48,8 @@ impl DatabaseStore {
         let directory = directory.as_ref().to_path_buf();
         std::fs::create_dir_all(directory.join(TABLES_DIRECTORY))
             .map_err(|error| StoreError::io("create database directory", error))?;
+        let directory = std::fs::canonicalize(&directory)
+            .map_err(|error| StoreError::io("canonicalize database directory", error))?;
 
         let writer_lock = open_lock(&directory.join(WRITER_LOCK_FILE))?;
         FileExt::try_lock_exclusive(&writer_lock).map_err(|error| {
@@ -79,8 +81,9 @@ impl DatabaseStore {
 
         let mut tables = BTreeMap::new();
         for (table_id, schema) in schemas_by_id {
+            let table_directory = directory.join(TABLES_DIRECTORY).join(table_id.to_string());
             let table = TableStore::open_with_wal(
-                directory.join(TABLES_DIRECTORY).join(table_id.to_string()),
+                &table_directory,
                 &wal_path,
                 table_id,
                 schema,

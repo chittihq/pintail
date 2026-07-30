@@ -318,11 +318,11 @@ impl TableStore {
     ) -> Result<Self, StoreError> {
         let directory = directory.as_ref().to_path_buf();
         let wal_path = directory.join(WAL_FILE);
-        Self::open_with_wal(directory, &wal_path, 0, schema, options, true)
+        Self::open_with_wal(&directory, &wal_path, 0, schema, options, true)
     }
 
     pub(crate) fn open_with_wal(
-        directory: PathBuf,
+        directory: &Path,
         wal_path: &Path,
         table_id: u64,
         schema: TableSchema,
@@ -339,8 +339,10 @@ impl TableStore {
                 "compaction fan-in must be at least two".into(),
             ));
         }
-        std::fs::create_dir_all(&directory)
+        std::fs::create_dir_all(directory)
             .map_err(|error| StoreError::io("create table directory", error))?;
+        let directory = std::fs::canonicalize(directory)
+            .map_err(|error| StoreError::io("canonicalize table directory", error))?;
 
         let writer_lock = open_lock(&directory.join(WRITER_LOCK_FILE))?;
         FileExt::try_lock_exclusive(&writer_lock).map_err(|error| {
@@ -898,20 +900,25 @@ impl TableSnapshot {
         start: &PrimaryKey,
         end: &PrimaryKey,
     ) -> Result<Vec<StoredRow>, StoreError> {
-        self.scan_range_as_of(start, end, u64::MAX)
+        self.scan_range_versions(start, end, 0, u64::MAX)
     }
 
-    /// Returns visible rows in one inclusive key range at a maximum source
-    /// version, pruning segments whose complete version range is newer.
+    /// Returns latest retained rows in inclusive key and source-version
+    /// ranges, pruning segments whose complete version bounds are disjoint.
+    ///
+    /// This is a retained-version filter, not a historical snapshot API:
+    /// memtable insertion and compaction may already have collapsed older
+    /// versions of a key.
     ///
     /// # Errors
     ///
     /// Returns an error for a reversed range, corrupt segment, or filesystem
     /// failure.
-    pub fn scan_range_as_of(
+    pub fn scan_range_versions(
         &self,
         start: &PrimaryKey,
         end: &PrimaryKey,
+        min_version: u64,
         max_version: u64,
     ) -> Result<Vec<StoredRow>, StoreError> {
         if start > end {
@@ -919,21 +926,31 @@ impl TableSnapshot {
                 "scan range start follows its end".into(),
             ));
         }
+        if min_version > max_version {
+            return Err(StoreError::FormatLimit(
+                "scan version range start follows its end".into(),
+            ));
+        }
         let mut latest = BTreeMap::new();
         for segment_meta in &self.manifest.segments {
-            if segment_meta.min_version > max_version
+            if segment_meta.max_version < min_version
+                || segment_meta.min_version > max_version
                 || !segment::overlaps_key_range(segment_meta, start, end)
             {
                 continue;
             }
             for row in segment::read(&self.directory, segment_meta, &self.schema)? {
-                if row.version() <= max_version && row.key() >= start && row.key() <= end {
+                if row.version() >= min_version
+                    && row.version() <= max_version
+                    && row.key() >= start
+                    && row.key() <= end
+                {
                     apply_latest(&mut latest, row);
                 }
             }
         }
         for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
-            if row.version() <= max_version {
+            if row.version() >= min_version && row.version() <= max_version {
                 apply_latest(&mut latest, row.clone());
             }
         }

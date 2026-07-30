@@ -50,8 +50,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   opportunities.
 - Manifest-resident primary-key bounds and bloom filters with pruned point and
   inclusive range reads that skip unrelated segment block decoding.
-- As-of range scans that prune segments whose stored version range is wholly
-  newer than the requested snapshot version.
+- Retained-version range scans that prune segments whose stored version bounds
+  do not overlap the requested filter interval.
 - Projected range scans with checksummed key-block zone-map pruning,
   cross-segment winner resolution before late materialization of requested
   user columns, and physical scan counters.

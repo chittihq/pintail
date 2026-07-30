@@ -127,6 +127,41 @@ fn pinned_snapshot_segments_survive_writer_drop_and_reopen() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn snapshot_pins_use_canonical_identity_across_symlinked_reopen() {
+    use std::os::unix::fs::symlink;
+
+    let parent = tempfile::tempdir().expect("temporary parent directory");
+    let physical = parent.path().join("physical-table");
+    let alias = parent.path().join("table-alias");
+    std::fs::create_dir(&physical).expect("physical table directory");
+    symlink(&physical, &alias).expect("table symlink");
+    let options = StoreOptions {
+        compaction_fan_in: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(&physical, schema(), options).expect("open");
+    for batch in [vec![row(1, "old", 1, false)], vec![row(1, "new", 2, false)]] {
+        table.ingest(batch).expect("ingest");
+        table.flush().expect("flush");
+    }
+    let pinned = table.snapshot();
+    table.compact().expect("compact");
+    drop(table);
+
+    let _reopened = TableStore::open(&alias, schema(), options).expect("reopen through symlink");
+    assert_eq!(
+        pinned.scan().expect("scan pinned symlink identity"),
+        vec![row(1, "new", 2, false)]
+    );
+    assert_eq!(
+        segment_count(&physical),
+        3,
+        "canonical snapshot identity protects retired files"
+    );
+}
+
 #[test]
 fn arbitrary_version_and_tombstone_interleavings_match_a_naive_reference() {
     for seed in 0..96 {
