@@ -300,15 +300,12 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             rows.truncate(limit);
             rows.shrink_to_fit();
         }
-        let retained_bytes = rows.capacity() * std::mem::size_of::<ProjectedRow>()
-            + rows
-                .iter()
-                .map(|row| {
-                    row.estimated_bytes()
-                        .saturating_sub(std::mem::size_of::<ProjectedRow>())
-                })
-                .sum::<usize>()
-                .saturating_add(stream_overhead);
+        let rows = rows
+            .into_iter()
+            .map(ProjectedRow::into_values)
+            .collect::<Vec<_>>();
+        let retained_bytes =
+            projected_values_retained_bytes(rows.capacity(), &rows).saturating_add(stream_overhead);
         Ok(Box::new(SnapshotStream {
             rows: rows.into(),
             stream: None,
@@ -568,7 +565,7 @@ fn predecessor(value: &KeyPart) -> Option<KeyPart> {
 }
 
 struct SnapshotStream {
-    rows: VecDeque<ProjectedRow>,
+    rows: VecDeque<Vec<Value>>,
     stream: Option<ProjectedScanStream>,
     types: Vec<pintail_types::DataType>,
     retained_bytes: usize,
@@ -610,12 +607,10 @@ impl BatchStream for SnapshotStream {
             .map(|_| Vec::with_capacity(row_count))
             .collect::<Vec<_>>();
         for _ in 0..row_count {
-            let row = self.rows.pop_front().expect("row count bounded above");
-            self.retained_bytes = self.retained_bytes.saturating_sub(
-                row.estimated_bytes()
-                    .saturating_sub(std::mem::size_of::<ProjectedRow>()),
-            );
-            let values = row.into_values();
+            let values = self.rows.pop_front().expect("row count bounded above");
+            self.retained_bytes = self
+                .retained_bytes
+                .saturating_sub(projected_value_payload_bytes(&values));
             if values.len() != self.types.len() {
                 return Err(ExecError::InvalidBatch(
                     "stored row is shorter than its snapshot schema",
@@ -631,10 +626,7 @@ impl BatchStream for SnapshotStream {
                 self.retained_bytes = self.retained_bytes.saturating_sub(
                     self.rows
                         .iter()
-                        .map(|row| {
-                            row.estimated_bytes()
-                                .saturating_sub(std::mem::size_of::<ProjectedRow>())
-                        })
+                        .map(|values| projected_value_payload_bytes(values))
                         .sum(),
                 );
                 self.rows.clear();
@@ -645,7 +637,7 @@ impl BatchStream for SnapshotStream {
             let capacity = self.rows.capacity();
             self.rows.shrink_to_fit();
             self.retained_bytes = self.retained_bytes.saturating_sub(
-                capacity.saturating_sub(self.rows.capacity()) * std::mem::size_of::<ProjectedRow>(),
+                capacity.saturating_sub(self.rows.capacity()) * std::mem::size_of::<Vec<Value>>(),
             );
         }
         let columns = self
@@ -673,6 +665,20 @@ impl BatchStream for SnapshotStream {
         }
         batch_memory_upper_bound(&self.types, row_count)
     }
+}
+
+fn projected_values_retained_bytes(capacity: usize, rows: &[Vec<Value>]) -> usize {
+    capacity
+        .saturating_mul(std::mem::size_of::<Vec<Value>>())
+        .saturating_add(
+            rows.iter()
+                .map(|values| projected_value_payload_bytes(values))
+                .sum(),
+        )
+}
+
+fn projected_value_payload_bytes(values: &[Value]) -> usize {
+    std::mem::size_of_val(values).saturating_add(values.iter().map(Value::heap_bytes).sum())
 }
 
 fn batch_memory_upper_bound(types: &[pintail_types::DataType], row_count: usize) -> usize {

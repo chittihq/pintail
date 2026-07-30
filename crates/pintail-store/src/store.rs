@@ -385,17 +385,117 @@ pub struct ProjectedScanStream {
     pruned_segments: usize,
 }
 
+/// One bounded set of projected values from an independently visible segment.
+pub struct ProjectedValueChunk {
+    rows: Vec<Vec<pintail_types::Value>>,
+    stats: ScanStats,
+    retained_bytes: usize,
+}
+
+impl ProjectedValueChunk {
+    /// Returns projected values in physical key order.
+    #[must_use]
+    pub fn rows(&self) -> &[Vec<pintail_types::Value>] {
+        &self.rows
+    }
+
+    /// Moves the projected values into the pull-based executor.
+    #[must_use]
+    pub fn into_rows(self) -> Vec<Vec<pintail_types::Value>> {
+        self.rows
+    }
+
+    /// Returns bytes retained by the projected values.
+    #[must_use]
+    pub const fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+
+    /// Returns pruning and decoding counters for this segment.
+    #[must_use]
+    pub const fn stats(&self) -> ScanStats {
+        self.stats
+    }
+}
+
 impl ProjectedScanStream {
     /// Decodes the next independently visible segment within `memory_limit`.
     ///
     /// # Errors
     ///
     /// Returns a precise storage, corruption, schema, or memory-limit error.
-    pub fn next_chunk(&mut self, memory_limit: usize) -> Result<Option<ProjectedScan>, StoreError> {
+    pub fn next_chunk(
+        &mut self,
+        memory_limit: usize,
+    ) -> Result<Option<ProjectedValueChunk>, StoreError> {
         let Some(segment) = self.segments.get(self.next_segment).cloned() else {
             return Ok(None);
         };
         self.next_segment += 1;
+        if self.start <= segment.min_key && self.end >= segment.max_key {
+            let projection = self
+                .column_ids
+                .iter()
+                .map(|id| {
+                    self.snapshot
+                        .schema
+                        .columns()
+                        .iter()
+                        .position(|column| column.id() == *id)
+                        .ok_or_else(|| {
+                            StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let row_count = usize::try_from(segment.row_count)
+                .map_err(|_| StoreError::FormatLimit("segment row count exceeds usize".into()))?;
+            let scan_memory = AtomicUsize::new(0);
+            let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+            let row_index_bytes = row_count.saturating_mul(size_of::<usize>());
+            scan_budget.reserve(row_index_bytes)?;
+            let row_indices = (0..row_count).collect::<Vec<_>>();
+            let fetch = segment::read_projected_rows(
+                &self.snapshot.directory,
+                &segment,
+                &self.snapshot.schema,
+                &projection,
+                &row_indices,
+                &scan_budget,
+            )?;
+            scan_budget.release(row_index_bytes);
+            let retained_bytes = size_of::<ProjectedValueChunk>()
+                .saturating_add(
+                    fetch
+                        .values
+                        .capacity()
+                        .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+                )
+                .saturating_add(
+                    fetch
+                        .values
+                        .iter()
+                        .map(|values| {
+                            values
+                                .capacity()
+                                .saturating_mul(size_of::<pintail_types::Value>())
+                                .saturating_add(
+                                    values.iter().map(pintail_types::Value::heap_bytes).sum(),
+                                )
+                        })
+                        .sum(),
+                );
+            scan_budget.release(fetch.reserved_bytes);
+            scan_budget.reserve(retained_bytes)?;
+            return Ok(Some(ProjectedValueChunk {
+                rows: fetch.values,
+                stats: ScanStats {
+                    segments_read: 1,
+                    blocks_decoded: fetch.blocks_decoded,
+                    ..ScanStats::default()
+                },
+                retained_bytes,
+            }));
+        }
         let mut manifest = self.snapshot.manifest.as_ref().clone();
         manifest.segments = vec![segment];
         let chunk = TableSnapshot {
@@ -404,9 +504,21 @@ impl ProjectedScanStream {
             directory: self.snapshot.directory.clone(),
             schema: self.snapshot.schema.clone(),
         };
-        chunk
-            .scan_projected_range_bounded(&self.start, &self.end, &self.column_ids, memory_limit)
-            .map(Some)
+        let projected = chunk.scan_projected_range_bounded(
+            &self.start,
+            &self.end,
+            &self.column_ids,
+            memory_limit,
+        )?;
+        Ok(Some(ProjectedValueChunk {
+            retained_bytes: projected.retained_bytes(),
+            stats: projected.stats(),
+            rows: projected
+                .into_rows()
+                .into_iter()
+                .map(ProjectedRow::into_values)
+                .collect(),
+        }))
     }
 
     /// Returns immutable segments that will be decoded.
@@ -834,6 +946,11 @@ impl TableStore {
         }
         for row in &rows {
             self.schema.validate_row(row)?;
+            if row.is_deleted() {
+                return Err(StoreError::FormatLimit(
+                    "direct snapshot ingest cannot contain tombstones".to_owned(),
+                ));
+            }
         }
         if rows.is_empty() {
             return Ok(BulkIngestOutcome {
@@ -1810,8 +1927,8 @@ impl TableSnapshot {
                                     .sum::<usize>()
                         })
                         .sum();
-                    scan_budget.reserve(fetched_bytes)?;
                     scan_budget.release(fetch.reserved_bytes);
+                    scan_budget.reserve(fetched_bytes)?;
                     Ok((selected, fetch.values, fetch.blocks_decoded))
                 })
                 .collect::<Result<Vec<_>, StoreError>>()
