@@ -48,6 +48,11 @@ pub enum PhysicalPlan {
         /// Catalog-derived result cardinality.
         estimated_rows: u64,
     },
+    /// Streaming branch concatenation.
+    UnionAll {
+        /// Inputs in SQL source order.
+        inputs: Vec<Self>,
+    },
     /// Build-right equi hash join.
     HashJoin {
         /// Probe input.
@@ -144,6 +149,9 @@ impl PhysicalPlan {
                 }))
                 .collect(),
             Self::CrossJoin { inputs, .. } => inputs.iter().flat_map(Self::output_fields).collect(),
+            Self::UnionAll { inputs } => inputs
+                .first()
+                .map_or_else(Vec::new, PhysicalPlan::output_fields),
             Self::HashJoin {
                 left, right, kind, ..
             } => {
@@ -234,6 +242,12 @@ impl PhysicalPlanner {
                     estimated_rows,
                 })
             }
+            LogicalPlan::UnionAll { inputs } => Ok(PhysicalPlan::UnionAll {
+                inputs: inputs
+                    .into_iter()
+                    .map(Self::plan)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
             LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
                 input: Box::new(Self::plan(*input)?),
             }),
@@ -337,7 +351,7 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
         LogicalPlan::Scan(scan) => {
             tables.insert((scan.table.database_id, scan.table.table_id));
         }
-        LogicalPlan::CrossJoin { inputs } => {
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
                 collect_logical_tables(input, tables);
             }
@@ -525,6 +539,10 @@ enum PullOperator {
         column_types: Vec<DataType>,
         state: Option<CrossJoinState>,
     },
+    UnionAll {
+        inputs: Vec<Self>,
+        current: usize,
+    },
     HashJoin {
         left: Box<Self>,
         right: Box<Self>,
@@ -614,6 +632,15 @@ impl PullOperator {
                 let batch = RecordBatch::new(rows.len(), columns)?;
                 memory.ensure_transient(batch.estimated_bytes())?;
                 Ok(Some(batch))
+            }
+            Self::UnionAll { inputs, current } => {
+                while let Some(input) = inputs.get_mut(*current) {
+                    if let Some(batch) = input.next_batch(memory)? {
+                        return Ok(Some(batch));
+                    }
+                    *current = current.saturating_add(1);
+                }
+                Ok(None)
             }
             Self::HashJoin {
                 left,
@@ -841,6 +868,26 @@ fn build_operator(
                 columns,
             ))
         }
+        PhysicalPlan::UnionAll { inputs } => {
+            let layouts = inputs
+                .iter()
+                .map(PhysicalPlan::output_fields)
+                .collect::<Vec<_>>();
+            validate_union_fields(&layouts)?;
+            let built = inputs
+                .into_iter()
+                .map(|input| build_operator(input, provider))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (operators, columns): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+            let columns = columns.into_iter().next().unwrap_or_default();
+            Ok((
+                PullOperator::UnionAll {
+                    inputs: operators,
+                    current: 0,
+                },
+                columns,
+            ))
+        }
         PhysicalPlan::HashJoin {
             left,
             right,
@@ -988,6 +1035,26 @@ fn build_operator(
             ))
         }
     }
+}
+
+fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> {
+    let Some(first) = layouts.first() else {
+        return Err(ExecError::InvalidPhysicalPlan(
+            "UNION ALL requires at least one input",
+        ));
+    };
+    if layouts.iter().skip(1).any(|layout| {
+        layout.len() != first.len()
+            || layout
+                .iter()
+                .zip(first)
+                .any(|(field, expected)| field.data_type != expected.data_type)
+    }) {
+        return Err(ExecError::InvalidPhysicalPlan(
+            "UNION ALL input layouts are incompatible",
+        ));
+    }
+    Ok(())
 }
 
 fn build_hash_join(
@@ -2017,6 +2084,23 @@ mod tests {
                 Value::Utf8("beta".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn streams_union_all_branches_before_outer_sort_and_limit() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT 3 AS value UNION ALL SELECT 1 UNION ALL SELECT 2 ORDER BY value LIMIT 2",
+        );
+        let mut execution = Execution::start(plan, &provider, 16 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).expect("value").values(),
+            [Value::Int64(1), Value::Int64(2)]
+        );
+        assert!(execution.next_batch().expect("end").is_none());
     }
 
     #[test]

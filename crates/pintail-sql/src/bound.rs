@@ -251,6 +251,8 @@ pub struct BoundQuery {
     pub distinct: bool,
     /// Ordered result-layout sort keys.
     pub order_by: Vec<BoundOrderKey>,
+    /// Additional type-compatible SELECT branches concatenated in source order.
+    pub union_all: Vec<BoundQuery>,
     /// Optional normalized row limit.
     pub limit: Option<BoundLimit>,
 }

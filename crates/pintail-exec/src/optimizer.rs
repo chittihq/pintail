@@ -32,6 +32,9 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(fold_constants).collect(),
         },
+        LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
+            inputs: inputs.into_iter().map(fold_constants).collect(),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -325,6 +328,9 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(push_predicates).collect(),
         },
+        LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
+            inputs: inputs.into_iter().map(push_predicates).collect(),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -467,6 +473,7 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
         LogicalPlan::CrossJoin { inputs } => {
             inputs.iter().any(|input| contains_table(input, table))
         }
+        LogicalPlan::UnionAll { inputs } => inputs.iter().any(|input| contains_table(input, table)),
         LogicalPlan::Join { left, right, .. } => {
             contains_table(left, table) || contains_table(right, table)
         }
@@ -490,6 +497,9 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             inputs.sort_by_key(|input| input.estimated_rows().unwrap_or(u64::MAX));
             LogicalPlan::CrossJoin { inputs }
         }
+        LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
+            inputs: inputs.into_iter().map(reorder_cross_joins).collect(),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -546,7 +556,7 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
                 collect_expr_columns(predicate, required);
             }
         }
-        LogicalPlan::CrossJoin { inputs } => {
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
                 collect_plan_columns(input, required);
             }
@@ -608,7 +618,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
                 .map(|column| column.column_id)
                 .collect();
         }
-        LogicalPlan::CrossJoin { inputs } => {
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
                 prune_scan_columns(input, required);
             }
@@ -634,7 +644,7 @@ fn push_limits(plan: &mut LogicalPlan) {
             set_input_limit(input, rows);
             push_limits(input);
         }
-        LogicalPlan::CrossJoin { inputs } => {
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
                 push_limits(input);
             }
@@ -662,6 +672,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Empty
         | LogicalPlan::OneRow
         | LogicalPlan::CrossJoin { .. }
+        | LogicalPlan::UnionAll { .. }
         | LogicalPlan::Join { .. }
         | LogicalPlan::Filter { .. }
         | LogicalPlan::Aggregate { .. }

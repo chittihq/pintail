@@ -48,6 +48,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Output-alias, ordinal, and projected-expression `ORDER BY` binding with
   MySQL NULL placement, memory-capped full sorting, case-insensitive UTF-8
   ordering, and LIMIT-aware top-K partitioning.
+- Type-checked `UNION ALL` binding and streaming branch concatenation, with
+  outer ordering and limits applied after every branch in SQL source order.
 
 ## [M1] - 2026-07-30
 

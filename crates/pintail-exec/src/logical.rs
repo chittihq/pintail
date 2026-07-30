@@ -42,6 +42,11 @@ pub enum LogicalPlan {
         /// Inputs in semantic source order.
         inputs: Vec<LogicalPlan>,
     },
+    /// Streaming concatenation of type-compatible query branches.
+    UnionAll {
+        /// Inputs in SQL source order.
+        inputs: Vec<LogicalPlan>,
+    },
     /// Predicate-constrained binary join.
     Join {
         /// Left input.
@@ -109,6 +114,9 @@ impl LogicalPlan {
             Self::CrossJoin { inputs } => inputs.iter().try_fold(1_u64, |rows, input| {
                 rows.checked_mul(input.estimated_rows()?)
             }),
+            Self::UnionAll { inputs } => inputs.iter().try_fold(0_u64, |rows, input| {
+                rows.checked_add(input.estimated_rows()?)
+            }),
             Self::Join {
                 left, right, kind, ..
             } => match kind {
@@ -150,6 +158,7 @@ impl LogicalPlanner {
             having,
             distinct,
             order_by,
+            union_all,
             limit,
         } = query;
 
@@ -187,6 +196,12 @@ impl LogicalPlanner {
             plan = LogicalPlan::Distinct {
                 input: Box::new(plan),
             };
+        }
+        if !union_all.is_empty() {
+            let mut inputs = Vec::with_capacity(1 + union_all.len());
+            inputs.push(plan);
+            inputs.extend(union_all.into_iter().map(Self::plan));
+            plan = LogicalPlan::UnionAll { inputs };
         }
         if !order_by.is_empty() {
             plan = LogicalPlan::Sort {
@@ -367,6 +382,26 @@ mod tests {
         assert_eq!(keys.len(), 1);
         assert!(!keys[0].ascending);
         assert!(matches!(*input, LogicalPlan::Project { .. }));
+    }
+
+    #[test]
+    fn applies_outer_sort_and_limit_after_union_all() {
+        let plan = plan("SELECT 2 AS value UNION ALL SELECT 1 ORDER BY value LIMIT 1");
+        let LogicalPlan::Limit { input, .. } = plan else {
+            panic!("limit root");
+        };
+        let LogicalPlan::Sort { input, .. } = *input else {
+            panic!("sort");
+        };
+        let LogicalPlan::UnionAll { inputs } = *input else {
+            panic!("union");
+        };
+        assert_eq!(inputs.len(), 2);
+        assert!(
+            inputs
+                .iter()
+                .all(|input| matches!(input, LogicalPlan::Project { .. }))
+        );
     }
 
     #[test]

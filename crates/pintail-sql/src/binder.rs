@@ -5,8 +5,9 @@ use pintail_types::{DataType, Value};
 use sqlparser::ast::{
     BinaryOperator, Distinct, DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr,
     FunctionArguments, GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName,
-    OrderByKind, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement,
-    TableFactor, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    OrderByKind, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, SetOperator,
+    SetQuantifier, Statement, TableFactor, UnaryOperator, Value as SqlValue,
+    WildcardAdditionalOptions,
 };
 
 use crate::bound::{
@@ -59,9 +60,33 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedQueryClause(query.to_string()));
         }
 
-        let SetExpr::Select(select) = query.body.as_ref() else {
-            return Err(BindError::UnsupportedQueryBody(query.body.to_string()));
-        };
+        let mut bound = self.bind_set_expr(&query.body)?;
+        bound.order_by = bind_order_by(query, &bound.projection)?;
+        bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
+        Ok(bound)
+    }
+
+    fn bind_set_expr(&self, expression: &SetExpr) -> Result<BoundQuery, BindError> {
+        match expression {
+            SetExpr::Select(select) => self.bind_select(select),
+            SetExpr::Query(query) => self.bind_query(query),
+            SetExpr::SetOperation {
+                left,
+                op: SetOperator::Union,
+                set_quantifier: SetQuantifier::All,
+                right,
+            } => {
+                let mut left = self.bind_set_expr(left)?;
+                let right = self.bind_set_expr(right)?;
+                validate_union_layout(&left, &right)?;
+                left.union_all.push(right);
+                Ok(left)
+            }
+            _ => Err(BindError::UnsupportedQueryBody(expression.to_string())),
+        }
+    }
+
+    fn bind_select(&self, select: &Select) -> Result<BoundQuery, BindError> {
         validate_select_shape(select)?;
 
         let (from, tables) = self.bind_from(select)?;
@@ -111,9 +136,6 @@ impl<'catalog> Binder<'catalog> {
                 return Err(BindError::UnsupportedQueryClause("DISTINCT ON".to_owned()));
             }
         };
-        let order_by = bind_order_by(query, &projection)?;
-        let limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
-
         Ok(BoundQuery {
             from,
             tables,
@@ -123,8 +145,9 @@ impl<'catalog> Binder<'catalog> {
             aggregates,
             having,
             distinct,
-            order_by,
-            limit,
+            order_by: Vec::new(),
+            union_all: Vec::new(),
+            limit: None,
         })
     }
 
@@ -271,6 +294,25 @@ fn reject_duplicate_relation(tables: &[BoundTable], table: &BoundTable) -> Resul
     } else {
         Ok(())
     }
+}
+
+fn validate_union_layout(left: &BoundQuery, right: &BoundQuery) -> Result<(), BindError> {
+    if left.projection.len() != right.projection.len() {
+        return Err(BindError::IncompatibleSetOperation(
+            "UNION ALL branches have different column counts".to_owned(),
+        ));
+    }
+    for (index, (left, right)) in left.projection.iter().zip(&right.projection).enumerate() {
+        if left.expr.data_type != right.expr.data_type {
+            return Err(BindError::IncompatibleSetOperation(format!(
+                "UNION ALL column {} has types {:?} and {:?}",
+                index + 1,
+                left.expr.data_type,
+                right.expr.data_type
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn bind_join_operator(
@@ -976,6 +1018,8 @@ pub enum BindError {
     UnsupportedQueryClause(String),
     /// A set operation or other query body is not implemented yet.
     UnsupportedQueryBody(String),
+    /// UNION ALL branches do not expose compatible result layouts.
+    IncompatibleSetOperation(String),
     /// A derived table or table extension is not implemented yet.
     UnsupportedTableFactor(String),
     /// A projection extension is not implemented yet.
@@ -1069,6 +1113,7 @@ impl fmt::Display for BindError {
             Self::UnsupportedQueryBody(value) => {
                 write!(formatter, "unsupported query body: {value}")
             }
+            Self::IncompatibleSetOperation(value) => formatter.write_str(value),
             Self::UnsupportedTableFactor(value) => {
                 write!(formatter, "unsupported table expression: {value}")
             }
@@ -1348,6 +1393,28 @@ mod tests {
         assert!(matches!(
             bind("SELECT Name AS label FROM Events ORDER BY id"),
             Err(BindError::InvalidOrderBy(_))
+        ));
+    }
+
+    #[test]
+    fn binds_type_compatible_union_all_with_outer_clauses() {
+        let query = bind(
+            "SELECT id AS item FROM Events \
+             UNION ALL SELECT id FROM users ORDER BY item DESC LIMIT 2",
+        )
+        .expect("union all");
+        assert_eq!(query.union_all.len(), 1);
+        assert_eq!(query.union_all[0].projection[0].name, "id");
+        assert_eq!(query.order_by[0].index, 0);
+        assert_eq!(query.limit.expect("limit").count, 2);
+
+        assert!(matches!(
+            bind("SELECT id FROM Events UNION SELECT id FROM users"),
+            Err(BindError::UnsupportedQueryBody(_))
+        ));
+        assert!(matches!(
+            bind("SELECT id FROM Events UNION ALL SELECT email FROM users"),
+            Err(BindError::IncompatibleSetOperation(_))
         ));
     }
 
