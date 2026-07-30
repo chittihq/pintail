@@ -77,6 +77,68 @@ pub(crate) fn source_projection(table: &SourceTable) -> String {
         .join(",")
 }
 
+pub(crate) fn key_projection(table: &SourceTable) -> String {
+    table
+        .key
+        .columns
+        .iter()
+        .map(|key| {
+            table
+                .columns
+                .iter()
+                .find(|column| column.name.eq_ignore_ascii_case(key))
+                .map_or_else(
+                    || quote_identifier(key),
+                    |column| {
+                        if is_geometry(&column.mysql_data_type) {
+                            format!(
+                                "ST_AsWKB({}) AS {}",
+                                quote_identifier(&column.name),
+                                quote_identifier(&column.name)
+                            )
+                        } else {
+                            quote_identifier(&column.name)
+                        }
+                    },
+                )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub(crate) fn decode_key(table: &SourceTable, row: Row) -> Result<PrimaryKey, PollError> {
+    if row.len() != table.key.columns.len() {
+        return Err(PollError::Decode(format!(
+            "{} source key contains {} values; expected {}",
+            table.name,
+            row.len(),
+            table.key.columns.len()
+        )));
+    }
+    let parts = row
+        .unwrap()
+        .into_iter()
+        .zip(&table.key.columns)
+        .map(|(value, key)| {
+            let column = table
+                .columns
+                .iter()
+                .find(|column| column.name.eq_ignore_ascii_case(key))
+                .ok_or_else(|| {
+                    PollError::Decode(format!(
+                        "{} key column {key} is absent from its source schema",
+                        table.name
+                    ))
+                })?;
+            let value = map_mysql_value(&table.name, column, value)?;
+            key_part(&value).ok_or_else(|| {
+                PollError::Decode(format!("{}.{} key value is NULL", table.name, key))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    PrimaryKey::new(parts).map_err(PollError::Schema)
+}
+
 pub(crate) fn quote_identifier(identifier: &str) -> String {
     format!("`{}`", identifier.replace('`', "``"))
 }

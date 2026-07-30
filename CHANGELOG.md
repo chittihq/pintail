@@ -11,9 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A durable polling engine with automatic timestamp/created/auto-increment
   cursor selection, inclusive boundary rereads, cheap count/maximum probes,
   monotonic poll versions, soft-delete mapping, complete primary-key
-  reconciliation, cursor-less keyed diffs, and append-table rebuilds.
+  reconciliation, cursor-less chunk checksums, and append-table rebuilds.
 - Per-table checksum chunk fingerprints are persisted and replaced atomically
   with their polling checkpoint, including in-place metadata upgrades.
+- Cursor-less tables compare source-side aggregate fingerprints with durable
+  source/replica fingerprints and fetch full rows only for mismatched chunks;
+  key-only sweeps repair deletes without re-shipping unchanged row payloads.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

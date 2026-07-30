@@ -207,6 +207,8 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     assert!(baseline.tables.iter().any(|table| {
         table.table == "keyed_rows" && table.strategy == PollStrategy::KeyedChecksum
     }));
+    assert_eq!(outcome(&baseline, "keyed_rows").chunks_scanned, 2);
+    assert_eq!(outcome(&baseline, "keyed_rows").chunks_redumped, 2);
     assert!(baseline.tables.iter().any(|table| {
         table.table == "append_rows" && table.strategy == PollStrategy::AppendRebuild
     }));
@@ -238,6 +240,7 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     assert_eq!((cursor.ingested, cursor.tombstones), (2, 1));
     let keyed = outcome(&changed, "keyed_rows");
     assert_eq!((keyed.ingested, keyed.tombstones), (2, 1));
+    assert_eq!((keyed.chunks_scanned, keyed.chunks_redumped), (2, 1));
     assert_eq!(outcome(&changed, "append_rows").ingested, 2);
     targets = changed.targets;
     assert_ids(&targets, "cursor_rows", &[1, 3]);
@@ -301,13 +304,17 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     mysql
         .query_batch("DELETE FROM cascade_parent WHERE id=1;")
         .expect("cascade source delete");
+    let mut cascade_options = options(false);
+    cascade_options
+        .reconcile_tables
+        .insert("cascade_child".to_owned());
     let cascade = run_poll_cycle(
         &pool,
         &metadata_path,
         DATABASE_ID,
         &report,
         targets,
-        options(false),
+        cascade_options,
     )
     .await
     .expect("CDC-mode cascade reconciliation");
@@ -335,6 +342,7 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
                 .iter()
                 .all(|table| table.ingested == 0 && table.tombstones == 0)
         );
+        assert_eq!(outcome(&idle, "keyed_rows").chunks_redumped, 0);
         targets = idle.targets;
     }
     assert_eq!(table_storage_bytes(workspace.path()), before);

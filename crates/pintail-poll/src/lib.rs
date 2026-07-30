@@ -1,5 +1,6 @@
 //! Polling and primary-key reconciliation for Pintail.
 
+mod checksum;
 mod cursor;
 mod decoder;
 
@@ -10,7 +11,9 @@ use std::{
 
 use chrono::Utc;
 use mysql_async::{Conn, Params, Pool, Row, Value as MysqlValue, prelude::Queryable as _};
-use pintail_meta::{MetaStore, PollStateRecord, PollStateUpdate};
+use pintail_meta::{
+    MetaStore, PollChunkStateRecord, PollChunkStateUpdate, PollStateRecord, PollStateUpdate,
+};
 use pintail_probe::{ProbeReport, SourceColumn, SourceTable};
 use pintail_snapshot::SnapshotError;
 use pintail_store::{StoreError, TableStore};
@@ -18,8 +21,9 @@ use pintail_types::{KeyMode, PrimaryKey, SchemaError, StoredRow, Value};
 use thiserror::Error;
 
 use crate::{
+    checksum::{SourceChunk, replica_checksum, source_chunks},
     cursor::{CursorValue, ProbeToken},
-    decoder::{decode_row, quote_identifier, source_projection},
+    decoder::{decode_key, decode_row, key_projection, quote_identifier, source_projection},
 };
 
 /// One probed table and its existing snapshot store.
@@ -123,6 +127,10 @@ pub struct TablePollOutcome {
     pub version: u64,
     /// Whether a full primary-key reconciliation completed.
     pub reconciled: bool,
+    /// Source aggregate chunks checked during this cycle.
+    pub chunks_scanned: usize,
+    /// Mismatched chunks whose full rows were fetched.
+    pub chunks_redumped: usize,
 }
 
 /// Successful database polling cycle.
@@ -131,6 +139,22 @@ pub struct PollResult {
     pub tables: Vec<TablePollOutcome>,
     /// Updated targets in source-name order.
     pub targets: Vec<PollTarget>,
+}
+
+struct PollChunkCheckpoint {
+    chunk_id: String,
+    source_count: u64,
+    source_checksum: String,
+    replica_checksum: String,
+}
+
+struct TableSync {
+    ingested: usize,
+    tombstones: usize,
+    reconciled: bool,
+    chunks: Vec<PollChunkCheckpoint>,
+    chunks_scanned: usize,
+    chunks_redumped: usize,
 }
 
 /// Polling failure.
@@ -266,7 +290,6 @@ async fn poll_table(
             != Some(token_json.as_str());
     let mut version = previous.as_ref().map_or(0, |state| state.version);
     let reconcile_requested = options.reconcile
-        || target.source.requires_reconciliation
         || contains_case_insensitive(&options.reconcile_tables, &target.source.name);
     if !token_changed && !reconcile_requested && previous.is_some() {
         return Ok(TablePollOutcome {
@@ -278,6 +301,8 @@ async fn poll_table(
             source_count: token.count,
             version,
             reconciled: false,
+            chunks_scanned: 0,
+            chunks_redumped: 0,
         });
     }
     version = version
@@ -291,7 +316,7 @@ async fn poll_table(
     let mut cursor_json = previous
         .as_ref()
         .and_then(|state| state.cursor_json.clone());
-    let (ingested, tombstones, reconciled) = match strategy {
+    let sync = match strategy {
         PollStrategy::Cursor => {
             let cursor = cursor.as_ref().expect("cursor strategy");
             let previous_cursor = previous_cursor(previous.as_ref(), cursor)?;
@@ -328,19 +353,28 @@ async fn poll_table(
             } else {
                 0
             };
-            (ingested, soft_tombstones + missing, reconcile)
+            TableSync {
+                ingested,
+                tombstones: soft_tombstones + missing,
+                reconciled: reconcile,
+                chunks: Vec::new(),
+                chunks_scanned: 0,
+                chunks_redumped: 0,
+            }
         }
         PollStrategy::KeyedChecksum => {
-            let (ingested, tombstones) = sync_complete_keyed_table(
+            let previous_chunks = metadata.poll_chunk_states(database_id, &target.source.name)?;
+            sync_checksum_table(
                 connection,
                 source_database,
                 target,
                 soft_delete.as_ref(),
                 version,
                 options.chunk_rows,
+                &previous_chunks,
+                reconcile_requested,
             )
-            .await?;
-            (ingested, tombstones, true)
+            .await?
         }
         PollStrategy::AppendRebuild => {
             let ingested = sync_append_table(
@@ -351,10 +385,17 @@ async fn poll_table(
                 options.chunk_rows,
             )
             .await?;
-            (ingested, 0, true)
+            TableSync {
+                ingested,
+                tombstones: 0,
+                reconciled: true,
+                chunks: Vec::new(),
+                chunks_scanned: 0,
+                chunks_redumped: 0,
+            }
         }
     };
-    if ingested > 0 || tombstones > 0 {
+    if sync.ingested > 0 || sync.tombstones > 0 {
         target.store.checkpoint()?;
     }
     let update = PollStateUpdate {
@@ -363,23 +404,41 @@ async fn poll_table(
         source_token_json: Some(&token_json),
         source_count: token.count,
         version,
-        reconciled,
+        reconciled: sync.reconciled,
     };
-    metadata.commit_poll_state(
-        database_id,
-        &target.source.name,
-        &update,
-        &Utc::now().to_rfc3339(),
-    )?;
+    let now = Utc::now().to_rfc3339();
+    if strategy == PollStrategy::KeyedChecksum {
+        let chunks = sync
+            .chunks
+            .iter()
+            .map(|chunk| PollChunkStateUpdate {
+                chunk_id: &chunk.chunk_id,
+                source_count: chunk.source_count,
+                source_checksum: &chunk.source_checksum,
+                replica_checksum: &chunk.replica_checksum,
+            })
+            .collect::<Vec<_>>();
+        metadata.commit_poll_state_with_chunks(
+            database_id,
+            &target.source.name,
+            &update,
+            &chunks,
+            &now,
+        )?;
+    } else {
+        metadata.commit_poll_state(database_id, &target.source.name, &update, &now)?;
+    }
     Ok(TablePollOutcome {
         table: target.source.name.clone(),
         strategy,
-        changed: token_changed || ingested > 0 || tombstones > 0,
-        ingested,
-        tombstones,
+        changed: token_changed || sync.ingested > 0 || sync.tombstones > 0,
+        ingested: sync.ingested,
+        tombstones: sync.tombstones,
         source_count: token.count,
         version,
-        reconciled,
+        reconciled: sync.reconciled,
+        chunks_scanned: sync.chunks_scanned,
+        chunks_redumped: sync.chunks_redumped,
     })
 }
 
@@ -557,24 +616,27 @@ async fn sync_cursor_rows(
     Ok((ingested, tombstones))
 }
 
-async fn sync_complete_keyed_table(
+#[allow(clippy::too_many_arguments)]
+async fn sync_checksum_table(
     connection: &mut Conn,
     database: &str,
     target: &mut PollTarget,
     soft_delete: Option<&SourceColumn>,
     version: u64,
     chunk_rows: usize,
-) -> Result<(usize, usize), PollError> {
-    let rows = fetch_rows(
-        connection,
-        database,
-        &target.source,
-        "",
-        Vec::new(),
-        &poll_order(&target.source, None),
-        chunk_rows,
-    )
-    .await?;
+    previous_chunks: &[PollChunkStateRecord],
+    reconcile_requested: bool,
+) -> Result<TableSync, PollError> {
+    let source_chunks = source_chunks(connection, database, &target.source, chunk_rows).await?;
+    let previous = previous_chunks
+        .iter()
+        .map(|chunk| (chunk.chunk_id.as_str(), chunk))
+        .collect::<BTreeMap<_, _>>();
+    let current_rows = target.store.snapshot().scan()?;
+    let current = current_rows
+        .iter()
+        .map(|row| (row.key().clone(), row))
+        .collect::<BTreeMap<_, _>>();
     let soft_delete_index = soft_delete.and_then(|column| {
         target
             .source
@@ -582,61 +644,92 @@ async fn sync_complete_keyed_table(
             .iter()
             .position(|candidate| candidate.id == column.id)
     });
-    let mut source = BTreeMap::<PrimaryKey, StoredRow>::new();
-    for (index, row) in rows.into_iter().enumerate() {
-        let decoded = decode_row(
-            &target.source,
-            row,
-            u64::try_from(index + 1).map_err(|error| PollError::Decode(error.to_string()))?,
-            version,
-            false,
-        )?;
-        source.insert(decoded.key().clone(), decoded);
-    }
-    let current = target
-        .store
-        .snapshot()
-        .scan()?
-        .into_iter()
-        .map(|row| (row.key().clone(), row))
-        .collect::<BTreeMap<_, _>>();
     let mut mutations = Vec::new();
     let mut ingested = 0;
     let mut tombstones = 0;
-    for (key, row) in &source {
-        let deleted =
-            soft_delete_index.is_some_and(|column| soft_delete_value(&row.values()[column]));
-        if deleted {
-            if current.contains_key(key) {
-                tombstones += 1;
-                mutations.push(StoredRow::new(
-                    key.clone(),
-                    row.values().to_vec(),
-                    version,
-                    true,
-                ));
-            }
-        } else if current
-            .get(key)
-            .is_none_or(|current| current.values() != row.values())
-        {
-            ingested += 1;
-            mutations.push(row.clone());
+    let mut redumped = 0;
+    for chunk in &source_chunks {
+        let local_checksum = checksum_slice(&current_rows, chunk, chunk_rows);
+        let unchanged = previous.get(chunk.chunk_id.as_str()).is_some_and(|prior| {
+            prior.source_count == chunk.source_count
+                && prior.source_checksum == chunk.source_checksum
+                && prior.replica_checksum == local_checksum
+        });
+        if unchanged {
+            continue;
         }
-    }
-    for (key, row) in &current {
-        if !source.contains_key(key) {
-            tombstones += 1;
-            mutations.push(StoredRow::new(
-                key.clone(),
-                row.values().to_vec(),
+        redumped += 1;
+        let rows = fetch_rows_page(
+            connection,
+            database,
+            &target.source,
+            "",
+            Vec::new(),
+            &poll_order(&target.source, None),
+            chunk_rows,
+            chunk.offset,
+        )
+        .await?;
+        for (index, row) in rows.into_iter().enumerate() {
+            let decoded = decode_row(
+                &target.source,
+                row,
+                u64::try_from(chunk.offset.saturating_add(index).saturating_add(1))
+                    .map_err(|error| PollError::Decode(error.to_string()))?,
                 version,
-                true,
-            ));
+                false,
+            )?;
+            let deleted = soft_delete_index
+                .is_some_and(|column| soft_delete_value(&decoded.values()[column]));
+            if deleted {
+                if current.contains_key(decoded.key()) {
+                    tombstones += 1;
+                    mutations.push(StoredRow::new(
+                        decoded.key().clone(),
+                        decoded.values().to_vec(),
+                        version,
+                        true,
+                    ));
+                }
+            } else if current
+                .get(decoded.key())
+                .is_none_or(|current| current.values() != decoded.values())
+            {
+                ingested += 1;
+                mutations.push(decoded);
+            }
         }
     }
     target.store.ingest(mutations)?;
-    Ok((ingested, tombstones))
+    let reconcile = redumped > 0 || reconcile_requested;
+    if reconcile {
+        tombstones +=
+            reconcile_missing_keys(connection, database, target, version, chunk_rows).await?;
+    }
+    let final_rows = target.store.snapshot().scan()?;
+    let chunks = source_chunks
+        .iter()
+        .map(|chunk| PollChunkCheckpoint {
+            chunk_id: chunk.chunk_id.clone(),
+            source_count: chunk.source_count,
+            source_checksum: chunk.source_checksum.clone(),
+            replica_checksum: checksum_slice(&final_rows, chunk, chunk_rows),
+        })
+        .collect();
+    Ok(TableSync {
+        ingested,
+        tombstones,
+        reconciled: reconcile,
+        chunks,
+        chunks_scanned: source_chunks.len(),
+        chunks_redumped: redumped,
+    })
+}
+
+fn checksum_slice(rows: &[StoredRow], chunk: &SourceChunk, chunk_rows: usize) -> String {
+    let start = chunk.offset.min(rows.len());
+    let end = start.saturating_add(chunk_rows).min(rows.len());
+    replica_checksum(&rows[start..end])
 }
 
 async fn sync_append_table(
@@ -695,30 +788,7 @@ async fn reconcile_missing_keys(
     version: u64,
     chunk_rows: usize,
 ) -> Result<usize, PollError> {
-    let rows = fetch_rows(
-        connection,
-        database,
-        &target.source,
-        "",
-        Vec::new(),
-        &poll_order(&target.source, None),
-        chunk_rows,
-    )
-    .await?;
-    let mut source_keys = BTreeSet::new();
-    for (index, row) in rows.into_iter().enumerate() {
-        source_keys.insert(
-            decode_row(
-                &target.source,
-                row,
-                u64::try_from(index + 1).map_err(|error| PollError::Decode(error.to_string()))?,
-                version,
-                false,
-            )?
-            .key()
-            .clone(),
-        );
-    }
+    let source_keys = fetch_source_keys(connection, database, &target.source, chunk_rows).await?;
     let current = target.store.snapshot().scan()?;
     let tombstones = current
         .into_iter()
@@ -728,6 +798,40 @@ async fn reconcile_missing_keys(
     let count = tombstones.len();
     target.store.ingest(tombstones)?;
     Ok(count)
+}
+
+async fn fetch_source_keys(
+    connection: &mut Conn,
+    database: &str,
+    table: &SourceTable,
+    chunk_rows: usize,
+) -> Result<BTreeSet<PrimaryKey>, PollError> {
+    let order = poll_order(table, None);
+    let mut output = BTreeSet::new();
+    let mut offset = 0_usize;
+    loop {
+        let sql = format!(
+            "SELECT {} FROM {}.{}{} LIMIT {} OFFSET {}",
+            key_projection(table),
+            quote_identifier(database),
+            quote_identifier(&table.name),
+            order,
+            chunk_rows,
+            offset
+        );
+        let rows: Vec<Row> = connection.query(sql).await?;
+        let fetched = rows.len();
+        for row in rows {
+            output.insert(decode_key(table, row)?);
+        }
+        if fetched < chunk_rows {
+            break;
+        }
+        offset = offset
+            .checked_add(fetched)
+            .ok_or_else(|| PollError::Decode("poll key offset exceeds usize".to_owned()))?;
+    }
+    Ok(output)
 }
 
 fn has_unique_collision(target: &PollTarget) -> Result<bool, PollError> {
@@ -778,19 +882,17 @@ async fn fetch_rows(
     let mut output = Vec::new();
     let mut offset = 0_usize;
     loop {
-        let sql = format!(
-            "SELECT {} FROM {}.{}{}{} LIMIT {} OFFSET {}",
-            source_projection(table),
-            quote_identifier(database),
-            quote_identifier(&table.name),
+        let rows = fetch_rows_page(
+            connection,
+            database,
+            table,
             condition,
+            parameters.clone(),
             order,
             chunk_rows,
-            offset
-        );
-        let rows: Vec<Row> = connection
-            .exec(sql, Params::Positional(parameters.clone()))
-            .await?;
+            offset,
+        )
+        .await?;
         let fetched = rows.len();
         output.extend(rows);
         if fetched < chunk_rows {
@@ -801,6 +903,33 @@ async fn fetch_rows(
             .ok_or_else(|| PollError::Decode("poll offset exceeds usize".to_owned()))?;
     }
     Ok(output)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_rows_page(
+    connection: &mut Conn,
+    database: &str,
+    table: &SourceTable,
+    condition: &str,
+    parameters: Vec<MysqlValue>,
+    order: &str,
+    chunk_rows: usize,
+    offset: usize,
+) -> Result<Vec<Row>, PollError> {
+    let sql = format!(
+        "SELECT {} FROM {}.{}{}{} LIMIT {} OFFSET {}",
+        source_projection(table),
+        quote_identifier(database),
+        quote_identifier(&table.name),
+        condition,
+        order,
+        chunk_rows,
+        offset
+    );
+    connection
+        .exec(sql, Params::Positional(parameters))
+        .await
+        .map_err(PollError::Mysql)
 }
 
 fn poll_order(table: &SourceTable, cursor: Option<&SourceColumn>) -> String {
