@@ -3,14 +3,14 @@ use std::fmt;
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
-    BinaryOperator, Distinct, Expr, GroupByExpr, Ident, LimitClause, ObjectName, Query, Select,
-    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement, TableFactor, UnaryOperator,
-    Value as SqlValue, WildcardAdditionalOptions,
+    BinaryOperator, Distinct, Expr, GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause,
+    ObjectName, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement,
+    TableFactor, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
 };
 
 use crate::bound::{
-    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundLimit, BoundProjection, BoundQuery,
-    BoundTable, UnaryOp,
+    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundFrom, BoundJoin, BoundJoinKind,
+    BoundLimit, BoundProjection, BoundQuery, BoundTable, UnaryOp,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -63,7 +63,7 @@ impl<'catalog> Binder<'catalog> {
         };
         validate_select_shape(select)?;
 
-        let tables = self.bind_tables(select)?;
+        let (from, tables) = self.bind_from(select)?;
         let projection = bind_projection(&select.projection, &tables)?;
         let filter = select
             .selection
@@ -87,6 +87,7 @@ impl<'catalog> Binder<'catalog> {
         let limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
 
         Ok(BoundQuery {
+            from,
             tables,
             projection,
             filter,
@@ -95,25 +96,49 @@ impl<'catalog> Binder<'catalog> {
         })
     }
 
-    fn bind_tables(&self, select: &Select) -> Result<Vec<BoundTable>, BindError> {
-        let mut tables = Vec::with_capacity(select.from.len());
+    fn bind_from(&self, select: &Select) -> Result<(Vec<BoundFrom>, Vec<BoundTable>), BindError> {
+        let mut from = Vec::with_capacity(select.from.len());
+        let mut tables = Vec::new();
         for table_with_joins in &select.from {
-            if !table_with_joins.joins.is_empty() {
-                return Err(BindError::UnsupportedQueryClause(
-                    "JOIN binding is not implemented yet".to_owned(),
-                ));
+            let base = self.bind_table(&table_with_joins.relation)?;
+            reject_duplicate_relation(&tables, &base)?;
+            tables.push(base.clone());
+
+            let mut joins = Vec::with_capacity(table_with_joins.joins.len());
+            for join in &table_with_joins.joins {
+                if join.global {
+                    return Err(BindError::UnsupportedQueryClause(join.to_string()));
+                }
+                let table = self.bind_table(&join.relation)?;
+                reject_duplicate_relation(&tables, &table)?;
+                tables.push(table.clone());
+                let (kind, constraint) = bind_join_operator(&join.join_operator)?;
+                let condition = match constraint {
+                    JoinConstraint::On(condition) => Some(bind_expr(condition, &tables)?),
+                    JoinConstraint::None if kind == BoundJoinKind::Cross => None,
+                    JoinConstraint::None if kind == BoundJoinKind::Inner => None,
+                    JoinConstraint::Using(_) | JoinConstraint::Natural | JoinConstraint::None => {
+                        return Err(BindError::UnsupportedJoinConstraint(format!(
+                            "{constraint:?}"
+                        )));
+                    }
+                };
+                if let Some(condition) = &condition
+                    && !is_truth_value(condition.data_type)
+                {
+                    return Err(BindError::ExpectedPredicate {
+                        actual: condition.data_type,
+                    });
+                }
+                joins.push(BoundJoin {
+                    kind,
+                    table,
+                    condition,
+                });
             }
-            let table = self.bind_table(&table_with_joins.relation)?;
-            if tables.iter().any(|existing: &BoundTable| {
-                existing
-                    .relation_name
-                    .eq_ignore_ascii_case(&table.relation_name)
-            }) {
-                return Err(BindError::DuplicateRelation(table.relation_name));
-            }
-            tables.push(table);
+            from.push(BoundFrom { base, joins });
         }
-        Ok(tables)
+        Ok((from, tables))
     }
 
     fn bind_table(&self, factor: &TableFactor) -> Result<BoundTable, BindError> {
@@ -201,6 +226,51 @@ impl<'catalog> Binder<'catalog> {
                 table: table_name.to_owned(),
             })?;
         Ok((database, table))
+    }
+}
+
+fn reject_duplicate_relation(tables: &[BoundTable], table: &BoundTable) -> Result<(), BindError> {
+    if tables.iter().any(|existing| {
+        existing
+            .relation_name
+            .eq_ignore_ascii_case(&table.relation_name)
+    }) {
+        Err(BindError::DuplicateRelation(table.relation_name.clone()))
+    } else {
+        Ok(())
+    }
+}
+
+fn bind_join_operator(
+    operator: &JoinOperator,
+) -> Result<(BoundJoinKind, &JoinConstraint), BindError> {
+    match operator {
+        JoinOperator::Join(constraint)
+        | JoinOperator::Inner(constraint)
+        | JoinOperator::StraightJoin(constraint) => Ok((BoundJoinKind::Inner, constraint)),
+        JoinOperator::Left(constraint) | JoinOperator::LeftOuter(constraint) => {
+            Ok((BoundJoinKind::Left, constraint))
+        }
+        JoinOperator::Semi(constraint) | JoinOperator::LeftSemi(constraint) => {
+            Ok((BoundJoinKind::Semi, constraint))
+        }
+        JoinOperator::Anti(constraint) | JoinOperator::LeftAnti(constraint) => {
+            Ok((BoundJoinKind::Anti, constraint))
+        }
+        JoinOperator::CrossJoin(constraint) => Ok((BoundJoinKind::Cross, constraint)),
+        JoinOperator::Right(_)
+        | JoinOperator::RightOuter(_)
+        | JoinOperator::FullOuter(_)
+        | JoinOperator::RightSemi(_)
+        | JoinOperator::RightAnti(_)
+        | JoinOperator::CrossApply
+        | JoinOperator::OuterApply
+        | JoinOperator::AsOf { .. }
+        | JoinOperator::ArrayJoin
+        | JoinOperator::LeftArrayJoin
+        | JoinOperator::InnerArrayJoin => {
+            Err(BindError::UnsupportedJoinOperator(format!("{operator:?}")))
+        }
     }
 }
 
@@ -645,6 +715,10 @@ pub enum BindError {
     UnsupportedTableFactor(String),
     /// A projection extension is not implemented yet.
     UnsupportedProjection(String),
+    /// A join kind is outside the v1 operator surface.
+    UnsupportedJoinOperator(String),
+    /// A join constraint cannot yet be lowered safely.
+    UnsupportedJoinConstraint(String),
     /// A scalar expression is not implemented yet.
     UnsupportedExpression(String),
     /// A literal representation is not implemented yet.
@@ -719,6 +793,12 @@ impl fmt::Display for BindError {
             Self::UnsupportedProjection(value) => {
                 write!(formatter, "unsupported projection: {value}")
             }
+            Self::UnsupportedJoinOperator(value) => {
+                write!(formatter, "unsupported join operator: {value}")
+            }
+            Self::UnsupportedJoinConstraint(value) => {
+                write!(formatter, "unsupported join constraint: {value}")
+            }
             Self::UnsupportedExpression(value) => {
                 write!(formatter, "unsupported expression: {value}")
             }
@@ -771,7 +851,7 @@ mod tests {
     use pintail_types::{Column, DataType, TableSchema, Value};
 
     use super::{BindError, Binder};
-    use crate::{BinaryOp, BoundExprKind, parse_statement};
+    use crate::{BinaryOp, BoundExprKind, BoundJoinKind, parse_statement};
 
     fn catalog() -> CatalogSnapshot {
         let events = TableEntry::new(
@@ -900,6 +980,38 @@ mod tests {
                 table: "missing".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn binds_explicit_inner_and_left_join_chains() {
+        let query = bind(
+            "SELECT e.Name, u.email FROM Events e \
+             INNER JOIN users u ON e.id = u.id",
+        )
+        .expect("inner join");
+        assert_eq!(query.from.len(), 1);
+        assert_eq!(query.from[0].joins.len(), 1);
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
+        assert!(query.from[0].joins[0].condition.is_some());
+
+        let query = bind(
+            "SELECT e.Name, u.email FROM Events e \
+             LEFT JOIN users u ON e.id = u.id",
+        )
+        .expect("left join");
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+    }
+
+    #[test]
+    fn rejects_unsupported_join_directions_and_constraints() {
+        assert!(matches!(
+            bind("SELECT * FROM Events RIGHT JOIN users ON Events.id = users.id"),
+            Err(BindError::UnsupportedJoinOperator(_))
+        ));
+        assert!(matches!(
+            bind("SELECT * FROM Events JOIN users USING (id)"),
+            Err(BindError::UnsupportedJoinConstraint(_))
+        ));
     }
 
     #[test]

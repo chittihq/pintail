@@ -34,6 +34,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Memory-accounted streaming DISTINCT and materialized cross-join execution,
   with catalog cardinality required up front and a one-million-row Cartesian
   safety guard.
+- Bound and logical explicit join chains for inner, left, semi, anti, and
+  cross semantics, preserving ON predicates and outer-join-safe filter
+  placement for physical hash-join planning.
 
 ## [M1] - 2026-07-30
 

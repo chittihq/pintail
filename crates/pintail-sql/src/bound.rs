@@ -148,9 +148,46 @@ pub struct BoundLimit {
     pub count: u64,
 }
 
+/// One comma-separated `FROM` item and its left-deep explicit join chain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundFrom {
+    /// First table in the chain.
+    pub base: BoundTable,
+    /// Explicit joins applied from left to right.
+    pub joins: Vec<BoundJoin>,
+}
+
+/// A resolved explicit join.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundJoin {
+    /// Join semantics.
+    pub kind: BoundJoinKind,
+    /// Right-hand table.
+    pub table: BoundTable,
+    /// Optional ON predicate. Cross joins have no predicate.
+    pub condition: Option<BoundExpr>,
+}
+
+/// Join semantics supported by the v1 executor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundJoinKind {
+    /// Emit matching row pairs.
+    Inner,
+    /// Emit matches and unmatched left rows.
+    Left,
+    /// Emit each left row with at least one match.
+    Semi,
+    /// Emit each left row with no match.
+    Anti,
+    /// Emit every row pair.
+    Cross,
+}
+
 /// A first-stage bound query ready for logical planning.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundQuery {
+    /// Comma-separated source items with explicit join chains.
+    pub from: Vec<BoundFrom>,
     /// Catalog tables referenced by the query.
     pub tables: Vec<BoundTable>,
     /// Ordered client-visible expressions.

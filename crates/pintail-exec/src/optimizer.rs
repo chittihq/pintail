@@ -30,6 +30,17 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(fold_constants).collect(),
         },
+        LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } => LogicalPlan::Join {
+            left: Box::new(fold_constants(*left)),
+            right: Box::new(fold_constants(*right)),
+            kind,
+            condition: condition.map(fold_expr),
+        },
         LogicalPlan::Filter { input, predicate } => {
             let input = fold_constants(*input);
             let predicate = fold_expr(predicate);
@@ -290,6 +301,17 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(push_predicates).collect(),
         },
+        LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } => LogicalPlan::Join {
+            left: Box::new(push_predicates(*left)),
+            right: Box::new(push_predicates(*right)),
+            kind,
+            condition,
+        },
         LogicalPlan::Filter { input, predicate } => {
             let mut input = push_predicates(*input);
             let mut residual = Vec::new();
@@ -383,6 +405,21 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
             }
             push_conjunct(input, predicate)
         }
+        LogicalPlan::Join {
+            left, right, kind, ..
+        } => {
+            let left_contains = contains_table(left, table);
+            let right_contains = contains_table(right, table);
+            match (kind, left_contains, right_contains) {
+                (_, true, false) => push_conjunct(left, predicate),
+                (
+                    pintail_sql::BoundJoinKind::Inner | pintail_sql::BoundJoinKind::Cross,
+                    false,
+                    true,
+                ) => push_conjunct(right, predicate),
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -392,6 +429,9 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
         LogicalPlan::Scan(scan) => table_key(&scan.table) == table,
         LogicalPlan::CrossJoin { inputs } => {
             inputs.iter().any(|input| contains_table(input, table))
+        }
+        LogicalPlan::Join { left, right, .. } => {
+            contains_table(left, table) || contains_table(right, table)
         }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
@@ -411,6 +451,17 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             inputs.sort_by_key(|input| input.estimated_rows().unwrap_or(u64::MAX));
             LogicalPlan::CrossJoin { inputs }
         }
+        LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } => LogicalPlan::Join {
+            left: Box::new(reorder_cross_joins(*left)),
+            right: Box::new(reorder_cross_joins(*right)),
+            kind,
+            condition,
+        },
         LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
             input: Box::new(reorder_cross_joins(*input)),
             predicate,
@@ -448,6 +499,18 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
                 collect_plan_columns(input, required);
             }
         }
+        LogicalPlan::Join {
+            left,
+            right,
+            condition,
+            ..
+        } => {
+            collect_plan_columns(left, required);
+            collect_plan_columns(right, required);
+            if let Some(condition) = condition {
+                collect_expr_columns(condition, required);
+            }
+        }
         LogicalPlan::Filter { input, predicate } => {
             collect_expr_columns(predicate, required);
             collect_plan_columns(input, required);
@@ -481,6 +544,10 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
                 prune_scan_columns(input, required);
             }
         }
+        LogicalPlan::Join { left, right, .. } => {
+            prune_scan_columns(left, required);
+            prune_scan_columns(right, required);
+        }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
@@ -501,6 +568,10 @@ fn push_limits(plan: &mut LogicalPlan) {
                 push_limits(input);
             }
         }
+        LogicalPlan::Join { left, right, .. } => {
+            push_limits(left);
+            push_limits(right);
+        }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input } => push_limits(input),
@@ -518,6 +589,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Empty
         | LogicalPlan::OneRow
         | LogicalPlan::CrossJoin { .. }
+        | LogicalPlan::Join { .. }
         | LogicalPlan::Filter { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Limit { .. } => {}
@@ -677,6 +749,25 @@ mod tests {
             panic!("residual filter");
         };
         assert!(matches!(*input, LogicalPlan::CrossJoin { .. }));
+    }
+
+    #[test]
+    fn keeps_right_side_where_predicates_above_left_joins() {
+        let input = project_input(optimized(
+            "SELECT events.name FROM events \
+             LEFT JOIN users ON events.id = users.id \
+             WHERE users.name = 'selected'",
+        ));
+        let LogicalPlan::Filter { input, .. } = input else {
+            panic!("right-side WHERE must remain above left join");
+        };
+        assert!(matches!(
+            *input,
+            LogicalPlan::Join {
+                kind: pintail_sql::BoundJoinKind::Left,
+                ..
+            }
+        ));
     }
 
     #[test]

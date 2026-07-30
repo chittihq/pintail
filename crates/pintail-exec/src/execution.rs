@@ -164,6 +164,7 @@ impl PhysicalPlanner {
             LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
                 input: Box::new(Self::plan(*input)?),
             }),
+            LogicalPlan::Join { .. } => Err(ExecError::UnsupportedOperator("HashJoin")),
         }
     }
 }

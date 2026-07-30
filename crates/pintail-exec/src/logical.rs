@@ -1,4 +1,6 @@
-use pintail_sql::{BoundExpr, BoundLimit, BoundProjection, BoundQuery, BoundTable};
+use pintail_sql::{
+    BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery, BoundTable,
+};
 
 /// A logical table scan with optimizer-controlled storage inputs.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,6 +40,17 @@ pub enum LogicalPlan {
     CrossJoin {
         /// Inputs in semantic source order.
         inputs: Vec<LogicalPlan>,
+    },
+    /// Predicate-constrained binary join.
+    Join {
+        /// Left input.
+        left: Box<LogicalPlan>,
+        /// Right input.
+        right: Box<LogicalPlan>,
+        /// Join semantics.
+        kind: BoundJoinKind,
+        /// Optional predicate. An unconstrained inner join is Cartesian.
+        condition: Option<BoundExpr>,
     },
     /// Row predicate.
     Filter {
@@ -79,6 +92,17 @@ impl LogicalPlan {
             Self::CrossJoin { inputs } => inputs.iter().try_fold(1_u64, |rows, input| {
                 rows.checked_mul(input.estimated_rows()?)
             }),
+            Self::Join {
+                left, right, kind, ..
+            } => match kind {
+                BoundJoinKind::Inner | BoundJoinKind::Cross => {
+                    left.estimated_rows()?.checked_mul(right.estimated_rows()?)
+                }
+                BoundJoinKind::Left => left
+                    .estimated_rows()?
+                    .checked_mul(right.estimated_rows()?.max(1)),
+                BoundJoinKind::Semi | BoundJoinKind::Anti => left.estimated_rows(),
+            },
             Self::Filter { input, .. } | Self::Distinct { input } | Self::Project { input, .. } => {
                 input.estimated_rows()
             }
@@ -98,6 +122,7 @@ impl LogicalPlanner {
     #[must_use]
     pub fn plan(query: BoundQuery) -> LogicalPlan {
         let BoundQuery {
+            from,
             tables,
             projection,
             filter,
@@ -105,7 +130,13 @@ impl LogicalPlanner {
             limit,
         } = query;
 
-        let mut plan = source_plan(tables);
+        debug_assert_eq!(
+            tables.len(),
+            from.iter()
+                .map(|source| 1 + source.joins.len())
+                .sum::<usize>()
+        );
+        let mut plan = source_plan(from);
         if let Some(predicate) = filter {
             plan = LogicalPlan::Filter {
                 input: Box::new(plan),
@@ -131,21 +162,20 @@ impl LogicalPlanner {
     }
 }
 
-fn source_plan(tables: Vec<BoundTable>) -> LogicalPlan {
-    let mut inputs = tables
+fn source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
+    let mut inputs = from
         .into_iter()
-        .map(|table| {
-            let projected_column_ids = table
-                .columns
-                .iter()
-                .map(|column| column.column_id)
-                .collect();
-            LogicalPlan::Scan(Scan {
-                table,
-                projected_column_ids,
-                predicates: Vec::new(),
-                limit: None,
-            })
+        .map(|source| {
+            let mut plan = scan_plan(source.base);
+            for join in source.joins {
+                plan = LogicalPlan::Join {
+                    left: Box::new(plan),
+                    right: Box::new(scan_plan(join.table)),
+                    kind: join.kind,
+                    condition: join.condition,
+                };
+            }
+            plan
         })
         .collect::<Vec<_>>();
 
@@ -156,12 +186,26 @@ fn source_plan(tables: Vec<BoundTable>) -> LogicalPlan {
     }
 }
 
+fn scan_plan(table: BoundTable) -> LogicalPlan {
+    let projected_column_ids = table
+        .columns
+        .iter()
+        .map(|column| column.column_id)
+        .collect();
+    LogicalPlan::Scan(Scan {
+        table,
+        projected_column_ids,
+        predicates: Vec::new(),
+        limit: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use pintail_catalog::{
         CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
     };
-    use pintail_sql::{Binder, BoundLimit, parse_statement};
+    use pintail_sql::{Binder, BoundJoinKind, BoundLimit, parse_statement};
     use pintail_types::{Column, DataType, TableSchema};
 
     use super::{LogicalPlan, LogicalPlanner};
@@ -267,5 +311,29 @@ mod tests {
             panic!("limit root");
         };
         assert!(matches!(*input, LogicalPlan::Distinct { .. }));
+    }
+
+    #[test]
+    fn preserves_explicit_join_kind_and_condition() {
+        let plan = plan(
+            "SELECT events.name FROM events \
+             LEFT JOIN users ON events.id = users.id",
+        );
+        let LogicalPlan::Project { input, .. } = plan else {
+            panic!("project root");
+        };
+        let LogicalPlan::Join {
+            kind,
+            condition,
+            left,
+            right,
+        } = *input
+        else {
+            panic!("join");
+        };
+        assert_eq!(kind, BoundJoinKind::Left);
+        assert!(condition.is_some());
+        assert!(matches!(*left, LogicalPlan::Scan(_)));
+        assert!(matches!(*right, LogicalPlan::Scan(_)));
     }
 }
