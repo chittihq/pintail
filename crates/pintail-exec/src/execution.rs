@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
     mem::{size_of, size_of_val},
@@ -7,7 +8,7 @@ use std::{
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundJoinKind, BoundProjection,
+    BoundJoinKind, BoundOrderKey, BoundProjection,
 };
 use pintail_types::{DataType, Value};
 
@@ -88,6 +89,15 @@ pub enum PhysicalPlan {
         /// Input operator.
         input: Box<Self>,
     },
+    /// Materialized full or top-K result sort.
+    Sort {
+        /// Projected input operator.
+        input: Box<Self>,
+        /// Result-layout ordering keys.
+        keys: Vec<BoundOrderKey>,
+        /// Maximum prefix retained before the downstream LIMIT.
+        top_k: Option<usize>,
+    },
     /// Skips and caps selected rows.
     Limit {
         /// Input operator.
@@ -112,9 +122,10 @@ impl PhysicalPlan {
                     nullable: expression.expr.nullable,
                 })
                 .collect(),
-            Self::Filter { input, .. } | Self::Distinct { input } | Self::Limit { input, .. } => {
-                input.output_fields()
-            }
+            Self::Filter { input, .. }
+            | Self::Distinct { input }
+            | Self::Sort { input, .. }
+            | Self::Limit { input, .. } => input.output_fields(),
             Self::HashAggregate {
                 group_by,
                 aggregates,
@@ -201,11 +212,7 @@ impl PhysicalPlanner {
                 input: Box::new(Self::plan(*input)?),
                 expressions,
             }),
-            LogicalPlan::Limit { input, limit } => Ok(PhysicalPlan::Limit {
-                input: Box::new(Self::plan(*input)?),
-                offset: limit.offset,
-                count: limit.count,
-            }),
+            LogicalPlan::Limit { input, limit } => plan_limit(*input, limit.offset, limit.count),
             LogicalPlan::CrossJoin { inputs } => {
                 let estimated_rows = inputs
                     .iter()
@@ -229,6 +236,11 @@ impl PhysicalPlanner {
             }
             LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
                 input: Box::new(Self::plan(*input)?),
+            }),
+            LogicalPlan::Sort { input, keys } => Ok(PhysicalPlan::Sort {
+                input: Box::new(Self::plan(*input)?),
+                keys,
+                top_k: None,
             }),
             LogicalPlan::Join {
                 left,
@@ -267,6 +279,22 @@ impl PhysicalPlanner {
             }
         }
     }
+}
+
+fn plan_limit(input: LogicalPlan, offset: u64, count: u64) -> Result<PhysicalPlan, ExecError> {
+    let input = match input {
+        LogicalPlan::Sort { input, keys } => PhysicalPlan::Sort {
+            input: Box::new(PhysicalPlanner::plan(*input)?),
+            keys,
+            top_k: usize::try_from(offset.saturating_add(count)).ok(),
+        },
+        input => PhysicalPlanner::plan(input)?,
+    };
+    Ok(PhysicalPlan::Limit {
+        input: Box::new(input),
+        offset,
+        count,
+    })
 }
 
 fn equi_join_keys(
@@ -322,6 +350,7 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
+        | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => collect_logical_tables(input, tables),
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
@@ -525,6 +554,13 @@ enum PullOperator {
         input: Box<Self>,
         seen: HashSet<Vec<Value>>,
     },
+    Sort {
+        input: Box<Self>,
+        keys: Vec<BoundOrderKey>,
+        column_types: Vec<DataType>,
+        top_k: Option<usize>,
+        state: Option<MaterializedRows>,
+    },
     Limit {
         input: Box<Self>,
         skip: u64,
@@ -692,6 +728,22 @@ impl PullOperator {
                     return Ok(Some(batch));
                 }
             },
+            Self::Sort {
+                input,
+                keys,
+                column_types,
+                top_k,
+                state,
+            } => {
+                if state.is_none() {
+                    *state = Some(build_sort(input, keys, *top_k, memory)?);
+                }
+                next_materialized_batch(
+                    state.as_mut().expect("initialized above"),
+                    column_types,
+                    memory,
+                )
+            }
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
                     return Ok(None);
@@ -893,6 +945,29 @@ fn build_operator(
                 PullOperator::Distinct {
                     input: Box::new(input),
                     seen: HashSet::new(),
+                },
+                columns,
+            ))
+        }
+        PhysicalPlan::Sort { input, keys, top_k } => {
+            let column_types = input
+                .output_fields()
+                .into_iter()
+                .map(|field| field.data_type.unwrap_or(DataType::Utf8))
+                .collect::<Vec<_>>();
+            if keys.iter().any(|key| key.index >= column_types.len()) {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "sort key is outside the projected result layout",
+                ));
+            }
+            let (input, columns) = build_operator(*input, provider)?;
+            Ok((
+                PullOperator::Sort {
+                    input: Box::new(input),
+                    keys,
+                    column_types,
+                    top_k,
+                    state: None,
                 },
                 columns,
             ))
@@ -1301,6 +1376,73 @@ fn materialize(
         }
     }
     Ok(rows)
+}
+
+fn build_sort(
+    input: &mut PullOperator,
+    keys: &[BoundOrderKey],
+    top_k: Option<usize>,
+    memory: &mut MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let mut rows = materialize(input, memory)?;
+    let compare = |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys);
+    if let Some(top_k) = top_k {
+        if top_k == 0 {
+            rows.clear();
+        } else if top_k < rows.len() {
+            rows.select_nth_unstable_by(top_k, compare);
+            rows.truncate(top_k);
+        }
+    }
+    rows.sort_by(compare);
+    Ok(MaterializedRows { rows, position: 0 })
+}
+
+fn compare_sort_rows(left: &[Value], right: &[Value], keys: &[BoundOrderKey]) -> Ordering {
+    for key in keys {
+        let ordering = compare_sort_values(
+            left.get(key.index).unwrap_or(&Value::Null),
+            right.get(key.index).unwrap_or(&Value::Null),
+            *key,
+        );
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
+}
+
+fn compare_sort_values(left: &Value, right: &Value, key: BoundOrderKey) -> Ordering {
+    match (left, right) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Null, _) => {
+            if key.nulls_first {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
+        (_, Value::Null) => {
+            if key.nulls_first {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+        (Value::Utf8(left), Value::Utf8(right)) => order_direction(
+            left.to_lowercase().cmp(&right.to_lowercase()),
+            key.ascending,
+        ),
+        _ => order_direction(left.cmp(right), key.ascending),
+    }
+}
+
+fn order_direction(ordering: Ordering, ascending: bool) -> Ordering {
+    if ascending {
+        ordering
+    } else {
+        ordering.reverse()
+    }
 }
 
 fn rows_to_columns(
@@ -1813,6 +1955,67 @@ mod tests {
         assert_eq!(
             batch.column(1).and_then(|column| column.value(0)),
             Some(&Value::Null)
+        );
+    }
+
+    #[test]
+    fn executes_case_insensitive_top_k_sort_with_mysql_null_ordering() {
+        let names = ColumnVector::new(
+            DataType::Utf8,
+            vec![
+                Value::Utf8("alpha".to_owned()),
+                Value::Null,
+                Value::Utf8("Gamma".to_owned()),
+            ],
+        )
+        .expect("names");
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(3, vec![names]).expect("batch")]),
+        };
+        let plan = physical("SELECT name AS label FROM events ORDER BY label DESC LIMIT 2");
+        let crate::PhysicalPlan::Limit { input, .. } = &plan else {
+            panic!("limit plan");
+        };
+        assert!(matches!(
+            input.as_ref(),
+            crate::PhysicalPlan::Sort { top_k: Some(2), .. }
+        ));
+
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).expect("label").values(),
+            [
+                Value::Utf8("Gamma".to_owned()),
+                Value::Utf8("alpha".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn full_sort_places_nulls_first_for_mysql_ascending_order() {
+        let names = ColumnVector::new(
+            DataType::Utf8,
+            vec![
+                Value::Utf8("beta".to_owned()),
+                Value::Null,
+                Value::Utf8("Alpha".to_owned()),
+            ],
+        )
+        .expect("names");
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(3, vec![names]).expect("batch")]),
+        };
+        let plan = physical("SELECT name FROM events ORDER BY name");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).expect("name").values(),
+            [
+                Value::Null,
+                Value::Utf8("Alpha".to_owned()),
+                Value::Utf8("beta".to_owned()),
+            ]
         );
     }
 

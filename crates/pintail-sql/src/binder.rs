@@ -5,13 +5,14 @@ use pintail_types::{DataType, Value};
 use sqlparser::ast::{
     BinaryOperator, Distinct, DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr,
     FunctionArguments, GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName,
-    Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement, TableFactor,
-    UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    OrderByKind, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement,
+    TableFactor, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
 };
 
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
-    BoundJoin, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery, BoundTable, UnaryOp,
+    BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
+    UnaryOp,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -48,7 +49,6 @@ impl<'catalog> Binder<'catalog> {
 
     fn bind_query(&self, query: &Query) -> Result<BoundQuery, BindError> {
         if query.with.is_some()
-            || query.order_by.is_some()
             || query.fetch.is_some()
             || !query.locks.is_empty()
             || query.for_clause.is_some()
@@ -111,6 +111,7 @@ impl<'catalog> Binder<'catalog> {
                 return Err(BindError::UnsupportedQueryClause("DISTINCT ON".to_owned()));
             }
         };
+        let order_by = bind_order_by(query, &projection)?;
         let limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
 
         Ok(BoundQuery {
@@ -122,6 +123,7 @@ impl<'catalog> Binder<'catalog> {
             aggregates,
             having,
             distinct,
+            order_by,
             limit,
         })
     }
@@ -871,6 +873,67 @@ fn bind_limit(limit: &LimitClause) -> Result<BoundLimit, BindError> {
     }
 }
 
+fn bind_order_by(
+    query: &Query,
+    projection: &[BoundProjection],
+) -> Result<Vec<BoundOrderKey>, BindError> {
+    let Some(order_by) = &query.order_by else {
+        return Ok(Vec::new());
+    };
+    if order_by.interpolate.is_some() {
+        return Err(BindError::InvalidOrderBy(order_by.to_string()));
+    }
+    let OrderByKind::Expressions(expressions) = &order_by.kind else {
+        return Err(BindError::InvalidOrderBy(order_by.to_string()));
+    };
+    expressions
+        .iter()
+        .map(|order| {
+            if order.with_fill.is_some() {
+                return Err(BindError::InvalidOrderBy(order.to_string()));
+            }
+            let index = resolve_order_index(&order.expr, projection)?;
+            let ascending = order.options.asc.unwrap_or(true);
+            Ok(BoundOrderKey {
+                index,
+                ascending,
+                nulls_first: order.options.nulls_first.unwrap_or(ascending),
+            })
+        })
+        .collect()
+}
+
+fn resolve_order_index(expr: &Expr, projection: &[BoundProjection]) -> Result<usize, BindError> {
+    if let Expr::Value(value) = expr
+        && let SqlValue::Number(value, _) = &value.value
+        && !value.contains(['.', 'e', 'E'])
+    {
+        let ordinal = value
+            .parse::<usize>()
+            .map_err(|_| BindError::InvalidOrderBy(expr.to_string()))?;
+        return ordinal
+            .checked_sub(1)
+            .filter(|index| *index < projection.len())
+            .ok_or_else(|| BindError::InvalidOrderBy(expr.to_string()));
+    }
+
+    let requested = match expr {
+        Expr::Identifier(identifier) => identifier.value.clone(),
+        _ => projection_name(expr),
+    };
+    let matches = projection
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.name.eq_ignore_ascii_case(&requested))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(BindError::InvalidOrderBy(expr.to_string())),
+        _ => Err(BindError::AmbiguousOrderBy(requested)),
+    }
+}
+
 fn unsigned_literal(expr: &Expr) -> Result<u64, BindError> {
     let Expr::Value(value) = expr else {
         return Err(BindError::InvalidLimit(expr.to_string()));
@@ -988,6 +1051,10 @@ pub enum BindError {
     },
     /// `LIMIT` is not a non-negative integer literal.
     InvalidLimit(String),
+    /// ORDER BY does not resolve to one projected output.
+    InvalidOrderBy(String),
+    /// ORDER BY matches multiple output aliases.
+    AmbiguousOrderBy(String),
 }
 
 impl fmt::Display for BindError {
@@ -1068,6 +1135,10 @@ impl fmt::Display for BindError {
                 write!(formatter, "row filter has non-boolean type {actual:?}")
             }
             Self::InvalidLimit(value) => write!(formatter, "invalid LIMIT value {value}"),
+            Self::InvalidOrderBy(value) => write!(formatter, "invalid ORDER BY expression {value}"),
+            Self::AmbiguousOrderBy(value) => {
+                write!(formatter, "ambiguous ORDER BY output {value}")
+            }
         }
     }
 }
@@ -1250,8 +1321,33 @@ mod tests {
         let query = bind("SELECT Name + active FROM Events WHERE Name").expect("MySQL coercion");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Float64));
         assert!(matches!(
-            bind("SELECT * FROM Events ORDER BY id"),
+            bind("SELECT * FROM Events FETCH FIRST 1 ROW ONLY"),
             Err(BindError::UnsupportedQueryClause(_))
+        ));
+    }
+
+    #[test]
+    fn resolves_ordering_aliases_ordinals_and_mysql_null_defaults() {
+        let query = bind("SELECT Name AS label, id FROM Events ORDER BY label DESC, 2 ASC")
+            .expect("ordered query");
+        assert_eq!(
+            query.order_by,
+            [
+                crate::BoundOrderKey {
+                    index: 0,
+                    ascending: false,
+                    nulls_first: false,
+                },
+                crate::BoundOrderKey {
+                    index: 1,
+                    ascending: true,
+                    nulls_first: true,
+                },
+            ]
+        );
+        assert!(matches!(
+            bind("SELECT Name AS label FROM Events ORDER BY id"),
+            Err(BindError::InvalidOrderBy(_))
         ));
     }
 

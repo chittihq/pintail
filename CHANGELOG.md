@@ -45,6 +45,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Memory-capped hash aggregation with case-insensitive UTF-8 grouping,
   SQL empty-input aggregate results, post-aggregate HAVING evaluation, and
   positional projection of grouping keys and aggregate results.
+- Output-alias, ordinal, and projected-expression `ORDER BY` binding with
+  MySQL NULL placement, memory-capped full sorting, case-insensitive UTF-8
+  ordering, and LIMIT-aware top-K partitioning.
 
 ## [M1] - 2026-07-30
 

@@ -83,6 +83,10 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(fold_constants(*input)),
         },
+        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+            input: Box::new(fold_constants(*input)),
+            keys,
+        },
         LogicalPlan::Limit { input, limit } => LogicalPlan::Limit {
             input: Box::new(fold_constants(*input)),
             limit,
@@ -364,6 +368,10 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(push_predicates(*input)),
         },
+        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+            input: Box::new(push_predicates(*input)),
+            keys,
+        },
         LogicalPlan::Limit { input, limit } => LogicalPlan::Limit {
             input: Box::new(push_predicates(*input)),
             limit,
@@ -466,6 +474,7 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
+        | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => contains_table(input, table),
         LogicalPlan::Empty | LogicalPlan::OneRow => false,
     }
@@ -511,6 +520,10 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(reorder_cross_joins(*input)),
+        },
+        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+            input: Box::new(reorder_cross_joins(*input)),
+            keys,
         },
         LogicalPlan::Limit { input, limit } => LogicalPlan::Limit {
             input: Box::new(reorder_cross_joins(*input)),
@@ -575,7 +588,9 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             }
             collect_plan_columns(input, required);
         }
-        LogicalPlan::Distinct { input } | LogicalPlan::Limit { input, .. } => {
+        LogicalPlan::Distinct { input }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Limit { input, .. } => {
             collect_plan_columns(input, required);
         }
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
@@ -606,6 +621,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
+        | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => prune_scan_columns(input, required),
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
@@ -630,6 +646,7 @@ fn push_limits(plan: &mut LogicalPlan) {
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
+        | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Aggregate { input, .. } => push_limits(input),
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
     }
@@ -649,6 +666,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Filter { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
+        | LogicalPlan::Sort { .. }
         | LogicalPlan::Limit { .. } => {}
     }
 }

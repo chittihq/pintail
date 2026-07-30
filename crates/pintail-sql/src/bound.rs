@@ -184,6 +184,17 @@ pub struct BoundLimit {
     pub count: u64,
 }
 
+/// One ordering key resolved against the projected result layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundOrderKey {
+    /// Zero-based projected output position.
+    pub index: usize,
+    /// Whether smaller values appear first.
+    pub ascending: bool,
+    /// Whether NULL values appear before non-NULL values.
+    pub nulls_first: bool,
+}
+
 /// One comma-separated `FROM` item and its left-deep explicit join chain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundFrom {
@@ -238,6 +249,8 @@ pub struct BoundQuery {
     pub having: Option<BoundExpr>,
     /// Whether duplicate output rows must be removed.
     pub distinct: bool,
+    /// Ordered result-layout sort keys.
+    pub order_by: Vec<BoundOrderKey>,
     /// Optional normalized row limit.
     pub limit: Option<BoundLimit>,
 }

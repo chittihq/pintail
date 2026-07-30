@@ -1,6 +1,6 @@
 use pintail_sql::{
-    BoundAggregate, BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery,
-    BoundTable,
+    BoundAggregate, BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundOrderKey,
+    BoundProjection, BoundQuery, BoundTable,
 };
 
 /// A logical table scan with optimizer-controlled storage inputs.
@@ -81,6 +81,13 @@ pub enum LogicalPlan {
         /// Input relation.
         input: Box<LogicalPlan>,
     },
+    /// Ordered result rows.
+    Sort {
+        /// Projected input relation.
+        input: Box<LogicalPlan>,
+        /// Result-layout sort keys.
+        keys: Vec<BoundOrderKey>,
+    },
     /// Offset and count.
     Limit {
         /// Input relation.
@@ -116,7 +123,8 @@ impl LogicalPlan {
             Self::Filter { input, .. }
             | Self::Distinct { input }
             | Self::Project { input, .. }
-            | Self::Aggregate { input, .. } => input.estimated_rows(),
+            | Self::Aggregate { input, .. }
+            | Self::Sort { input, .. } => input.estimated_rows(),
             Self::Limit { input, limit } => input
                 .estimated_rows()
                 .map(|rows| rows.saturating_sub(limit.offset).min(limit.count)),
@@ -141,6 +149,7 @@ impl LogicalPlanner {
             aggregates,
             having,
             distinct,
+            order_by,
             limit,
         } = query;
 
@@ -177,6 +186,12 @@ impl LogicalPlanner {
         if distinct {
             plan = LogicalPlan::Distinct {
                 input: Box::new(plan),
+            };
+        }
+        if !order_by.is_empty() {
+            plan = LogicalPlan::Sort {
+                input: Box::new(plan),
+                keys: order_by,
             };
         }
         if let Some(limit) = limit {
@@ -338,6 +353,20 @@ mod tests {
             panic!("limit root");
         };
         assert!(matches!(*input, LogicalPlan::Distinct { .. }));
+    }
+
+    #[test]
+    fn places_sort_after_projection_and_before_limit() {
+        let plan = plan("SELECT name AS label FROM events ORDER BY label DESC LIMIT 3");
+        let LogicalPlan::Limit { input, .. } = plan else {
+            panic!("limit root");
+        };
+        let LogicalPlan::Sort { input, keys } = *input else {
+            panic!("sort");
+        };
+        assert_eq!(keys.len(), 1);
+        assert!(!keys[0].ascending);
+        assert!(matches!(*input, LogicalPlan::Project { .. }));
     }
 
     #[test]
