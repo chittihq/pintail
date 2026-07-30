@@ -28,7 +28,7 @@ const WRITER_LOCK_FILE: &str = ".writer.lock";
 const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOCK_ROWS: usize = 16 * 1024;
 const DEFAULT_COMPACTION_FAN_IN: usize = 4;
-const DEFAULT_MAX_COMPACTION_INPUT_ROWS: u64 = 250_000;
+const DEFAULT_MAX_COMPACTION_INPUT_ROWS: u64 = 50_000;
 const DEFAULT_MAX_COMPACTION_ROWS: u64 = 128_000;
 const SIZE_TIER_RATIO: u64 = 4;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
@@ -391,9 +391,17 @@ pub struct ProjectedScanStream {
 
 struct MergedProjectedStream {
     streams: Vec<segment::SegmentRowStream>,
-    heads: Vec<Option<StoredRow>>,
+    heads: Vec<Option<segment::SegmentRowHeader>>,
     memtable_head: Option<StoredRow>,
     reported_segments: bool,
+}
+
+enum MergedWinnerSource {
+    Segment {
+        segment_index: usize,
+        row_index: usize,
+    },
+    Memtable(Vec<pintail_types::Value>),
 }
 
 /// One bounded set of projected values from an independently visible segment.
@@ -615,33 +623,38 @@ impl ProjectedScanStream {
                 .unwrap_or(0)
                 .clamp(1, MAX_MERGED_CHUNK_ROWS)
         };
-        let mut columns = projection
-            .iter()
-            .map(|_| Vec::with_capacity(chunk_rows))
-            .collect::<Vec<_>>();
-        let mut row_count = 0;
-        while row_count < chunk_rows {
+        let mut winner_sources = Vec::with_capacity(chunk_rows);
+        while winner_sources.len() < chunk_rows {
             let minimum = merge
                 .heads
                 .iter()
-                .filter_map(|row| row.as_ref().map(StoredRow::key))
+                .filter_map(|row| row.as_ref().map(|row| &row.key))
                 .chain(merge.memtable_head.as_ref().map(StoredRow::key).into_iter())
                 .min()
                 .cloned();
             let Some(minimum) = minimum else {
                 break;
             };
-            let mut winner = None;
-            for (stream, head) in merge.streams.iter_mut().zip(&mut merge.heads) {
-                while head.as_ref().is_some_and(|row| row.key() == &minimum) {
+            let mut winner = None::<(u64, bool, MergedWinnerSource)>;
+            for (segment_index, (stream, head)) in
+                merge.streams.iter_mut().zip(&mut merge.heads).enumerate()
+            {
+                while head.as_ref().is_some_and(|row| row.key == minimum) {
                     let candidate = head.take().expect("matching stream head");
                     if winner
                         .as_ref()
-                        .is_none_or(|current: &StoredRow| candidate.version() >= current.version())
+                        .is_none_or(|current| candidate.version >= current.0)
                     {
-                        winner = Some(candidate);
+                        winner = Some((
+                            candidate.version,
+                            candidate.deleted,
+                            MergedWinnerSource::Segment {
+                                segment_index,
+                                row_index: candidate.physical_index,
+                            },
+                        ));
                     }
-                    *head = stream.next_row()?;
+                    *head = stream.next_header()?;
                 }
             }
             if merge
@@ -652,9 +665,18 @@ impl ProjectedScanStream {
                 let candidate = merge.memtable_head.take().expect("matching memtable head");
                 if winner
                     .as_ref()
-                    .is_none_or(|current: &StoredRow| candidate.version() >= current.version())
+                    .is_none_or(|current| candidate.version() >= current.0)
                 {
-                    winner = Some(candidate);
+                    winner = Some((
+                        candidate.version(),
+                        candidate.is_deleted(),
+                        MergedWinnerSource::Memtable(
+                            projection
+                                .iter()
+                                .map(|index| candidate.values()[*index].clone())
+                                .collect(),
+                        ),
+                    ));
                 }
                 merge.memtable_head = self
                     .snapshot
@@ -667,16 +689,68 @@ impl ProjectedScanStream {
                     .map(|(_, row)| row.clone());
             }
             let winner = winner.expect("minimum key has a winning row");
-            if winner.key() < &self.start || winner.key() > &self.end || winner.is_deleted() {
+            if minimum < self.start || minimum > self.end || winner.1 {
                 continue;
             }
-            for (output, index) in columns.iter_mut().zip(&projection) {
-                output.push(winner.values()[*index].clone());
-            }
-            row_count += 1;
+            winner_sources.push(winner.2);
         }
+        let row_count = winner_sources.len();
         if row_count == 0 {
             return Ok(None);
+        }
+        let mut winner_values = vec![None; row_count];
+        let mut segment_rows = BTreeMap::<usize, Vec<(usize, usize)>>::new();
+        for (winner_index, source) in winner_sources.into_iter().enumerate() {
+            match source {
+                MergedWinnerSource::Segment { .. } if projection.is_empty() => {
+                    winner_values[winner_index] = Some(Vec::new());
+                }
+                MergedWinnerSource::Segment {
+                    segment_index,
+                    row_index,
+                } => segment_rows
+                    .entry(segment_index)
+                    .or_default()
+                    .push((row_index, winner_index)),
+                MergedWinnerSource::Memtable(values) => {
+                    winner_values[winner_index] = Some(values);
+                }
+            }
+        }
+        let mut blocks_decoded = 0;
+        for (segment_index, selected) in segment_rows {
+            let row_indices = selected
+                .iter()
+                .map(|(row_index, _)| *row_index)
+                .collect::<Vec<_>>();
+            let scan_memory = AtomicUsize::new(0);
+            let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+            let fetch = segment::read_projected_rows(
+                &self.snapshot.directory,
+                &self.segments[segment_index],
+                &self.snapshot.schema,
+                &projection,
+                &row_indices,
+                &scan_budget,
+            )?;
+            blocks_decoded += fetch.blocks_decoded;
+            let values = columns_to_rows(fetch.columns, selected.len())?;
+            scan_budget.release(fetch.reserved_bytes);
+            for ((_, winner_index), values) in selected.into_iter().zip(values) {
+                winner_values[winner_index] = Some(values);
+            }
+        }
+        let mut columns = projection
+            .iter()
+            .map(|_| Vec::with_capacity(row_count))
+            .collect::<Vec<_>>();
+        for values in winner_values {
+            let values = values.ok_or_else(|| {
+                StoreError::FormatLimit("merged winner was not late-materialized".into())
+            })?;
+            for (column, value) in columns.iter_mut().zip(values) {
+                column.push(value);
+            }
         }
         let retained_bytes = size_of::<ProjectedColumnChunk>()
             .saturating_add(
@@ -711,6 +785,7 @@ impl ProjectedScanStream {
             stats: ScanStats {
                 segments_read: usize::from(first_chunk) * self.segments.len(),
                 segments_pruned: usize::from(first_chunk) * self.pruned_segments,
+                blocks_decoded,
                 ..ScanStats::default()
             },
             retained_bytes,
@@ -2130,11 +2205,13 @@ impl TableSnapshot {
         } else {
             let mut streams = segments
                 .iter()
-                .map(|meta| segment::SegmentRowStream::open(&self.directory, meta, &self.schema))
+                .map(|meta| {
+                    segment::SegmentRowStream::open_headers(&self.directory, meta, &self.schema)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let heads = streams
                 .iter_mut()
-                .map(segment::SegmentRowStream::next_row)
+                .map(segment::SegmentRowStream::next_header)
                 .collect::<Result<Vec<_>, _>>()?;
             let memtable_head = self
                 .memtable

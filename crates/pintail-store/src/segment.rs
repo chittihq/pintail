@@ -533,16 +533,43 @@ pub(crate) struct SegmentRowStream {
     path: PathBuf,
     columns: Vec<StreamColumn>,
     nullable_absent: Vec<usize>,
+    schema_column_count: usize,
+    include_values: bool,
     remaining_rows: usize,
+    next_physical_index: usize,
     buffered_rows: std::vec::IntoIter<StoredRow>,
 }
 
+pub(crate) struct SegmentRowHeader {
+    pub(crate) key: PrimaryKey,
+    pub(crate) version: u64,
+    pub(crate) deleted: bool,
+    pub(crate) physical_index: usize,
+}
+
 impl SegmentRowStream {
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn open(
         directory: &Path,
         meta: &SegmentMeta,
         schema: &TableSchema,
+    ) -> Result<Self, StoreError> {
+        Self::open_internal(directory, meta, schema, true)
+    }
+
+    pub(crate) fn open_headers(
+        directory: &Path,
+        meta: &SegmentMeta,
+        schema: &TableSchema,
+    ) -> Result<Self, StoreError> {
+        Self::open_internal(directory, meta, schema, false)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn open_internal(
+        directory: &Path,
+        meta: &SegmentMeta,
+        schema: &TableSchema,
+        include_values: bool,
     ) -> Result<Self, StoreError> {
         verify(directory, meta, schema)?;
         let path = directory.join(&meta.file_name);
@@ -664,30 +691,33 @@ impl SegmentRowStream {
                     }
                     Some(StreamColumnTarget::Tombstone)
                 }
-                _ => schema
-                    .columns()
-                    .iter()
-                    .enumerate()
-                    .find(|(_, column)| column.id() == id)
-                    .map(|(index, column)| {
-                        if found_values[index] {
-                            return Err(corrupt_here(
-                                &path,
-                                &layout,
-                                format!("duplicate user column id {id}"),
-                            ));
-                        }
-                        let expected = LogicalType::from_data_type(column.data_type());
-                        if logical_type != expected {
-                            return Err(StoreError::IncompatibleSchema(format!(
-                                "column {} ({id}) changed physical type",
-                                column.name()
-                            )));
-                        }
-                        found_values[index] = true;
-                        Ok(StreamColumnTarget::Value(index))
-                    })
-                    .transpose()?,
+                _ => {
+                    let value_target = schema
+                        .columns()
+                        .iter()
+                        .enumerate()
+                        .find(|(_, column)| column.id() == id)
+                        .map(|(index, column)| {
+                            if found_values[index] {
+                                return Err(corrupt_here(
+                                    &path,
+                                    &layout,
+                                    format!("duplicate user column id {id}"),
+                                ));
+                            }
+                            let expected = LogicalType::from_data_type(column.data_type());
+                            if logical_type != expected {
+                                return Err(StoreError::IncompatibleSchema(format!(
+                                    "column {} ({id}) changed physical type",
+                                    column.name()
+                                )));
+                            }
+                            found_values[index] = true;
+                            Ok(StreamColumnTarget::Value(index))
+                        })
+                        .transpose()?;
+                    if include_values { value_target } else { None }
+                }
             };
 
             if let Some(target) = target {
@@ -747,13 +777,18 @@ impl SegmentRowStream {
                     column.id()
                 )));
             }
-            nullable_absent.push(index);
+            if include_values {
+                nullable_absent.push(index);
+            }
         }
         Ok(Self {
             path,
             columns,
             nullable_absent,
+            schema_column_count: schema.columns().len(),
+            include_values,
             remaining_rows,
+            next_physical_index: 0,
             buffered_rows: Vec::new().into_iter(),
         })
     }
@@ -761,6 +796,7 @@ impl SegmentRowStream {
     pub(crate) fn next_row(&mut self) -> Result<Option<StoredRow>, StoreError> {
         loop {
             if let Some(row) = self.buffered_rows.next() {
+                self.next_physical_index = self.next_physical_index.saturating_add(1);
                 return Ok(Some(row));
             }
             if self.remaining_rows == 0 {
@@ -777,22 +813,27 @@ impl SegmentRowStream {
         }
     }
 
+    pub(crate) fn next_header(&mut self) -> Result<Option<SegmentRowHeader>, StoreError> {
+        let Some(row) = self.next_row()? else {
+            return Ok(None);
+        };
+        Ok(Some(SegmentRowHeader {
+            key: row.key().clone(),
+            version: row.version(),
+            deleted: row.is_deleted(),
+            physical_index: self.next_physical_index.saturating_sub(1),
+        }))
+    }
+
     fn refill(&mut self) -> Result<(), StoreError> {
         let mut keys = None;
         let mut versions = None;
         let mut tombstones = None;
-        let value_count = self
-            .columns
-            .iter()
-            .filter_map(|column| match column.target {
-                StreamColumnTarget::Value(index) => Some(index),
-                StreamColumnTarget::Key
-                | StreamColumnTarget::Version
-                | StreamColumnTarget::Tombstone => None,
-            })
-            .chain(self.nullable_absent.iter().copied())
-            .max()
-            .map_or(0, |index| index + 1);
+        let value_count = if self.include_values {
+            self.schema_column_count
+        } else {
+            0
+        };
         let mut values = vec![None; value_count];
         let mut block_rows = None;
         let mut decode_position = 0;
