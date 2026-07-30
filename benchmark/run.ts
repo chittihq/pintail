@@ -198,6 +198,7 @@ async function buildPintail(): Promise<string> {
 
 async function seedSource(connection: mysql.Connection) {
   log(`seeding ${orderRows.toLocaleString()} deterministic orders`)
+  await connection.query('SET SESSION sql_log_bin=0')
   await connection.query('CREATE DATABASE benchmark_db')
   await connection.query('USE benchmark_db')
   await connection.query(readFileSync(join(benchmarkDir, 'schema.sql'), 'utf8'))
@@ -209,7 +210,12 @@ async function seedSource(connection: mysql.Connection) {
     "CREATE USER IF NOT EXISTS 'benchmark'@'%' IDENTIFIED BY 'benchmarkpass'",
   )
   await connection.query(
-    "GRANT SELECT, RELOAD, REPLICATION CLIENT ON *.* TO 'benchmark'@'%'",
+    "GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT " +
+      "ON *.* TO 'benchmark'@'%'",
+  )
+  await connection.query('SET SESSION sql_log_bin=1')
+  await connection.query(
+    'CREATE TABLE benchmark_cdc_marker (id INT); DROP TABLE benchmark_cdc_marker',
   )
   log(`source seed completed in ${Math.round(performance.now() - started).toLocaleString()} ms`)
 }
@@ -270,7 +276,7 @@ async function createReplica(baseUrl: string, token: string, dsn: string): Promi
     body: {
       name: 'benchmark_db',
       dsn,
-      mode: 'polling',
+      mode: 'cdc',
       include_tables: ['orders', 'products', 'users'],
     },
   })
@@ -492,7 +498,13 @@ async function main() {
     '--env',
     'MYSQL_ROOT_PASSWORD=pintail-root',
     'mysql:8.4',
-    '--skip-log-bin',
+    '--server-id=909',
+    '--log-bin=mysql-bin',
+    '--binlog-format=ROW',
+    '--binlog-row-image=FULL',
+    '--binlog-row-metadata=FULL',
+    '--gtid-mode=ON',
+    '--enforce-gtid-consistency=ON',
     '--default-time-zone=+00:00',
     '--sql-mode=NO_ENGINE_SUBSTITUTION',
     '--innodb-buffer-pool-size=1G',

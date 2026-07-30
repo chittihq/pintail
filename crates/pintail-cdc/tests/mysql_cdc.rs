@@ -5,7 +5,10 @@ use std::{
     net::{TcpListener, TcpStream},
     path::Path,
     process::{Child, Command, Output, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -16,11 +19,154 @@ use pintail_meta::MetaStore;
 use pintail_poll::{PollTarget, run_cdc_reconciliation};
 use pintail_probe::{ProbeReport, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
-use pintail_store::{StoreOptions, TableStore};
+use pintail_store::{StoreOptions, TableSnapshot, TableStore};
 use pintail_types::{Column, Value};
 use rusqlite::Connection;
 
 const DATABASE_ID: &str = "m4-source";
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn spilled_unique_value_swap_is_never_torn_by_readers() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE unique_swap (\
+               id BIGINT UNSIGNED PRIMARY KEY,\
+               slot VARCHAR(16) NOT NULL UNIQUE\
+             );\
+             INSERT INTO unique_swap VALUES (1,'left'),(2,'right');",
+        )
+        .expect("unique-swap source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("unique-swap DSN"));
+    let report = probe(&pool, "app").await.expect("probe unique-swap source");
+    let workspace = tempfile::tempdir().expect("unique-swap workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("unique-swap metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register unique-swap source");
+    let source = report.tables.first().expect("unique-swap table").clone();
+    let schema = source.table_schema().expect("unique-swap schema");
+    let table_directory = workspace.path().join("unique_swap");
+    let store = TableStore::open(&table_directory, schema.clone(), StoreOptions::default())
+        .expect("unique-swap store");
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![SnapshotTarget::new(source.clone(), store).expect("unique-swap snapshot target")],
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("unique-swap baseline snapshot");
+
+    mysql
+        .query_batch(
+            "START TRANSACTION;\
+               UPDATE unique_swap SET slot='moving' WHERE id=1;\
+               UPDATE unique_swap SET slot='left' WHERE id=2;\
+               UPDATE unique_swap SET slot='right' WHERE id=1;\
+             COMMIT;",
+        )
+        .expect("commit unique-value swap");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+    let reader_stop = Arc::clone(&stop);
+    let reader_observations = Arc::clone(&observations);
+    let reader = thread::spawn(move || {
+        while !reader_stop.load(Ordering::Acquire) {
+            let rows = TableSnapshot::open(&table_directory, schema.clone())
+                .expect("open concurrent unique-swap reader")
+                .scan()
+                .expect("scan concurrent unique-swap reader");
+            let slots = rows
+                .iter()
+                .map(|row| row.values()[1].clone())
+                .collect::<Vec<_>>();
+            assert!(
+                slots
+                    == [
+                        Value::Utf8("left".to_owned()),
+                        Value::Utf8("right".to_owned())
+                    ]
+                    || slots
+                        == [
+                            Value::Utf8("right".to_owned()),
+                            Value::Utf8("left".to_owned())
+                        ],
+                "reader observed a torn source transaction: {slots:?}"
+            );
+            reader_observations
+                .lock()
+                .expect("record unique-swap observation")
+                .push(slots);
+        }
+    });
+    thread::sleep(Duration::from_millis(25));
+
+    let target = snapshot
+        .targets
+        .into_iter()
+        .next()
+        .expect("unique-swap snapshot target");
+    let result = run_cdc(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![CdcTarget::new(source, target.into_store()).expect("unique-swap CDC target")],
+        CdcOptions {
+            blocking: false,
+            max_transaction_bytes: 1,
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    .expect("unique-swap finite CDC catch-up");
+    assert_eq!(result.mutations, 3);
+    thread::sleep(Duration::from_millis(25));
+    stop.store(true, Ordering::Release);
+    reader.join().expect("join unique-swap reader");
+
+    {
+        let observations = observations.lock().expect("inspect observations");
+        assert!(
+            observations.iter().any(|slots| {
+                slots.as_slice()
+                    == [
+                        Value::Utf8("left".to_owned()),
+                        Value::Utf8("right".to_owned()),
+                    ]
+            }),
+            "reader never observed the pre-commit state"
+        );
+        assert!(
+            observations.iter().any(|slots| {
+                slots.as_slice()
+                    == [
+                        Value::Utf8("right".to_owned()),
+                        Value::Utf8("left".to_owned()),
+                    ]
+            }),
+            "reader never observed the committed state"
+        );
+    }
+    pool.disconnect()
+        .await
+        .expect("disconnect unique-swap pool");
+}
 
 struct MysqlContainer {
     name: String,

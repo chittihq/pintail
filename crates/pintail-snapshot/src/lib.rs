@@ -49,7 +49,7 @@ impl Default for SnapshotOptions {
     fn default() -> Self {
         Self {
             workers: 4,
-            chunk_rows: 10_000,
+            chunk_rows: 100_000,
             allow_degraded_lock: true,
             max_new_chunks: None,
         }
