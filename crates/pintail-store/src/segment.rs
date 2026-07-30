@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
-    io::Write,
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
 };
@@ -535,9 +535,92 @@ pub(crate) fn verify(
     schema: &TableSchema,
 ) -> Result<(), StoreError> {
     let path = directory.join(&meta.file_name);
-    let bytes = std::fs::read(&path)
-        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
-    validate_footer(&path, &bytes, meta, schema)
+    let mut file = File::open(&path)
+        .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))?;
+    let length = usize::try_from(
+        file.metadata()
+            .map_err(|error| StoreError::io("stat segment footer", error))?
+            .len(),
+    )
+    .map_err(|_| StoreError::FormatLimit("segment file length exceeds usize".into()))?;
+    if length < 18 {
+        return Err(corrupt(&path, 0, "segment is shorter than its trailer"));
+    }
+
+    let mut header = [0_u8; 18];
+    file.read_exact(&mut header)
+        .map_err(|error| StoreError::io("read segment header", error))?;
+    let trailer_offset = length - 16;
+    file.seek(SeekFrom::Start(u64::try_from(trailer_offset).map_err(
+        |_| StoreError::FormatLimit("segment trailer offset exceeds u64".into()),
+    )?))
+    .map_err(|error| StoreError::io("seek segment trailer", error))?;
+    let mut trailer = [0_u8; 16];
+    file.read_exact(&mut trailer)
+        .map_err(|error| StoreError::io("read segment trailer", error))?;
+    let expected = u64::from_le_bytes(
+        trailer[..8]
+            .try_into()
+            .map_err(|_| corrupt(&path, trailer_offset, "invalid footer checksum"))?,
+    );
+    let footer_offset =
+        usize::try_from(u64::from_le_bytes(trailer[8..].try_into().map_err(
+            |_| corrupt(&path, trailer_offset + 8, "invalid footer offset"),
+        )?))
+        .map_err(|_| {
+            corrupt(
+                &path,
+                trailer_offset + 8,
+                "footer offset does not fit usize",
+            )
+        })?;
+    if footer_offset >= trailer_offset {
+        return Err(corrupt(
+            &path,
+            trailer_offset + 8,
+            "footer offset is outside segment",
+        ));
+    }
+    file.seek(SeekFrom::Start(u64::try_from(footer_offset).map_err(
+        |_| StoreError::FormatLimit("segment footer offset exceeds u64".into()),
+    )?))
+    .map_err(|error| StoreError::io("seek segment footer", error))?;
+    let mut footer = vec![0_u8; trailer_offset - footer_offset];
+    file.read_exact(&mut footer)
+        .map_err(|error| StoreError::io("read segment footer", error))?;
+    if xxh3_64(&footer) != expected {
+        return Err(corrupt(&path, footer_offset, "footer checksum mismatch"));
+    }
+    if footer.get(..FOOTER_MAGIC.len()) != Some(FOOTER_MAGIC) {
+        return Err(corrupt(&path, footer_offset, "invalid footer magic"));
+    }
+    validate_footer_body(&path, &footer, footer_offset, meta)?;
+    if &header[..MAGIC.len()] != MAGIC {
+        return Err(corrupt(&path, 0, "invalid segment header"));
+    }
+    let segment_schema_version = u32::from_le_bytes(
+        header[6..10]
+            .try_into()
+            .map_err(|_| corrupt(&path, 6, "invalid schema version"))?,
+    );
+    if segment_schema_version > schema.version() {
+        return Err(StoreError::SchemaMismatch {
+            expected_version: schema.version(),
+            actual_version: segment_schema_version,
+        });
+    }
+    let segment_fingerprint = u64::from_le_bytes(
+        header[10..18]
+            .try_into()
+            .map_err(|_| corrupt(&path, 10, "invalid schema fingerprint"))?,
+    );
+    if meta.schema_fingerprint != segment_fingerprint {
+        return Err(StoreError::SchemaFingerprintMismatch {
+            expected: meta.schema_fingerprint,
+            actual: segment_fingerprint,
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn might_contain_key(
