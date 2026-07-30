@@ -99,6 +99,12 @@ pub struct SourceTable {
     pub columns: Vec<SourceColumn>,
     /// Selected primary/unique/append key strategy.
     pub key: SourceKey,
+    /// Complete non-null, non-prefix UNIQUE constraints available for polling
+    /// collision audits.
+    pub unique_keys: Vec<Vec<String>>,
+    /// Whether invisible cascading foreign-key changes require periodic
+    /// primary-key reconciliation even in CDC mode.
+    pub requires_reconciliation: bool,
     /// Table-specific mapping warnings.
     pub warnings: Vec<String>,
 }
@@ -164,6 +170,8 @@ pub struct SourceColumn {
     pub collation: Option<String>,
     /// Whether this is a generated stored column.
     pub generated_stored: bool,
+    /// Whether the source declares this column `AUTO_INCREMENT`.
+    pub auto_increment: bool,
 }
 
 /// Physical key selected from source indexes.
@@ -382,9 +390,27 @@ async fn probe_table(
         })
         .collect::<Vec<_>>();
     let key = choose_key(&raw_columns, &index_parts);
+    let unique_keys = usable_unique_keys(&raw_columns, &index_parts);
+    let cascade_rules: Vec<(String, String, String)> = connection
+        .exec(
+            "SELECT CONSTRAINT_NAME, DELETE_RULE, UPDATE_RULE \
+             FROM information_schema.REFERENTIAL_CONSTRAINTS \
+             WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? \
+             ORDER BY CONSTRAINT_NAME",
+            (database, &table),
+        )
+        .await?;
 
     let mut columns = Vec::with_capacity(raw_columns.len());
     let mut warnings = Vec::new();
+    for (constraint, delete_rule, update_rule) in &cascade_rules {
+        if invisible_fk_rule(delete_rule) || invisible_fk_rule(update_rule) {
+            warnings.push(format!(
+                "foreign key {constraint} uses DELETE {delete_rule}/UPDATE {update_rule}; \
+                 scheduling primary-key reconciliation because cascades are absent from row binlogs"
+            ));
+        }
+    }
     for raw in raw_columns {
         let generated = !raw.generation_expression.is_empty()
             || raw.extra.to_ascii_lowercase().contains("generated");
@@ -400,6 +426,7 @@ async fn probe_table(
         if let Some(warning) = mapping.warning {
             warnings.push(format!("column {}: {warning}", raw.name));
         }
+        let auto_increment = raw.extra.to_ascii_lowercase().contains("auto_increment");
         columns.push(SourceColumn {
             id: raw.ordinal,
             name: raw.name,
@@ -410,6 +437,7 @@ async fn probe_table(
             character_set: raw.character_set,
             collation: raw.collation,
             generated_stored,
+            auto_increment,
         });
     }
     if columns.is_empty() {
@@ -424,6 +452,10 @@ async fn probe_table(
         estimated_rows,
         columns,
         key,
+        unique_keys,
+        requires_reconciliation: cascade_rules.iter().any(|(_, delete_rule, update_rule)| {
+            invisible_fk_rule(delete_rule) || invisible_fk_rule(update_rule)
+        }),
         warnings,
     })
 }
@@ -551,6 +583,37 @@ fn choose_key(columns: &[RawColumn], parts: &[RawIndexPart]) -> SourceKey {
     }
 }
 
+fn usable_unique_keys(columns: &[RawColumn], parts: &[RawIndexPart]) -> Vec<Vec<String>> {
+    let mut indexes = BTreeMap::<&str, Vec<&RawIndexPart>>::new();
+    for part in parts {
+        indexes.entry(&part.name).or_default().push(part);
+    }
+    indexes
+        .into_values()
+        .filter(|index| {
+            index.iter().all(|part| {
+                !part.non_unique
+                    && part.prefix_length.is_none()
+                    && columns
+                        .iter()
+                        .find(|column| column.name.eq_ignore_ascii_case(&part.column))
+                        .is_some_and(|column| {
+                            !column.nullable
+                                && !column.extra.to_ascii_lowercase().contains("virtual")
+                        })
+            })
+        })
+        .map(|mut index| {
+            index.sort_by_key(|part| part.sequence);
+            index.iter().map(|part| part.column.clone()).collect()
+        })
+        .collect()
+}
+
+fn invisible_fk_rule(rule: &str) -> bool {
+    rule.eq_ignore_ascii_case("CASCADE") || rule.eq_ignore_ascii_case("SET NULL")
+}
+
 struct TypeMapping {
     data_type: DataType,
     warning: Option<String>,
@@ -673,7 +736,8 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
 mod tests {
     use super::{
         RawColumn, RawIndexPart, RecommendedMode, SourceColumn, SourceFlavor, SourceKey,
-        SourceTable, choose_key, derive_capabilities, map_mysql_type,
+        SourceTable, choose_key, derive_capabilities, invisible_fk_rule, map_mysql_type,
+        usable_unique_keys,
     };
     use pintail_types::{DataType, KeyMode};
     use std::collections::BTreeMap;
@@ -757,6 +821,13 @@ mod tests {
             KeyMode::AppendRowId
         );
         assert_eq!(choose_key(&columns, &[]).mode, KeyMode::AppendRowId);
+        assert_eq!(
+            usable_unique_keys(&columns, &[unique]),
+            vec![vec!["email".to_owned()]]
+        );
+        assert!(invisible_fk_rule("CASCADE"));
+        assert!(invisible_fk_rule("set null"));
+        assert!(!invisible_fk_rule("RESTRICT"));
     }
 
     #[test]
@@ -796,6 +867,7 @@ mod tests {
                     character_set: None,
                     collation: None,
                     generated_stored: false,
+                    auto_increment: true,
                 },
                 SourceColumn {
                     id: 2,
@@ -807,6 +879,7 @@ mod tests {
                     character_set: None,
                     collation: None,
                     generated_stored: false,
+                    auto_increment: false,
                 },
             ],
             key: SourceKey {
@@ -814,6 +887,8 @@ mod tests {
                 index_name: Some("PRIMARY".to_owned()),
                 columns: vec!["id".to_owned()],
             },
+            unique_keys: vec![vec!["id".to_owned()]],
+            requires_reconciliation: false,
             warnings: Vec::new(),
         };
         let schema = table.table_schema().expect("table schema");

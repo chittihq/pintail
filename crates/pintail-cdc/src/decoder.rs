@@ -319,6 +319,7 @@ mod tests {
             character_set: Some("utf8mb4".to_owned()),
             collation: Some("utf8mb4_0900_ai_ci".to_owned()),
             generated_stored: false,
+            auto_increment: false,
         }
     }
 
