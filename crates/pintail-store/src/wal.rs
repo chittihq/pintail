@@ -65,7 +65,7 @@ impl Wal {
                 .map_err(|error| StoreError::io("initialize WAL", error))?;
         }
 
-        let recovery = recover(&mut file)?;
+        let recovery = recover(&mut file, true)?;
         file.seek(SeekFrom::End(0))
             .map_err(|error| StoreError::io("seek to WAL end", error))?;
         Ok((
@@ -168,6 +168,25 @@ impl Wal {
         }
         Ok(())
     }
+}
+
+pub(crate) fn recover_read_only(path: &Path) -> Result<Recovery, StoreError> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Recovery {
+                batches: Vec::new(),
+                last_sequence: 0,
+            });
+        }
+        Err(error) => {
+            return Err(StoreError::io(
+                format!("open WAL reader {}", path.display()),
+                error,
+            ));
+        }
+    };
+    recover(&mut file, false)
 }
 
 #[cfg(test)]
@@ -299,7 +318,7 @@ fn decode_data_type(tag: u8) -> Result<DataType, String> {
     }
 }
 
-fn recover(file: &mut File) -> Result<Recovery, StoreError> {
+fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreError> {
     file.seek(SeekFrom::Start(0))
         .map_err(|error| StoreError::io("seek to WAL start", error))?;
     let mut bytes = Vec::new();
@@ -381,7 +400,7 @@ fn recover(file: &mut File) -> Result<Recovery, StoreError> {
         valid_length = position;
     }
 
-    if valid_length != bytes.len() {
+    if truncate_torn_tail && valid_length != bytes.len() {
         file.set_len(valid_length as u64)
             .and_then(|()| file.sync_all())
             .map_err(|error| StoreError::io("truncate torn WAL tail", error))?;
@@ -435,7 +454,7 @@ mod tests {
         let mut file = tempfile::tempfile().expect("temporary WAL");
         file.write_all(&bytes).expect("write simulated WAL");
         file.seek(SeekFrom::Start(0)).expect("seek WAL");
-        let recovery = recover(&mut file).expect("recover complete prefix");
+        let recovery = recover(&mut file, true).expect("recover complete prefix");
         assert_eq!(recovery.batches.len(), 1);
         assert_eq!(recovery.batches[0].sequence, 1);
         assert_eq!(

@@ -4,12 +4,10 @@ use axum::{
     Extension, Json,
     extract::{Path, Query, State},
 };
-use pintail_cdc::CdcTarget;
 use pintail_meta::{DatabaseRecord, TableRecord};
-use pintail_probe::ProbeReport;
-use pintail_store::StoreOptions;
-use pintail_types::{DataType, KeyMode, Value};
-use pintail_wire::{QueryError, ReplicaEngine, table_directory};
+use pintail_probe::{ProbeReport, SourceTable};
+use pintail_types::{DataType, KeyMode, TableSchema, Value};
+use pintail_wire::{QueryError, ReplicaEngine};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value as JsonValue};
 
@@ -98,7 +96,12 @@ pub(crate) struct CountResponse {
 }
 
 struct LoadedReplica {
-    targets: Vec<CdcTarget>,
+    targets: Vec<SchemaTarget>,
+}
+
+struct SchemaTarget {
+    source: SourceTable,
+    schema: TableSchema,
 }
 
 pub(crate) async fn query(
@@ -139,12 +142,12 @@ pub(crate) async fn table_schema(
     principal.authorize_database(&query.db)?;
     let replica = load_replica(&state, &query.db)?;
     let target = find_target(&replica, &name)?;
-    let schema = target.store().schema();
+    let schema = &target.schema;
     Ok(Json(TableSchemaResponse {
-        name: target.source().name.clone(),
+        name: target.source.name.clone(),
         version: schema.version(),
         key_mode: schema.key_mode(),
-        key_columns: target.source().key.columns.clone(),
+        key_columns: target.source.key.columns.clone(),
         columns: schema
             .columns()
             .iter()
@@ -273,29 +276,23 @@ fn load_replica(state: &ApiState, database_id: &str) -> Result<LoadedReplica, Ap
         .iter()
         .map(|table| (table.name.to_ascii_lowercase(), table))
         .collect::<BTreeMap<_, _>>();
-    let root = state
-        .data_dir()?
-        .join("databases")
-        .join(database_id)
-        .join("tables");
     let targets = report
         .tables
         .into_iter()
         .filter(|source| table_records.contains_key(&source.name.to_ascii_lowercase()))
-        .map(|source| {
-            let directory = table_directory(&root, &source.name);
-            CdcTarget::open_tracked(
-                state.metadata_path()?,
-                database_id,
-                source,
-                directory,
-                StoreOptions::default(),
-            )
-            .map_err(|error| {
-                ApiError::unavailable(format!(
-                    "replica is not currently available for queries: {error}"
-                ))
-            })
+        .map(|mut source| {
+            let history = metadata
+                .schema_history(database_id, &source.name)
+                .map_err(ApiError::internal)?;
+            let version = history.last().map_or(1, |record| record.version);
+            if let Some(record) = history.last() {
+                source.columns =
+                    serde_json::from_str(&record.columns_json).map_err(ApiError::internal)?;
+            }
+            let schema = source
+                .table_schema_with_version(version)
+                .map_err(ApiError::internal)?;
+            Ok(SchemaTarget { source, schema })
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(LoadedReplica { targets })
@@ -304,11 +301,11 @@ fn load_replica(state: &ApiState, database_id: &str) -> Result<LoadedReplica, Ap
 fn find_target<'replica>(
     replica: &'replica LoadedReplica,
     name: &str,
-) -> Result<&'replica CdcTarget, ApiError> {
+) -> Result<&'replica SchemaTarget, ApiError> {
     replica
         .targets
         .iter()
-        .find(|target| target.source().name.eq_ignore_ascii_case(name))
+        .find(|target| target.source.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| ApiError::not_found("table does not exist"))
 }
 

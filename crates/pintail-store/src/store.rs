@@ -1221,6 +1221,65 @@ impl BackupSegment {
 }
 
 impl TableSnapshot {
+    /// Opens a reader-only snapshot without claiming the table writer lock.
+    ///
+    /// The reader pins one durable manifest and merges complete WAL records
+    /// newer than that manifest. A concurrent manifest publication causes a
+    /// bounded retry, so a reader cannot combine an old segment set with a
+    /// newly truncated WAL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing table directory, corrupt manifest,
+    /// segment, or WAL, incompatible schema, or repeated concurrent manifest
+    /// replacement.
+    pub fn open(directory: impl AsRef<Path>, schema: TableSchema) -> Result<Self, StoreError> {
+        let directory = std::fs::canonicalize(directory.as_ref())
+            .map_err(|error| StoreError::io("canonicalize table reader directory", error))?;
+        for _ in 0..8 {
+            let manifest = Arc::new(manifest::load(&directory, &schema)?);
+            register_pinned_manifest(&directory, &manifest);
+            let recovery = crate::wal::recover_read_only(&directory.join(WAL_FILE))?;
+            let latest = manifest::load(&directory, &schema)?;
+            if manifest.generation != latest.generation
+                || manifest.epoch != latest.epoch
+                || manifest.flushed_sequence != latest.flushed_sequence
+            {
+                continue;
+            }
+            let mut memtable = Memtable::default();
+            for batch in recovery.batches {
+                if batch.table_id != 0 || batch.sequence <= manifest.flushed_sequence {
+                    continue;
+                }
+                for row in batch.rows {
+                    let row = adapt_recovered_row(&schema, &batch.columns, &row)?;
+                    memtable.apply(&row);
+                }
+            }
+            let verification = manifest
+                .segments
+                .iter()
+                .try_for_each(|meta| segment::verify(&directory, meta, &schema));
+            if let Err(error) = verification {
+                let current = manifest::load(&directory, &schema)?;
+                if current.generation != manifest.generation || current.epoch != manifest.epoch {
+                    continue;
+                }
+                return Err(error);
+            }
+            return Ok(Self {
+                memtable: memtable.snapshot(),
+                manifest,
+                directory,
+                schema,
+            });
+        }
+        Err(StoreError::FormatLimit(
+            "table manifest changed during eight reader-open attempts".to_owned(),
+        ))
+    }
+
     /// Returns the catalog schema pinned with this reader snapshot.
     #[must_use]
     pub const fn schema(&self) -> &TableSchema {

@@ -8,15 +8,14 @@ use std::{
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
-use pintail_cdc::CdcTarget;
 use pintail_exec::{
     Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
     explain_analyze_statement, explain_statement,
 };
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
-use pintail_probe::ProbeReport;
+use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{Binder, MetadataError, Statement, execute_metadata, parse_statement};
-use pintail_store::{StoreOptions, TableSnapshot};
+use pintail_store::TableSnapshot;
 use pintail_types::{DataType, Value};
 use thiserror::Error;
 
@@ -79,7 +78,12 @@ pub struct ReplicaEngine {
 struct LoadedReplica {
     database: DatabaseRecord,
     tables: Vec<TableRecord>,
-    targets: Vec<CdcTarget>,
+    targets: Vec<ReaderTarget>,
+}
+
+struct ReaderTarget {
+    source: SourceTable,
+    snapshot: TableSnapshot,
 }
 
 impl ReplicaEngine {
@@ -112,13 +116,8 @@ impl ReplicaEngine {
     ) -> Result<QueryOutput, QueryError> {
         let started = Instant::now();
         let replica = self.load_replica(database_id)?;
-        let snapshots = replica
-            .targets
-            .iter()
-            .map(|target| target.store().snapshot())
-            .collect::<Vec<_>>();
-        let catalog = build_catalog(&replica, &snapshots)?;
-        let mut provider = build_provider(&replica, &snapshots)?;
+        let catalog = build_catalog(&replica)?;
+        let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();
         let statement =
             parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
@@ -256,16 +255,22 @@ impl ReplicaEngine {
             .tables
             .into_iter()
             .filter(|source| table_records.contains_key(&source.name.to_ascii_lowercase()))
-            .map(|source| {
+            .map(|mut source| {
+                let history = metadata
+                    .schema_history(database_id, &source.name)
+                    .map_err(|error| QueryError::Internal(error.to_string()))?;
+                let version = history.last().map_or(1, |record| record.version);
+                if let Some(record) = history.last() {
+                    source.columns = serde_json::from_str(&record.columns_json)
+                        .map_err(|error| QueryError::Internal(error.to_string()))?;
+                }
+                let schema = source
+                    .table_schema_with_version(version)
+                    .map_err(|error| QueryError::Internal(error.to_string()))?;
                 let directory = table_directory(&root, &source.name);
-                CdcTarget::open_tracked(
-                    &self.metadata_path,
-                    database_id,
-                    source,
-                    directory,
-                    StoreOptions::default(),
-                )
-                .map_err(|error| QueryError::NotReady(error.to_string()))
+                let snapshot = TableSnapshot::open(directory, schema)
+                    .map_err(|error| QueryError::NotReady(error.to_string()))?;
+                Ok(ReaderTarget { source, snapshot })
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(LoadedReplica {
@@ -327,10 +332,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
     }
 }
 
-fn build_catalog(
-    replica: &LoadedReplica,
-    snapshots: &[TableSnapshot],
-) -> Result<CatalogSnapshot, QueryError> {
+fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError> {
     let row_counts = replica
         .tables
         .iter()
@@ -339,23 +341,22 @@ fn build_catalog(
     let entries = replica
         .targets
         .iter()
-        .zip(snapshots)
         .enumerate()
-        .map(|(index, (target, snapshot))| {
+        .map(|(index, target)| {
             let id = table_id(index)?;
             let rows = row_counts
-                .get(&target.source().name.to_ascii_lowercase())
+                .get(&target.source.name.to_ascii_lowercase())
                 .copied()
-                .or(target.source().estimated_rows)
+                .or(target.source.estimated_rows)
                 .unwrap_or(0);
             let entry = TableEntry::new(
                 id,
-                &target.source().name,
-                snapshot.schema().clone(),
+                &target.source.name,
+                target.snapshot.schema().clone(),
                 TableStatistics::with_row_count(rows),
             )
             .map_err(|error| QueryError::Internal(error.to_string()))?;
-            let key_columns = target.source().key_column_ids();
+            let key_columns = target.source.key_column_ids();
             if key_columns.is_empty() {
                 Ok(entry)
             } else {
@@ -370,28 +371,26 @@ fn build_catalog(
     CatalogSnapshot::new([database]).map_err(|error| QueryError::Internal(error.to_string()))
 }
 
-fn build_provider<'snapshot>(
-    replica: &LoadedReplica,
-    snapshots: &'snapshot [TableSnapshot],
-) -> Result<SnapshotScanProvider<'snapshot>, QueryError> {
+fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, QueryError> {
     let database_id = DatabaseId::new(1);
-    let indexed = snapshots
+    let indexed = replica
+        .targets
         .iter()
         .enumerate()
-        .map(|(index, snapshot)| Ok((database_id, table_id(index)?, snapshot)))
+        .map(|(index, target)| Ok((database_id, table_id(index)?, &target.snapshot)))
         .collect::<Result<Vec<_>, QueryError>>()?;
     let mut provider = SnapshotScanProvider::new(indexed)
         .map_err(|error| QueryError::Internal(error.to_string()))?;
     for (index, target) in replica.targets.iter().enumerate() {
         let unique_keys = target
-            .source()
+            .source
             .unique_keys
             .iter()
             .map(|key| {
                 key.iter()
                     .filter_map(|name| {
                         target
-                            .source()
+                            .source
                             .columns
                             .iter()
                             .find(|column| column.name.eq_ignore_ascii_case(name))
