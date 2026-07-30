@@ -36,6 +36,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   segments so background maintenance remains inside the release RSS envelope.
 - Oversized CDC source transactions spill to anonymous temporary storage
   without weakening atomic publication or checkpoint-before-replay safety.
+- The CDC restart gate uses a source-side named-lock barrier after the tenth
+  commit, proving the worker is SIGKILLed with 190 writes still pending instead
+  of relying on workstation/process-start timing.
 
 ### Verification
 

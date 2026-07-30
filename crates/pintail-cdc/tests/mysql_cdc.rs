@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use mysql_async::{Opts, Pool};
+use mysql_async::{Opts, Pool, prelude::Queryable};
 use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
 use pintail_poll::{PollTarget, run_cdc_reconciliation};
@@ -24,6 +24,7 @@ use pintail_types::{Column, Value};
 use rusqlite::Connection;
 
 const DATABASE_ID: &str = "m4-source";
+const RESTART_WRITER_GATE: &str = "pintail-cdc-restart-writer";
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the configured Docker host and mysql:8.4 image"]
@@ -868,7 +869,16 @@ async fn cdc_restart_survives_sigkill_during_sustained_writes() {
     .expect("restart baseline snapshot");
     drop(snapshot);
 
-    let mut writer = spawn_sustained_writes(&mysql, 200);
+    let mut writer_gate = pool
+        .get_conn()
+        .await
+        .expect("open sustained-writer gate connection");
+    let acquired: Option<i64> = writer_gate
+        .query_first(format!("SELECT GET_LOCK('{RESTART_WRITER_GATE}', 30)"))
+        .await
+        .expect("acquire sustained-writer gate");
+    assert_eq!(acquired, Some(1), "sustained-writer gate must be acquired");
+    let mut writer = spawn_sustained_writes(&mysql, 200, 10, RESTART_WRITER_GATE);
     kill_cdc_worker(&mysql.dsn(), &metadata_path, workspace.path(), DATABASE_ID);
     assert!(
         writer
@@ -877,6 +887,12 @@ async fn cdc_restart_survives_sigkill_during_sustained_writes() {
             .is_none(),
         "source writer must still be active when CDC is killed"
     );
+    let released: Option<i64> = writer_gate
+        .query_first(format!("SELECT RELEASE_LOCK('{RESTART_WRITER_GATE}')"))
+        .await
+        .expect("release sustained-writer gate");
+    assert_eq!(released, Some(1), "sustained-writer gate must be released");
+    drop(writer_gate);
     assert!(
         writer.wait().expect("wait sustained writer").success(),
         "sustained source writes must complete"
@@ -1702,7 +1718,16 @@ fn cdc_mutations() -> &'static str {
      );"
 }
 
-fn spawn_sustained_writes(mysql: &MysqlContainer, rows: u64) -> Child {
+fn spawn_sustained_writes(
+    mysql: &MysqlContainer,
+    rows: u64,
+    gate_after: u64,
+    gate_name: &str,
+) -> Child {
+    assert!(
+        gate_after > 0 && gate_after < rows,
+        "writer gate must split the source writes"
+    );
     let sql = (0..rows).fold(String::new(), |mut sql, id| {
         write!(
             sql,
@@ -1710,6 +1735,14 @@ fn spawn_sustained_writes(mysql: &MysqlContainer, rows: u64) -> Child {
                  DO SLEEP(0.02);"
         )
         .expect("build sustained source writes");
+        if id + 1 == gate_after {
+            write!(
+                sql,
+                "SELECT GET_LOCK('{gate_name}', 30);\
+                 DO RELEASE_LOCK('{gate_name}');"
+            )
+            .expect("build sustained-writer gate");
+        }
         sql
     });
     Command::new("docker")
