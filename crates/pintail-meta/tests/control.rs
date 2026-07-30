@@ -1,4 +1,4 @@
-use pintail_meta::{DatabaseUpdate, MetaStore, NewApiKey};
+use pintail_meta::{DatabaseUpdate, MetaStore, NewApiKey, NewBackup, NewBackupConfig};
 
 #[test]
 fn users_databases_and_table_controls_round_trip() {
@@ -172,4 +172,86 @@ fn api_keys_activity_and_dead_letters_round_trip() {
     assert!(metadata.delete_dlq_record(&dlq[0].id).unwrap());
     assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
     assert!(metadata.delete_api_key("key-1").unwrap());
+}
+
+#[test]
+fn backup_configuration_and_runs_round_trip() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-07-30T00:00:00Z")
+        .unwrap();
+
+    metadata
+        .upsert_backup_config(&NewBackupConfig {
+            database_id: "db-1",
+            bucket: "pintail",
+            prefix: "team/analytics",
+            endpoint: Some("http://127.0.0.1:9000"),
+            region: "us-east-1",
+            encrypted_access_key_id: Some(b"encrypted-access"),
+            encrypted_secret_access_key: Some(b"encrypted-secret"),
+            schedule_minutes: 60,
+            enabled: true,
+            now: "2026-07-30T00:01:00Z",
+        })
+        .unwrap();
+    let config = metadata
+        .backup_config("db-1")
+        .unwrap()
+        .expect("backup config");
+    assert_eq!(config.prefix, "team/analytics");
+    assert_eq!(config.schedule_minutes, 60);
+    assert!(config.enabled);
+
+    metadata
+        .start_backup(&NewBackup {
+            id: "backup-1",
+            database_id: "db-1",
+            kind: "full",
+            parent_id: None,
+            object_prefix: "team/analytics/db-1/backup-1",
+            started_at: "2026-07-30T00:02:00Z",
+        })
+        .unwrap();
+    metadata
+        .finish_backup(
+            "backup-1",
+            "completed",
+            4096,
+            3,
+            None,
+            "2026-07-30T00:03:00Z",
+        )
+        .unwrap();
+    metadata
+        .start_backup(&NewBackup {
+            id: "backup-2",
+            database_id: "db-1",
+            kind: "incremental",
+            parent_id: Some("backup-1"),
+            object_prefix: "team/analytics/db-1/backup-2",
+            started_at: "2026-07-30T00:04:00Z",
+        })
+        .unwrap();
+    metadata
+        .finish_backup(
+            "backup-2",
+            "error",
+            0,
+            0,
+            Some("destination unavailable"),
+            "2026-07-30T00:05:00Z",
+        )
+        .unwrap();
+
+    let backups = metadata.backups("db-1", 10).unwrap();
+    assert_eq!(backups.len(), 2);
+    assert_eq!(backups[0].status, "error");
+    let latest = metadata
+        .latest_completed_backup("db-1")
+        .unwrap()
+        .expect("latest completed");
+    assert_eq!(latest.id, "backup-1");
 }

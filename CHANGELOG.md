@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Control-plane schema version 7 stores per-database S3-compatible backup
+  configuration, encrypted credential material, and durable full/incremental
+  backup run history with parent chains, object counts, byte totals, and
+  terminal errors.
+
 ## [M7] - 2026-07-30
 
 ### Added
