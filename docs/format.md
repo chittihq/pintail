@@ -204,8 +204,9 @@ Flush sorts the memtable by primary key and writes one immutable segment:
 2. publish and synchronize a new manifest containing the segment and flushed
    WAL sequence;
 3. swap the in-memory manifest generation and clear the memtable;
-4. truncate the WAL to its six-byte header and synchronize according to its
-   policy.
+4. truncate a standalone table WAL to its six-byte header, or truncate a
+   shared database WAL only after every registered table memtable is empty,
+   and synchronize according to its policy.
 
 A crash before step 2 leaves an orphan ignored and removed during reopen. A
 crash after step 2 replays no covered WAL records. Thus a row is reachable

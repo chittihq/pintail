@@ -22,6 +22,8 @@ const MAX_RECORD_LENGTH: usize = 128 * 1024 * 1024;
 pub(crate) struct Wal {
     file: File,
     sync_policy: WalSync,
+    #[cfg(test)]
+    fail_append_after_bytes: Option<usize>,
 }
 
 pub(crate) struct Recovery {
@@ -66,7 +68,15 @@ impl Wal {
         let recovery = recover(&mut file)?;
         file.seek(SeekFrom::End(0))
             .map_err(|error| StoreError::io("seek to WAL end", error))?;
-        Ok((Self { file, sync_policy }, recovery))
+        Ok((
+            Self {
+                file,
+                sync_policy,
+                #[cfg(test)]
+                fail_append_after_bytes: None,
+            },
+            recovery,
+        ))
     }
 
     pub(crate) fn append(
@@ -85,7 +95,23 @@ impl Wal {
             .file
             .seek(SeekFrom::End(0))
             .map_err(|error| StoreError::io("seek to WAL end", error))?;
-        if let Err(write_error) = write_record(&mut self.file, length, &payload, checksum) {
+        #[cfg(test)]
+        let write_result = if let Some(remaining) = self.fail_append_after_bytes.take() {
+            write_record(
+                &mut StorageFullWriter {
+                    file: &mut self.file,
+                    remaining,
+                },
+                length,
+                &payload,
+                checksum,
+            )
+        } else {
+            write_record(&mut self.file, length, &payload, checksum)
+        };
+        #[cfg(not(test))]
+        let write_result = write_record(&mut self.file, length, &payload, checksum);
+        if let Err(write_error) = write_result {
             self.rollback_failed_append(record_offset, &write_error)?;
             return Err(StoreError::io("append WAL record", write_error));
         }
@@ -141,6 +167,32 @@ impl Wal {
                 .map_err(|error| StoreError::io("sync truncated WAL", error))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+struct StorageFullWriter<'a> {
+    file: &'a mut File,
+    remaining: usize,
+}
+
+#[cfg(test)]
+impl Write for StorageFullWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "simulated disk full",
+            ));
+        }
+        let written = buffer.len().min(self.remaining);
+        let written = self.file.write(&buffer[..written])?;
+        self.remaining -= written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
     }
 }
 
@@ -347,7 +399,7 @@ mod tests {
     use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
     use xxhash_rust::xxh3::xxh3_64;
 
-    use crate::store::WalSync;
+    use crate::{StoreError, store::WalSync};
 
     use super::{FORMAT_VERSION, MAGIC, Wal, encode_batch, recover, write_record};
 
@@ -398,15 +450,15 @@ mod tests {
         let schema = TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)])
             .expect("schema");
         let (mut wal, _) = Wal::open(&path, WalSync::Always).expect("open WAL");
-        let record_offset = wal.file.seek(SeekFrom::End(0)).expect("WAL end");
-        wal.file
-            .write_all(&[0xff; 19])
-            .expect("simulate partial record");
-        wal.rollback_failed_append(
-            record_offset,
-            &Error::new(ErrorKind::StorageFull, "simulated disk full"),
-        )
-        .expect("roll back partial record");
+        wal.fail_append_after_bytes = Some(19);
+        let error = wal
+            .append(1, 7, &schema, &[row("partial", 1)])
+            .expect_err("injected append must fail");
+        assert!(matches!(
+            error,
+            StoreError::Io { source, .. } if source.kind() == ErrorKind::StorageFull
+        ));
+        assert_eq!(wal.file.metadata().expect("WAL metadata").len(), 6);
         wal.append(1, 7, &schema, &[row("retry", 1)])
             .expect("retry append");
         drop(wal);

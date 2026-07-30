@@ -39,3 +39,15 @@ merge-on-read, snapshots, and compaction rules. `xxhash-rust`, `lz4_flex`, and
 `zstd` provide only the utility checksum/compression primitives permitted by
 the specification. Format version 1 is documented byte-for-byte in
 `docs/format.md`.
+
+### Compaction scheduling stays outside the table core
+
+The storage core performs at most one size-tier compaction and reclamation
+step when an ingest crosses its memtable budget, reports compaction debt, and
+yields between input segments. It does not create an unsupervised thread per
+open table. The replication supervisor will own background scheduling when
+the ingestion task tree is introduced, calling the bounded per-table
+maintenance API from its managed worker. This is a deliberate staging
+deviation from §5.1's final “background, per table” topology: M1 has no
+executor, query scheduler, or supervisor lifetime to own and stop those
+threads safely.

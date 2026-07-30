@@ -90,8 +90,46 @@ fn partial_compaction_retains_tombstones_that_suppress_unmerged_versions() {
 }
 
 #[test]
+fn pinned_snapshot_segments_survive_writer_drop_and_reopen() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        compaction_fan_in: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    for batch in [vec![row(1, "old", 1, false)], vec![row(1, "new", 2, false)]] {
+        table.ingest(batch).expect("ingest");
+        table.flush().expect("flush");
+    }
+    let pinned = table.snapshot();
+    table.compact().expect("compact");
+    assert_eq!(segment_count(directory.path()), 3);
+    drop(table);
+
+    let reopened = TableStore::open(directory.path(), schema(), options).expect("reopen");
+    assert_eq!(
+        pinned.scan().expect("scan snapshot across writer reopen"),
+        vec![row(1, "new", 2, false)]
+    );
+    assert_eq!(
+        segment_count(directory.path()),
+        3,
+        "reopen preserves segments owned by a live snapshot"
+    );
+    drop(pinned);
+    drop(reopened);
+
+    let _reopened = TableStore::open(directory.path(), schema(), options).expect("reopen again");
+    assert_eq!(
+        segment_count(directory.path()),
+        1,
+        "a later reopen removes files after the snapshot releases"
+    );
+}
+
+#[test]
 fn arbitrary_version_and_tombstone_interleavings_match_a_naive_reference() {
-    for seed in 0..64 {
+    for seed in 0..96 {
         check_random_compaction(seed);
     }
 }
@@ -105,16 +143,23 @@ fn check_random_compaction(seed: u64) {
     let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
     let mut random = StdRng::seed_from_u64(seed);
     let mut reference = BTreeMap::new();
-    let mut next_version = 1;
-    for _ in 0..4 {
+    let segment_count = random.random_range(4..=8);
+    let mut event = 0_u64;
+    for _ in 0..segment_count {
         let mut batch = Vec::new();
-        for _ in 0..32 {
+        for _ in 0..random.random_range(8..=40) {
+            event += 1;
             let id = random.random_range(0..16);
             let deleted = random.random_ratio(1, 5);
-            let value = row(id, &format!("v{next_version}"), next_version, deleted);
-            reference.insert(id, value.clone());
+            let version = random.random_range(0..=128) * 1_000 + event;
+            let value = row(id, &format!("event-{event}-v{version}"), version, deleted);
+            if reference
+                .get(&id)
+                .is_none_or(|current: &StoredRow| value.version() >= current.version())
+            {
+                reference.insert(id, value.clone());
+            }
             batch.push(value);
-            next_version += 1;
         }
         table.ingest(batch).expect("random ingest");
         table.flush().expect("random flush");
@@ -129,13 +174,17 @@ fn check_random_compaction(seed: u64) {
         "seed {seed} before compaction"
     );
 
-    let outcome = table.compact().expect("random compact");
-    assert_eq!(outcome.input_segments(), 4, "seed {seed}");
-    assert_eq!(
-        table.snapshot().scan().expect("after compact"),
-        expected,
-        "seed {seed} after compaction"
-    );
+    for pass in 0..16 {
+        let outcome = table.compact().expect("random compact");
+        if outcome.input_segments() == 0 {
+            break;
+        }
+        assert_eq!(
+            table.snapshot().scan().expect("after compact"),
+            expected,
+            "seed {seed} after compaction pass {pass}"
+        );
+    }
     drop(table);
     let reopened = TableStore::open(directory.path(), schema(), options).expect("random reopen");
     assert_eq!(

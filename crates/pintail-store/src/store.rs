@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
-    sync::{Arc, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use fs2::FileExt;
@@ -750,6 +750,7 @@ impl TableStore {
     /// Pins an immutable view of rows currently visible to readers.
     #[must_use]
     pub fn snapshot(&self) -> TableSnapshot {
+        register_pinned_manifest(&self.directory, &self.manifest);
         TableSnapshot {
             memtable: self.memtable.snapshot(),
             manifest: Arc::clone(&self.manifest),
@@ -871,20 +872,18 @@ impl TableSnapshot {
     ///
     /// Returns a precise segment corruption or filesystem error.
     pub fn get(&self, key: &PrimaryKey) -> Result<Option<StoredRow>, StoreError> {
-        let mut latest = None;
-        for segment_meta in &self.manifest.segments {
-            if !segment::might_contain_key(&self.directory, segment_meta, &self.schema, key)? {
-                continue;
-            }
-            let rows = segment::read(&self.directory, segment_meta, &self.schema)?;
-            if let Ok(index) = rows.binary_search_by(|row| row.key().cmp(key)) {
-                apply_latest_option(&mut latest, rows[index].clone());
-            }
-        }
-        if let Some(row) = self.memtable.get(key) {
-            apply_latest_option(&mut latest, row.clone());
-        }
-        Ok(latest.filter(|row| !row.is_deleted()))
+        let column_ids = self
+            .schema
+            .columns()
+            .iter()
+            .map(pintail_types::Column::id)
+            .collect::<Vec<_>>();
+        let scan = self.scan_projected_range(key, key, &column_ids)?;
+        Ok(scan
+            .rows
+            .into_iter()
+            .next()
+            .map(|row| StoredRow::new(row.key, row.values, row.version, false)))
     }
 
     /// Returns visible rows in one inclusive key range, pruning disjoint
@@ -899,6 +898,22 @@ impl TableSnapshot {
         start: &PrimaryKey,
         end: &PrimaryKey,
     ) -> Result<Vec<StoredRow>, StoreError> {
+        self.scan_range_as_of(start, end, u64::MAX)
+    }
+
+    /// Returns visible rows in one inclusive key range at a maximum source
+    /// version, pruning segments whose complete version range is newer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reversed range, corrupt segment, or filesystem
+    /// failure.
+    pub fn scan_range_as_of(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        max_version: u64,
+    ) -> Result<Vec<StoredRow>, StoreError> {
         if start > end {
             return Err(StoreError::FormatLimit(
                 "scan range start follows its end".into(),
@@ -906,17 +921,21 @@ impl TableSnapshot {
         }
         let mut latest = BTreeMap::new();
         for segment_meta in &self.manifest.segments {
-            if !segment::overlaps_key_range(segment_meta, start, end) {
+            if segment_meta.min_version > max_version
+                || !segment::overlaps_key_range(segment_meta, start, end)
+            {
                 continue;
             }
             for row in segment::read(&self.directory, segment_meta, &self.schema)? {
-                if row.key() >= start && row.key() <= end {
+                if row.version() <= max_version && row.key() >= start && row.key() <= end {
                     apply_latest(&mut latest, row);
                 }
             }
         }
         for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
-            apply_latest(&mut latest, row.clone());
+            if row.version() <= max_version {
+                apply_latest(&mut latest, row.clone());
+            }
         }
         Ok(latest
             .into_values()
@@ -931,6 +950,7 @@ impl TableSnapshot {
     ///
     /// Returns an error for a reversed range, duplicate/unknown column ID,
     /// incompatible schema, corrupt block, or filesystem failure.
+    #[allow(clippy::too_many_lines)]
     pub fn scan_projected_range(
         &self,
         start: &PrimaryKey,
@@ -963,19 +983,21 @@ impl TableSnapshot {
 
         let mut stats = ScanStats::default();
         let mut latest = BTreeMap::new();
-        for segment_meta in &self.manifest.segments {
-            if !segment::overlaps_key_range(segment_meta, start, end) {
+        for (segment_index, segment_meta) in self.manifest.segments.iter().enumerate() {
+            let overlaps = segment::overlaps_key_range(segment_meta, start, end);
+            let point_might_match = start != end
+                || segment::might_contain_key(&self.directory, segment_meta, &self.schema, start)?;
+            if !overlaps || !point_might_match {
                 stats.segments_pruned += 1;
                 continue;
             }
             stats.segments_read += 1;
-            let scan = segment::read_projected_range(
+            let scan = segment::read_row_headers_range(
                 &self.directory,
                 segment_meta,
                 &self.schema,
                 start,
                 end,
-                &projection,
             )?;
             stats.blocks_pruned += scan.stats.blocks_pruned;
             stats.blocks_decoded += scan.stats.blocks_decoded;
@@ -984,9 +1006,12 @@ impl TableSnapshot {
                     &mut latest,
                     ProjectedCandidate {
                         key: row.key,
-                        values: row.values,
                         version: row.version,
                         deleted: row.deleted,
+                        source: ProjectedSource::Segment {
+                            segment_index,
+                            row_index: row.physical_index,
+                        },
                     },
                 );
             }
@@ -996,35 +1021,91 @@ impl TableSnapshot {
                 &mut latest,
                 ProjectedCandidate {
                     key: row.key().clone(),
-                    values: projection
-                        .iter()
-                        .map(|index| row.values()[*index].clone())
-                        .collect(),
                     version: row.version(),
                     deleted: row.is_deleted(),
+                    source: ProjectedSource::Memtable,
                 },
             );
         }
-        Ok(ProjectedScan {
-            rows: latest
-                .into_values()
-                .filter(|row| !row.deleted)
-                .map(|row| ProjectedRow {
+
+        let mut winners = latest
+            .into_values()
+            .filter(|row| !row.deleted)
+            .map(|candidate| (candidate, None))
+            .collect::<Vec<_>>();
+        let mut segment_rows = BTreeMap::<usize, Vec<(usize, usize)>>::new();
+        for (winner_index, (candidate, values)) in winners.iter_mut().enumerate() {
+            match candidate.source {
+                ProjectedSource::Segment {
+                    segment_index,
+                    row_index,
+                } => segment_rows
+                    .entry(segment_index)
+                    .or_default()
+                    .push((row_index, winner_index)),
+                ProjectedSource::Memtable => {
+                    let row = self.memtable.get(&candidate.key).ok_or_else(|| {
+                        StoreError::FormatLimit(
+                            "winning memtable row disappeared from pinned snapshot".into(),
+                        )
+                    })?;
+                    *values = Some(
+                        projection
+                            .iter()
+                            .map(|index| row.values()[*index].clone())
+                            .collect(),
+                    );
+                }
+            }
+        }
+        for (segment_index, mut selected) in segment_rows {
+            selected.sort_unstable_by_key(|(row_index, _)| *row_index);
+            let row_indices = selected
+                .iter()
+                .map(|(row_index, _)| *row_index)
+                .collect::<Vec<_>>();
+            let fetch = segment::read_projected_rows(
+                &self.directory,
+                &self.manifest.segments[segment_index],
+                &self.schema,
+                &projection,
+                &row_indices,
+            )?;
+            stats.blocks_decoded += fetch.blocks_decoded;
+            for ((_, winner_index), values) in selected.into_iter().zip(fetch.values) {
+                winners[winner_index].1 = Some(values);
+            }
+        }
+        let rows = winners
+            .into_iter()
+            .map(|(row, values)| {
+                Ok(ProjectedRow {
                     key: row.key,
-                    values: row.values,
+                    values: values.ok_or_else(|| {
+                        StoreError::FormatLimit("projected winner was not late-materialized".into())
+                    })?,
                     version: row.version,
                 })
-                .collect(),
-            stats,
-        })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        Ok(ProjectedScan { rows, stats })
     }
 }
 
 struct ProjectedCandidate {
     key: PrimaryKey,
-    values: Vec<pintail_types::Value>,
     version: u64,
     deleted: bool,
+    source: ProjectedSource,
+}
+
+#[derive(Clone, Copy)]
+enum ProjectedSource {
+    Segment {
+        segment_index: usize,
+        row_index: usize,
+    },
+    Memtable,
 }
 
 fn apply_projected_latest(
@@ -1045,15 +1126,6 @@ fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
         .is_none_or(|current| row.version() >= current.version())
     {
         rows.insert(row.key().clone(), row);
-    }
-}
-
-fn apply_latest_option(current: &mut Option<StoredRow>, row: StoredRow) {
-    if current
-        .as_ref()
-        .is_none_or(|current| row.version() >= current.version())
-    {
-        *current = Some(row);
     }
 }
 
@@ -1110,11 +1182,20 @@ fn adapt_recovered_row(
 }
 
 fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), StoreError> {
-    let live = manifest
+    let pinned = pinned_manifests(directory);
+    let mut live = manifest
         .segments
         .iter()
         .map(|segment| segment.file_name.as_str())
         .collect::<std::collections::HashSet<_>>();
+    for pinned_manifest in &pinned {
+        live.extend(
+            pinned_manifest
+                .segments
+                .iter()
+                .map(|segment| segment.file_name.as_str()),
+        );
+    }
     let mut removed = false;
     for entry in std::fs::read_dir(directory)
         .map_err(|error| StoreError::io("list table directory", error))?
@@ -1139,6 +1220,45 @@ fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), S
         segment::sync_directory(directory)?;
     }
     Ok(())
+}
+
+type SnapshotRegistry = BTreeMap<PathBuf, Vec<Weak<Manifest>>>;
+
+fn snapshot_registry() -> &'static Mutex<SnapshotRegistry> {
+    static REGISTRY: OnceLock<Mutex<SnapshotRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn register_pinned_manifest(directory: &Path, manifest: &Arc<Manifest>) {
+    let mut registry = snapshot_registry()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let manifests = registry.entry(directory.to_path_buf()).or_default();
+    manifests.retain(|pinned| pinned.strong_count() > 0);
+    if !manifests
+        .iter()
+        .any(|pinned| pinned.ptr_eq(&Arc::downgrade(manifest)))
+    {
+        manifests.push(Arc::downgrade(manifest));
+    }
+}
+
+fn pinned_manifests(directory: &Path) -> Vec<Arc<Manifest>> {
+    let mut registry = snapshot_registry()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(manifests) = registry.get_mut(directory) else {
+        return Vec::new();
+    };
+    let pinned = manifests
+        .iter()
+        .filter_map(Weak::upgrade)
+        .collect::<Vec<_>>();
+    manifests.retain(|manifest| manifest.strong_count() > 0);
+    if manifests.is_empty() {
+        registry.remove(directory);
+    }
+    pinned
 }
 
 fn find_next_append_row_id(

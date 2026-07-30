@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M1] - 2026-07-30
+
 ### Added
 
 - Dependency-free typed schema, scalar value, composite-key, and versioned-row
@@ -30,7 +32,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   including byte-debt reporting, max-version collapse, partial-merge
   tombstone retention, full-merge tombstone removal, and zstd cold output.
 - Reference-counted obsolete-segment reclamation that preserves pinned reader
-  generations and cleans unreferenced crash orphans during reopen.
+  generations across writer drop/reopen and cleans unreferenced crash orphans
+  only after the last process-local snapshot releases.
 - Metadata-only nullable column additions for older segment and WAL rows,
   stable-ID dropped-column reads, and compaction-time removal of dropped
   bytes, with incompatible physical changes rejected.
@@ -47,8 +50,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   opportunities.
 - Manifest-resident primary-key bounds and bloom filters with pruned point and
   inclusive range reads that skip unrelated segment block decoding.
+- As-of range scans that prune segments whose stored version range is wholly
+  newer than the requested snapshot version.
 - Projected range scans with checksummed key-block zone-map pruning,
-  requested-column-only decoding, and physical scan counters.
+  cross-segment winner resolution before late materialization of requested
+  user columns, and physical scan counters.
 - Whole-block xxh3 coverage for null bitmaps, codec metadata, compressed
   values, zone maps, and HLL sketches, preventing corrupt statistics from
   causing false pruning.
@@ -64,7 +70,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   precise checksum failures.
 - WAL storage-exhaustion tests inject `StorageFull` after a partial record and
   verify recovery preserves and truncates to the prior complete prefix; live
-  append failures roll back before a caller can retry.
+  write and `always`-sync append failures roll back before a caller can retry.
 - Multi-table tests verify global WAL sequencing, recovery through one
   database log, safe partial-table flushes, and rejection of unregistered WAL
   table IDs.
@@ -73,14 +79,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   WAL recovery, and precise block-checksum corruption.
 - On-disk format tests force and round-trip all five version-1 block encodings.
 - Compaction tests cover delayed reclamation, partial versus full tombstone
-  rules, zstd cold output, and 64 deterministic randomized version/tombstone
-  interleavings against a naive reference model.
+  rules, zstd cold output, and 96 deterministic randomized segment-count,
+  non-monotonic-version, and tombstone interleavings against a naive reference
+  model.
 - Recovery tests verify live footers during open, discard unpublished segment
   orphans, and prefer a durable manifest checkpoint when a crash leaves the
   pre-flush WAL in place.
 - A process-level crash-fuzz test performs 100 kill/reopen cycles while a
-  separate writer loops through WAL, flush, manifest, and compaction paths;
-  each reopen is checked against an external acknowledged-commit oracle.
+  separate writer loops two tables through the shared database WAL, flush,
+  manifest, and compaction paths; each reopen is checked against an external
+  acknowledged-commit oracle for the full two-table state.
 
 ## [M0] - 2026-07-30
 

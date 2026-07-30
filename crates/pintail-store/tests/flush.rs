@@ -224,6 +224,40 @@ fn point_and_range_reads_prune_disjoint_corrupt_segments_before_block_decode() {
 }
 
 #[test]
+fn as_of_range_reads_prune_segments_wholly_newer_than_the_snapshot() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
+    table.ingest(vec![row(1, "as-of", 5)]).expect("ingest");
+    table.flush().expect("first flush");
+    table
+        .ingest(vec![row(1, "future", 100)])
+        .expect("ingest future");
+    let future_path = table
+        .flush()
+        .expect("future flush")
+        .segment_path()
+        .expect("future segment")
+        .to_path_buf();
+    let snapshot = table.snapshot();
+
+    let mut bytes = std::fs::read(&future_path).expect("future segment bytes");
+    bytes[66] ^= 0xff;
+    std::fs::write(&future_path, bytes).expect("corrupt future block");
+
+    assert_eq!(
+        snapshot
+            .scan_range_as_of(&key(1), &key(1), 10)
+            .expect("as-of scan"),
+        vec![row(1, "as-of", 5)]
+    );
+    assert!(
+        snapshot.scan_range(&key(1), &key(1)).is_err(),
+        "the current-version scan still visits the corrupt future segment"
+    );
+}
+
+#[test]
 fn projected_range_scan_prunes_key_blocks_and_decodes_only_requested_columns() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let options = StoreOptions {
@@ -256,6 +290,39 @@ fn projected_range_scan_prunes_key_blocks_and_decodes_only_requested_columns() {
         scan.stats().blocks_decoded(),
         4,
         "one key block plus version, tombstone, and projected label"
+    );
+}
+
+#[test]
+fn projected_scan_materializes_user_columns_only_after_version_resolution() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        block_rows: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    table
+        .ingest(vec![row(1, "losing-payload", 1)])
+        .expect("old ingest");
+    table.flush().expect("old flush");
+    table
+        .ingest(vec![row(1, "winning-payload", 2)])
+        .expect("new ingest");
+    table.flush().expect("new flush");
+
+    let scan = table
+        .snapshot()
+        .scan_projected_range(&key(1), &key(1), &[2])
+        .expect("late-materialized scan");
+    assert_eq!(
+        scan.rows()[0].values(),
+        [Value::Utf8("winning-payload".into())]
+    );
+    assert_eq!(
+        scan.stats().blocks_decoded(),
+        7,
+        "both segments decode key/version/tombstone headers, but only the \
+         winning segment decodes its projected payload"
     );
 }
 

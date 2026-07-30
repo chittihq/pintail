@@ -460,9 +460,9 @@ pub(crate) fn overlaps_key_range(meta: &SegmentMeta, start: &PrimaryKey, end: &P
 
 pub(crate) struct ProjectedSegmentRow {
     pub(crate) key: PrimaryKey,
-    pub(crate) values: Vec<Value>,
     pub(crate) version: u64,
     pub(crate) deleted: bool,
+    pub(crate) physical_index: usize,
 }
 
 #[derive(Default)]
@@ -476,14 +476,18 @@ pub(crate) struct ProjectedSegmentScan {
     pub(crate) stats: SegmentReadStats,
 }
 
+pub(crate) struct ProjectedValueFetch {
+    pub(crate) values: Vec<Vec<Value>>,
+    pub(crate) blocks_decoded: usize,
+}
+
 #[allow(clippy::too_many_lines)]
-pub(crate) fn read_projected_range(
+pub(crate) fn read_row_headers_range(
     directory: &Path,
     meta: &SegmentMeta,
     schema: &TableSchema,
     start: &PrimaryKey,
     end: &PrimaryKey,
-    projection: &[usize],
 ) -> Result<ProjectedSegmentScan, StoreError> {
     let path = directory.join(&meta.file_name);
     let bytes = std::fs::read(&path)
@@ -528,10 +532,11 @@ pub(crate) fn read_projected_range(
 
     let mut selected_blocks = Vec::new();
     let mut block_row_counts = Vec::new();
+    let mut selected_row_indices = Vec::new();
+    let mut next_row_index = 0;
     let mut keys = None;
     let mut versions = None;
     let mut tombstones = None;
-    let mut values = vec![None; projection.len()];
     let mut stats = SegmentReadStats::default();
     for _ in 0..column_count {
         let id = decoder
@@ -582,8 +587,10 @@ pub(crate) fn read_projected_range(
                 selected_blocks.push(selected);
                 block_row_counts.push(block.row_count);
                 if let Some(cells) = block.cells {
+                    selected_row_indices.extend(next_row_index..next_row_index + block.row_count);
                     column_cells.extend(cells);
                 }
+                next_row_index += block.row_count;
             }
             keys = Some(column_cells);
             continue;
@@ -618,9 +625,7 @@ pub(crate) fn read_projected_range(
                 schema.columns()[schema_index].name()
             )));
         }
-        let projected_position = schema_index
-            .and_then(|schema_index| projection.iter().position(|value| *value == schema_index));
-        let decode_column = system_column != 0 || projected_position.is_some();
+        let decode_column = system_column != 0;
         let mut column_cells = Vec::new();
         for (block_index, selected) in selected_blocks.iter().copied().enumerate() {
             let block = read_block_if(&path, &mut decoder, logical_type, |_, _| {
@@ -649,13 +654,6 @@ pub(crate) fn read_projected_range(
                     return Err(corrupt_here(&path, &decoder, "duplicate tombstone column"));
                 }
             }
-            0 => {
-                if let Some(position) = projected_position
-                    && values[position].replace(column_cells).is_some()
-                {
-                    return Err(corrupt_here(&path, &decoder, "duplicate user column"));
-                }
-            }
             _ => {}
         }
     }
@@ -665,20 +663,6 @@ pub(crate) fn read_projected_range(
         versions.ok_or_else(|| corrupt_here(&path, &decoder, "missing version column"))?;
     let tombstones =
         tombstones.ok_or_else(|| corrupt_here(&path, &decoder, "missing tombstone column"))?;
-    for (position, schema_index) in projection.iter().copied().enumerate() {
-        if values[position].is_none() {
-            let column = &schema.columns()[schema_index];
-            if !column.is_nullable() {
-                return Err(StoreError::IncompatibleSchema(format!(
-                    "required projected column {} ({}) is absent",
-                    column.name(),
-                    column.id()
-                )));
-            }
-            values[position] = Some(vec![Cell::Null; keys.len()]);
-        }
-    }
-
     let mut rows = Vec::new();
     for row_index in 0..keys.len() {
         let Cell::Key(key) = &keys[row_index] else {
@@ -693,24 +677,182 @@ pub(crate) fn read_projected_range(
         let Cell::Boolean(deleted) = tombstones[row_index] else {
             return Err(corrupt_here(&path, &decoder, "invalid tombstone cell"));
         };
-        let projected_values = values
-            .iter()
-            .map(|column| {
-                column
-                    .as_ref()
-                    .and_then(|cells| cells.get(row_index))
-                    .map(Cell::to_value)
-                    .ok_or_else(|| corrupt_here(&path, &decoder, "missing projected value"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         rows.push(ProjectedSegmentRow {
             key: key.clone(),
-            values: projected_values,
             version,
             deleted,
+            physical_index: selected_row_indices[row_index],
         });
     }
     Ok(ProjectedSegmentScan { rows, stats })
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn read_projected_rows(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    projection: &[usize],
+    row_indices: &[usize],
+) -> Result<ProjectedValueFetch, StoreError> {
+    if row_indices.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(StoreError::FormatLimit(
+            "late-materialization row indices must be strictly increasing".into(),
+        ));
+    }
+    let path = directory.join(&meta.file_name);
+    let bytes = std::fs::read(&path)
+        .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
+    validate_footer(&path, &bytes, meta, schema)?;
+    let mut decoder = Decoder::new(&bytes);
+    expect_raw(&mut decoder, MAGIC).map_err(|reason| corrupt(&path, 0, reason))?;
+    if decoder
+        .u8()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?
+        != FORMAT_VERSION
+    {
+        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
+    }
+    let segment_schema_version = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    if segment_schema_version > schema.version() {
+        return Err(StoreError::SchemaMismatch {
+            expected_version: schema.version(),
+            actual_version: segment_schema_version,
+        });
+    }
+    let fingerprint = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    if fingerprint != meta.schema_fingerprint {
+        return Err(StoreError::SchemaFingerprintMismatch {
+            expected: meta.schema_fingerprint,
+            actual: fingerprint,
+        });
+    }
+    let row_count = usize::try_from(
+        decoder
+            .u64()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+    )
+    .map_err(|_| corrupt_here(&path, &decoder, "segment row count exceeds usize"))?;
+    if row_indices.iter().any(|index| *index >= row_count) {
+        return Err(StoreError::FormatLimit(
+            "late-materialization row index exceeds segment row count".into(),
+        ));
+    }
+    let column_count = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    let block_rows = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
+    if block_rows == 0 {
+        return Err(corrupt_here(
+            &path,
+            &decoder,
+            "segment block row target is zero",
+        ));
+    }
+
+    let mut values = vec![vec![None; projection.len()]; row_indices.len()];
+    let mut found = vec![false; projection.len()];
+    let mut blocks_decoded = 0;
+    for _ in 0..column_count {
+        let id = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let logical_type = LogicalType::decode(
+            decoder
+                .u8()
+                .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+        )
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let block_count = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?
+            as usize;
+        let schema_index = schema.columns().iter().position(|column| column.id() == id);
+        if let Some(schema_index) = schema_index
+            && LogicalType::from_data_type(schema.columns()[schema_index].data_type())
+                != logical_type
+        {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "column {} ({id}) changed physical type",
+                schema.columns()[schema_index].name()
+            )));
+        }
+        let projected_position = schema_index
+            .and_then(|schema_index| projection.iter().position(|value| *value == schema_index));
+        if let Some(position) = projected_position
+            && std::mem::replace(&mut found[position], true)
+        {
+            return Err(corrupt_here(&path, &decoder, "duplicate user column"));
+        }
+
+        let mut block_start = 0_usize;
+        for _ in 0..block_count {
+            let block_limit = block_start.saturating_add(block_rows);
+            let selected = projected_position.is_some()
+                && row_indices
+                    .iter()
+                    .any(|index| *index >= block_start && *index < block_limit);
+            let block = read_block_if(&path, &mut decoder, logical_type, |_, _| Ok(selected))?;
+            let block_end = block_start
+                .checked_add(block.row_count)
+                .ok_or_else(|| corrupt_here(&path, &decoder, "column row count overflow"))?;
+            if let (Some(position), Some(cells)) = (projected_position, block.cells) {
+                blocks_decoded += 1;
+                for (result_index, row_index) in row_indices.iter().copied().enumerate() {
+                    if row_index < block_start || row_index >= block_end {
+                        continue;
+                    }
+                    values[result_index][position] =
+                        Some(cells[row_index - block_start].to_value());
+                }
+            }
+            block_start = block_end;
+        }
+        if block_start != row_count {
+            return Err(corrupt_here(
+                &path,
+                &decoder,
+                "column row count differs from segment header",
+            ));
+        }
+    }
+
+    for (position, schema_index) in projection.iter().copied().enumerate() {
+        if found[position] {
+            continue;
+        }
+        let column = &schema.columns()[schema_index];
+        if !column.is_nullable() {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "required projected column {} ({}) is absent",
+                column.name(),
+                column.id()
+            )));
+        }
+        for row in &mut values {
+            row[position] = Some(Value::Null);
+        }
+    }
+    let values = values
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|value| {
+                    value.ok_or_else(|| corrupt_here(&path, &decoder, "missing projected value"))
+                })
+                .collect()
+        })
+        .collect::<Result<Vec<Vec<_>>, _>>()?;
+    Ok(ProjectedValueFetch {
+        values,
+        blocks_decoded,
+    })
 }
 
 fn decode_stat_key(path: &Path, bytes: &[u8]) -> Result<PrimaryKey, String> {
