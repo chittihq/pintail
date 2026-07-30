@@ -1,0 +1,97 @@
+INSERT INTO users (name, email, region, created_at, updated_at)
+SELECT
+  CONCAT('User_', n),
+  CONCAT('user', n, '@example.com'),
+  ELT(1 + MOD(n, 8), 'us-east', 'us-west', 'eu-west', 'eu-east',
+      'ap-south', 'ap-east', 'sa-east', 'af-south'),
+  DATE_ADD('2020-01-01', INTERVAL MOD(n * 17, 1825) DAY),
+  '2025-01-01 00:00:00'
+FROM (
+  SELECT a.d * 10000 + b.d * 1000 + c.d * 100 + d.d * 10 + e.d + 1 AS n
+  FROM
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) a,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) d,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) e
+) numbers;
+
+INSERT INTO products (name, category, price, created_at, updated_at)
+SELECT
+  CONCAT('Product_', n),
+  ELT(1 + MOD(n, 10), 'electronics', 'clothing', 'food', 'books', 'toys',
+      'sports', 'home', 'garden', 'auto', 'health'),
+  ROUND(5 + MOD(n * 7919, 99500) / 100, 2),
+  DATE_ADD('2024-01-01', INTERVAL MOD(n * 13, 365) DAY),
+  '2025-01-01 00:00:00'
+FROM (
+  SELECT a.d * 1000 + b.d * 100 + c.d * 10 + d.d + 1 AS n
+  FROM
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) a,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c,
+    (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+     UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) d
+) numbers;
+
+DROP PROCEDURE IF EXISTS seed_orders;
+CREATE PROCEDURE seed_orders(IN total_batches INT)
+BEGIN
+  DECLARE batch_number INT DEFAULT 0;
+  SET autocommit = 0;
+  WHILE batch_number < total_batches DO
+    INSERT INTO orders (
+      user_id, product_id, quantity, unit_price, total_amount, status, region,
+      order_date, created_at, updated_at
+    )
+    SELECT
+      1 + MOD(generated_id * 17, 100000),
+      1 + MOD(generated_id * 31, 10000),
+      1 + MOD(generated_id, 20),
+      ROUND(10 + MOD(generated_id * 7919, 99000) / 100, 2),
+      ROUND(
+        (1 + MOD(generated_id, 20))
+        * (10 + MOD(generated_id * 7919, 99000) / 100),
+        2
+      ),
+      ELT(1 + MOD(generated_id, 5),
+          'pending', 'processing', 'shipped', 'delivered', 'cancelled'),
+      ELT(1 + MOD(generated_id, 8),
+          'us-east', 'us-west', 'eu-west', 'eu-east',
+          'ap-south', 'ap-east', 'sa-east', 'af-south'),
+      DATE_ADD('2020-01-01', INTERVAL MOD(generated_id * 7, 1825) DAY),
+      DATE_ADD('2020-01-01', INTERVAL MOD(generated_id * 11, 1825) DAY),
+      '2025-01-01 00:00:00'
+    FROM (
+      SELECT
+        batch_number * 10000
+        + a.d * 1000 + b.d * 100 + c.d * 10 + d.d + 1 AS generated_id
+      FROM
+        (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+         UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) a
+        CROSS JOIN
+        (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+         UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b
+        CROSS JOIN
+        (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+         UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c
+        CROSS JOIN
+        (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+         UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) d
+    ) derived_rows;
+    SET batch_number = batch_number + 1;
+    IF MOD(batch_number, 100) = 0 THEN
+      COMMIT;
+    END IF;
+  END WHILE;
+  COMMIT;
+  SET autocommit = 1;
+END;
