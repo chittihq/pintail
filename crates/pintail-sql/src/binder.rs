@@ -717,6 +717,7 @@ fn bind_expr_inner(
             array: false,
             format: None,
         } => bind_cast(expr, data_type, tables, aggregates, subqueries),
+        Expr::Convert { .. } => bind_convert(expr, tables, aggregates, subqueries),
         Expr::Substring {
             expr,
             substring_from: Some(from),
@@ -1358,6 +1359,45 @@ fn bind_cast(
 ) -> Result<BoundExpr, BindError> {
     let target = cast_data_type(data_type)
         .ok_or_else(|| BindError::InvalidScalarFunction(format!("CAST AS {data_type}")))?;
+    bind_scalar(
+        ScalarFunction::Cast(target),
+        vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
+    )
+}
+
+fn bind_convert(
+    conversion: &Expr,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let Expr::Convert {
+        is_try,
+        expr,
+        data_type,
+        charset,
+        target_before_value,
+        styles,
+    } = conversion
+    else {
+        unreachable!("bind_convert is called only for CONVERT expressions");
+    };
+    if *is_try || *target_before_value || !styles.is_empty() {
+        return Err(BindError::UnsupportedExpression(conversion.to_string()));
+    }
+    let target = match (data_type, charset) {
+        (Some(data_type), _) => cast_data_type(data_type)
+            .ok_or_else(|| BindError::InvalidScalarFunction(format!("CONVERT TO {data_type}")))?,
+        (None, Some(charset)) if charset.to_string().eq_ignore_ascii_case("binary") => {
+            DataType::Binary
+        }
+        (None, Some(_)) => DataType::Utf8,
+        (None, None) => {
+            return Err(BindError::InvalidScalarFunction(
+                "CONVERT requires a target type or character set".to_owned(),
+            ));
+        }
+    };
     bind_scalar(
         ScalarFunction::Cast(target),
         vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
@@ -2243,14 +2283,17 @@ mod tests {
              IF(active, id, 0) AS chosen, \
              CASE WHEN id BETWEEN 1 AND 3 THEN 'yes' ELSE 'no' END AS ranged, \
              Name LIKE 'a%' AS matched, id IN (1, 2, NULL) AS listed, \
-             CAST(Name AS CHAR) AS cast_name FROM Events",
+             CAST(Name AS CHAR) AS cast_name, CONVERT(Name, CHAR) AS converted_name, \
+             CONVERT(Name USING utf8mb4) AS transcoded_name FROM Events",
         )
         .expect("scalar functions");
-        assert_eq!(query.projection.len(), 6);
+        assert_eq!(query.projection.len(), 8);
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
         assert_eq!(query.projection[1].expr.data_type, Some(DataType::Float64));
         assert_eq!(query.projection[3].expr.data_type, Some(DataType::Boolean));
         assert_eq!(query.projection[5].expr.data_type, Some(DataType::Utf8));
+        assert_eq!(query.projection[6].expr.data_type, Some(DataType::Utf8));
+        assert_eq!(query.projection[7].expr.data_type, Some(DataType::Utf8));
     }
 
     #[test]

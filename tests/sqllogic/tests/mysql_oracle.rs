@@ -352,7 +352,8 @@ fn oracle_cases() -> Vec<OracleCase> {
                 "SELECT CONCAT(LOWER('MiXeD'), '-', {value}), \
                  SUBSTRING('abcdef', 2, 3), TRIM('  pintail  '), \
                  REPLACE('a-b-c', '-', '_'), LEFT('abcdef', 3), \
-                 RIGHT('abcdef', 2), LOCATE('tail', 'pintail')"
+                 RIGHT('abcdef', 2), LOCATE('tail', 'pintail'), \
+                 CONVERT({value}, CHAR), CONVERT('MiXeD' USING utf8mb4)"
             ),
         });
     }

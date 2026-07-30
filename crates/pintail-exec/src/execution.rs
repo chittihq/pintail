@@ -2168,7 +2168,8 @@ mod tests {
              CASE WHEN 0 THEN 'bad' ELSE 'ok' END, IFNULL(NULL, 'fallback'), \
              NULLIF(1, 1), 2 IN (1, 2, NULL), 3 NOT IN (1, 2, NULL), \
              'Alphabet' LIKE 'a%bet', 5 BETWEEN 2 AND 8, \
-             CAST('12x' AS SIGNED)",
+             CAST('12x' AS SIGNED), CONVERT('34x', SIGNED), \
+             CONVERT('MiXeD' USING utf8mb4)",
         );
         let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
@@ -2191,6 +2192,8 @@ mod tests {
                 Value::Boolean(true),
                 Value::Boolean(true),
                 Value::Int64(12),
+                Value::Int64(34),
+                Value::Utf8("MiXeD".to_owned()),
             ]
         );
     }
