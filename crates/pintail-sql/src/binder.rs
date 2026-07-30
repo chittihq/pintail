@@ -607,7 +607,7 @@ fn bind_group_by(
                 })
                 .collect::<Vec<_>>();
             match aliases.as_slice() {
-                [aliased] => bind_expr(aliased, tables, subqueries),
+                [alias_expression] => bind_expr(alias_expression, tables, subqueries),
                 [] => bind_expr(expr, tables, subqueries),
                 _ => Err(BindError::InvalidGrouping(format!(
                     "GROUP BY alias {} is ambiguous",
@@ -1756,12 +1756,22 @@ fn comparable(left: Option<DataType>, right: Option<DataType>) -> bool {
 fn is_numeric(data_type: Option<DataType>) -> bool {
     matches!(
         data_type,
-        None | Some(DataType::Boolean)
-            | Some(DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64)
-            | Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
-            | Some(DataType::Float32 | DataType::Float64)
-            | Some(DataType::Decimal { .. })
-            | Some(DataType::Utf8 | DataType::Binary)
+        None | Some(
+            DataType::Boolean
+                | DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal { .. }
+                | DataType::Utf8
+                | DataType::Binary
+        )
     )
 }
 
@@ -1772,13 +1782,26 @@ fn is_truth_value(data_type: Option<DataType>) -> bool {
 fn is_mysql_scalar(data_type: Option<DataType>) -> bool {
     matches!(
         data_type,
-        None | Some(DataType::Boolean)
-            | Some(DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64)
-            | Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
-            | Some(DataType::Float32 | DataType::Float64)
-            | Some(DataType::Decimal { .. })
-            | Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
-            | Some(DataType::Utf8 | DataType::Binary | DataType::Json)
+        None | Some(
+            DataType::Boolean
+                | DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal { .. }
+                | DataType::Date32
+                | DataType::DateTime64 { .. }
+                | DataType::Time64 { .. }
+                | DataType::Utf8
+                | DataType::Binary
+                | DataType::Json
+        )
     )
 }
 

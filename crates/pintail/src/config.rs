@@ -38,7 +38,7 @@ pub struct Cli {
     #[arg(long)]
     pub wire_bind: Option<SocketAddr>,
 
-    /// Hard byte ceiling for each HTTP or MySQL wire query.
+    /// Hard byte ceiling for each HTTP or `MySQL` wire query.
     #[arg(long)]
     pub query_memory_limit_bytes: Option<usize>,
 }
@@ -181,7 +181,7 @@ impl AppConfig {
         self.wire_bind
     }
 
-    /// Hard byte ceiling for one HTTP or MySQL wire query.
+    /// Hard byte ceiling for one HTTP or `MySQL` wire query.
     #[must_use]
     pub const fn query_memory_limit_bytes(&self) -> usize {
         self.query_memory_limit_bytes
