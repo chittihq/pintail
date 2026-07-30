@@ -87,6 +87,7 @@ const selectedDatabaseId = ref('')
 const tables = ref<TableSummary[]>([])
 const snapshot = ref<SnapshotStatus | null>(null)
 const detailTab = ref('tables')
+const tableAction = ref('')
 const deleteCandidate = ref<DatabaseRecord | null>(null)
 const deleteText = ref('')
 
@@ -354,6 +355,29 @@ async function forceSnapshot() {
     await loadDatabaseDetail()
   } catch (failure) {
     error.value = messageOf(failure)
+  }
+}
+
+async function runTableAction(table: TableSummary, action: 'resync' | 'reconcile') {
+  if (!selectedDatabase.value) return
+  tableAction.value = `${table.name}:${action}`
+  error.value = ''
+  try {
+    await request(
+      `/databases/${encodeURIComponent(selectedDatabase.value.id)}/tables/${encodeURIComponent(table.name)}/${action}`,
+      { method: 'POST' },
+    )
+    if (action === 'resync') {
+      detailTab.value = 'snapshot'
+      toast('Safe mirror-wide resnapshot accepted; tables share one source checkpoint')
+    } else {
+      toast(`${table.name} reconciliation accepted`)
+    }
+    await loadDatabaseDetail()
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    tableAction.value = ''
   }
 }
 
@@ -926,7 +950,14 @@ function describeTable(table: TableSummary) {
               <tbody><tr v-for="table in tables" :key="table.name">
                 <td><strong>{{ table.name }}</strong></td><td><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></td>
                 <td class="mono">{{ table.rows.toLocaleString() }}</td><td class="mono">v{{ table.schema_version }}</td><td class="muted">{{ table.last_error || '—' }}</td>
-                <td><button class="text-button" @click="forceSnapshot">Resync</button></td>
+                <td><div class="row-actions">
+                  <button class="text-button" :disabled="Boolean(tableAction)" @click="runTableAction(table, 'reconcile')">
+                    <LoaderCircle v-if="tableAction === `${table.name}:reconcile`" class="spin" :size="13" /> Reconcile
+                  </button>
+                  <button class="text-button" :disabled="Boolean(tableAction)" title="Starts a mirror-wide resnapshot because all tables share one source checkpoint" @click="runTableAction(table, 'resync')">
+                    <LoaderCircle v-if="tableAction === `${table.name}:resync`" class="spin" :size="13" /> Resync
+                  </button>
+                </div></td>
               </tr></tbody>
             </table>
           </div>

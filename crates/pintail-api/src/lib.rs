@@ -2,6 +2,7 @@
 
 mod activity;
 mod auth;
+mod controls;
 mod databases;
 mod error;
 mod events;
@@ -26,6 +27,7 @@ pub use state::ApiState;
 
 use crate::activity::{activity, dead_letters, discard_dead_letter};
 use crate::auth::{login, require_auth, session, setup, setup_status};
+use crate::controls::{reconcile, resync};
 use crate::databases::{
     create as create_database, delete as delete_database, get as get_database,
     list as list_databases, probe_database, set_mode, status as database_status, test_connection,
@@ -83,6 +85,8 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/tables/{name}/count", get(table_count))
         .route("/databases/{id}/snapshot", post(start_snapshot))
         .route("/databases/{id}/snapshot/status", get(snapshot_status))
+        .route("/databases/{id}/tables/{name}/resync", post(resync))
+        .route("/databases/{id}/tables/{name}/reconcile", post(reconcile))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let api = Router::new()
         .route("/auth/setup/status", get(setup_status))

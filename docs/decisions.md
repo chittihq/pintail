@@ -245,3 +245,17 @@ for full reconciliation or CDC-side cascade repair. It does not spawn timers.
 The M8 per-database supervised task tree owns the 1-second probe, 5-second sync,
 10-minute delete-reconcile, and hourly CDC-cascade defaults so pause, shutdown,
 backoff, and blast-radius behavior have one lifetime owner.
+
+### Operator resync preserves the database-wide handoff
+
+The table-action REST surface accepts a table name so operators can act from
+the table that exposed drift or schema quarantine. Its `resync` operation
+nevertheless starts a force resnapshot of every included table. Pintail owns
+one source checkpoint per database: independently capturing one table while
+retaining the older shared checkpoint could replay pre-snapshot binlog events
+over that table and replace fresh values with stale ones.
+
+The dashboard calls this behavior out in the action tooltip and acceptance
+toast. `reconcile` remains genuinely table-local because it assigns versions
+above the table's visible rows, synchronizes storage before metadata, and does
+not advance the CDC source checkpoint.

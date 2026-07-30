@@ -28,6 +28,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   export, activity and dead-letter views, scoped API-key management, responsive
   navigation, and explicit preactivation states for later backup and settings
   milestones.
+- Authenticated table controls now run checkpoint-preserving, table-local
+  reconciliation for CDC and polling mirrors. Table resync actions use the
+  safe database-wide snapshot handoff because source checkpoints are shared;
+  both operations are durable activity records and publish scoped events.
 
 ## [M5] - 2026-07-30
 

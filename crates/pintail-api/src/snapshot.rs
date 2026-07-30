@@ -141,6 +141,20 @@ pub(crate) async fn start(
     ))
 }
 
+pub(crate) async fn start_forced(
+    principal: Extension<AuthPrincipal>,
+    state: State<ApiState>,
+    database_id: Path<String>,
+) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
+    start(
+        principal,
+        state,
+        database_id,
+        Some(Json(SnapshotRequest { force: true })),
+    )
+    .await
+}
+
 async fn complete_snapshot_job(state: ApiState, database_id: String, run_id: String, force: bool) {
     let started = Instant::now();
     match run_snapshot_job(&state, &database_id, &run_id, force).await {

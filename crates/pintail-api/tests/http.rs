@@ -412,6 +412,52 @@ async fn database_crud_encrypts_dsn_and_requires_authentication() {
 }
 
 #[tokio::test]
+async fn table_controls_require_authentication_and_a_known_table() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let authorization = format!("Bearer {}", setup_admin(&app).await);
+    let database = create_database(&app, &authorization, "app").await;
+    let database_id = database["id"].as_str().expect("database ID");
+
+    for action in ["resync", "reconcile"] {
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/databases/{database_id}/tables/events/{action}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/databases/{database_id}/tables/events/{action}"
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            json_response(missing).await,
+            serde_json::json!({"error": "table does not exist"})
+        );
+    }
+}
+
+#[tokio::test]
 async fn api_key_secrets_are_shown_once_and_database_scoped() {
     let data = tempfile::tempdir().expect("API data directory");
     let app = pintail_api::router_with_state(configured_state(data.path()));
