@@ -156,6 +156,7 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
         "append_rows",
         "cascade_child",
         "cascade_parent",
+        "composite_rows",
         "cursor_rows",
         "keyed_rows",
     ];
@@ -223,6 +224,10 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
              UPDATE keyed_rows SET value='one-2' WHERE id=1;\
              DELETE FROM keyed_rows WHERE id=2;\
              INSERT INTO keyed_rows VALUES (3,'three');\
+             DELETE FROM composite_rows WHERE tenant_id=1 AND item_id=2;\
+             UPDATE composite_rows SET value='two-one-updated' \
+               WHERE tenant_id=2 AND item_id=1;\
+             INSERT INTO composite_rows VALUES (2,2,'two-two');\
              INSERT INTO append_rows VALUES ('second');",
         )
         .expect("mutate polled tables");
@@ -241,10 +246,18 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     let keyed = outcome(&changed, "keyed_rows");
     assert_eq!((keyed.ingested, keyed.tombstones), (2, 1));
     assert_eq!((keyed.chunks_scanned, keyed.chunks_redumped), (2, 1));
+    assert_eq!(
+        (
+            outcome(&changed, "composite_rows").ingested,
+            outcome(&changed, "composite_rows").tombstones,
+        ),
+        (2, 1)
+    );
     assert_eq!(outcome(&changed, "append_rows").ingested, 2);
     targets = changed.targets;
     assert_ids(&targets, "cursor_rows", &[1, 3]);
     assert_ids(&targets, "keyed_rows", &[1, 3]);
+    assert_composite_keys(&targets, "composite_rows", &[(1, 1), (2, 1), (2, 2)]);
     assert_eq!(row_count(&targets, "append_rows"), 2);
 
     mysql
@@ -269,11 +282,18 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     targets = repaired.targets;
     assert_ids(&targets, "cursor_rows", &[3, 4]);
 
+    let token_before_blindspot = MetaStore::open(&metadata_path)
+        .unwrap()
+        .poll_state(DATABASE_ID, "cursor_rows")
+        .unwrap()
+        .unwrap()
+        .source_token_json;
     mysql
         .query_batch(
-            "DELETE FROM cursor_rows WHERE id=3;\
+            "SET @pintail_boundary=(SELECT MAX(updated_at) FROM cursor_rows);\
+             DELETE FROM cursor_rows WHERE id=3;\
              INSERT INTO cursor_rows(email,value,updated_at) \
-               VALUES ('five@example.com','epsilon',NOW(6));",
+               VALUES ('five@example.com','epsilon',@pintail_boundary);",
         )
         .expect("create count-neutral delete blind spot");
     let blind = run_poll_cycle(
@@ -286,6 +306,17 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     )
     .await
     .expect("cursor sync before reconcile");
+    assert_eq!(outcome(&blind, "cursor_rows").ingested, 1);
+    assert_eq!(
+        MetaStore::open(&metadata_path)
+            .unwrap()
+            .poll_state(DATABASE_ID, "cursor_rows")
+            .unwrap()
+            .unwrap()
+            .source_token_json,
+        token_before_blindspot,
+        "count/MAX token is intentionally unchanged in the regression window"
+    );
     targets = blind.targets;
     assert_ids(&targets, "cursor_rows", &[3, 4, 5]);
     let reconciled = run_poll_cycle(
@@ -414,11 +445,28 @@ fn assert_ids(targets: &[PollTarget], name: &str, expected: &[u64]) {
     assert_eq!(ids, expected);
 }
 
+fn assert_composite_keys(targets: &[PollTarget], name: &str, expected: &[(u64, u64)]) {
+    let mut keys = table(targets, name)
+        .store()
+        .snapshot()
+        .scan()
+        .expect("scan composite keys")
+        .into_iter()
+        .map(|row| match row.values() {
+            [Value::UInt64(left), Value::UInt64(right), ..] => (*left, *right),
+            values => panic!("unexpected {name} composite values {values:?}"),
+        })
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(keys, expected);
+}
+
 fn table_storage_bytes(root: &Path) -> u64 {
     [
         "append_rows",
         "cascade_child",
         "cascade_parent",
+        "composite_rows",
         "cursor_rows",
         "keyed_rows",
     ]
@@ -529,6 +577,13 @@ CREATE TABLE keyed_rows (id BIGINT UNSIGNED NOT NULL PRIMARY KEY, value VARCHAR(
 INSERT INTO keyed_rows VALUES (1,'one'),(2,'two');\
 CREATE TABLE append_rows (value VARCHAR(128) NOT NULL);\
 INSERT INTO append_rows VALUES ('first');\
+CREATE TABLE composite_rows (\
+  tenant_id BIGINT UNSIGNED NOT NULL,\
+  item_id BIGINT UNSIGNED NOT NULL,\
+  value VARCHAR(128) NOT NULL,\
+  PRIMARY KEY (tenant_id,item_id)\
+);\
+INSERT INTO composite_rows VALUES (1,1,'one-one'),(1,2,'one-two'),(2,1,'two-one');\
 CREATE TABLE cascade_parent (id BIGINT UNSIGNED NOT NULL PRIMARY KEY);\
 CREATE TABLE cascade_child (\
   id BIGINT UNSIGNED NOT NULL PRIMARY KEY,\

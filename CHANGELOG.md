@@ -36,6 +36,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with versions above their live binlog rows while preserving the CDC mode
   and source checkpoint. The live gate proves the InnoDB negative control
   first, then converges the missing child tombstone.
+- Delete reconciliation now uses composite-safe keyset pagination. Poll syncs
+  still run cursor-boundary, checksum, or append checks when count/MAX is
+  unchanged, closing same-timestamp and count-neutral update windows without
+  adding row-storage writes.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.

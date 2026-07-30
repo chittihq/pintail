@@ -409,21 +409,6 @@ async fn poll_table(
     let mut version = previous.as_ref().map_or(0, |state| state.version);
     let reconcile_requested = options.reconcile
         || contains_case_insensitive(&options.reconcile_tables, &target.source.name);
-    if !token_changed && !reconcile_requested && previous.is_some() {
-        return Ok(TablePollOutcome {
-            table: target.source.name.clone(),
-            strategy,
-            changed: false,
-            ingested: 0,
-            tombstones: 0,
-            source_count: token.count,
-            version,
-            reconciled: false,
-            chunks_scanned: 0,
-            chunks_redumped: 0,
-            unique_repairs: 0,
-        });
-    }
     version = version
         .checked_add(1)
         .ok_or_else(|| PollError::Decode("poll version exceeds UInt64".to_owned()))?;
@@ -439,21 +424,17 @@ async fn poll_table(
         PollStrategy::Cursor => {
             let cursor = cursor.as_ref().expect("cursor strategy");
             let previous_cursor = previous_cursor(previous.as_ref(), cursor)?;
-            let (ingested, soft_tombstones) = if token_changed {
-                sync_cursor_rows(
-                    connection,
-                    source_database,
-                    target,
-                    cursor,
-                    previous_cursor,
-                    soft_delete.as_ref(),
-                    version,
-                    options.chunk_rows,
-                )
-                .await?
-            } else {
-                (0, 0)
-            };
+            let (ingested, soft_tombstones) = sync_cursor_rows(
+                connection,
+                source_database,
+                target,
+                cursor,
+                previous_cursor,
+                soft_delete.as_ref(),
+                version,
+                options.chunk_rows,
+            )
+            .await?;
             cursor_json = match &token.maximum {
                 CursorValue::Null => None,
                 maximum => Some(maximum.encode()?),
@@ -933,28 +914,51 @@ async fn fetch_source_keys(
 ) -> Result<BTreeSet<PrimaryKey>, PollError> {
     let order = poll_order(table, None);
     let mut output = BTreeSet::new();
-    let mut offset = 0_usize;
+    let mut last_key = None;
     loop {
+        let (condition, parameters) = last_key.as_ref().map_or_else(
+            || (String::new(), Vec::new()),
+            |key: &PrimaryKey| {
+                let columns = table
+                    .key
+                    .columns
+                    .iter()
+                    .map(|column| quote_identifier(column))
+                    .collect::<Vec<_>>();
+                let placeholders = vec!["?"; columns.len()];
+                let comparison = if columns.len() == 1 {
+                    format!("{} > ?", columns[0])
+                } else {
+                    format!("({}) > ({})", columns.join(","), placeholders.join(","))
+                };
+                (
+                    format!(" WHERE {comparison}"),
+                    key.parts()
+                        .iter()
+                        .map(key_part_mysql_value)
+                        .collect::<Vec<_>>(),
+                )
+            },
+        );
         let sql = format!(
-            "SELECT {} FROM {}.{}{} LIMIT {} OFFSET {}",
+            "SELECT {} FROM {}.{}{}{} LIMIT {}",
             key_projection(table),
             quote_identifier(database),
             quote_identifier(&table.name),
+            condition,
             order,
-            chunk_rows,
-            offset
+            chunk_rows
         );
-        let rows: Vec<Row> = connection.query(sql).await?;
+        let rows: Vec<Row> = connection.exec(sql, Params::Positional(parameters)).await?;
         let fetched = rows.len();
         for row in rows {
-            output.insert(decode_key(table, row)?);
+            let key = decode_key(table, row)?;
+            last_key = Some(key.clone());
+            output.insert(key);
         }
         if fetched < chunk_rows {
             break;
         }
-        offset = offset
-            .checked_add(fetched)
-            .ok_or_else(|| PollError::Decode("poll key offset exceeds usize".to_owned()))?;
     }
     Ok(output)
 }
