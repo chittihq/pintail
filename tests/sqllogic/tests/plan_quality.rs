@@ -35,7 +35,9 @@ fn explain_analyze_proves_segment_and_block_pruning() {
         schema,
         TableStatistics::with_row_count(8),
     )
-    .expect("table entry");
+    .expect("table entry")
+    .with_key_columns([1])
+    .expect("key columns");
     let database = DatabaseEntry::new(DATABASE_ID, "app", [entry]).expect("database");
     let catalog = CatalogSnapshot::new([database]).expect("catalog");
     let provider =

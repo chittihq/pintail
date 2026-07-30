@@ -327,6 +327,32 @@ fn projected_scan_materializes_user_columns_only_after_version_resolution() {
     );
 }
 
+#[test]
+fn projected_scan_enforces_its_retained_memory_budget() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
+    table
+        .ingest(
+            (1..=8)
+                .map(|id| row(id, &format!("label-{id}-{}", "x".repeat(256)), id))
+                .collect(),
+        )
+        .expect("ingest");
+    table.flush().expect("flush");
+    let snapshot = table.snapshot();
+
+    assert!(matches!(
+        snapshot.scan_projected_range_bounded(&key(1), &key(8), &[2], 128),
+        Err(StoreError::MemoryLimitExceeded { limit: 128, .. })
+    ));
+    let scan = snapshot
+        .scan_projected_range_bounded(&key(1), &key(8), &[2], 64 * 1024)
+        .expect("bounded scan");
+    assert_eq!(scan.rows().len(), 8);
+    assert!(scan.retained_bytes() <= 64 * 1024);
+}
+
 fn schema() -> TableSchema {
     TableSchema::new(
         3,

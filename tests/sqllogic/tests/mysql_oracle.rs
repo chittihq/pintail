@@ -23,6 +23,7 @@ const EXPECTED_CASES: usize = 600;
 struct OracleCase {
     family: &'static str,
     sql: String,
+    ordered: bool,
 }
 
 struct MysqlContainer {
@@ -63,6 +64,7 @@ impl MysqlContainer {
                     "mysql",
                     "--user=root",
                     "--database=app",
+                    "--default-character-set=utf8mb4",
                     "--execute=SELECT 1",
                 ])
                 .stdout(Stdio::null())
@@ -92,6 +94,7 @@ impl MysqlContainer {
                 "mysql",
                 "--user=root",
                 "--database=app",
+                "--default-character-set=utf8mb4",
                 "--batch",
                 "--raw",
                 "--skip-column-names",
@@ -142,22 +145,22 @@ fn run_oracle() -> Result<(), String> {
            id BIGINT UNSIGNED PRIMARY KEY,\
            name VARCHAR(32) NOT NULL,\
            score BIGINT NOT NULL,\
-           active BOOLEAN NOT NULL\
+           active BOOLEAN NOT NULL,\
+           note VARCHAR(32) NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          CREATE TABLE users (\
-           id BIGINT UNSIGNED PRIMARY KEY,\
+           id BIGINT PRIMARY KEY,\
            name VARCHAR(32) NOT NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          INSERT INTO events VALUES\
-           (1,'event-01',10,0),(2,'event-02',20,1),\
-           (3,'event-03',30,0),(4,'event-04',40,1),\
-           (5,'event-05',50,0),(6,'event-06',60,1),\
-           (7,'event-07',70,0),(8,'event-08',80,1),\
-           (9,'event-09',90,0),(10,'event-10',100,1);\
+           (1,'event-01',10,0,'Alpha'),(2,'event-02',20,1,'alpha'),\
+           (3,'event-03',30,0,NULL),(4,'event-04',40,1,'Beta'),\
+           (5,'event-05',50,0,'beta'),(6,'event-06',60,1,NULL),\
+           (7,'event-07',70,0,'Alpha'),(8,'event-08',80,1,'alpha'),\
+           (9,'event-09',90,0,NULL),(10,'event-10',100,1,'Beta');\
          INSERT INTO users VALUES\
            (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
-           (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08'),\
-           (9,'user-09'),(10,'user-10');",
+           (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');",
     )?;
 
     let events_directory =
@@ -181,7 +184,7 @@ fn run_oracle() -> Result<(), String> {
         .ingest((1..=10).map(event_row).collect())
         .map_err(|error| format!("ingest events: {error}"))?;
     users
-        .ingest((1..=10).map(user_row).collect())
+        .ingest((1..=8).map(user_row).collect())
         .map_err(|error| format!("ingest users: {error}"))?;
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
@@ -204,7 +207,7 @@ fn run_oracle() -> Result<(), String> {
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
         let actual = execute_pintail(&case.sql, &catalog, &provider)
             .map_err(|error| format!("case {index} ({}) `{}`: {error}", case.family, case.sql))?;
-        if !oracle_rows_equal(&actual, expected) {
+        if !oracle_rows_equal(&actual, expected, case.ordered) {
             failures.push(format!(
                 "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
                 case.family, case.sql
@@ -215,9 +218,7 @@ fn run_oracle() -> Result<(), String> {
         }
     }
     if failures.is_empty() {
-        println!(
-            "all {EXPECTED_CASES} generated queries matched MySQL 8.4 across 11 operator families"
-        );
+        println!("all {EXPECTED_CASES} generated and hand-written queries matched MySQL 8.4");
         Ok(())
     } else {
         Err(format!(
@@ -321,17 +322,39 @@ fn execute_pintail(
     Ok(rows)
 }
 
-fn oracle_rows_equal(actual: &[String], expected: &[String]) -> bool {
+fn oracle_rows_equal(actual: &[String], expected: &[String], ordered: bool) -> bool {
+    if actual.len() != expected.len() {
+        return false;
+    }
+    if ordered {
+        return actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| oracle_row_equal(actual, expected));
+    }
+    let mut matched = vec![false; expected.len()];
+    actual.iter().all(|actual| {
+        let Some(index) = expected
+            .iter()
+            .enumerate()
+            .find(|(index, expected)| !matched[*index] && oracle_row_equal(actual, expected))
+            .map(|(index, _)| index)
+        else {
+            return false;
+        };
+        matched[index] = true;
+        true
+    })
+}
+
+fn oracle_row_equal(actual: &str, expected: &str) -> bool {
+    let actual = actual.split('\t').collect::<Vec<_>>();
+    let expected = expected.split('\t').collect::<Vec<_>>();
     actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(actual, expected)| {
-            let actual = actual.split('\t').collect::<Vec<_>>();
-            let expected = expected.split('\t').collect::<Vec<_>>();
-            actual.len() == expected.len()
-                && actual
-                    .iter()
-                    .zip(expected)
-                    .all(|(actual, expected)| oracle_values_equal(actual, expected))
-        })
+        && actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| oracle_values_equal(actual, expected))
 }
 
 fn oracle_values_equal(actual: &str, expected: &str) -> bool {
@@ -360,16 +383,17 @@ fn canonical_value(value: &Value) -> String {
 #[allow(clippy::too_many_lines)]
 fn oracle_cases() -> Vec<OracleCase> {
     let mut cases = Vec::with_capacity(EXPECTED_CASES);
-    for value in 0..100 {
+    for value in 0..90 {
         cases.push(OracleCase {
             family: "arithmetic and predicates",
             sql: format!(
                 "SELECT {value} + 7, {value} * 3, {value} % 7, \
                  {value} BETWEEN 10 AND 80, {value} IN (3, 17, 42, 88)"
             ),
+            ordered: true,
         });
     }
-    for value in 0..100 {
+    for value in 0..90 {
         cases.push(OracleCase {
             family: "strings",
             sql: format!(
@@ -379,9 +403,10 @@ fn oracle_cases() -> Vec<OracleCase> {
                  RIGHT('abcdef', 2), LOCATE('tail', 'pintail'), \
                  CONVERT({value}, CHAR), CONVERT('MiXeD' USING utf8mb4)"
             ),
+            ordered: true,
         });
     }
-    for value in 0..100 {
+    for value in 0..90 {
         cases.push(OracleCase {
             family: "conditionals and nulls",
             sql: format!(
@@ -391,9 +416,10 @@ fn oracle_cases() -> Vec<OracleCase> {
                  IFNULL(NULL, {value}), COALESCE(NULL, NULL, {value} + 1), \
                  NULLIF({value} % 5, 0)"
             ),
+            ordered: true,
         });
     }
-    for value in 0..100 {
+    for value in 0..90 {
         let days = value % 28;
         cases.push(OracleCase {
             family: "date and time",
@@ -404,6 +430,7 @@ fn oracle_cases() -> Vec<OracleCase> {
                  YEAR('2024-02-29'), MONTH('2024-02-29'), DAY('2024-02-29'), \
                  DATE_FORMAT('2024-02-29 12:34:56', '%Y-%m-%d %H:%i:%s')"
             ),
+            ordered: true,
         });
     }
     for value in 0..50 {
@@ -415,6 +442,7 @@ fn oracle_cases() -> Vec<OracleCase> {
                  {value} NOT IN (SELECT 101 UNION ALL SELECT 102), \
                  (SELECT NULL)"
             ),
+            ordered: true,
         });
     }
     for value in 0..25 {
@@ -436,6 +464,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         cases.push(OracleCase {
             family: "relational subqueries",
             sql,
+            ordered: true,
         });
     }
     for value in 0..25 {
@@ -449,6 +478,7 @@ fn oracle_cases() -> Vec<OracleCase> {
                  SELECT flag, COUNT(*), MIN(label), MAX(label) FROM recent \
                  GROUP BY flag HAVING COUNT(*) >= 1 ORDER BY flag"
             ),
+            ordered: true,
         });
     }
     for value in 0..25 {
@@ -460,6 +490,7 @@ fn oracle_cases() -> Vec<OracleCase> {
                 "SELECT id, name, score FROM events \
                  WHERE id >= {threshold} ORDER BY name DESC LIMIT {limit}"
             ),
+            ordered: true,
         });
     }
     for value in 0..25 {
@@ -472,6 +503,7 @@ fn oracle_cases() -> Vec<OracleCase> {
                  FROM events WHERE id >= {threshold} \
                  GROUP BY active HAVING COUNT(*) >= 1 ORDER BY active"
             ),
+            ordered: true,
         });
     }
     for value in 0..25 {
@@ -484,6 +516,7 @@ fn oracle_cases() -> Vec<OracleCase> {
                  INNER JOIN users AS u ON e.id = u.id \
                  WHERE e.id >= {threshold} ORDER BY e.id LIMIT {limit}"
             ),
+            ordered: true,
         });
     }
     for value in 0..25 {
@@ -496,9 +529,208 @@ fn oracle_cases() -> Vec<OracleCase> {
                 value + 2,
                 value + 1
             ),
+            ordered: true,
         });
     }
+    cases.extend(hand_written_cases());
     cases
+}
+
+#[allow(clippy::too_many_lines)]
+fn hand_written_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    let unordered = |family, sql: &str| OracleCase {
+        family,
+        sql: sql.to_owned(),
+        ordered: false,
+    };
+    vec![
+        unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
+        unordered(
+            "hand-written distinct",
+            "SELECT DISTINCT active, note FROM events",
+        ),
+        ordered(
+            "hand-written left join",
+            "SELECT e.id, u.name FROM events e LEFT JOIN users u ON e.id = u.id \
+             WHERE e.id >= 7 ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written left join",
+            "SELECT e.id FROM events e LEFT JOIN users u ON e.id = u.id \
+             WHERE u.id IS NULL ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written cross join",
+            "SELECT e.id AS event_id, u.id AS user_id FROM events e CROSS JOIN users u \
+             WHERE e.id >= 9 AND u.id <= 2 ORDER BY event_id, user_id",
+        ),
+        unordered(
+            "hand-written cross join",
+            "SELECT e.name, u.name FROM events e, users u \
+             WHERE e.id = 10 AND u.id >= 7",
+        ),
+        ordered(
+            "hand-written null predicates",
+            "SELECT id FROM events WHERE note IS NULL OR active = TRUE ORDER BY id",
+        ),
+        ordered(
+            "hand-written null predicates",
+            "SELECT id FROM events WHERE NOT (note = 'alpha') ORDER BY id",
+        ),
+        ordered(
+            "hand-written null predicates",
+            "SELECT id FROM events WHERE note = 'alpha' OR note IS NULL ORDER BY id",
+        ),
+        ordered(
+            "hand-written null predicates",
+            "SELECT id FROM events WHERE note <> 'alpha' AND note IS NOT NULL ORDER BY id",
+        ),
+        ordered(
+            "hand-written logic",
+            "SELECT TRUE OR NULL, FALSE AND NULL, NOT NULL, NULL XOR TRUE",
+        ),
+        ordered(
+            "hand-written logic",
+            "SELECT id, (id = 1 AND active) OR id = 3 FROM events \
+             WHERE id <= 3 ORDER BY id",
+        ),
+        ordered(
+            "hand-written strings",
+            "SELECT UPPER('Pintáil'), LOWER('MiXeD'), LENGTH('Pintáil'), \
+             CHAR_LENGTH('Pintáil')",
+        ),
+        ordered(
+            "hand-written strings",
+            "SELECT 'Pintail' LIKE 'pin%', 'Pintail' NOT LIKE '%sql', \
+             'a_b' LIKE 'a_b'",
+        ),
+        ordered(
+            "hand-written date and time",
+            "SELECT HOUR('2024-02-29 12:34:56'), \
+             MINUTE('2024-02-29 12:34:56'), SECOND('2024-02-29 12:34:56')",
+        ),
+        ordered(
+            "hand-written date and time",
+            "SELECT UNIX_TIMESTAMP(FROM_UNIXTIME(1704067200)), \
+             FROM_UNIXTIME(UNIX_TIMESTAMP('2024-01-01 12:34:56'))",
+        ),
+        ordered(
+            "hand-written date and time",
+            "SELECT DATE(NOW()) = CURDATE(), LENGTH(NOW()), CHAR_LENGTH(CURDATE())",
+        ),
+        ordered(
+            "hand-written date and time",
+            "SELECT DATE_FORMAT('2024-02-29 12:34:56', '%c/%e/%Y %k:%i:%s'), \
+             DATE('2024-02-29 12:34:56')",
+        ),
+        ordered(
+            "hand-written conditionals",
+            "SELECT IF(NULL, 'yes', 'no'), COALESCE(NULL, 'first', 'second'), \
+             NULLIF('Alpha', 'alpha')",
+        ),
+        ordered(
+            "hand-written derived table",
+            "SELECT d.active, COUNT(*) FROM \
+             (SELECT id, active FROM events WHERE id >= 5) d \
+             GROUP BY d.active ORDER BY d.active",
+        ),
+        ordered(
+            "hand-written common table expression",
+            "WITH missing AS (SELECT e.id FROM events e LEFT JOIN users u ON e.id = u.id \
+             WHERE u.id IS NULL) SELECT id FROM missing ORDER BY id",
+        ),
+        ordered(
+            "hand-written distinct aggregate",
+            "SELECT COUNT(note), COUNT(DISTINCT note), GROUP_CONCAT(note) FROM events",
+        ),
+        ordered(
+            "hand-written null membership",
+            "SELECT id FROM events WHERE note NOT IN ('missing', NULL) ORDER BY id",
+        ),
+        ordered(
+            "hand-written null membership",
+            "SELECT id FROM events WHERE note IN ('alpha', NULL) ORDER BY id",
+        ),
+        ordered(
+            "hand-written null membership",
+            "SELECT 1 IN (1, NULL), 2 IN (1, NULL), 2 NOT IN (1, NULL), \
+             NULL IN (1, 2)",
+        ),
+        ordered(
+            "hand-written grouping",
+            "SELECT note, COUNT(*), MIN(name), MAX(name) FROM events \
+             GROUP BY note ORDER BY note",
+        ),
+        ordered(
+            "hand-written collation",
+            "SELECT MIN(note), MAX(note) FROM events",
+        ),
+        ordered(
+            "hand-written left join aggregate",
+            "SELECT u.id IS NULL, COUNT(*) FROM events e LEFT JOIN users u ON e.id = u.id \
+             GROUP BY u.id IS NULL ORDER BY u.id IS NULL",
+        ),
+        ordered(
+            "hand-written relational subquery",
+            "SELECT id FROM events WHERE id NOT IN (SELECT id FROM users) ORDER BY id",
+        ),
+        ordered(
+            "hand-written relational subquery",
+            "SELECT (SELECT MAX(id) FROM users), \
+             10 IN (SELECT id FROM users), 8 IN (SELECT id FROM users)",
+        ),
+        unordered(
+            "hand-written union all",
+            "SELECT 3 AS value UNION ALL SELECT 1 UNION ALL SELECT 2",
+        ),
+        ordered(
+            "hand-written union all",
+            "SELECT note FROM events WHERE id <= 2 UNION ALL \
+             SELECT note FROM events WHERE id >= 9 ORDER BY note",
+        ),
+        unordered(
+            "hand-written left join distinct",
+            "SELECT DISTINCT u.name FROM events e LEFT JOIN users u ON e.id = u.id",
+        ),
+        ordered(
+            "hand-written limit offset",
+            "SELECT id, name FROM events ORDER BY id LIMIT 3 OFFSET 4",
+        ),
+        ordered(
+            "hand-written reversed comparison",
+            "SELECT id FROM events WHERE 8 <= id AND 10 > id ORDER BY id",
+        ),
+        ordered(
+            "hand-written between",
+            "SELECT id, id NOT BETWEEN 3 AND 7 FROM events \
+             WHERE id IN (1, 3, 7, 10) ORDER BY id",
+        ),
+        ordered(
+            "hand-written arithmetic",
+            "SELECT -7 DIV 3, -7 % 3, 7 / 2, 7 DIV 2",
+        ),
+        ordered(
+            "hand-written aggregate empty input",
+            "SELECT COUNT(*), SUM(score), AVG(score), MIN(note), MAX(note) \
+             FROM events WHERE id > 100",
+        ),
+        ordered(
+            "hand-written scalar subquery",
+            "SELECT id, (SELECT name FROM users WHERE id = 8) \
+             FROM events WHERE id IN (1, 8) ORDER BY id",
+        ),
+        ordered(
+            "hand-written case expression",
+            "SELECT id, CASE WHEN note IS NULL THEN 'none' \
+             WHEN note = 'alpha' THEN 'a' ELSE 'b' END \
+             FROM events WHERE id >= 7 ORDER BY id",
+        ),
+    ]
 }
 
 fn catalog(
@@ -511,13 +743,17 @@ fn catalog(
         events_schema,
         TableStatistics::with_row_count(10),
     )
+    .map_err(|error| error.to_string())?
+    .with_key_columns([1])
     .map_err(|error| error.to_string())?;
     let users = TableEntry::new(
         USERS_ID,
         "users",
         users_schema,
-        TableStatistics::with_row_count(10),
+        TableStatistics::with_row_count(8),
     )
+    .map_err(|error| error.to_string())?
+    .with_key_columns([1])
     .map_err(|error| error.to_string())?;
     let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users])
         .map_err(|error| error.to_string())?;
@@ -532,6 +768,7 @@ fn events_schema() -> Result<TableSchema, String> {
             Column::new(2, "name", DataType::Utf8, false),
             Column::new(3, "score", DataType::Int64, false),
             Column::new(4, "active", DataType::Boolean, false),
+            Column::new(5, "note", DataType::Utf8, true),
         ],
     )
     .map_err(|error| error.to_string())
@@ -541,7 +778,7 @@ fn users_schema() -> Result<TableSchema, String> {
     TableSchema::new(
         1,
         vec![
-            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(1, "id", DataType::Int64, false),
             Column::new(2, "name", DataType::Utf8, false),
         ],
     )
@@ -556,6 +793,14 @@ fn event_row(id: u64) -> StoredRow {
             Value::Utf8(format!("event-{id:02}")),
             Value::Int64(i64::try_from(id * 10).expect("small seed score")),
             Value::Boolean(id % 2 == 0),
+            match id {
+                1 | 7 => Value::Utf8("Alpha".to_owned()),
+                2 | 8 => Value::Utf8("alpha".to_owned()),
+                4 | 10 => Value::Utf8("Beta".to_owned()),
+                5 => Value::Utf8("beta".to_owned()),
+                3 | 6 | 9 => Value::Null,
+                _ => unreachable!("oracle event IDs are 1 through 10"),
+            },
         ],
         id,
         false,
@@ -563,10 +808,11 @@ fn event_row(id: u64) -> StoredRow {
 }
 
 fn user_row(id: u64) -> StoredRow {
+    let id = i64::try_from(id).expect("small seed id");
     StoredRow::new(
-        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("non-empty user key"),
-        vec![Value::UInt64(id), Value::Utf8(format!("user-{id:02}"))],
-        id,
+        PrimaryKey::new(vec![KeyPart::Int64(id)]).expect("non-empty user key"),
+        vec![Value::Int64(id), Value::Utf8(format!("user-{id:02}"))],
+        u64::try_from(id).expect("positive oracle event ID"),
         false,
     )
 }

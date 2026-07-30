@@ -590,7 +590,7 @@ pub(crate) fn predicate_truth(value: &Value) -> Result<bool, ExecError> {
     Ok(mysql_truth(value)?.unwrap_or(false))
 }
 
-fn evaluate_unary(
+pub(crate) fn evaluate_unary(
     op: UnaryOp,
     value: &Value,
     data_type: Option<DataType>,
@@ -616,7 +616,7 @@ fn evaluate_unary(
     }
 }
 
-fn evaluate_binary(
+pub(crate) fn evaluate_binary(
     op: BinaryOp,
     left: &Value,
     right: &Value,
@@ -789,7 +789,7 @@ fn cast_numeric(value: &Value, data_type: Option<DataType>) -> Result<Value, Exe
     }
 }
 
-fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
+pub(crate) fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
     match value {
         Value::Null => Ok(None),
         Value::Boolean(value) => Ok(Some(*value)),

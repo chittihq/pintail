@@ -62,6 +62,6 @@ cargo test -p pintail-sqllogic --test mysql_oracle -- --ignored --nocapture
 ```
 
 The final command starts a uniquely named MySQL 8.4 Docker container and
-compares 600 deterministic queries over equivalent MySQL and Pintail data.
-Current compatibility boundaries are recorded in
+compares 600 generated and hand-written queries over equivalent nullable
+MySQL and Pintail data. Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).

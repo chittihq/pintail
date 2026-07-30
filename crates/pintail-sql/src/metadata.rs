@@ -401,13 +401,14 @@ fn evaluate_metadata_predicate(
             let equal = metadata_equal(
                 &metadata_expr_value(left, fields, row)?,
                 &metadata_expr_value(right, fields, row)?,
-            )
-            .unwrap_or(false);
-            Ok(if *op == BinaryOperator::Eq {
-                equal
-            } else {
-                !equal
-            })
+            );
+            Ok(equal.is_some_and(|equal| {
+                if *op == BinaryOperator::Eq {
+                    equal
+                } else {
+                    !equal
+                }
+            }))
         }
         Expr::IsNull(expression) => Ok(matches!(
             metadata_expr_value(expression, fields, row)?,
@@ -423,14 +424,25 @@ fn evaluate_metadata_predicate(
             negated,
         } => {
             let needle = metadata_expr_value(expr, fields, row)?;
-            let found = list.iter().try_fold(false, |found, candidate| {
-                Ok::<_, MetadataError>(
-                    found
-                        || metadata_equal(&needle, &metadata_expr_value(candidate, fields, row)?)
-                            .unwrap_or(false),
-                )
-            })?;
-            Ok(if *negated { !found } else { found })
+            if matches!(needle, Value::Null) {
+                return Ok(false);
+            }
+            let mut found = false;
+            let mut contains_null = false;
+            for candidate in list {
+                match metadata_equal(&needle, &metadata_expr_value(candidate, fields, row)?) {
+                    Some(true) => found = true,
+                    Some(false) => {}
+                    None => contains_null = true,
+                }
+            }
+            Ok(if found {
+                !*negated
+            } else if contains_null {
+                false
+            } else {
+                *negated
+            })
         }
         Expr::Like {
             negated,
@@ -441,6 +453,9 @@ fn evaluate_metadata_predicate(
         } => {
             let value = metadata_expr_value(expr, fields, row)?;
             let pattern = metadata_expr_value(pattern, fields, row)?;
+            if matches!(value, Value::Null) || matches!(pattern, Value::Null) {
+                return Ok(false);
+            }
             let matched = match (&value, &pattern) {
                 (Value::Utf8(value), Value::Utf8(pattern)) => metadata_like(value, pattern),
                 _ => false,
@@ -886,5 +901,38 @@ mod tests {
         )
         .expect("count");
         assert_eq!(count.rows, [vec![Value::UInt64(2)]]);
+    }
+
+    #[test]
+    fn information_schema_filters_null_with_mysql_three_valued_logic() {
+        let catalog = catalog();
+        for predicate in [
+            "column_default = NULL",
+            "column_default != 'value'",
+            "column_default NOT IN ('value')",
+            "column_name NOT IN ('missing', NULL)",
+            "column_default NOT LIKE '%'",
+        ] {
+            let sql = format!("SELECT COUNT(*) FROM information_schema.columns WHERE {predicate}");
+            let result = execute_metadata(&parse_statement(&sql).expect("parse"), &catalog, None)
+                .expect("metadata query");
+            assert_eq!(
+                result.rows,
+                [vec![Value::UInt64(0)]],
+                "predicate: {predicate}"
+            );
+        }
+
+        let result = execute_metadata(
+            &parse_statement(
+                "SELECT column_name FROM information_schema.columns \
+                 WHERE column_name IN ('id', NULL)",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+        )
+        .expect("metadata query");
+        assert_eq!(result.rows, [vec![Value::Utf8("id".to_owned())]]);
     }
 }

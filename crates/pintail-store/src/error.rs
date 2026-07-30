@@ -64,6 +64,15 @@ pub enum StoreError {
     SequenceOverflow,
     /// A collection could not be represented by the on-disk format.
     FormatLimit(String),
+    /// A bounded projected scan would exceed its caller-owned memory budget.
+    MemoryLimitExceeded {
+        /// Bytes already reserved by the scan.
+        used: usize,
+        /// Additional bytes requested.
+        requested: usize,
+        /// Hard scan limit.
+        limit: usize,
+    },
 }
 
 impl StoreError {
@@ -129,6 +138,14 @@ impl fmt::Display for StoreError {
             }
             Self::SequenceOverflow => formatter.write_str("WAL sequence number overflow"),
             Self::FormatLimit(reason) => write!(formatter, "storage format limit: {reason}"),
+            Self::MemoryLimitExceeded {
+                used,
+                requested,
+                limit,
+            } => write!(
+                formatter,
+                "projected scan memory limit exceeded: {used} bytes used, {requested} requested, {limit} limit"
+            ),
         }
     }
 }

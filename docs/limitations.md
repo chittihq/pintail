@@ -51,17 +51,22 @@ plausible but incorrect result.
 
 ### Planning and execution
 
-- Storage predicate-to-key-range translation currently targets supported
-  comparisons on the first and only component of a primary or unique key.
-  Composite-key scans remain correct but do not receive this physical range
-  pruning yet.
+- Storage predicate-to-key-range translation requires an explicitly declared
+  one-column physical key mapping, an `Int64` or `UInt64` key, and an exact
+  or losslessly convertible integer literal. Text keys, numeric/string
+  coercions, out-of-range signedness conversions, synthetic append-row IDs,
+  undeclared mappings, and composite keys remain correct but deliberately
+  skip physical range pruning.
 - Parallel projected scans schedule independent segment header and
-  late-materialization work on Rayon. A snapshot containing only one relevant
-  segment has no smaller storage morsels to parallelize.
+  late-materialization work on a Pintail-owned Rayon pool. A snapshot
+  containing only one relevant segment has no smaller storage morsels to
+  parallelize.
 - Hash joins, hash aggregation, sorting, distinct state, subquery
-  materialization, and cross joins obey a hard per-query memory cap. Spill to
-  disk is intentionally a v1.1 feature. Cross joins also require catalog
-  cardinalities and reject estimates above one million rows.
+  materialization, retained projected scans, and cross joins obey a hard
+  per-query memory cap. LIMIT-aware top-K retains only the current candidates
+  plus one input batch; full sorting still materializes its complete input.
+  Spill to disk is intentionally a v1.1 feature. Cross joins also require
+  catalog cardinalities and reject estimates above one million rows.
 - Aggregate pushdown is intentionally conservative. M2 removes only
   unreferenced predicate-free cross-join inputs with an exact catalog
   cardinality of one; Pintail has no relationship or uniqueness statistics

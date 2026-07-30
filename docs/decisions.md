@@ -84,12 +84,23 @@ bounded execution.
 
 ### Projected scans parallelize independent segment work
 
-Projected scans use Rayon's dedicated worker pool, a data-path CPU utility
-explicitly permitted by the goal specification. Header/zone-map reads and
-late column fetches run in parallel per segment; max-version and tombstone
-winner resolution remains deterministic and single-owner after the parallel
-results return. This preserves merge-on-read correctness and stable output
-ordering without exposing storage internals to the async runtime.
+Projected scans use a Pintail-owned Rayon thread pool, a data-path CPU utility
+explicitly permitted by the goal specification. Header/zone-map reads and late
+column fetches run in parallel per segment; max-version and tombstone winner
+resolution remains deterministic and single-owner after the parallel results
+return. This preserves merge-on-read correctness, isolates scan scheduling
+from Rayon's process-global pool, and avoids exposing storage internals to the
+async runtime.
+
+### Key pruning requires explicit catalog provenance
+
+Catalog table entries carry stable source-column IDs for each physical key
+component. The executor never infers that the first visible column produced
+the first storage-key component: append-row IDs, reordered schemas, and source
+index choices make that inference unsafe. M2 range pruning is therefore
+restricted to an explicitly declared single `Int64` or `UInt64` key and an
+exact or losslessly convertible integer literal. Every other predicate falls
+back to a correct full physical-key range.
 
 ### Aggregate pushdown requires a proof
 

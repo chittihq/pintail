@@ -5,7 +5,7 @@ use std::{
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction};
-use pintail_store::{ScanStats, TableSnapshot};
+use pintail_store::{ProjectedRow, ScanStats, StoreError, TableSnapshot};
 use pintail_types::{KeyPart, PrimaryKey, Value};
 
 use crate::{
@@ -118,7 +118,11 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
 }
 
 impl ScanProvider for SnapshotScanProvider<'_> {
-    fn open_scan(&self, scan: &Scan) -> Result<Box<dyn BatchStream>, ExecError> {
+    fn open_scan(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
         let key = (scan.table.database_id, scan.table.table_id);
         let snapshot = self.snapshots.get(&key).ok_or(ExecError::MissingSnapshot {
             database_id: key.0,
@@ -151,49 +155,66 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             .iter()
             .map(|position| snapshot.schema().columns()[*position].data_type())
             .collect::<Vec<_>>();
+        let stream_overhead = std::mem::size_of::<SnapshotStream>()
+            .saturating_add(types.capacity() * std::mem::size_of::<pintail_types::DataType>());
+        if stream_overhead > memory_limit {
+            return Err(ExecError::MemoryLimitExceeded {
+                used: 0,
+                requested: stream_overhead,
+                limit: memory_limit,
+            });
+        }
 
         let Some((start, end)) = storage_key_range(scan, snapshot) else {
             self.record_stats(key, PhysicalScanStats::default());
             return Ok(Box::new(SnapshotStream {
-                batches: VecDeque::new(),
+                rows: VecDeque::new(),
+                types,
+                retained_bytes: stream_overhead,
             }));
         };
         let projected = snapshot
-            .scan_projected_range(&start, &end, &scan.projected_column_ids)
-            .map_err(|error| ExecError::Source(error.to_string()))?;
+            .scan_projected_range_bounded(
+                &start,
+                &end,
+                &scan.projected_column_ids,
+                memory_limit - stream_overhead,
+            )
+            .map_err(|error| match error {
+                StoreError::MemoryLimitExceeded {
+                    used,
+                    requested,
+                    limit: _,
+                } => ExecError::MemoryLimitExceeded {
+                    used: used.saturating_add(stream_overhead),
+                    requested,
+                    limit: memory_limit,
+                },
+                other => ExecError::Source(other.to_string()),
+            })?;
         self.record_stats(key, projected.stats().into());
-        let mut rows = projected.rows();
+        let mut rows = projected.into_rows();
         if scan.predicates.is_empty()
             && let Some(limit) = scan.limit
         {
             let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-            rows = &rows[..rows.len().min(limit)];
+            rows.truncate(limit);
+            rows.shrink_to_fit();
         }
-
-        let mut batches = VecDeque::new();
-        for rows in rows.chunks(DEFAULT_BATCH_ROWS) {
-            let columns = types
+        let retained_bytes = rows.capacity() * std::mem::size_of::<ProjectedRow>()
+            + rows
                 .iter()
-                .enumerate()
-                .map(|(position, data_type)| {
-                    let values = rows
-                        .iter()
-                        .map(|row| {
-                            row.values()
-                                .get(position)
-                                .cloned()
-                                .ok_or(ExecError::InvalidBatch(
-                                    "stored row is shorter than its snapshot schema",
-                                ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    ColumnVector::new(*data_type, values).map_err(ExecError::from)
+                .map(|row| {
+                    row.estimated_bytes()
+                        .saturating_sub(std::mem::size_of::<ProjectedRow>())
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            batches.push_back(RecordBatch::new(rows.len(), columns)?);
-        }
-
-        Ok(Box::new(SnapshotStream { batches }))
+                .sum::<usize>()
+                .saturating_add(stream_overhead);
+        Ok(Box::new(SnapshotStream {
+            rows: rows.into(),
+            types,
+            retained_bytes,
+        }))
     }
 }
 
@@ -202,9 +223,23 @@ fn storage_key_range(scan: &Scan, snapshot: &TableSnapshot) -> Option<(PrimaryKe
     let ([minimum_part], [maximum_part]) = (minimum.parts(), maximum.parts()) else {
         return Some((minimum, maximum));
     };
-    let Some(key_column) = snapshot.schema().columns().first() else {
+    let [key_column_id] = scan.table.key_column_ids.as_slice() else {
         return Some((minimum, maximum));
     };
+    let Some(key_column) = snapshot
+        .schema()
+        .columns()
+        .iter()
+        .find(|column| column.id() == *key_column_id)
+    else {
+        return Some((minimum, maximum));
+    };
+    if !matches!(
+        key_column.data_type(),
+        pintail_types::DataType::Int64 | pintail_types::DataType::UInt64
+    ) {
+        return Some((minimum, maximum));
+    }
     if !key_part_matches_column(minimum_part, key_column.data_type())
         || !key_part_matches_column(maximum_part, key_column.data_type())
     {
@@ -275,15 +310,22 @@ fn key_literal(expression: &BoundExpr, key_type: &KeyPart) -> Option<KeyPart> {
         return None;
     };
     match (value, key_type) {
+        (Value::Int64(value), KeyPart::Int64(_)) => Some(KeyPart::Int64(*value)),
+        (Value::UInt64(value), KeyPart::UInt64(_)) => Some(KeyPart::UInt64(*value)),
         (Value::Int64(value), KeyPart::UInt64(_)) => {
             u64::try_from(*value).ok().map(KeyPart::UInt64)
         }
         (Value::UInt64(value), KeyPart::Int64(_)) => i64::try_from(*value).ok().map(KeyPart::Int64),
-        (Value::Int64(value), _) => Some(KeyPart::Int64(*value)),
-        (Value::UInt64(value), _) => Some(KeyPart::UInt64(*value)),
-        (Value::Utf8(value), _) => Some(KeyPart::Utf8(value.clone())),
-        (Value::Binary(value), _) => Some(KeyPart::Binary(value.clone())),
-        (Value::Null | Value::Boolean(_) | Value::Float64(_), _) => None,
+        (
+            Value::Null
+            | Value::Boolean(_)
+            | Value::Int64(_)
+            | Value::UInt64(_)
+            | Value::Float64(_)
+            | Value::Utf8(_)
+            | Value::Binary(_),
+            _,
+        ) => None,
     }
 }
 
@@ -375,12 +417,59 @@ fn predecessor(value: &KeyPart) -> Option<KeyPart> {
 }
 
 struct SnapshotStream {
-    batches: VecDeque<RecordBatch>,
+    rows: VecDeque<ProjectedRow>,
+    types: Vec<pintail_types::DataType>,
+    retained_bytes: usize,
 }
 
 impl BatchStream for SnapshotStream {
     fn next_batch(&mut self) -> Result<Option<RecordBatch>, ExecError> {
-        Ok(self.batches.pop_front())
+        if self.rows.is_empty() {
+            return Ok(None);
+        }
+        let row_count = self.rows.len().min(DEFAULT_BATCH_ROWS);
+        let mut values_by_column = self
+            .types
+            .iter()
+            .map(|_| Vec::with_capacity(row_count))
+            .collect::<Vec<_>>();
+        for _ in 0..row_count {
+            let row = self.rows.pop_front().expect("row count bounded above");
+            self.retained_bytes = self.retained_bytes.saturating_sub(
+                row.estimated_bytes()
+                    .saturating_sub(std::mem::size_of::<ProjectedRow>()),
+            );
+            let values = row.into_values();
+            if values.len() != self.types.len() {
+                return Err(ExecError::InvalidBatch(
+                    "stored row is shorter than its snapshot schema",
+                ));
+            }
+            for (position, value) in values.into_iter().enumerate() {
+                values_by_column[position].push(value);
+            }
+        }
+        if self.rows.is_empty() {
+            let capacity = self.rows.capacity();
+            self.rows.shrink_to_fit();
+            self.retained_bytes = self.retained_bytes.saturating_sub(
+                capacity.saturating_sub(self.rows.capacity()) * std::mem::size_of::<ProjectedRow>(),
+            );
+        }
+        let columns = self
+            .types
+            .iter()
+            .copied()
+            .zip(values_by_column)
+            .map(|(data_type, values)| {
+                ColumnVector::new(data_type, values).map_err(ExecError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(RecordBatch::new(row_count, columns)?))
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.retained_bytes
     }
 }
 
@@ -397,6 +486,32 @@ mod tests {
         ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
         explain_analyze_statement,
     };
+
+    fn execute_values(
+        sql: &str,
+        catalog: &CatalogSnapshot,
+        provider: &SnapshotScanProvider<'_>,
+    ) -> Vec<Value> {
+        let statement = parse_statement(sql).expect("parse query");
+        let bound = Binder::new(catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind query");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical plan");
+        let mut execution =
+            Execution::start(physical, provider, 64 * 1024).expect("start execution");
+        let mut values = Vec::new();
+        while let Some(batch) = execution.next_batch().expect("pull batch") {
+            values.extend(batch.selection().selected_rows().map(|row| {
+                batch
+                    .column(0)
+                    .and_then(|column| column.value(row))
+                    .cloned()
+                    .expect("selected value")
+            }));
+        }
+        values
+    }
 
     #[test]
     fn executes_queries_against_pinned_storage_snapshots() {
@@ -551,7 +666,9 @@ mod tests {
             schema,
             TableStatistics::with_row_count(8),
         )
-        .expect("table");
+        .expect("table")
+        .with_key_columns([1])
+        .expect("key columns");
         let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database");
         let catalog = CatalogSnapshot::new([database]).expect("catalog");
         let provider =
@@ -606,11 +723,189 @@ mod tests {
     }
 
     #[test]
+    fn key_pruning_requires_an_exact_declared_numeric_mapping() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest(vec![row(1, "alpha"), row(2, "Beta"), row(3, "gamma")])
+            .expect("ingest");
+        table.flush().expect("flush");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(5);
+        let table_id = TableId::new(7);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(3),
+        )
+        .expect("table")
+        .with_key_columns([1])
+        .expect("physical key mapping");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        assert_eq!(
+            execute_values(
+                "SELECT name FROM events WHERE id = '2'",
+                &catalog,
+                &provider
+            ),
+            [Value::Utf8("Beta".to_owned())]
+        );
+    }
+
+    #[test]
+    fn text_key_predicates_do_not_use_bytewise_storage_pruning() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = TableSchema::new(1, vec![Column::new(1, "name", DataType::Utf8, false)])
+            .expect("schema");
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest(vec![
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::Utf8("Alpha".to_owned())]).expect("key"),
+                    vec![Value::Utf8("Alpha".to_owned())],
+                    1,
+                    false,
+                ),
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::Utf8("alpha".to_owned())]).expect("key"),
+                    vec![Value::Utf8("alpha".to_owned())],
+                    2,
+                    false,
+                ),
+            ])
+            .expect("ingest");
+        table.flush().expect("flush");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(5);
+        let table_id = TableId::new(7);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(2),
+        )
+        .expect("table")
+        .with_key_columns([1])
+        .expect("physical key mapping");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let mut values = execute_values(
+            "SELECT name FROM events WHERE name = 'alpha'",
+            &catalog,
+            &provider,
+        );
+        values.sort_by(|left, right| format!("{left:?}").cmp(&format!("{right:?}")));
+        assert_eq!(
+            values,
+            [
+                Value::Utf8("Alpha".to_owned()),
+                Value::Utf8("alpha".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn executes_left_semi_and_anti_hash_joins() {
+        let events_directory = tempfile::tempdir().expect("events directory");
+        let users_directory = tempfile::tempdir().expect("users directory");
+        let events_schema = schema();
+        let users_schema = signed_schema();
+        let mut events = TableStore::open(
+            events_directory.path(),
+            events_schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("open events");
+        let mut users = TableStore::open(
+            users_directory.path(),
+            users_schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("open users");
+        events
+            .ingest(vec![
+                row(1, "event-a"),
+                row(2, "event-b"),
+                row(3, "event-c"),
+            ])
+            .expect("ingest events");
+        users
+            .ingest(vec![signed_row(2, "user-b")])
+            .expect("ingest users");
+        let events_snapshot = events.snapshot();
+        let users_snapshot = users.snapshot();
+        let database_id = DatabaseId::new(5);
+        let events_id = TableId::new(7);
+        let users_id = TableId::new(8);
+        let database = DatabaseEntry::new(
+            database_id,
+            "app",
+            [
+                TableEntry::new(
+                    events_id,
+                    "events",
+                    events_schema,
+                    TableStatistics::with_row_count(3),
+                )
+                .expect("events entry"),
+                TableEntry::new(
+                    users_id,
+                    "users",
+                    users_schema,
+                    TableStatistics::with_row_count(1),
+                )
+                .expect("users entry"),
+            ],
+        )
+        .expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider = SnapshotScanProvider::new([
+            (database_id, events_id, &events_snapshot),
+            (database_id, users_id, &users_snapshot),
+        ])
+        .expect("provider");
+
+        assert_eq!(
+            execute_values(
+                "SELECT events.name FROM events LEFT SEMI JOIN users \
+                 ON events.id = users.id ORDER BY events.name",
+                &catalog,
+                &provider,
+            ),
+            [Value::Utf8("event-b".to_owned())]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT events.name FROM events LEFT ANTI JOIN users \
+                 ON events.id = users.id ORDER BY events.name",
+                &catalog,
+                &provider,
+            ),
+            [
+                Value::Utf8("event-a".to_owned()),
+                Value::Utf8("event-c".to_owned())
+            ]
+        );
+    }
+
+    #[test]
     #[allow(clippy::too_many_lines)]
-    fn executes_guarded_cross_joins_in_bounded_output_batches() {
+    fn executes_cross_joins_mixed_numeric_hash_joins_and_subqueries() {
         let events_directory = tempfile::tempdir().expect("events directory");
         let users_directory = tempfile::tempdir().expect("users directory");
         let schema = schema();
+        let users_schema = signed_schema();
         let mut events = TableStore::open(
             events_directory.path(),
             schema.clone(),
@@ -619,7 +914,7 @@ mod tests {
         .expect("open events");
         let mut users = TableStore::open(
             users_directory.path(),
-            schema.clone(),
+            users_schema.clone(),
             StoreOptions::default(),
         )
         .expect("open users");
@@ -627,7 +922,7 @@ mod tests {
             .ingest(vec![row(1, "event-a"), row(2, "event-b")])
             .expect("ingest events");
         users
-            .ingest(vec![row(1, "user-a"), row(2, "user-b")])
+            .ingest(vec![signed_row(1, "user-a"), signed_row(2, "user-b")])
             .expect("ingest users");
         let events_snapshot = events.snapshot();
         let users_snapshot = users.snapshot();
@@ -649,7 +944,7 @@ mod tests {
                 TableEntry::new(
                     users_id,
                     "users",
-                    schema,
+                    users_schema,
                     TableStatistics::with_row_count(2),
                 )
                 .expect("users entry"),
@@ -808,7 +1103,7 @@ mod tests {
         );
         assert_eq!(
             batch.column(1).expect("maximum").values(),
-            [Value::UInt64(2), Value::UInt64(2)]
+            [Value::Int64(2), Value::Int64(2)]
         );
         assert_eq!(
             batch.column(2).expect("membership").values(),
@@ -844,6 +1139,26 @@ mod tests {
             PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
             vec![Value::UInt64(id), Value::Utf8(name.to_owned())],
             id,
+            false,
+        )
+    }
+
+    fn signed_schema() -> TableSchema {
+        TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::Int64, false),
+                Column::new(2, "name", DataType::Utf8, true),
+            ],
+        )
+        .expect("schema")
+    }
+
+    fn signed_row(id: i64, name: &str) -> StoredRow {
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::Int64(id)]).expect("key"),
+            vec![Value::Int64(id), Value::Utf8(name.to_owned())],
+            u64::try_from(id).expect("positive test ID"),
             false,
         )
     }

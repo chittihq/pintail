@@ -36,7 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   projected batches, validates schema generations, and supports zero-column
   scans for constant-per-row queries.
 - Morsel-style projected scans that read independent segment headers and
-  late-materialized column blocks concurrently on a dedicated Rayon worker
+  late-materialized column blocks concurrently on a Pintail-owned Rayon worker
   pool, followed by deterministic version-winner resolution.
 - Memory-accounted streaming DISTINCT and materialized cross-join execution,
   with catalog cardinality required up front and a one-million-row Cartesian
@@ -91,9 +91,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Typed non-recursive common table expressions and derived tables with fresh
   relation identities, projected column aliases, nested optimization, and
   execution through outer filters, aggregation, sorting, and hash joins.
-- A Docker-backed 600-query MySQL 8.4 differential oracle covering eleven
-  deterministic scalar, date, subquery, scan, sort, aggregation, join, and
-  `UNION ALL` workload families over equivalent pinned storage snapshots.
+- A Docker-backed 600-query MySQL 8.4 differential oracle combining generated
+  cases with hand-written DISTINCT, nullable-table, three-valued logic,
+  left/cross/inner join, scalar/date, subquery, scan, sort, aggregation, and
+  `UNION ALL` workloads over equivalent pinned storage snapshots, with
+  order-insensitive comparison where SQL does not specify row order.
 - A plan-quality gate proving a selective predicate reads one of two segments
   and one of two key blocks while returning the MySQL-equivalent result.
 
@@ -101,14 +103,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - UTF-8 `MIN` and `MAX` now use Pintail's case-insensitive comparison
   semantics, matching text predicates, grouping, joins, and ordering.
+- Physical key pruning now requires explicit stable catalog key-column
+  metadata and lossless integer conversion; unsafe first-column, text,
+  append-row-id, out-of-range, and string-coercing assumptions fall back to a
+  full scan.
+- DISTINCT and mixed signed/unsigned hash joins now share the executor's
+  case-insensitive and lossless numeric equality semantics.
+- Projected scans transfer owned rows into pull batches without cloning the
+  complete result, LIMIT-aware top-K trims after every input batch, and
+  retained scan/container/subquery state participates in the hard query cap.
+- Constant folding and `information_schema` filtering now reuse MySQL
+  three-valued and case-insensitive runtime semantics.
 
 ### Verification
 
 - Rust formatting, workspace Clippy with warnings denied, and the complete
   locked workspace test suite pass.
 - Bun's frozen install, dashboard type check, and static generation pass.
-- The Docker-backed differential corpus matches all 600 queries against
-  MySQL 8.4 across eleven operator families.
+- The Docker-backed generated and hand-written differential corpus matches all
+  600 queries against MySQL 8.4.
 - The plan-quality gate proves a selective key predicate reads one of two
   segments and one of two logical key blocks.
 

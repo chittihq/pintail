@@ -5,6 +5,9 @@ use std::{
     mem::{size_of, size_of_val},
 };
 
+const HASH_ENTRY_OVERHEAD: usize = 3 * size_of::<usize>();
+const BTREE_ENTRY_OVERHEAD: usize = 4 * size_of::<usize>();
+
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
@@ -344,7 +347,7 @@ fn equi_join_keys(
     else {
         return None;
     };
-    if first.data_type != second.data_type {
+    if !hash_join_types_compatible(first.data_type, second.data_type) {
         return None;
     }
     let left_tables = logical_tables(left);
@@ -358,6 +361,15 @@ fn equi_join_keys(
     } else {
         None
     }
+}
+
+fn hash_join_types_compatible(left: Option<DataType>, right: Option<DataType>) -> bool {
+    left == right
+        || matches!(
+            (left, right),
+            (Some(DataType::Int64), Some(DataType::UInt64))
+                | (Some(DataType::UInt64), Some(DataType::Int64))
+        )
 }
 
 fn logical_tables(plan: &LogicalPlan) -> BTreeSet<(DatabaseId, TableId)> {
@@ -434,6 +446,12 @@ pub trait BatchStream: Send {
     ///
     /// Returns a source-specific execution error.
     fn next_batch(&mut self) -> Result<Option<RecordBatch>, ExecError>;
+
+    /// Returns bytes retained between pulls by this stream.
+    #[must_use]
+    fn retained_bytes(&self) -> usize {
+        0
+    }
 }
 
 /// Opens storage scans for physical execution.
@@ -444,7 +462,11 @@ pub trait ScanProvider {
     /// # Errors
     ///
     /// Returns a source-specific execution error.
-    fn open_scan(&self, scan: &Scan) -> Result<Box<dyn BatchStream>, ExecError>;
+    fn open_scan(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+    ) -> Result<Box<dyn BatchStream>, ExecError>;
 }
 
 /// Hard per-query memory accounting.
@@ -471,6 +493,12 @@ impl MemoryTracker {
     #[must_use]
     pub const fn used(&self) -> usize {
         self.used
+    }
+
+    /// Returns bytes still available to persistent query state.
+    #[must_use]
+    pub const fn remaining(&self) -> usize {
+        self.limit.saturating_sub(self.used)
     }
 
     /// Reserves persistent operator memory.
@@ -531,9 +559,9 @@ impl Execution {
         let mut subquery_bytes = 0;
         resolve_plan_subqueries(&mut plan, provider, memory_limit, &mut subquery_bytes)?;
         let output_fields = plan.output_fields();
-        let (root, _) = build_operator(plan, provider)?;
         let mut memory = MemoryTracker::new(memory_limit);
         memory.reserve(subquery_bytes)?;
+        let (root, _) = build_operator(plan, provider, &mut memory)?;
         Ok(Self {
             root,
             memory,
@@ -642,7 +670,11 @@ fn resolve_expr_subqueries(
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) => {
-            let values = materialize_subquery((**query).clone(), provider, memory_limit)?;
+            let values = materialize_subquery(
+                (**query).clone(),
+                provider,
+                memory_limit.saturating_sub(*retained_bytes),
+            )?;
             let value = match values.as_slice() {
                 [] => Value::Null,
                 [value] => value.clone(),
@@ -659,7 +691,11 @@ fn resolve_expr_subqueries(
             negated,
         } => {
             resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
-            let values = materialize_subquery((**query).clone(), provider, memory_limit)?;
+            let values = materialize_subquery(
+                (**query).clone(),
+                provider,
+                memory_limit.saturating_sub(*retained_bytes),
+            )?;
             reserve_subquery_values(&values, memory_limit, retained_bytes)?;
             let mut args = Vec::with_capacity(values.len() + 1);
             args.push((**expr).clone());
@@ -707,8 +743,9 @@ fn materialize_subquery(
     }
     let mut execution = Execution::start(physical, provider, memory_limit)?;
     let mut values = Vec::new();
-    let mut used = 0_usize;
+    let mut used = size_of::<Vec<Value>>();
     while let Some(batch) = execution.next_batch()? {
+        let batch_bytes = batch.estimated_bytes();
         for row in batch.selection().selected_rows() {
             let value = batch
                 .column(0)
@@ -718,9 +755,14 @@ fn materialize_subquery(
                     "subquery result is missing its scalar column",
                 ))?;
             let bytes = size_of::<Value>().saturating_add(value.heap_bytes());
-            if used.saturating_add(bytes) > memory_limit {
+            let live_bytes = execution
+                .memory()
+                .used()
+                .saturating_add(batch_bytes)
+                .saturating_add(used);
+            if live_bytes.saturating_add(bytes) > memory_limit {
                 return Err(ExecError::MemoryLimitExceeded {
-                    used,
+                    used: live_bytes,
                     requested: bytes,
                     limit: memory_limit,
                 });
@@ -739,7 +781,7 @@ fn reserve_subquery_values(
 ) -> Result<(), ExecError> {
     let bytes = values.iter().fold(0_usize, |bytes, value| {
         bytes
-            .saturating_add(size_of::<Value>())
+            .saturating_add(size_of::<BoundExpr>())
             .saturating_add(value.heap_bytes())
     });
     if retained_bytes.saturating_add(bytes) > memory_limit {
@@ -832,9 +874,12 @@ impl PullOperator {
                 stream,
                 expected_types,
             } => {
+                let retained_before = stream.retained_bytes();
                 let Some(batch) = stream.next_batch()? else {
+                    memory.release(retained_before.saturating_sub(stream.retained_bytes()));
                     return Ok(None);
                 };
+                memory.release(retained_before.saturating_sub(stream.retained_bytes()));
                 validate_scan_batch(&batch, expected_types)?;
                 memory.ensure_transient(batch.estimated_bytes())?;
                 Ok(Some(batch))
@@ -964,15 +1009,20 @@ impl PullOperator {
                         .columns()
                         .iter()
                         .map(|column| {
-                            column.value(row).cloned().ok_or(ExecError::InvalidBatch(
-                                "distinct row is outside an input column",
-                            ))
+                            column
+                                .value(row)
+                                .cloned()
+                                .map(normalized_collation_value)
+                                .ok_or(ExecError::InvalidBatch(
+                                    "distinct row is outside an input column",
+                                ))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     if seen.contains(&key) {
                         batch.selection_mut().set(row, false)?;
                     } else {
-                        let row_bytes = estimated_row_bytes(&key);
+                        let row_bytes =
+                            estimated_row_bytes(&key).saturating_add(HASH_ENTRY_OVERHEAD);
                         memory
                             .ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
                         memory.reserve(row_bytes)?;
@@ -1034,6 +1084,7 @@ impl PullOperator {
 fn build_operator(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
+    memory: &mut MemoryTracker,
 ) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
     match plan {
         PhysicalPlan::Empty => Ok((PullOperator::Empty, Vec::new())),
@@ -1059,7 +1110,8 @@ fn build_operator(
                 .iter()
                 .map(|predicate| CompiledExpr::compile(predicate, &columns))
                 .collect::<Result<Vec<_>, _>>()?;
-            let stream = provider.open_scan(&scan)?;
+            let stream = provider.open_scan(&scan, memory.remaining())?;
+            memory.reserve(stream.retained_bytes())?;
             let mut operator = PullOperator::Scan {
                 stream,
                 expected_types,
@@ -1084,17 +1136,17 @@ fn build_operator(
                     "derived input layout does not match its bound columns",
                 ));
             }
-            let (input, _) = build_operator(*input, provider)?;
+            let (input, _) = build_operator(*input, provider, memory)?;
             Ok((input, columns))
         }
         PhysicalPlan::CrossJoin {
             inputs,
             estimated_rows: _,
         } => {
-            let built = inputs
-                .into_iter()
-                .map(|input| build_operator(input, provider))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut built = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                built.push(build_operator(input, provider, memory)?);
+            }
             let mut operators = Vec::with_capacity(built.len());
             let mut columns = Vec::new();
             for (operator, input_columns) in built {
@@ -1117,10 +1169,10 @@ fn build_operator(
                 .map(PhysicalPlan::output_fields)
                 .collect::<Vec<_>>();
             validate_union_fields(&layouts)?;
-            let built = inputs
-                .into_iter()
-                .map(|input| build_operator(input, provider))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut built = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                built.push(build_operator(input, provider, memory)?);
+            }
             let (operators, columns): (Vec<_>, Vec<_>) = built.into_iter().unzip();
             let columns = columns.into_iter().next().unwrap_or_default();
             Ok((
@@ -1138,8 +1190,8 @@ fn build_operator(
             left_key,
             right_key,
         } => {
-            let (left, left_columns) = build_operator(*left, provider)?;
-            let (right, right_columns) = build_operator(*right, provider)?;
+            let (left, left_columns) = build_operator(*left, provider, memory)?;
+            let (right, right_columns) = build_operator(*right, provider, memory)?;
             let left_key = CompiledExpr::compile(&left_key, &left_columns)?;
             let right_key = CompiledExpr::compile(&right_key, &right_columns)?;
             let right_width = right_columns.len();
@@ -1166,7 +1218,7 @@ fn build_operator(
             ))
         }
         PhysicalPlan::Filter { input, predicate } => {
-            let (input, columns) = build_operator(*input, provider)?;
+            let (input, columns) = build_operator(*input, provider, memory)?;
             let predicate = CompiledExpr::compile(&predicate, &columns)?;
             Ok((
                 PullOperator::Filter {
@@ -1181,7 +1233,7 @@ fn build_operator(
             group_by,
             aggregates,
         } => {
-            let (input, columns) = build_operator(*input, provider)?;
+            let (input, columns) = build_operator(*input, provider, memory)?;
             let column_types = group_by
                 .iter()
                 .map(|expression| expression.data_type.unwrap_or(DataType::Utf8))
@@ -1211,7 +1263,7 @@ fn build_operator(
             ))
         }
         PhysicalPlan::Project { input, expressions } => {
-            let (input, columns) = build_operator(*input, provider)?;
+            let (input, columns) = build_operator(*input, provider, memory)?;
             let expressions = expressions
                 .iter()
                 .map(|projection| {
@@ -1230,7 +1282,7 @@ fn build_operator(
             ))
         }
         PhysicalPlan::Distinct { input } => {
-            let (input, columns) = build_operator(*input, provider)?;
+            let (input, columns) = build_operator(*input, provider, memory)?;
             Ok((
                 PullOperator::Distinct {
                     input: Box::new(input),
@@ -1250,7 +1302,7 @@ fn build_operator(
                     "sort key is outside the projected result layout",
                 ));
             }
-            let (input, columns) = build_operator(*input, provider)?;
+            let (input, columns) = build_operator(*input, provider, memory)?;
             Ok((
                 PullOperator::Sort {
                     input: Box::new(input),
@@ -1267,7 +1319,7 @@ fn build_operator(
             offset,
             count,
         } => {
-            let (input, columns) = build_operator(*input, provider)?;
+            let (input, columns) = build_operator(*input, provider, memory)?;
             Ok((
                 PullOperator::Limit {
                     input: Box::new(input),
@@ -1309,14 +1361,22 @@ fn build_hash_join(
     right_width: usize,
     memory: &mut MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
-    let mut build: HashMap<Value, Vec<Vec<Value>>> = HashMap::new();
+    let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
     while let Some(batch) = right.next_batch(memory)? {
         for row in batch.selection().selected_rows() {
-            let Some(key) = normalized_hash_key(right_key.evaluate(&batch, row)?) else {
+            let Some(key) = normalized_join_key(right_key.evaluate(&batch, row)?) else {
                 continue;
             };
             let values = batch_row(&batch, row)?;
-            let bytes = estimated_row_bytes(&values).saturating_add(key.heap_bytes());
+            let key_bytes = if build.contains_key(&key) {
+                0
+            } else {
+                size_of::<JoinHashKey>()
+                    .saturating_add(key.heap_bytes())
+                    .saturating_add(size_of::<Vec<Vec<Value>>>())
+                    .saturating_add(HASH_ENTRY_OVERHEAD)
+            };
+            let bytes = estimated_row_bytes(&values).saturating_add(key_bytes);
             memory.ensure_transient(batch.estimated_bytes().saturating_add(bytes))?;
             memory.reserve(bytes)?;
             build.entry(key).or_default().push(values);
@@ -1327,7 +1387,7 @@ fn build_hash_join(
     while let Some(batch) = left.next_batch(memory)? {
         for row in batch.selection().selected_rows() {
             let left_values = batch_row(&batch, row)?;
-            let key = normalized_hash_key(left_key.evaluate(&batch, row)?);
+            let key = normalized_join_key(left_key.evaluate(&batch, row)?);
             let matches = key.as_ref().and_then(|key| build.get(key));
             match kind {
                 BoundJoinKind::Inner => {
@@ -1443,10 +1503,15 @@ impl AggregateState {
         }
         if let Some(seen) = &mut self.seen {
             let key = normalized_hash_key(value.clone()).unwrap_or(Value::Null);
-            if !seen.insert(key.clone()) {
+            if seen.contains(&key) {
                 return Ok(());
             }
-            memory.reserve(size_of::<Value>().saturating_add(key.heap_bytes()))?;
+            memory.reserve(
+                size_of::<Value>()
+                    .saturating_add(key.heap_bytes())
+                    .saturating_add(HASH_ENTRY_OVERHEAD),
+            )?;
+            seen.insert(key);
         }
         match &mut self.value {
             AggregateValue::Count(count) => {
@@ -1472,7 +1537,7 @@ impl AggregateState {
                     None => true,
                 };
                 if replace {
-                    *minimum = Some(value);
+                    replace_retained_value(minimum, value, memory)?;
                 }
             }
             AggregateValue::Maximum(maximum) => {
@@ -1481,12 +1546,12 @@ impl AggregateState {
                     None => true,
                 };
                 if replace {
-                    *maximum = Some(value);
+                    replace_retained_value(maximum, value, memory)?;
                 }
             }
             AggregateValue::GroupConcat(values) => {
                 let value = aggregate_string(&value)?;
-                memory.reserve(value.len())?;
+                memory.reserve(size_of::<String>().saturating_add(value.len()))?;
                 values.push(value);
             }
         }
@@ -1508,6 +1573,22 @@ impl AggregateState {
     }
 }
 
+fn replace_retained_value(
+    current: &mut Option<Value>,
+    replacement: Value,
+    memory: &mut MemoryTracker,
+) -> Result<(), ExecError> {
+    let current_bytes = current.as_ref().map_or(0, Value::heap_bytes);
+    let replacement_bytes = replacement.heap_bytes();
+    if replacement_bytes > current_bytes {
+        memory.reserve(replacement_bytes - current_bytes)?;
+    } else {
+        memory.release(current_bytes - replacement_bytes);
+    }
+    *current = Some(replacement);
+    Ok(())
+}
+
 fn build_hash_aggregate(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
@@ -1523,7 +1604,12 @@ fn build_hash_aggregate(
                 states: aggregates.iter().map(AggregateState::new).collect(),
             },
         );
-        memory.reserve(size_of::<AggregateGroup>())?;
+        memory.reserve(
+            size_of::<Vec<Value>>()
+                .saturating_add(size_of::<AggregateGroup>())
+                .saturating_add(aggregates.len() * size_of::<AggregateState>())
+                .saturating_add(BTREE_ENTRY_OVERHEAD),
+        )?;
     }
 
     while let Some(batch) = input.next_batch(memory)? {
@@ -1538,9 +1624,13 @@ fn build_hash_aggregate(
                 .map(|value| normalized_hash_key(value).unwrap_or(Value::Null))
                 .collect::<Vec<_>>();
             if !groups.contains_key(&key) {
-                let bytes = estimated_row_bytes(&values).saturating_add(estimated_row_bytes(&key));
+                let bytes = estimated_row_bytes(&values)
+                    .saturating_add(estimated_row_bytes(&key))
+                    .saturating_add(size_of::<AggregateGroup>())
+                    .saturating_add(aggregates.len() * size_of::<AggregateState>())
+                    .saturating_add(BTREE_ENTRY_OVERHEAD);
                 memory.ensure_transient(batch.estimated_bytes().saturating_add(bytes))?;
-                memory.reserve(bytes.saturating_add(size_of::<AggregateGroup>()))?;
+                memory.reserve(bytes)?;
                 groups.insert(
                     key.clone(),
                     AggregateGroup {
@@ -1629,10 +1719,41 @@ fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
 }
 
 fn normalized_hash_key(value: Value) -> Option<Value> {
+    (!matches!(value, Value::Null)).then(|| normalized_collation_value(value))
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum JoinHashKey {
+    NegativeInteger(i64),
+    NonNegativeInteger(u64),
+    Scalar(Value),
+}
+
+impl JoinHashKey {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Scalar(value) => value.heap_bytes(),
+            Self::NegativeInteger(_) | Self::NonNegativeInteger(_) => 0,
+        }
+    }
+}
+
+fn normalized_join_key(value: Value) -> Option<JoinHashKey> {
     match value {
         Value::Null => None,
-        Value::Utf8(value) => Some(Value::Utf8(value.to_lowercase())),
-        value => Some(value),
+        Value::Int64(value) if value < 0 => Some(JoinHashKey::NegativeInteger(value)),
+        Value::Int64(value) => Some(JoinHashKey::NonNegativeInteger(
+            u64::try_from(value).expect("nonnegative i64 fits u64"),
+        )),
+        Value::UInt64(value) => Some(JoinHashKey::NonNegativeInteger(value)),
+        value => Some(JoinHashKey::Scalar(normalized_collation_value(value))),
+    }
+}
+
+fn normalized_collation_value(value: Value) -> Value {
+    match value {
+        Value::Utf8(value) => Value::Utf8(value.to_lowercase()),
+        value => value,
     }
 }
 
@@ -1702,18 +1823,53 @@ fn build_sort(
     top_k: Option<usize>,
     memory: &mut MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
-    let mut rows = materialize(input, memory)?;
     let compare = |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys);
-    if let Some(top_k) = top_k {
-        if top_k == 0 {
-            rows.clear();
-        } else if top_k < rows.len() {
-            rows.select_nth_unstable_by(top_k, compare);
-            rows.truncate(top_k);
-        }
-    }
+    let mut rows = if let Some(top_k) = top_k {
+        materialize_top_k(input, top_k, compare, memory)?
+    } else {
+        materialize(input, memory)?
+    };
     rows.sort_by(compare);
     Ok(MaterializedRows { rows, position: 0 })
+}
+
+fn materialize_top_k(
+    input: &mut PullOperator,
+    top_k: usize,
+    compare: impl Copy + FnMut(&Vec<Value>, &Vec<Value>) -> Ordering,
+    memory: &mut MemoryTracker,
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    if top_k == 0 {
+        return Ok(Vec::new());
+    }
+    let mut rows = Vec::with_capacity(top_k);
+    while let Some(batch) = input.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            let values = batch
+                .columns()
+                .iter()
+                .map(|column| {
+                    column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+                        "top-K row is outside an input column",
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let row_bytes = estimated_row_bytes(&values);
+            memory.ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
+            memory.reserve(row_bytes)?;
+            rows.push(values);
+        }
+        if rows.len() > top_k {
+            rows.select_nth_unstable_by(top_k, compare);
+            let released = rows[top_k..]
+                .iter()
+                .map(|row| estimated_row_bytes(row))
+                .sum();
+            rows.truncate(top_k);
+            memory.release(released);
+        }
+    }
+    Ok(rows)
 }
 
 fn compare_sort_rows(left: &[Value], right: &[Value], keys: &[BoundOrderKey]) -> Ordering {
@@ -2051,7 +2207,11 @@ mod tests {
     }
 
     impl ScanProvider for StaticProvider {
-        fn open_scan(&self, _scan: &Scan) -> Result<Box<dyn BatchStream>, ExecError> {
+        fn open_scan(
+            &self,
+            _scan: &Scan,
+            _memory_limit: usize,
+        ) -> Result<Box<dyn BatchStream>, ExecError> {
             let batches = self
                 .batches
                 .lock()
@@ -2290,6 +2450,23 @@ mod tests {
     }
 
     #[test]
+    fn counts_materialized_subquery_results_against_the_parent_cap() {
+        let names = ColumnVector::new(
+            DataType::Utf8,
+            vec![Value::Utf8("a".repeat(300)), Value::Utf8("b".repeat(300))],
+        )
+        .expect("names");
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(2, vec![names]).expect("batch")]),
+        };
+        let plan = physical("SELECT 'needle' IN (SELECT name FROM events)");
+        assert!(matches!(
+            Execution::start(plan, &provider, 800),
+            Err(ExecError::MemoryLimitExceeded { limit: 800, .. })
+        ));
+    }
+
+    #[test]
     fn rejects_source_batches_that_do_not_match_scan_projection() {
         let provider = StaticProvider {
             batches: Mutex::new(vec![RecordBatch::new(1, Vec::new()).expect("empty batch")]),
@@ -2310,7 +2487,7 @@ mod tests {
             DataType::Utf8,
             vec![
                 Value::Utf8("alpha".to_owned()),
-                Value::Utf8("alpha".to_owned()),
+                Value::Utf8("Alpha".to_owned()),
                 Value::Utf8("Beta".to_owned()),
             ],
         )
@@ -2466,6 +2643,37 @@ mod tests {
                 Value::Utf8("alpha".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn top_k_releases_losing_rows_between_input_batches() {
+        let batches = (1..=20)
+            .rev()
+            .map(|rank| {
+                let name = format!("{rank:02}-{}", "x".repeat(200));
+                let names =
+                    ColumnVector::new(DataType::Utf8, vec![Value::Utf8(name)]).expect("names");
+                RecordBatch::new(1, vec![names]).expect("batch")
+            })
+            .collect();
+        let provider = StaticProvider {
+            batches: Mutex::new(batches),
+        };
+        let plan = physical("SELECT name FROM events ORDER BY name LIMIT 2");
+        let mut execution =
+            Execution::start(plan, &provider, 2 * 1024).expect("bounded top-K execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let prefixes = batch
+            .column(0)
+            .expect("names")
+            .values()
+            .iter()
+            .map(|value| match value {
+                Value::Utf8(value) => value[..2].to_owned(),
+                _ => panic!("text result"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(prefixes, ["01", "02"]);
     }
 
     #[test]

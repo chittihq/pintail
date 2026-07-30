@@ -69,6 +69,7 @@ pub struct TableEntry {
     name: String,
     schema: Arc<TableSchema>,
     statistics: TableStatistics,
+    key_column_ids: Vec<u32>,
 }
 
 impl TableEntry {
@@ -106,7 +107,44 @@ impl TableEntry {
             name,
             schema: Arc::new(schema),
             statistics,
+            key_column_ids: Vec::new(),
         })
+    }
+
+    /// Declares the stable columns that produce the physical primary or
+    /// unique storage key, in key-component order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for append-row-id tables, an empty declaration,
+    /// duplicate IDs, or IDs absent from the table schema.
+    pub fn with_key_columns(
+        mut self,
+        column_ids: impl IntoIterator<Item = u32>,
+    ) -> Result<Self, CatalogError> {
+        if self.schema.key_mode() == pintail_types::KeyMode::AppendRowId {
+            return Err(CatalogError::SyntheticKeyColumns);
+        }
+        let column_ids = column_ids.into_iter().collect::<Vec<_>>();
+        if column_ids.is_empty() {
+            return Err(CatalogError::EmptyKeyColumns);
+        }
+        let mut seen = std::collections::HashSet::with_capacity(column_ids.len());
+        for id in &column_ids {
+            if !seen.insert(*id) {
+                return Err(CatalogError::DuplicateKeyColumn(*id));
+            }
+            if !self
+                .schema
+                .columns()
+                .iter()
+                .any(|column| column.id() == *id)
+            {
+                return Err(CatalogError::UnknownKeyColumn(*id));
+            }
+        }
+        self.key_column_ids = column_ids;
+        Ok(self)
     }
 
     /// Returns the stable table identifier.
@@ -131,6 +169,12 @@ impl TableEntry {
     #[must_use]
     pub const fn statistics(&self) -> TableStatistics {
         self.statistics
+    }
+
+    /// Returns stable physical key columns in component order.
+    #[must_use]
+    pub fn key_column_ids(&self) -> &[u32] {
+        &self.key_column_ids
     }
 
     /// Looks up a column by an ASCII case-insensitive source name.
@@ -349,6 +393,14 @@ pub enum CatalogError {
         /// Conflicting spelling.
         second: String,
     },
+    /// A physical primary/unique key declaration cannot be empty.
+    EmptyKeyColumns,
+    /// Append-row-id tables have no source key columns.
+    SyntheticKeyColumns,
+    /// A physical key declaration repeated one stable column ID.
+    DuplicateKeyColumn(u32),
+    /// A physical key declaration named an ID absent from the schema.
+    UnknownKeyColumn(u32),
 }
 
 impl fmt::Display for CatalogError {
@@ -390,6 +442,12 @@ impl fmt::Display for CatalogError {
                 formatter,
                 "column names {first} and {second} conflict in table {table}"
             ),
+            Self::EmptyKeyColumns => formatter.write_str("key column declaration cannot be empty"),
+            Self::SyntheticKeyColumns => {
+                formatter.write_str("append-row-id tables have no source key columns")
+            }
+            Self::DuplicateKeyColumn(id) => write!(formatter, "duplicate key column ID {id}"),
+            Self::UnknownKeyColumn(id) => write!(formatter, "unknown key column ID {id}"),
         }
     }
 }
@@ -402,7 +460,7 @@ fn normalize_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pintail_types::{Column, DataType, TableSchema};
+    use pintail_types::{Column, DataType, KeyMode, TableSchema};
 
     use super::{
         CatalogError, CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId,
@@ -491,6 +549,53 @@ mod tests {
                 .map(TableEntry::name)
                 .collect::<Vec<_>>(),
             ["alpha", "Zulu"]
+        );
+    }
+
+    #[test]
+    fn validates_explicit_physical_key_columns() {
+        let keyed = table(1, "events", &[(1, "id"), (2, "name")])
+            .with_key_columns([1, 2])
+            .expect("declared physical key");
+        assert_eq!(keyed.key_column_ids(), [1, 2]);
+
+        assert_eq!(
+            table(1, "events", &[(1, "id")])
+                .with_key_columns([])
+                .expect_err("empty declaration"),
+            CatalogError::EmptyKeyColumns
+        );
+        assert_eq!(
+            table(1, "events", &[(1, "id")])
+                .with_key_columns([1, 1])
+                .expect_err("duplicate declaration"),
+            CatalogError::DuplicateKeyColumn(1)
+        );
+        assert_eq!(
+            table(1, "events", &[(1, "id")])
+                .with_key_columns([9])
+                .expect_err("unknown declaration"),
+            CatalogError::UnknownKeyColumn(9)
+        );
+
+        let append_schema = TableSchema::with_key_mode(
+            1,
+            vec![Column::new(1, "payload", DataType::Utf8, true)],
+            KeyMode::AppendRowId,
+        )
+        .expect("append schema");
+        let append = TableEntry::new(
+            TableId::new(2),
+            "log",
+            append_schema,
+            TableStatistics::default(),
+        )
+        .expect("append table");
+        assert_eq!(
+            append
+                .with_key_columns([1])
+                .expect_err("synthetic keys have no source mapping"),
+            CatalogError::SyntheticKeyColumns
         );
     }
 

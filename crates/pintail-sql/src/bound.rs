@@ -20,6 +20,8 @@ pub struct BoundTable {
     pub columns: Vec<BoundColumn>,
     /// Exact catalog row count, when available.
     pub row_count: Option<u64>,
+    /// Stable columns that produce the physical storage key.
+    pub key_column_ids: Vec<u32>,
     /// Bound input for a derived table or common table expression.
     ///
     /// Catalog-backed tables leave this empty and become storage scans.

@@ -3,11 +3,17 @@ use std::collections::BTreeSet;
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundProjection, UnaryOp,
+    BoundProjection,
 };
-use pintail_types::{DataType, Float64, Value};
+use pintail_types::{DataType, Value};
 
-use crate::LogicalPlan;
+use crate::{
+    LogicalPlan,
+    expression::{
+        evaluate_binary as evaluate_runtime_binary, evaluate_unary as evaluate_runtime_unary,
+        mysql_truth,
+    },
+};
 
 /// Deterministic rule-based logical optimizer.
 #[derive(Clone, Copy, Debug, Default)]
@@ -364,159 +370,19 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
         | BoundExprKind::InSubquery { .. }
         | BoundExprKind::Scalar { .. } => None,
         BoundExprKind::Literal(value) => Some(value.clone()),
-        BoundExprKind::Unary { op, expr } => {
-            let value = evaluate_constant(expr)?;
-            evaluate_unary(*op, value)
+        BoundExprKind::Unary { op, expr: child } => {
+            let value = evaluate_constant(child)?;
+            evaluate_runtime_unary(*op, &value, expr.data_type).ok()
         }
         BoundExprKind::Binary { op, left, right } => {
             let left = evaluate_constant(left)?;
             let right = evaluate_constant(right)?;
-            evaluate_binary(*op, left, right, expr.data_type)
+            evaluate_runtime_binary(*op, &left, &right, expr.data_type).ok()
         }
         BoundExprKind::IsNull { expr, negated } => {
             let is_null = matches!(evaluate_constant(expr)?, Value::Null);
             Some(Value::Boolean(if *negated { !is_null } else { is_null }))
         }
-    }
-}
-
-fn evaluate_unary(op: UnaryOp, value: Value) -> Option<Value> {
-    if matches!(value, Value::Null) {
-        return Some(Value::Null);
-    }
-    match (op, value) {
-        (UnaryOp::Plus, value @ (Value::Int64(_) | Value::UInt64(_) | Value::Float64(_))) => {
-            Some(value)
-        }
-        (UnaryOp::Minus, Value::Int64(value)) => value.checked_neg().map(Value::Int64),
-        (UnaryOp::Minus, Value::Float64(value)) => Some(Value::float64(-value.get())),
-        (UnaryOp::Not, value) => scalar_truth(&value).map(|value| Value::Boolean(!value)),
-        _ => None,
-    }
-}
-
-fn evaluate_binary(
-    op: BinaryOp,
-    left: Value,
-    right: Value,
-    result_type: Option<DataType>,
-) -> Option<Value> {
-    if matches!(left, Value::Null) || matches!(right, Value::Null) {
-        return Some(Value::Null);
-    }
-
-    match op {
-        BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => {
-            let left = scalar_truth(&left)?;
-            let right = scalar_truth(&right)?;
-            let value = match op {
-                BinaryOp::And => left && right,
-                BinaryOp::Or => left || right,
-                BinaryOp::Xor => left ^ right,
-                _ => unreachable!("matched logical operation"),
-            };
-            Some(Value::Boolean(value))
-        }
-        BinaryOp::Equal
-        | BinaryOp::NotEqual
-        | BinaryOp::Less
-        | BinaryOp::LessOrEqual
-        | BinaryOp::Greater
-        | BinaryOp::GreaterOrEqual => evaluate_comparison(op, &left, &right).map(Value::Boolean),
-        BinaryOp::Add
-        | BinaryOp::Subtract
-        | BinaryOp::Multiply
-        | BinaryOp::Divide
-        | BinaryOp::IntegerDivide
-        | BinaryOp::Modulo => evaluate_arithmetic(op, left, right, result_type),
-    }
-}
-
-fn evaluate_comparison(op: BinaryOp, left: &Value, right: &Value) -> Option<bool> {
-    if left.data_type() != right.data_type() {
-        return None;
-    }
-    Some(match op {
-        BinaryOp::Equal => left == right,
-        BinaryOp::NotEqual => left != right,
-        BinaryOp::Less => left < right,
-        BinaryOp::LessOrEqual => left <= right,
-        BinaryOp::Greater => left > right,
-        BinaryOp::GreaterOrEqual => left >= right,
-        _ => return None,
-    })
-}
-
-fn evaluate_arithmetic(
-    op: BinaryOp,
-    left: Value,
-    right: Value,
-    result_type: Option<DataType>,
-) -> Option<Value> {
-    match result_type {
-        Some(DataType::Float64) => {
-            let left = numeric_f64(&left)?;
-            let right = numeric_f64(&right)?;
-            let value = match op {
-                BinaryOp::Add => left + right,
-                BinaryOp::Subtract => left - right,
-                BinaryOp::Multiply => left * right,
-                BinaryOp::Divide if right != 0.0 => left / right,
-                BinaryOp::IntegerDivide if right != 0.0 => (left / right).trunc(),
-                BinaryOp::Modulo if right != 0.0 => left % right,
-                _ => return None,
-            };
-            value
-                .is_finite()
-                .then(|| Value::Float64(Float64::new(value)))
-        }
-        Some(DataType::UInt64) => {
-            let (Value::UInt64(left), Value::UInt64(right)) = (left, right) else {
-                return None;
-            };
-            match op {
-                BinaryOp::Add => left.checked_add(right).map(Value::UInt64),
-                BinaryOp::Subtract => left.checked_sub(right).map(Value::UInt64),
-                BinaryOp::Multiply => left.checked_mul(right).map(Value::UInt64),
-                BinaryOp::IntegerDivide if right != 0 => Some(Value::UInt64(left / right)),
-                BinaryOp::Modulo if right != 0 => Some(Value::UInt64(left % right)),
-                _ => None,
-            }
-        }
-        Some(DataType::Int64) => {
-            let left = numeric_i64(&left)?;
-            let right = numeric_i64(&right)?;
-            match op {
-                BinaryOp::Add => left.checked_add(right).map(Value::Int64),
-                BinaryOp::Subtract => left.checked_sub(right).map(Value::Int64),
-                BinaryOp::Multiply => left.checked_mul(right).map(Value::Int64),
-                BinaryOp::IntegerDivide if right != 0 => left.checked_div(right).map(Value::Int64),
-                BinaryOp::Modulo if right != 0 => left.checked_rem(right).map(Value::Int64),
-                _ => None,
-            }
-        }
-        None | Some(DataType::Boolean | DataType::Utf8 | DataType::Binary) => None,
-    }
-}
-
-fn numeric_f64(value: &Value) -> Option<f64> {
-    match value {
-        Value::Float64(value) => Some(value.get()),
-        Value::Null
-        | Value::Boolean(_)
-        | Value::Int64(_)
-        | Value::UInt64(_)
-        | Value::Utf8(_)
-        | Value::Binary(_) => None,
-    }
-}
-
-fn numeric_i64(value: &Value) -> Option<i64> {
-    match value {
-        Value::Boolean(value) => Some(i64::from(*value)),
-        Value::Int64(value) => Some(*value),
-        Value::UInt64(value) => i64::try_from(*value).ok(),
-        _ => None,
     }
 }
 
@@ -532,18 +398,7 @@ fn literal_truth(expr: &BoundExpr) -> Option<bool> {
     let BoundExprKind::Literal(value) = &expr.kind else {
         return None;
     };
-    scalar_truth(value)
-}
-
-fn scalar_truth(value: &Value) -> Option<bool> {
-    match value {
-        Value::Null => Some(false),
-        Value::Boolean(value) => Some(*value),
-        Value::Int64(value) => Some(*value != 0),
-        Value::UInt64(value) => Some(*value != 0),
-        Value::Float64(value) => Some(value.get() != 0.0),
-        Value::Utf8(_) | Value::Binary(_) => None,
-    }
+    mysql_truth(value).ok().map(|value| value.unwrap_or(false))
 }
 
 fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
@@ -1140,7 +995,11 @@ mod tests {
 
     #[test]
     fn constant_folding_preserves_null_semantics() {
-        let plan = optimized("SELECT NULL IS NULL AS yes, NULL + 1 AS absent");
+        let plan = optimized(
+            "SELECT NULL IS NULL AS yes, NULL + 1 AS absent, \
+             TRUE OR NULL AS still_true, FALSE AND NULL AS still_false, \
+             'A' = 'a' AS collated_equal",
+        );
         let LogicalPlan::Project { expressions, .. } = plan else {
             panic!("project");
         };
@@ -1152,6 +1011,18 @@ mod tests {
             expressions[1].expr.kind,
             BoundExprKind::Literal(pintail_types::Value::Null)
         ));
+        assert_eq!(
+            expressions[2].expr.kind,
+            BoundExprKind::Literal(pintail_types::Value::Boolean(true))
+        );
+        assert_eq!(
+            expressions[3].expr.kind,
+            BoundExprKind::Literal(pintail_types::Value::Boolean(false))
+        );
+        assert_eq!(
+            expressions[4].expr.kind,
+            BoundExprKind::Literal(pintail_types::Value::Boolean(true))
+        );
     }
 
     #[test]

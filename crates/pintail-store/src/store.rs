@@ -2,7 +2,10 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    },
 };
 
 use fs2::FileExt;
@@ -23,6 +26,23 @@ const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOCK_ROWS: usize = 64 * 1024;
 const DEFAULT_COMPACTION_FAN_IN: usize = 4;
 const SIZE_TIER_RATIO: u64 = 4;
+static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
+
+fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
+    PROJECTED_SCAN_POOL
+        .get_or_init(|| {
+            let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .thread_name(|index| format!("pintail-scan-{index}"))
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| {
+            StoreError::FormatLimit(format!("cannot initialize projected scan pool: {error}"))
+        })
+}
 
 /// WAL durability policy.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -206,6 +226,26 @@ impl ProjectedRow {
     pub fn version(&self) -> u64 {
         self.version
     }
+
+    /// Moves projected values out of this scan row.
+    #[must_use]
+    pub fn into_values(self) -> Vec<pintail_types::Value> {
+        self.values
+    }
+
+    /// Estimates bytes retained by this projected row.
+    #[must_use]
+    pub fn estimated_bytes(&self) -> usize {
+        size_of::<Self>()
+            + std::mem::size_of_val(self.key.parts())
+            + self.key.heap_bytes()
+            + self.values.capacity() * size_of::<pintail_types::Value>()
+            + self
+                .values
+                .iter()
+                .map(pintail_types::Value::heap_bytes)
+                .sum::<usize>()
+    }
 }
 
 /// Physical work performed by a projected range scan.
@@ -263,6 +303,7 @@ impl ScanStats {
 pub struct ProjectedScan {
     rows: Vec<ProjectedRow>,
     stats: ScanStats,
+    retained_bytes: usize,
 }
 
 impl ProjectedScan {
@@ -270,6 +311,18 @@ impl ProjectedScan {
     #[must_use]
     pub fn rows(&self) -> &[ProjectedRow] {
         &self.rows
+    }
+
+    /// Moves visible projected rows into a pull-based consumer.
+    #[must_use]
+    pub fn into_rows(self) -> Vec<ProjectedRow> {
+        self.rows
+    }
+
+    /// Returns bytes retained by the projected row set.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.retained_bytes
     }
 
     /// Returns pruning and decoding counters.
@@ -1029,6 +1082,25 @@ impl TableSnapshot {
         end: &PrimaryKey,
         column_ids: &[u32],
     ) -> Result<ProjectedScan, StoreError> {
+        self.scan_projected_range_bounded(start, end, column_ids, usize::MAX)
+    }
+
+    /// Scans a projected range while enforcing a caller-owned memory budget
+    /// over candidate, winner, and late-materialized row state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::scan_projected_range`], plus
+    /// [`StoreError::MemoryLimitExceeded`] before retained scan state crosses
+    /// `memory_limit`.
+    #[allow(clippy::too_many_lines)]
+    pub fn scan_projected_range_bounded(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        column_ids: &[u32],
+        memory_limit: usize,
+    ) -> Result<ProjectedScan, StoreError> {
         if start > end {
             return Err(StoreError::FormatLimit(
                 "scan range start follows its end".into(),
@@ -1053,59 +1125,70 @@ impl TableSnapshot {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let segment_scans = self
-            .manifest
-            .segments
-            .par_iter()
-            .enumerate()
-            .map(|(segment_index, segment_meta)| {
-                let overlaps = segment::overlaps_key_range(segment_meta, start, end);
-                let point_might_match = start != end
-                    || segment::might_contain_key(
+        let scan_memory = AtomicUsize::new(0);
+        let scan_pool = projected_scan_pool()?;
+        let segment_scans = scan_pool.install(|| {
+            self.manifest
+                .segments
+                .par_iter()
+                .enumerate()
+                .map(|(segment_index, segment_meta)| {
+                    let overlaps = segment::overlaps_key_range(segment_meta, start, end);
+                    let point_might_match = start != end
+                        || segment::might_contain_key(
+                            &self.directory,
+                            segment_meta,
+                            &self.schema,
+                            start,
+                        )?;
+                    if !overlaps || !point_might_match {
+                        return Ok((
+                            ScanStats {
+                                segments_pruned: 1,
+                                ..ScanStats::default()
+                            },
+                            Vec::new(),
+                        ));
+                    }
+                    let scan = segment::read_row_headers_range(
                         &self.directory,
                         segment_meta,
                         &self.schema,
                         start,
+                        end,
                     )?;
-                if !overlaps || !point_might_match {
-                    return Ok((
-                        ScanStats {
-                            segments_pruned: 1,
-                            ..ScanStats::default()
-                        },
-                        Vec::new(),
-                    ));
-                }
-                let scan = segment::read_row_headers_range(
-                    &self.directory,
-                    segment_meta,
-                    &self.schema,
-                    start,
-                    end,
-                )?;
-                let stats = ScanStats {
-                    segments_read: 1,
-                    blocks_pruned: scan.stats.pruned,
-                    blocks_read: scan.stats.read,
-                    blocks_decoded: scan.stats.decoded,
-                    ..ScanStats::default()
-                };
-                let candidates = scan
-                    .rows
-                    .into_iter()
-                    .map(|row| ProjectedCandidate {
-                        key: row.key,
-                        version: row.version,
-                        deleted: row.deleted,
-                        source: ProjectedSource::Segment {
-                            segment_index,
-                            row_index: row.physical_index,
-                        },
-                    })
-                    .collect();
-                Ok((stats, candidates))
-            })
-            .collect::<Result<Vec<_>, StoreError>>()?;
+                    let stats = ScanStats {
+                        segments_read: 1,
+                        blocks_pruned: scan.stats.pruned,
+                        blocks_read: scan.stats.read,
+                        blocks_decoded: scan.stats.decoded,
+                        ..ScanStats::default()
+                    };
+                    let candidates = scan
+                        .rows
+                        .into_iter()
+                        .map(|row| {
+                            let candidate = ProjectedCandidate {
+                                key: row.key,
+                                version: row.version,
+                                deleted: row.deleted,
+                                source: ProjectedSource::Segment {
+                                    segment_index,
+                                    row_index: row.physical_index,
+                                },
+                            };
+                            reserve_scan_memory(
+                                &scan_memory,
+                                candidate.estimated_bytes(),
+                                memory_limit,
+                            )?;
+                            Ok(candidate)
+                        })
+                        .collect::<Result<Vec<_>, StoreError>>()?;
+                    Ok((stats, candidates))
+                })
+                .collect::<Result<Vec<_>, StoreError>>()
+        })?;
 
         let mut stats = ScanStats::default();
         let mut latest = BTreeMap::new();
@@ -1116,15 +1199,14 @@ impl TableSnapshot {
             }
         }
         for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
-            apply_projected_latest(
-                &mut latest,
-                ProjectedCandidate {
-                    key: row.key().clone(),
-                    version: row.version(),
-                    deleted: row.is_deleted(),
-                    source: ProjectedSource::Memtable,
-                },
-            );
+            let candidate = ProjectedCandidate {
+                key: row.key().clone(),
+                version: row.version(),
+                deleted: row.is_deleted(),
+                source: ProjectedSource::Memtable,
+            };
+            reserve_scan_memory(&scan_memory, candidate.estimated_bytes(), memory_limit)?;
+            apply_projected_latest(&mut latest, candidate);
         }
 
         let mut winners = latest
@@ -1157,26 +1239,41 @@ impl TableSnapshot {
                 }
             }
         }
-        let segment_fetches = segment_rows
-            .into_iter()
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .map(|(segment_index, mut selected)| {
-                selected.sort_unstable_by_key(|(row_index, _)| *row_index);
-                let row_indices = selected
-                    .iter()
-                    .map(|(row_index, _)| *row_index)
-                    .collect::<Vec<_>>();
-                let fetch = segment::read_projected_rows(
-                    &self.directory,
-                    &self.manifest.segments[segment_index],
-                    &self.schema,
-                    &projection,
-                    &row_indices,
-                )?;
-                Ok((selected, fetch.values, fetch.blocks_decoded))
-            })
-            .collect::<Result<Vec<_>, StoreError>>()?;
+        let segment_fetches = scan_pool.install(|| {
+            segment_rows
+                .into_iter()
+                .collect::<Vec<_>>()
+                .into_par_iter()
+                .map(|(segment_index, mut selected)| {
+                    selected.sort_unstable_by_key(|(row_index, _)| *row_index);
+                    let row_indices = selected
+                        .iter()
+                        .map(|(row_index, _)| *row_index)
+                        .collect::<Vec<_>>();
+                    let fetch = segment::read_projected_rows(
+                        &self.directory,
+                        &self.manifest.segments[segment_index],
+                        &self.schema,
+                        &projection,
+                        &row_indices,
+                    )?;
+                    let fetched_bytes = fetch
+                        .values
+                        .iter()
+                        .map(|values| {
+                            size_of::<Vec<pintail_types::Value>>()
+                                + values.len() * size_of::<pintail_types::Value>()
+                                + values
+                                    .iter()
+                                    .map(pintail_types::Value::heap_bytes)
+                                    .sum::<usize>()
+                        })
+                        .sum();
+                    reserve_scan_memory(&scan_memory, fetched_bytes, memory_limit)?;
+                    Ok((selected, fetch.values, fetch.blocks_decoded))
+                })
+                .collect::<Result<Vec<_>, StoreError>>()
+        })?;
         for (selected, values, blocks_decoded) in segment_fetches {
             stats.blocks_decoded += blocks_decoded;
             for ((_, winner_index), values) in selected.into_iter().zip(values) {
@@ -1195,7 +1292,20 @@ impl TableSnapshot {
                 })
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
-        Ok(ProjectedScan { rows, stats })
+        let retained_bytes = size_of::<ProjectedScan>()
+            + rows.capacity() * size_of::<ProjectedRow>()
+            + rows
+                .iter()
+                .map(|row| {
+                    row.estimated_bytes()
+                        .saturating_sub(size_of::<ProjectedRow>())
+                })
+                .sum::<usize>();
+        Ok(ProjectedScan {
+            rows,
+            stats,
+            retained_bytes,
+        })
     }
 }
 
@@ -1204,6 +1314,43 @@ struct ProjectedCandidate {
     version: u64,
     deleted: bool,
     source: ProjectedSource,
+}
+
+impl ProjectedCandidate {
+    fn estimated_bytes(&self) -> usize {
+        size_of::<Self>()
+            + size_of::<PrimaryKey>()
+            + 2 * std::mem::size_of_val(self.key.parts())
+            + 2 * self.key.heap_bytes()
+            + 4 * size_of::<usize>()
+    }
+}
+
+fn reserve_scan_memory(
+    used: &AtomicUsize,
+    requested: usize,
+    limit: usize,
+) -> Result<(), StoreError> {
+    let mut current = used.load(AtomicOrdering::Relaxed);
+    loop {
+        let next = current.saturating_add(requested);
+        if next > limit {
+            return Err(StoreError::MemoryLimitExceeded {
+                used: current,
+                requested,
+                limit,
+            });
+        }
+        match used.compare_exchange_weak(
+            current,
+            next,
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+        ) {
+            Ok(_) => return Ok(()),
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
