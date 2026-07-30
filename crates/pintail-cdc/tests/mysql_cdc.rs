@@ -605,6 +605,16 @@ async fn m4_cdc_crud_gipk_append_and_type_fidelity() {
     assert_eq!(result.mutations, 7);
     assert_eq!(result.checkpoint.kind, "gtid");
     assert_replica(&result.targets);
+    assert_eq!(
+        MetaStore::open(&metadata_path)
+            .expect("decode failure metadata")
+            .tables_needing_resync(DATABASE_ID)
+            .expect("decode failure table"),
+        ["decode_fail".to_owned()].into_iter().collect()
+    );
+    let errors = dlq_errors(&metadata_path);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("unsupported binlog character set utf16"));
     assert_restart_replay(
         &mysql,
         &pool,
@@ -857,6 +867,10 @@ fn source_schema() -> &'static str {
      CREATE TABLE gipk_rows (value VARCHAR(64));\
      SET SESSION sql_generate_invisible_primary_key=OFF;\
      INSERT INTO gipk_rows (value) VALUES ('first');\
+     CREATE TABLE decode_fail (\
+       id BIGINT UNSIGNED PRIMARY KEY,\
+       value VARCHAR(32) CHARACTER SET utf16\
+     );\
      CREATE TABLE type_rows (\
        id BIGINT UNSIGNED PRIMARY KEY,\
        decimal_value DECIMAL(38,10),\
@@ -885,6 +899,7 @@ fn cdc_mutations() -> &'static str {
      INSERT INTO append_rows VALUES ('after');\
      UPDATE gipk_rows SET value='updated' WHERE value='first';\
      INSERT INTO gipk_rows (value) VALUES ('second');\
+     INSERT INTO decode_fail VALUES (1,CONVERT('hello' USING utf16));\
      INSERT INTO type_rows VALUES (\
        2,1234567890123456789012345678.1234567890,b'101010101',\
        '0000-00-00','0000-00-00 00:00:00.000000','0000-00-00 00:00:00.000000',\
