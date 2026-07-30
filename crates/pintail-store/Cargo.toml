@@ -11,6 +11,7 @@ rust-version.workspace = true
 fs2.workspace = true
 lz4_flex.workspace = true
 pintail-types.workspace = true
+rayon.workspace = true
 xxhash-rust.workspace = true
 zstd.workspace = true
 

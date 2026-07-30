@@ -42,6 +42,7 @@ pintail-store = { path = "crates/pintail-store" }
 pintail-sql = { path = "crates/pintail-sql" }
 pintail-types = { path = "crates/pintail-types" }
 rand = "0.9.1"
+rayon = "1.10.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 rust-embed = { version = "8.7.2", features = ["compression"] }
 serde = { version = "1.0.219", features = ["derive"] }

@@ -7,6 +7,7 @@ use std::{
 
 use fs2::FileExt;
 use pintail_types::{KeyMode, KeyPart, PrimaryKey, StoredRow, TableSchema};
+use rayon::prelude::*;
 
 use crate::{
     StoreError,
@@ -246,6 +247,14 @@ impl ScanStats {
     #[must_use]
     pub fn blocks_decoded(self) -> usize {
         self.blocks_decoded
+    }
+
+    fn add(&mut self, other: Self) {
+        self.segments_pruned += other.segments_pruned;
+        self.segments_read += other.segments_read;
+        self.blocks_pruned += other.blocks_pruned;
+        self.blocks_read += other.blocks_read;
+        self.blocks_decoded += other.blocks_decoded;
     }
 }
 
@@ -1044,31 +1053,47 @@ impl TableSnapshot {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut stats = ScanStats::default();
-        let mut latest = BTreeMap::new();
-        for (segment_index, segment_meta) in self.manifest.segments.iter().enumerate() {
-            let overlaps = segment::overlaps_key_range(segment_meta, start, end);
-            let point_might_match = start != end
-                || segment::might_contain_key(&self.directory, segment_meta, &self.schema, start)?;
-            if !overlaps || !point_might_match {
-                stats.segments_pruned += 1;
-                continue;
-            }
-            stats.segments_read += 1;
-            let scan = segment::read_row_headers_range(
-                &self.directory,
-                segment_meta,
-                &self.schema,
-                start,
-                end,
-            )?;
-            stats.blocks_pruned += scan.stats.pruned;
-            stats.blocks_read += scan.stats.read;
-            stats.blocks_decoded += scan.stats.decoded;
-            for row in scan.rows {
-                apply_projected_latest(
-                    &mut latest,
-                    ProjectedCandidate {
+        let segment_scans = self
+            .manifest
+            .segments
+            .par_iter()
+            .enumerate()
+            .map(|(segment_index, segment_meta)| {
+                let overlaps = segment::overlaps_key_range(segment_meta, start, end);
+                let point_might_match = start != end
+                    || segment::might_contain_key(
+                        &self.directory,
+                        segment_meta,
+                        &self.schema,
+                        start,
+                    )?;
+                if !overlaps || !point_might_match {
+                    return Ok((
+                        ScanStats {
+                            segments_pruned: 1,
+                            ..ScanStats::default()
+                        },
+                        Vec::new(),
+                    ));
+                }
+                let scan = segment::read_row_headers_range(
+                    &self.directory,
+                    segment_meta,
+                    &self.schema,
+                    start,
+                    end,
+                )?;
+                let stats = ScanStats {
+                    segments_read: 1,
+                    blocks_pruned: scan.stats.pruned,
+                    blocks_read: scan.stats.read,
+                    blocks_decoded: scan.stats.decoded,
+                    ..ScanStats::default()
+                };
+                let candidates = scan
+                    .rows
+                    .into_iter()
+                    .map(|row| ProjectedCandidate {
                         key: row.key,
                         version: row.version,
                         deleted: row.deleted,
@@ -1076,8 +1101,18 @@ impl TableSnapshot {
                             segment_index,
                             row_index: row.physical_index,
                         },
-                    },
-                );
+                    })
+                    .collect();
+                Ok((stats, candidates))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+
+        let mut stats = ScanStats::default();
+        let mut latest = BTreeMap::new();
+        for (segment_stats, candidates) in segment_scans {
+            stats.add(segment_stats);
+            for candidate in candidates {
+                apply_projected_latest(&mut latest, candidate);
             }
         }
         for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
@@ -1122,21 +1157,29 @@ impl TableSnapshot {
                 }
             }
         }
-        for (segment_index, mut selected) in segment_rows {
-            selected.sort_unstable_by_key(|(row_index, _)| *row_index);
-            let row_indices = selected
-                .iter()
-                .map(|(row_index, _)| *row_index)
-                .collect::<Vec<_>>();
-            let fetch = segment::read_projected_rows(
-                &self.directory,
-                &self.manifest.segments[segment_index],
-                &self.schema,
-                &projection,
-                &row_indices,
-            )?;
-            stats.blocks_decoded += fetch.blocks_decoded;
-            for ((_, winner_index), values) in selected.into_iter().zip(fetch.values) {
+        let segment_fetches = segment_rows
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|(segment_index, mut selected)| {
+                selected.sort_unstable_by_key(|(row_index, _)| *row_index);
+                let row_indices = selected
+                    .iter()
+                    .map(|(row_index, _)| *row_index)
+                    .collect::<Vec<_>>();
+                let fetch = segment::read_projected_rows(
+                    &self.directory,
+                    &self.manifest.segments[segment_index],
+                    &self.schema,
+                    &projection,
+                    &row_indices,
+                )?;
+                Ok((selected, fetch.values, fetch.blocks_decoded))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        for (selected, values, blocks_decoded) in segment_fetches {
+            stats.blocks_decoded += blocks_decoded;
+            for ((_, winner_index), values) in selected.into_iter().zip(values) {
                 winners[winner_index].1 = Some(values);
             }
         }
