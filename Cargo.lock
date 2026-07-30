@@ -1297,6 +1297,7 @@ dependencies = [
  "pintail-snapshot",
  "pintail-store",
  "pintail-types",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "thiserror",

@@ -379,7 +379,7 @@ async fn run_cdc_inner(
                 }
                 EventData::RotateEvent(rotate) => {
                     if !rotate.is_fake() {
-                        position.file = rotate.name().into_owned();
+                        position.file = sanitize_binlog_filename(&rotate.name())?;
                         position.pos = rotate.position();
                     }
                 }
@@ -1048,6 +1048,21 @@ enum PositionKind {
     FilePosition,
 }
 
+fn sanitize_binlog_filename(value: &str) -> Result<String, CdcError> {
+    let filename = value
+        .chars()
+        .take_while(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '/')
+        })
+        .collect::<String>();
+    if filename.is_empty() {
+        return Err(CdcError::Decode(
+            "rotate event contains an empty binlog filename".to_owned(),
+        ));
+    }
+    Ok(filename)
+}
+
 impl StreamPosition {
     fn from_checkpoint(
         checkpoint: SnapshotCheckpointRecord,
@@ -1173,7 +1188,7 @@ fn generated_server_id(database_id: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{StreamPosition, generated_server_id};
+    use super::{StreamPosition, generated_server_id, sanitize_binlog_filename};
     use pintail_meta::SnapshotCheckpointRecord;
     use pintail_probe::SourceFlavor;
 
@@ -1197,5 +1212,14 @@ mod tests {
             position.version(200, 3).expect("deterministic")
         );
         assert_ne!(generated_server_id("a"), 0);
+    }
+
+    #[test]
+    fn strips_non_filename_trailers_from_rotate_events() {
+        assert_eq!(
+            sanitize_binlog_filename("mysql-bin.000002\u{fffd}\u{5cf}\u{fffd}")
+                .expect("sanitized filename"),
+            "mysql-bin.000002"
+        );
     }
 }

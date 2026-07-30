@@ -13,6 +13,7 @@ use pintail_probe::{ProbeReport, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreOptions, TableStore};
 use pintail_types::Value;
+use rusqlite::Connection;
 
 const DATABASE_ID: &str = "m4-source";
 
@@ -20,12 +21,15 @@ struct MysqlContainer {
     name: String,
     host: String,
     port: u16,
+    client: String,
 }
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
         Self::start_variant(
             "mysql84-gtid",
+            "mysql:8.4",
+            "mysql",
             &[
                 "--server-id=184",
                 "--log-bin=mysql-bin",
@@ -43,6 +47,8 @@ impl MysqlContainer {
     fn start_file_position() -> Result<Self, String> {
         Self::start_variant(
             "mysql84-filepos",
+            "mysql:8.4",
+            "mysql",
             &[
                 "--server-id=185",
                 "--log-bin=mysql-bin",
@@ -55,7 +61,12 @@ impl MysqlContainer {
         )
     }
 
-    fn start_variant(label: &str, server_arguments: &[&str]) -> Result<Self, String> {
+    fn start_variant(
+        label: &str,
+        image: &str,
+        client: &str,
+        server_arguments: &[&str],
+    ) -> Result<Self, String> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -75,7 +86,7 @@ impl MysqlContainer {
             "MYSQL_ROOT_PASSWORD=pintail-root",
             "--env",
             "MYSQL_DATABASE=app",
-            "mysql:8.4",
+            image,
         ]);
         command.args(server_arguments);
         checked_output(&mut command, "start MySQL 8.4 CDC source")?;
@@ -91,7 +102,12 @@ impl MysqlContainer {
             .and_then(|line| line.rsplit(':').next())
             .and_then(|port| port.parse().ok())
             .ok_or_else(|| "Docker did not report a numeric MySQL port".to_owned())?;
-        let container = Self { name, host, port };
+        let container = Self {
+            name,
+            host,
+            port,
+            client: client.to_owned(),
+        };
         for _ in 0..120 {
             if container.query_batch("SELECT 1;").is_ok() {
                 return Ok(container);
@@ -111,7 +127,7 @@ impl MysqlContainer {
                 "exec",
                 "--interactive",
                 &self.name,
-                "mysql",
+                &self.client,
                 "--user=root",
                 "--password=pintail-root",
                 "--database=app",
@@ -150,6 +166,223 @@ impl Drop for MysqlContainer {
             .stderr(Stdio::null())
             .status();
     }
+}
+
+struct CompatibilityVariant {
+    label: &'static str,
+    image: &'static str,
+    client: &'static str,
+    arguments: &'static [&'static str],
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires MySQL 5.7/8.4 and MariaDB 11 on the configured Docker host"]
+async fn cdc_compatibility_matrix_covers_file_position_mariadb_and_myisam() {
+    let variants = [
+        CompatibilityVariant {
+            label: "mysql84-filepos",
+            image: "mysql:8.4",
+            client: "mysql",
+            arguments: &[
+                "--server-id=284",
+                "--log-bin=mysql-bin",
+                "--binlog-format=ROW",
+                "--binlog-row-image=FULL",
+                "--binlog-row-metadata=FULL",
+                "--default-time-zone=+00:00",
+                "--sql-mode=NO_ENGINE_SUBSTITUTION",
+            ],
+        },
+        CompatibilityVariant {
+            label: "mysql57-filepos",
+            image: "mysql:5.7",
+            client: "mysql",
+            arguments: &[
+                "--server-id=257",
+                "--log-bin=mysql-bin",
+                "--binlog-format=ROW",
+                "--binlog-row-image=FULL",
+                "--default-time-zone=+00:00",
+                "--sql-mode=NO_ENGINE_SUBSTITUTION",
+            ],
+        },
+        CompatibilityVariant {
+            label: "mariadb11-gtid-fallback",
+            image: "mariadb:11",
+            client: "mariadb",
+            arguments: &[
+                "--server-id=211",
+                "--log-bin=mysql-bin",
+                "--binlog-format=ROW",
+                "--binlog-row-image=FULL",
+                "--gtid-strict-mode=ON",
+                "--default-time-zone=+00:00",
+                "--sql-mode=NO_ENGINE_SUBSTITUTION",
+            ],
+        },
+    ];
+    let selected = std::env::var("PINTAIL_CDC_VARIANT").ok();
+    for variant in variants {
+        if selected
+            .as_deref()
+            .is_some_and(|selected| selected != variant.label)
+        {
+            continue;
+        }
+        run_compatibility_variant(&variant).await;
+    }
+}
+
+async fn run_compatibility_variant(variant: &CompatibilityVariant) {
+    let mysql = MysqlContainer::start_variant(
+        variant.label,
+        variant.image,
+        variant.client,
+        variant.arguments,
+    )
+    .unwrap_or_else(|error| panic!("{}: {error}", variant.label));
+    mysql
+        .query_batch(compatibility_schema())
+        .unwrap_or_else(|error| panic!("{} schema: {error}", variant.label));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("compatibility DSN"));
+    let report = probe(&pool, "app")
+        .await
+        .unwrap_or_else(|error| panic!("{} probe: {error}", variant.label));
+    let workspace = tempfile::tempdir().expect("compatibility workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("compatibility metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register compatibility source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("compatibility schema"),
+                StoreOptions::default(),
+            )
+            .expect("compatibility store");
+            SnapshotTarget::new(source.clone(), store).expect("compatibility snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{} snapshot: {error}", variant.label));
+    mysql
+        .query_batch(compatibility_mutations())
+        .unwrap_or_else(|error| panic!("{} mutations: {error}", variant.label));
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("compatibility CDC target")
+        })
+        .collect();
+    let result = finite_catch_up(&pool, &metadata_path, &report, targets)
+        .await
+        .unwrap_or_else(|error| panic!("{} CDC: {error}", variant.label));
+    assert!(
+        MetaStore::open(&metadata_path)
+            .expect("compatibility metadata state")
+            .tables_needing_resync(DATABASE_ID)
+            .expect("compatibility table state")
+            .is_empty(),
+        "{}",
+        variant.label
+    );
+    assert!(dlq_errors(&metadata_path).is_empty(), "{}", variant.label);
+    assert_eq!(result.checkpoint.kind, "filepos", "{}", variant.label);
+    assert_eq!(result.mutations, 6, "{}", variant.label);
+    assert_compatibility_rows(variant.label, &result.targets);
+    pool.disconnect()
+        .await
+        .expect("disconnect compatibility pool");
+}
+
+fn dlq_errors(metadata_path: &Path) -> Vec<String> {
+    let connection = Connection::open(metadata_path).expect("open diagnostic metadata");
+    let mut statement = connection
+        .prepare("SELECT error FROM dlq ORDER BY created_at, id")
+        .expect("prepare DLQ diagnostics");
+    statement
+        .query_map([], |row| row.get(0))
+        .expect("query DLQ diagnostics")
+        .collect::<rusqlite::Result<_>>()
+        .expect("decode DLQ diagnostics")
+}
+
+fn assert_compatibility_rows(label: &str, targets: &[CdcTarget]) {
+    let targets = targets
+        .iter()
+        .map(|target| (target.source().name.as_str(), target))
+        .collect::<BTreeMap<_, _>>();
+    let events = targets["compat_events"];
+    let rows = events
+        .store()
+        .snapshot()
+        .scan()
+        .expect("compatibility event scan");
+    assert_eq!(rows.len(), 2, "{label}");
+    assert_eq!(rows[0].values()[1], Value::Utf8("updated".to_owned()));
+    let columns = events
+        .source()
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| (column.name.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        rows[1].values()[columns["date_value"]],
+        Value::Null,
+        "{label}"
+    );
+    assert_eq!(
+        rows[1].values()[columns["datetime_value"]],
+        Value::Null,
+        "{label}"
+    );
+    assert_eq!(
+        rows[1].values()[columns["timestamp_value"]],
+        Value::Null,
+        "{label}"
+    );
+    assert_eq!(
+        rows[1].values()[columns["latin_value"]],
+        Value::Utf8("café".to_owned()),
+        "{label}"
+    );
+    assert_eq!(
+        rows[1].values()[columns["enum_value"]],
+        Value::Utf8("βeta".to_owned()),
+        "{label}"
+    );
+    assert_eq!(
+        rows[1].values()[columns["set_value"]],
+        Value::Utf8("red,blue".to_owned()),
+        "{label}"
+    );
+    let myisam = targets["myisam_events"]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("MyISAM scan");
+    assert_eq!(myisam.len(), 1, "{label}");
+    assert_eq!(myisam[0].values()[1], Value::Utf8("updated".to_owned()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -567,6 +800,49 @@ fn assert_replica(targets: &[CdcTarget]) {
         row.values()[columns["blob_value"]],
         Value::Binary(vec![0xde, 0xad, 0xbe, 0xef])
     );
+}
+
+fn compatibility_schema() -> &'static str {
+    "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+     GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+       ON *.* TO 'pintail'@'%';\
+     CREATE TABLE compat_events (\
+       id BIGINT UNSIGNED PRIMARY KEY,\
+       value VARCHAR(64),\
+       decimal_value DECIMAL(38,10),\
+       date_value DATE,\
+       datetime_value DATETIME(6),\
+       timestamp_value TIMESTAMP(6) NULL,\
+       latin_value VARCHAR(32) CHARACTER SET latin1,\
+       enum_value ENUM('alpha','βeta'),\
+       set_value SET('red','green','blue'),\
+       bit_value BIT(9),\
+       binary_value VARBINARY(8),\
+       blob_value BLOB\
+     ) DEFAULT CHARACTER SET utf8mb4;\
+     INSERT INTO compat_events VALUES \
+       (1,'before',0.0000000000,'1000-01-01','2024-02-29 12:34:56.123456',\
+        '1970-01-01 00:00:01.000001','plain','alpha','green',b'0',X'',X''),\
+       (2,'delete',1.0000000000,'2000-01-01','2000-01-01 00:00:00.000000',\
+        '2000-01-01 00:00:00.000000','plain','alpha','green',b'1',0x01,0x02);\
+     CREATE TABLE myisam_events (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64)) \
+       ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4;\
+     INSERT INTO myisam_events VALUES (1,'before');"
+}
+
+fn compatibility_mutations() -> &'static str {
+    "START TRANSACTION;\
+       UPDATE compat_events SET value='updated' WHERE id=1;\
+       DELETE FROM compat_events WHERE id=2;\
+       INSERT INTO compat_events VALUES (\
+         3,'inserted',1234567890123456789012345678.1234567890,\
+         '0000-00-00','0000-00-00 00:00:00.000000','0000-00-00 00:00:00.000000',\
+         _latin1 0x636166E9,'βeta','red,blue',b'101010101',0x00FF10,0xDEADBEEF\
+       );\
+     COMMIT;\
+     INSERT INTO myisam_events VALUES (2,'temporary');\
+     UPDATE myisam_events SET value='updated' WHERE id=1;\
+     DELETE FROM myisam_events WHERE id=2;"
 }
 
 fn source_schema() -> &'static str {
