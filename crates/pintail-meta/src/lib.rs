@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -73,6 +73,39 @@ pub struct SnapshotCheckpointRecord {
     pub binlog_file: Option<String>,
     /// Binlog byte offset captured with a GTID or file/position source.
     pub binlog_pos: Option<u64>,
+}
+
+/// Durable polling position and cheap-probe token for one table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollStateRecord {
+    /// Selected source cursor, absent for checksum-only tables.
+    pub cursor_column: Option<String>,
+    /// Serialized inclusive cursor boundary.
+    pub cursor_json: Option<String>,
+    /// Serialized row-count/MAX cheap-probe token.
+    pub source_token_json: Option<String>,
+    /// Source row count observed by the latest completed cycle.
+    pub source_count: u64,
+    /// Monotonic row version assigned to the latest completed poll cycle.
+    pub version: u64,
+    /// Last completed full primary-key reconciliation.
+    pub last_reconcile_at: Option<String>,
+}
+
+/// Values committed after one polling WAL boundary.
+pub struct PollStateUpdate<'a> {
+    /// Selected source cursor, absent for checksum-only tables.
+    pub cursor_column: Option<&'a str>,
+    /// Serialized inclusive cursor boundary.
+    pub cursor_json: Option<&'a str>,
+    /// Serialized row-count/MAX cheap-probe token.
+    pub source_token_json: Option<&'a str>,
+    /// Source row count observed in this cycle.
+    pub source_count: u64,
+    /// Monotonic row version used by this cycle.
+    pub version: u64,
+    /// Whether this cycle completed a full delete reconciliation.
+    pub reconciled: bool,
 }
 
 impl StoredSetting {
@@ -335,6 +368,149 @@ impl MetaStore {
             })
         })
         .transpose()
+    }
+
+    /// Returns one table's durable polling state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be queried or contains negative
+    /// counters.
+    pub fn poll_state(
+        &self,
+        database_id: &str,
+        table_name: &str,
+    ) -> Result<Option<PollStateRecord>> {
+        type RawPollState = (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+            i64,
+            Option<String>,
+        );
+        let raw: Option<RawPollState> = self
+            .connection
+            .query_row(
+                "SELECT cursor_column, cursor_json, source_token_json, \
+                        source_count, version, last_reconcile_at \
+                 FROM poll_states WHERE db_id = ?1 AND table_name = ?2",
+                (database_id, table_name),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .context("failed to read polling state")?;
+        raw.map(
+            |(
+                cursor_column,
+                cursor_json,
+                source_token_json,
+                source_count,
+                version,
+                last_reconcile_at,
+            )| {
+                Ok(PollStateRecord {
+                    cursor_column,
+                    cursor_json,
+                    source_token_json,
+                    source_count: u64::try_from(source_count)
+                        .context("poll source count is negative")?,
+                    version: u64::try_from(version).context("poll version is negative")?,
+                    last_reconcile_at,
+                })
+            },
+        )
+        .transpose()
+    }
+
+    /// Commits one polling position after its table WAL is synchronized.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when counters exceed `SQLite`'s range or the
+    /// control-plane transaction cannot commit.
+    pub fn commit_poll_state(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        update: &PollStateUpdate<'_>,
+        now: &str,
+    ) -> Result<()> {
+        let source_count =
+            i64::try_from(update.source_count).context("poll source count exceeds i64")?;
+        let version = i64::try_from(update.version).context("poll version exceeds i64")?;
+        let reconcile_at = update.reconciled.then_some(now);
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin polling checkpoint")?;
+        transaction
+            .execute(
+                "INSERT INTO poll_states (\
+                   db_id, table_name, cursor_column, cursor_json, source_token_json, \
+                   source_count, version, last_reconcile_at, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+                 ON CONFLICT(db_id, table_name) DO UPDATE SET \
+                   cursor_column = excluded.cursor_column, \
+                   cursor_json = excluded.cursor_json, \
+                   source_token_json = excluded.source_token_json, \
+                   source_count = excluded.source_count, \
+                   version = excluded.version, \
+                   last_reconcile_at = COALESCE(\
+                     excluded.last_reconcile_at, poll_states.last_reconcile_at\
+                   ), \
+                   updated_at = excluded.updated_at",
+                (
+                    database_id,
+                    table_name,
+                    update.cursor_column,
+                    update.cursor_json,
+                    update.source_token_json,
+                    source_count,
+                    version,
+                    reconcile_at,
+                    now,
+                ),
+            )
+            .context("failed to persist polling state")?;
+        transaction
+            .execute(
+                "INSERT INTO checkpoints (db_id, kind, poll_cursors_json, updated_at) \
+                 VALUES (?1, 'polling', '{}', ?2) \
+                 ON CONFLICT(db_id) DO UPDATE SET \
+                   kind = 'polling', gtid_set = NULL, binlog_file = NULL, \
+                   binlog_pos = NULL, poll_cursors_json = '{}', \
+                   updated_at = excluded.updated_at",
+                (database_id, now),
+            )
+            .context("failed to persist polling database checkpoint")?;
+        transaction
+            .execute(
+                "UPDATE tables SET state = 'polling', last_error = NULL, \
+                   last_reconcile_at = COALESCE(?3, last_reconcile_at) \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, reconcile_at),
+            )
+            .context("failed to mark table polling")?;
+        transaction
+            .execute(
+                "UPDATE databases SET state = 'polling', effective_mode = 'polling', \
+                   updated_at = ?2 WHERE id = ?1",
+                (database_id, now),
+            )
+            .context("failed to mark database polling")?;
+        transaction
+            .commit()
+            .context("failed to commit polling checkpoint")
     }
 
     /// Commits a CDC source checkpoint after every touched WAL has been
@@ -783,6 +959,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found == 0 {
         migration_v1(connection.transaction()?)?;
     }
+    if found < 2 {
+        migration_v2(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -793,4 +972,13 @@ fn migration_v1(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 1")
+}
+
+fn migration_v2(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .context("failed to apply metadata migration 2")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 2")
 }
