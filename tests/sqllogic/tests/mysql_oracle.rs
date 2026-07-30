@@ -204,7 +204,7 @@ fn run_oracle() -> Result<(), String> {
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
         let actual = execute_pintail(&case.sql, &catalog, &provider)
             .map_err(|error| format!("case {index} ({}) `{}`: {error}", case.family, case.sql))?;
-        if actual != *expected {
+        if !oracle_rows_equal(&actual, expected) {
             failures.push(format!(
                 "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
                 case.family, case.sql
@@ -319,6 +319,30 @@ fn execute_pintail(
         }
     }
     Ok(rows)
+}
+
+fn oracle_rows_equal(actual: &[String], expected: &[String]) -> bool {
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(actual, expected)| {
+            let actual = actual.split('\t').collect::<Vec<_>>();
+            let expected = expected.split('\t').collect::<Vec<_>>();
+            actual.len() == expected.len()
+                && actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| oracle_values_equal(actual, expected))
+        })
+}
+
+fn oracle_values_equal(actual: &str, expected: &str) -> bool {
+    if actual == expected {
+        return true;
+    }
+    let (Ok(actual), Ok(expected)) = (actual.parse::<f64>(), expected.parse::<f64>()) else {
+        return false;
+    };
+    let scale = actual.abs().max(expected.abs()).max(1.0);
+    (actual - expected).abs() <= f64::EPSILON * 16.0 * scale
 }
 
 fn canonical_value(value: &Value) -> String {
@@ -443,7 +467,8 @@ fn oracle_cases() -> Vec<OracleCase> {
         cases.push(OracleCase {
             family: "hash aggregate",
             sql: format!(
-                "SELECT active, COUNT(*), SUM(score), MIN(name), MAX(name) \
+                "SELECT active, COUNT(*), SUM(score), AVG(score), \
+                 COUNT(DISTINCT score), MIN(name), MAX(name), GROUP_CONCAT(name) \
                  FROM events WHERE id >= {threshold} \
                  GROUP BY active HAVING COUNT(*) >= 1 ORDER BY active"
             ),

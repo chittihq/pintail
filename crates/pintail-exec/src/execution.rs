@@ -2348,7 +2348,9 @@ mod tests {
             ]),
         };
         let plan = physical(
-            "SELECT name, COUNT(*) AS rows, SUM(DISTINCT id) AS total \
+            "SELECT name, COUNT(*) AS rows, SUM(DISTINCT id) AS total, \
+             COUNT(DISTINCT id) AS unique_ids, AVG(id) AS average_id, \
+             GROUP_CONCAT(DISTINCT id) AS ids \
              FROM events GROUP BY name HAVING COUNT(*) > 1",
         );
         let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
@@ -2366,6 +2368,18 @@ mod tests {
         assert_eq!(
             batch.column(2).and_then(|column| column.value(0)),
             Some(&Value::UInt64(3))
+        );
+        assert_eq!(
+            batch.column(3).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(2))
+        );
+        assert_eq!(
+            batch.column(4).and_then(|column| column.value(0)),
+            Some(&Value::float64(1.5))
+        );
+        assert_eq!(
+            batch.column(5).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("1,2".to_owned()))
         );
         assert!(execution.next_batch().expect("end").is_none());
     }
