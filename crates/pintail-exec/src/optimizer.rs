@@ -21,10 +21,107 @@ impl Optimizer {
         let plan = push_predicates(plan);
         let plan = replace_metadata_counts(plan);
         let plan = reorder_cross_joins(plan);
+        let plan = push_aggregates_through_identity_joins(plan);
         let mut plan = plan;
         prune_projections(&mut plan);
         push_limits(&mut plan);
         plan
+    }
+}
+
+fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
+    match plan {
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => {
+            let input = push_aggregates_through_identity_joins(*input);
+            let mut referenced = BTreeSet::new();
+            for expression in &group_by {
+                referenced.extend(referenced_tables(expression));
+            }
+            for aggregate in &aggregates {
+                if let Some(expression) = &aggregate.expr {
+                    referenced.extend(referenced_tables(expression));
+                }
+            }
+            let input = if let LogicalPlan::CrossJoin { mut inputs } = input {
+                inputs.retain(|input| !is_unreferenced_identity(input, &referenced));
+                match inputs.len() {
+                    0 => LogicalPlan::OneRow,
+                    1 => inputs.pop().expect("one retained cross-join input"),
+                    _ => LogicalPlan::CrossJoin { inputs },
+                }
+            } else {
+                input
+            };
+            LogicalPlan::Aggregate {
+                input: Box::new(input),
+                group_by,
+                aggregates,
+            }
+        }
+        LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            columns,
+        },
+        LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
+            inputs: inputs
+                .into_iter()
+                .map(push_aggregates_through_identity_joins)
+                .collect(),
+        },
+        LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
+            inputs: inputs
+                .into_iter()
+                .map(push_aggregates_through_identity_joins)
+                .collect(),
+        },
+        LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } => LogicalPlan::Join {
+            left: Box::new(push_aggregates_through_identity_joins(*left)),
+            right: Box::new(push_aggregates_through_identity_joins(*right)),
+            kind,
+            condition,
+        },
+        LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            predicate,
+        },
+        LogicalPlan::Project { input, expressions } => LogicalPlan::Project {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            expressions,
+        },
+        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+        },
+        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            keys,
+        },
+        LogicalPlan::Limit { input, limit } => LogicalPlan::Limit {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            limit,
+        },
+        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+    }
+}
+
+fn is_unreferenced_identity(plan: &LogicalPlan, referenced: &BTreeSet<TableKey>) -> bool {
+    match plan {
+        LogicalPlan::OneRow => true,
+        LogicalPlan::Scan(scan) => {
+            scan.predicates.is_empty()
+                && scan.limit.is_none()
+                && scan.table.row_count == Some(1)
+                && !referenced.contains(&table_key(&scan.table))
+        }
+        _ => false,
     }
 }
 
@@ -887,8 +984,9 @@ mod tests {
     fn optimized(sql: &str) -> LogicalPlan {
         let events = table(1, "events", 100);
         let users = table(2, "users", 20);
-        let database =
-            DatabaseEntry::new(DatabaseId::new(9), "app", [events, users]).expect("database");
+        let singleton = table(3, "singleton", 1);
+        let database = DatabaseEntry::new(DatabaseId::new(9), "app", [events, users, singleton])
+            .expect("database");
         let catalog = CatalogSnapshot::new([database]).expect("catalog");
         let statement = parse_statement(sql).expect("parse");
         let query = Binder::new(&catalog, Some("app"))
@@ -1073,5 +1171,23 @@ mod tests {
 
         let plan = project_input(optimized("SELECT COUNT(*) FROM events WHERE id > 0"));
         assert!(matches!(plan, LogicalPlan::Aggregate { .. }));
+    }
+
+    #[test]
+    fn pushes_aggregates_through_unreferenced_identity_cross_joins_only() {
+        let plan = project_input(optimized("SELECT COUNT(events.id) FROM events, singleton"));
+        let LogicalPlan::Aggregate { input, .. } = plan else {
+            panic!("aggregate");
+        };
+        assert!(matches!(*input, LogicalPlan::Scan(_)));
+
+        let plan = project_input(optimized(
+            "SELECT singleton.id, COUNT(events.id) \
+             FROM events, singleton GROUP BY singleton.id",
+        ));
+        let LogicalPlan::Aggregate { input, .. } = plan else {
+            panic!("aggregate");
+        };
+        assert!(matches!(*input, LogicalPlan::CrossJoin { .. }));
     }
 }
