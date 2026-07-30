@@ -2,6 +2,7 @@
 
 mod binder;
 mod bound;
+mod metadata;
 
 use std::fmt;
 
@@ -16,6 +17,7 @@ pub use bound::{
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
     DatePart, IntervalUnit, ScalarFunction, UnaryOp,
 };
+pub use metadata::{MetadataError, MetadataField, MetadataResult, execute_metadata};
 
 /// An error produced while parsing a SQL request.
 #[derive(Debug, Clone, PartialEq, Eq)]

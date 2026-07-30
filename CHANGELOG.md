@@ -64,6 +64,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stable physical `EXPLAIN` output for optimized queries, including operator
   hierarchy, scan estimates, stable projected column IDs, pushed-predicate
   counts, scan limits, join and aggregation strategies, and top-K bounds.
+- Deterministic catalog-backed `SHOW DATABASES`, `SHOW TABLES`, `SHOW COLUMNS`,
+  and `DESCRIBE` responses with MySQL-compatible field names and type strings.
 
 ## [M1] - 2026-07-30
 
