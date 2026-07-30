@@ -47,9 +47,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Typed `GROUP BY` and `HAVING` binding with strict grouped-column validation,
   deduplicated aggregate slots, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, and
   `GROUP_CONCAT`, including DISTINCT aggregate inputs.
-- Memory-capped hash aggregation with case-insensitive UTF-8 grouping,
-  SQL empty-input aggregate results, post-aggregate HAVING evaluation, and
-  positional projection of grouping keys and aggregate results.
+- Memory-capped hash aggregation with case-insensitive UTF-8 grouping and
+  extrema, SQL empty-input aggregate results, post-aggregate HAVING
+  evaluation, and positional projection of grouping keys and aggregate
+  results.
 - Output-alias, ordinal, and projected-expression `ORDER BY` binding with
   MySQL NULL placement, memory-capped full sorting, case-insensitive UTF-8
   ordering, and LIMIT-aware top-K partitioning.

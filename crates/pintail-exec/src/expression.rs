@@ -677,7 +677,7 @@ fn evaluate_comparison(op: BinaryOp, left: &Value, right: &Value) -> Result<Valu
     Ok(Value::Boolean(result))
 }
 
-fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, ExecError> {
+pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, ExecError> {
     match (left, right) {
         (Value::Utf8(left), Value::Utf8(right)) => {
             Ok(left.to_lowercase().cmp(&right.to_lowercase()))

@@ -15,7 +15,7 @@ use pintail_types::{DataType, Value};
 use crate::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, LogicalPlanner, Optimizer,
     RecordBatch, Scan,
-    expression::{CompiledExpr, mysql_f64, mysql_i64, mysql_u64, predicate_truth},
+    expression::{CompiledExpr, compare_mysql, mysql_f64, mysql_i64, mysql_u64, predicate_truth},
 };
 
 /// Maximum estimated result rows accepted by the unqualified cross-join
@@ -1467,12 +1467,20 @@ impl AggregateState {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
             AggregateValue::Minimum(minimum) => {
-                if minimum.as_ref().is_none_or(|current| value < *current) {
+                let replace = match minimum.as_ref() {
+                    Some(current) => compare_mysql(&value, current)? == Ordering::Less,
+                    None => true,
+                };
+                if replace {
                     *minimum = Some(value);
                 }
             }
             AggregateValue::Maximum(maximum) => {
-                if maximum.as_ref().is_none_or(|current| value > *current) {
+                let replace = match maximum.as_ref() {
+                    Some(current) => compare_mysql(&value, current)? == Ordering::Greater,
+                    None => true,
+                };
+                if replace {
                     *maximum = Some(value);
                 }
             }
@@ -2350,7 +2358,7 @@ mod tests {
         let plan = physical(
             "SELECT name, COUNT(*) AS rows, SUM(DISTINCT id) AS total, \
              COUNT(DISTINCT id) AS unique_ids, AVG(id) AS average_id, \
-             GROUP_CONCAT(DISTINCT id) AS ids \
+             GROUP_CONCAT(DISTINCT id) AS ids, MIN(name), MAX(name) \
              FROM events GROUP BY name HAVING COUNT(*) > 1",
         );
         let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
@@ -2380,6 +2388,14 @@ mod tests {
         assert_eq!(
             batch.column(5).and_then(|column| column.value(0)),
             Some(&Value::Utf8("1,2".to_owned()))
+        );
+        assert_eq!(
+            batch.column(6).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("alpha".to_owned()))
+        );
+        assert_eq!(
+            batch.column(7).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("alpha".to_owned()))
         );
         assert!(execution.next_batch().expect("end").is_none());
     }
