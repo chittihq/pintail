@@ -353,6 +353,52 @@ fn projected_scan_enforces_its_retained_memory_budget() {
     assert!(scan.retained_bytes() <= 64 * 1024);
 }
 
+#[test]
+fn projected_memtable_scan_reserves_payloads_before_cloning() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
+    table
+        .ingest(vec![row(1, &"x".repeat(16 * 1024), 1)])
+        .expect("ingest");
+    let snapshot = table.snapshot();
+
+    assert!(matches!(
+        snapshot.scan_projected_range_bounded(&key(1), &key(1), &[2], 2 * 1024),
+        Err(StoreError::MemoryLimitExceeded { limit: 2_048, .. })
+    ));
+    assert_eq!(
+        snapshot
+            .scan_projected_range_bounded(&key(1), &key(1), &[2], 64 * 1024)
+            .expect("bounded memtable scan")
+            .rows()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn projected_memtable_scan_reserves_keys_before_cloning() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let mut table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
+    let wide_key = PrimaryKey::new(vec![KeyPart::Utf8("k".repeat(16 * 1024))]).expect("wide key");
+    table
+        .ingest(vec![StoredRow::new(
+            wide_key.clone(),
+            vec![Value::UInt64(1), Value::Utf8("small".into())],
+            1,
+            false,
+        )])
+        .expect("ingest");
+    let snapshot = table.snapshot();
+
+    assert!(matches!(
+        snapshot.scan_projected_range_bounded(&wide_key, &wide_key, &[2], 2 * 1024),
+        Err(StoreError::MemoryLimitExceeded { limit: 2_048, .. })
+    ));
+}
+
 fn schema() -> TableSchema {
     TableSchema::new(
         3,

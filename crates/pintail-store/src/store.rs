@@ -2,10 +2,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex, OnceLock, Weak,
-        atomic::{AtomicUsize, Ordering as AtomicOrdering},
-    },
+    sync::{Arc, Mutex, OnceLock, Weak, atomic::AtomicUsize},
 };
 
 use fs2::FileExt;
@@ -1126,6 +1123,7 @@ impl TableSnapshot {
             .collect::<Result<Vec<_>, _>>()?;
 
         let scan_memory = AtomicUsize::new(0);
+        let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
         let scan_pool = projected_scan_pool()?;
         let segment_scans = scan_pool.install(|| {
             self.manifest
@@ -1156,6 +1154,7 @@ impl TableSnapshot {
                         &self.schema,
                         start,
                         end,
+                        &scan_budget,
                     )?;
                     let stats = ScanStats {
                         segments_read: 1,
@@ -1164,6 +1163,7 @@ impl TableSnapshot {
                         blocks_decoded: scan.stats.decoded,
                         ..ScanStats::default()
                     };
+                    let scan_reserved = scan.reserved_bytes;
                     let candidates = scan
                         .rows
                         .into_iter()
@@ -1177,14 +1177,11 @@ impl TableSnapshot {
                                     row_index: row.physical_index,
                                 },
                             };
-                            reserve_scan_memory(
-                                &scan_memory,
-                                candidate.estimated_bytes(),
-                                memory_limit,
-                            )?;
+                            scan_budget.reserve(candidate.estimated_bytes())?;
                             Ok(candidate)
                         })
                         .collect::<Result<Vec<_>, StoreError>>()?;
+                    scan_budget.release(scan_reserved);
                     Ok((stats, candidates))
                 })
                 .collect::<Result<Vec<_>, StoreError>>()
@@ -1199,13 +1196,14 @@ impl TableSnapshot {
             }
         }
         for (_, row) in self.memtable.range(start.clone()..=end.clone()) {
+            let candidate_bytes = ProjectedCandidate::estimated_bytes_for_key(row.key());
+            scan_budget.reserve(candidate_bytes)?;
             let candidate = ProjectedCandidate {
                 key: row.key().clone(),
                 version: row.version(),
                 deleted: row.is_deleted(),
                 source: ProjectedSource::Memtable,
             };
-            reserve_scan_memory(&scan_memory, candidate.estimated_bytes(), memory_limit)?;
             apply_projected_latest(&mut latest, candidate);
         }
 
@@ -1230,6 +1228,19 @@ impl TableSnapshot {
                             "winning memtable row disappeared from pinned snapshot".into(),
                         )
                     })?;
+                    let projected_bytes = size_of::<Vec<pintail_types::Value>>()
+                        .saturating_add(
+                            projection
+                                .len()
+                                .saturating_mul(size_of::<pintail_types::Value>()),
+                        )
+                        .saturating_add(
+                            projection
+                                .iter()
+                                .map(|index| row.values()[*index].heap_bytes())
+                                .fold(0_usize, usize::saturating_add),
+                        );
+                    scan_budget.reserve(projected_bytes)?;
                     *values = Some(
                         projection
                             .iter()
@@ -1256,6 +1267,7 @@ impl TableSnapshot {
                         &self.schema,
                         &projection,
                         &row_indices,
+                        &scan_budget,
                     )?;
                     let fetched_bytes = fetch
                         .values
@@ -1269,7 +1281,8 @@ impl TableSnapshot {
                                     .sum::<usize>()
                         })
                         .sum();
-                    reserve_scan_memory(&scan_memory, fetched_bytes, memory_limit)?;
+                    scan_budget.reserve(fetched_bytes)?;
+                    scan_budget.release(fetch.reserved_bytes);
                     Ok((selected, fetch.values, fetch.blocks_decoded))
                 })
                 .collect::<Result<Vec<_>, StoreError>>()
@@ -1318,38 +1331,15 @@ struct ProjectedCandidate {
 
 impl ProjectedCandidate {
     fn estimated_bytes(&self) -> usize {
+        Self::estimated_bytes_for_key(&self.key)
+    }
+
+    fn estimated_bytes_for_key(key: &PrimaryKey) -> usize {
         size_of::<Self>()
             + size_of::<PrimaryKey>()
-            + 2 * std::mem::size_of_val(self.key.parts())
-            + 2 * self.key.heap_bytes()
+            + 2 * std::mem::size_of_val(key.parts())
+            + 2 * key.heap_bytes()
             + 4 * size_of::<usize>()
-    }
-}
-
-fn reserve_scan_memory(
-    used: &AtomicUsize,
-    requested: usize,
-    limit: usize,
-) -> Result<(), StoreError> {
-    let mut current = used.load(AtomicOrdering::Relaxed);
-    loop {
-        let next = current.saturating_add(requested);
-        if next > limit {
-            return Err(StoreError::MemoryLimitExceeded {
-                used: current,
-                requested,
-                limit,
-            });
-        }
-        match used.compare_exchange_weak(
-            current,
-            next,
-            AtomicOrdering::Relaxed,
-            AtomicOrdering::Relaxed,
-        ) {
-            Ok(_) => return Ok(()),
-            Err(actual) => current = actual,
-        }
     }
 }
 

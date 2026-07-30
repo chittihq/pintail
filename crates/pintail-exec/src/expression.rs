@@ -132,6 +132,178 @@ impl CompiledExpr {
             } => evaluate_scalar(*function, args, *data_type, batch, row),
         }
     }
+
+    pub(crate) fn allocation_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
+        match self {
+            Self::Column(index) => batch
+                .column(*index)
+                .and_then(|column| column.value(row))
+                .map_or(0, Value::heap_bytes),
+            Self::Literal(value) => value.heap_bytes(),
+            Self::Unary {
+                expr, data_type, ..
+            } => expr.allocation_upper_bound(batch, row).saturating_add(
+                if data_type.is_some_and(|data_type| data_type == DataType::Utf8) {
+                    self.string_value_upper_bound(batch, row)
+                } else {
+                    0
+                },
+            ),
+            Self::Binary {
+                left,
+                right,
+                data_type,
+                ..
+            } => left
+                .allocation_upper_bound(batch, row)
+                .saturating_add(right.allocation_upper_bound(batch, row))
+                .saturating_add(
+                    if data_type.is_some_and(|data_type| data_type == DataType::Utf8) {
+                        self.string_value_upper_bound(batch, row)
+                    } else {
+                        0
+                    },
+                ),
+            Self::IsNull { expr, .. } => expr.allocation_upper_bound(batch, row),
+            Self::Scalar {
+                function,
+                args,
+                data_type: _,
+            } => {
+                let string_arguments = args
+                    .iter()
+                    .map(|argument| argument.string_value_upper_bound(batch, row))
+                    .fold(0_usize, usize::saturating_add);
+                let argument_memory = args
+                    .iter()
+                    .map(|argument| argument.allocation_upper_bound(batch, row))
+                    .fold(0_usize, usize::saturating_add)
+                    .saturating_add(args.len().saturating_mul(std::mem::size_of::<Value>()))
+                    .saturating_add(string_arguments)
+                    .saturating_add(args.len().saturating_mul(std::mem::size_of::<String>()));
+                let string = |index: usize| {
+                    args.get(index)
+                        .map_or(0, |argument| argument.string_value_upper_bound(batch, row))
+                };
+                let first = string(0);
+                let output = match function {
+                    ScalarFunction::Concat => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add),
+                    ScalarFunction::Substring
+                    | ScalarFunction::Trim
+                    | ScalarFunction::Left
+                    | ScalarFunction::Right
+                    | ScalarFunction::NullIf
+                    | ScalarFunction::Cast(_) => first,
+                    ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
+                    ScalarFunction::Locate => string_arguments.saturating_mul(12),
+                    ScalarFunction::Replace => {
+                        first.saturating_add(first.saturating_add(1).saturating_mul(string(2)))
+                    }
+                    ScalarFunction::If => string(1).max(string(2)),
+                    ScalarFunction::Coalesce => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .max()
+                        .unwrap_or(0),
+                    ScalarFunction::Now
+                    | ScalarFunction::CurrentDate
+                    | ScalarFunction::Date
+                    | ScalarFunction::DateInterval { .. }
+                    | ScalarFunction::FromUnixTime => 64,
+                    ScalarFunction::DateFormat => string(1).saturating_mul(64),
+                    ScalarFunction::Like { .. } => args
+                        .iter()
+                        .take(2)
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add)
+                        .saturating_mul(12),
+                    ScalarFunction::Length
+                    | ScalarFunction::CharLength
+                    | ScalarFunction::InList { .. }
+                    | ScalarFunction::Between { .. }
+                    | ScalarFunction::DatePart(_)
+                    | ScalarFunction::DateDiff
+                    | ScalarFunction::UnixTimestamp => 0,
+                };
+                argument_memory.saturating_add(output)
+            }
+        }
+    }
+
+    fn string_value_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
+        match self {
+            Self::Column(index) => batch
+                .column(*index)
+                .and_then(|column| column.value(row))
+                .map_or(0, scalar_string_upper_bound),
+            Self::Literal(value) => scalar_string_upper_bound(value),
+            Self::Unary { data_type, .. } | Self::Binary { data_type, .. } => {
+                if data_type.is_some_and(|data_type| data_type == DataType::Utf8) {
+                    64
+                } else {
+                    24
+                }
+            }
+            Self::IsNull { .. } => 1,
+            Self::Scalar { function, args, .. } => {
+                let bound = |index: usize| {
+                    args.get(index)
+                        .map_or(0, |argument| argument.string_value_upper_bound(batch, row))
+                };
+                let first = bound(0);
+                match function {
+                    ScalarFunction::Concat => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add),
+                    ScalarFunction::Substring
+                    | ScalarFunction::Trim
+                    | ScalarFunction::Left
+                    | ScalarFunction::Right
+                    | ScalarFunction::NullIf
+                    | ScalarFunction::Cast(_) => first,
+                    ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
+                    ScalarFunction::Replace => {
+                        first.saturating_add(first.saturating_add(1).saturating_mul(bound(2)))
+                    }
+                    ScalarFunction::If => bound(1).max(bound(2)),
+                    ScalarFunction::Coalesce => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .max()
+                        .unwrap_or(0),
+                    ScalarFunction::Now
+                    | ScalarFunction::CurrentDate
+                    | ScalarFunction::Date
+                    | ScalarFunction::DateInterval { .. }
+                    | ScalarFunction::DateFormat
+                    | ScalarFunction::FromUnixTime => 64,
+                    ScalarFunction::Length
+                    | ScalarFunction::CharLength
+                    | ScalarFunction::Locate
+                    | ScalarFunction::Like { .. }
+                    | ScalarFunction::InList { .. }
+                    | ScalarFunction::Between { .. }
+                    | ScalarFunction::DatePart(_)
+                    | ScalarFunction::DateDiff
+                    | ScalarFunction::UnixTimestamp => 24,
+                }
+            }
+        }
+    }
+}
+
+fn scalar_string_upper_bound(value: &Value) -> usize {
+    match value {
+        Value::Null => 0,
+        Value::Boolean(_) => 1,
+        Value::Int64(_) | Value::UInt64(_) | Value::Float64(_) => 24,
+        Value::Utf8(value) => value.len(),
+        Value::Binary(value) => value.len(),
+    }
 }
 
 fn evaluate_scalar(
@@ -462,97 +634,96 @@ fn mysql_substring(value: &str, start: i64, length: i64) -> String {
     if start == 0 || length <= 0 {
         return String::new();
     }
-    let characters = value.chars().collect::<Vec<_>>();
-    let start = if start > 0 {
+    let character_count = value.chars().count();
+    let start_character = if start > 0 {
         usize::try_from(start - 1).unwrap_or(usize::MAX)
     } else {
-        characters
-            .len()
-            .saturating_sub(usize::try_from(start.unsigned_abs()).unwrap_or(usize::MAX))
+        character_count.saturating_sub(usize::try_from(start.unsigned_abs()).unwrap_or(usize::MAX))
     };
     let length = usize::try_from(length).unwrap_or(usize::MAX);
-    characters.into_iter().skip(start).take(length).collect()
+    value.chars().skip(start_character).take(length).collect()
 }
 
 fn locate(needle: &str, haystack: &str, start: i64) -> u64 {
     if start <= 0 {
         return 0;
     }
-    let characters = haystack.chars().collect::<Vec<_>>();
     let start = usize::try_from(start - 1).unwrap_or(usize::MAX);
-    if start >= characters.len() {
-        return 0;
-    }
-    let suffix = characters[start..].iter().collect::<String>();
-    let suffix_lower = suffix.to_lowercase();
-    let Some(byte_position) = suffix_lower.find(needle) else {
+    let haystack_lower = haystack.to_lowercase();
+    let Some(start_byte) = haystack_lower
+        .char_indices()
+        .nth(start)
+        .map(|(index, _)| index)
+    else {
         return 0;
     };
-    let character_position = suffix_lower[..byte_position].chars().count();
+    let suffix = &haystack_lower[start_byte..];
+    let Some(byte_position) = suffix.find(needle) else {
+        return 0;
+    };
+    let character_position = suffix[..byte_position].chars().count();
     u64::try_from(start.saturating_add(character_position).saturating_add(1)).unwrap_or(u64::MAX)
 }
 
 fn like_matches(value: &str, pattern: &str, escape: Option<char>) -> bool {
     let value = value.chars().collect::<Vec<_>>();
-    let pattern = pattern.chars().collect::<Vec<_>>();
-    let mut memo = std::collections::HashMap::new();
-    like_from(&value, &pattern, escape, 0, 0, &mut memo)
-}
-
-fn like_from(
-    value: &[char],
-    pattern: &[char],
-    escape: Option<char>,
-    value_index: usize,
-    pattern_index: usize,
-    memo: &mut std::collections::HashMap<(usize, usize), bool>,
-) -> bool {
-    if let Some(result) = memo.get(&(value_index, pattern_index)) {
-        return *result;
+    let mut tokens = Vec::with_capacity(pattern.chars().count());
+    let mut pattern = pattern.chars();
+    while let Some(character) = pattern.next() {
+        if Some(character) == escape {
+            let Some(literal) = pattern.next() else {
+                return false;
+            };
+            tokens.push(LikeToken::Literal(literal));
+        } else {
+            tokens.push(match character {
+                '%' => LikeToken::AnyMany,
+                '_' => LikeToken::AnyOne,
+                literal => LikeToken::Literal(literal),
+            });
+        }
     }
-    let result = if pattern_index == pattern.len() {
-        value_index == value.len()
-    } else if Some(pattern[pattern_index]) == escape {
-        pattern_index + 1 < pattern.len()
-            && value.get(value_index) == pattern.get(pattern_index + 1)
-            && like_from(
-                value,
-                pattern,
-                escape,
-                value_index + 1,
-                pattern_index + 2,
-                memo,
-            )
-    } else {
-        match pattern[pattern_index] {
-            '%' => {
-                like_from(value, pattern, escape, value_index, pattern_index + 1, memo)
-                    || value_index < value.len()
-                        && like_from(value, pattern, escape, value_index + 1, pattern_index, memo)
+
+    let mut value_index = 0;
+    let mut token_index = 0;
+    let mut wildcard = None;
+    let mut wildcard_value = 0;
+    while value_index < value.len() {
+        match tokens.get(token_index) {
+            Some(LikeToken::Literal(literal)) if value[value_index] == *literal => {
+                value_index += 1;
+                token_index += 1;
             }
-            '_' if value_index < value.len() => like_from(
-                value,
-                pattern,
-                escape,
-                value_index + 1,
-                pattern_index + 1,
-                memo,
-            ),
-            character => {
-                value.get(value_index) == Some(&character)
-                    && like_from(
-                        value,
-                        pattern,
-                        escape,
-                        value_index + 1,
-                        pattern_index + 1,
-                        memo,
-                    )
+            Some(LikeToken::AnyOne) => {
+                value_index += 1;
+                token_index += 1;
+            }
+            Some(LikeToken::AnyMany) => {
+                wildcard = Some(token_index);
+                token_index += 1;
+                wildcard_value = value_index;
+            }
+            _ => {
+                let Some(wildcard_index) = wildcard else {
+                    return false;
+                };
+                wildcard_value += 1;
+                value_index = wildcard_value;
+                token_index = wildcard_index + 1;
             }
         }
-    };
-    memo.insert((value_index, pattern_index), result);
-    result
+    }
+    while matches!(tokens.get(token_index), Some(LikeToken::AnyMany)) {
+        token_index += 1;
+    }
+    token_index == tokens.len()
+}
+
+#[derive(Clone, Copy)]
+enum LikeToken {
+    Literal(char),
+    AnyOne,
+    AnyMany,
 }
 
 fn evaluate_in_list(values: &[Value], negated: bool) -> Result<Value, ExecError> {
@@ -679,18 +850,41 @@ fn evaluate_comparison(op: BinaryOp, left: &Value, right: &Value) -> Result<Valu
 
 pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, ExecError> {
     match (left, right) {
-        (Value::Utf8(left), Value::Utf8(right)) => {
-            Ok(left.to_lowercase().cmp(&right.to_lowercase()))
-        }
+        (Value::Utf8(left), Value::Utf8(right)) => Ok(compare_utf8_mysql(left, right)),
         (Value::Binary(left), Value::Binary(right)) => Ok(left.cmp(right)),
         (Value::Boolean(left), Value::Boolean(right)) => Ok(left.cmp(right)),
         (Value::Int64(left), Value::Int64(right)) => Ok(left.cmp(right)),
         (Value::UInt64(left), Value::UInt64(right)) => Ok(left.cmp(right)),
-        (Value::Float64(left), Value::Float64(right)) => Ok(left.cmp(right)),
+        (Value::Int64(left), Value::UInt64(right)) => {
+            if *left < 0 {
+                Ok(Ordering::Less)
+            } else {
+                Ok(u64::try_from(*left)
+                    .expect("nonnegative i64 fits u64")
+                    .cmp(right))
+            }
+        }
+        (Value::UInt64(left), Value::Int64(right)) => {
+            if *right < 0 {
+                Ok(Ordering::Greater)
+            } else {
+                Ok(left.cmp(&u64::try_from(*right).expect("nonnegative i64 fits u64")))
+            }
+        }
+        (Value::Float64(left), Value::Float64(right)) => left
+            .get()
+            .partial_cmp(&right.get())
+            .ok_or(ExecError::InvalidExpressionType),
         _ => mysql_f64(left)?
             .partial_cmp(&mysql_f64(right)?)
             .ok_or(ExecError::InvalidExpressionType),
     }
+}
+
+pub(crate) fn compare_utf8_mysql(left: &str, right: &str) -> Ordering {
+    left.chars()
+        .flat_map(char::to_lowercase)
+        .cmp(right.chars().flat_map(char::to_lowercase))
 }
 
 fn evaluate_arithmetic(
@@ -920,7 +1114,11 @@ mod tests {
     // Expression behavior is exercised through physical operator tests. Keep
     // the MySQL numeric-prefix parser covered directly because its edge cases
     // do not require a catalog.
-    use super::parse_mysql_number;
+    use std::cmp::Ordering;
+
+    use pintail_types::Value;
+
+    use super::{compare_mysql, parse_mysql_number};
 
     #[test]
     fn parses_mysql_numeric_prefixes() {
@@ -928,5 +1126,20 @@ mod tests {
         assert!((parse_mysql_number("1.25e2 trailing") - 125.0).abs() < f64::EPSILON);
         assert!(parse_mysql_number("not a number").abs() < f64::EPSILON);
         assert!((parse_mysql_number("1e") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn compares_mixed_bigints_without_float_precision_loss() {
+        assert_eq!(
+            compare_mysql(
+                &Value::UInt64(9_007_199_254_740_993),
+                &Value::Int64(9_007_199_254_740_992),
+            ),
+            Ok(Ordering::Greater)
+        );
+        assert_eq!(
+            compare_mysql(&Value::Int64(-1), &Value::UInt64(0)),
+            Ok(Ordering::Less)
+        );
     }
 }

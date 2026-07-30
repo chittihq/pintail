@@ -4,6 +4,7 @@ use std::{
     fs::{File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
 };
 
 use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
@@ -22,6 +23,71 @@ const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
 const TOMBSTONE_COLUMN_ID: u32 = u32::MAX;
 const BLOOM_BYTES: usize = 256;
+
+pub(crate) struct ScanMemoryBudget<'a> {
+    used: &'a AtomicUsize,
+    limit: usize,
+}
+
+impl<'a> ScanMemoryBudget<'a> {
+    pub(crate) const fn new(used: &'a AtomicUsize, limit: usize) -> Self {
+        Self { used, limit }
+    }
+
+    pub(crate) fn reserve(&self, requested: usize) -> Result<(), StoreError> {
+        reserve_scan_memory(self.used, requested, self.limit)
+    }
+
+    pub(crate) fn release(&self, released: usize) {
+        self.used.fetch_sub(released, AtomicOrdering::Relaxed);
+    }
+
+    fn reserve_temporary(&self, requested: usize) -> Result<ScanMemoryReservation<'a>, StoreError> {
+        self.reserve(requested)?;
+        Ok(ScanMemoryReservation {
+            used: self.used,
+            reserved: requested,
+        })
+    }
+}
+
+struct ScanMemoryReservation<'a> {
+    used: &'a AtomicUsize,
+    reserved: usize,
+}
+
+impl Drop for ScanMemoryReservation<'_> {
+    fn drop(&mut self) {
+        self.used.fetch_sub(self.reserved, AtomicOrdering::Relaxed);
+    }
+}
+
+fn reserve_scan_memory(
+    used: &AtomicUsize,
+    requested: usize,
+    limit: usize,
+) -> Result<(), StoreError> {
+    let mut current = used.load(AtomicOrdering::Relaxed);
+    loop {
+        let next = current.saturating_add(requested);
+        if next > limit {
+            return Err(StoreError::MemoryLimitExceeded {
+                used: current,
+                requested,
+                limit,
+            });
+        }
+        match used.compare_exchange_weak(
+            current,
+            next,
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+        ) {
+            Ok(_) => return Ok(()),
+            Err(actual) => current = actual,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct SegmentMeta {
@@ -475,11 +541,13 @@ pub(crate) struct SegmentReadStats {
 pub(crate) struct ProjectedSegmentScan {
     pub(crate) rows: Vec<ProjectedSegmentRow>,
     pub(crate) stats: SegmentReadStats,
+    pub(crate) reserved_bytes: usize,
 }
 
 pub(crate) struct ProjectedValueFetch {
     pub(crate) values: Vec<Vec<Value>>,
     pub(crate) blocks_decoded: usize,
+    pub(crate) reserved_bytes: usize,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -489,8 +557,16 @@ pub(crate) fn read_row_headers_range(
     schema: &TableSchema,
     start: &PrimaryKey,
     end: &PrimaryKey,
+    memory: &ScanMemoryBudget<'_>,
 ) -> Result<ProjectedSegmentScan, StoreError> {
     let path = directory.join(&meta.file_name);
+    let file_bytes = usize::try_from(
+        std::fs::metadata(&path)
+            .map_err(|error| StoreError::io(format!("stat segment {}", path.display()), error))?
+            .len(),
+    )
+    .map_err(|_| StoreError::FormatLimit("segment file length exceeds usize".into()))?;
+    let _file_memory = memory.reserve_temporary(file_bytes.saturating_add(1))?;
     let bytes = std::fs::read(&path)
         .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
     validate_footer(&path, &bytes, meta, schema)?;
@@ -521,19 +597,45 @@ pub(crate) fn read_row_headers_range(
             actual: fingerprint,
         });
     }
-    let _row_count = decoder
-        .u64()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+    let row_count = usize::try_from(
+        decoder
+            .u64()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+    )
+    .map_err(|_| corrupt_here(&path, &decoder, "segment row count exceeds usize"))?;
     let column_count = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-    let _block_rows = decoder
+    let block_rows = decoder
         .u32()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
+    if block_rows == 0 {
+        return Err(corrupt_here(
+            &path,
+            &decoder,
+            "segment block row target is zero",
+        ));
+    }
+    let block_count_upper = row_count.div_ceil(block_rows);
+    let header_reserved = row_count
+        .saturating_mul(
+            std::mem::size_of::<usize>().saturating_add(std::mem::size_of::<ProjectedSegmentRow>()),
+        )
+        .saturating_add(
+            row_count
+                .saturating_mul(3)
+                .saturating_mul(std::mem::size_of::<Cell>())
+                .saturating_mul(2),
+        )
+        .saturating_add(block_count_upper.saturating_mul(
+            std::mem::size_of::<bool>().saturating_add(std::mem::size_of::<usize>()),
+        ));
+    memory.reserve(header_reserved)?;
+    let mut reserved_bytes = header_reserved;
 
-    let mut selected_blocks = Vec::new();
-    let mut block_row_counts = Vec::new();
-    let mut selected_row_indices = Vec::new();
+    let mut selected_blocks = Vec::with_capacity(block_count_upper);
+    let mut block_row_counts = Vec::with_capacity(block_count_upper);
+    let mut selected_row_indices = Vec::with_capacity(row_count);
     let mut next_row_index = 0;
     let mut keys = None;
     let mut versions = None;
@@ -564,8 +666,12 @@ pub(crate) fn read_row_headers_range(
             }
             let mut column_cells = Vec::new();
             for _ in 0..block_count {
-                let block =
-                    read_block_if(&path, &mut decoder, logical_type, |minimum, maximum| {
+                let block = read_block_if_bounded(
+                    &path,
+                    &mut decoder,
+                    logical_type,
+                    memory,
+                    |minimum, maximum| {
                         let minimum = decode_stat_key(&path, minimum).map_err(|reason| {
                             StoreError::CorruptSegment {
                                 path: path.clone(),
@@ -581,8 +687,10 @@ pub(crate) fn read_row_headers_range(
                             }
                         })?;
                         Ok(minimum <= *end && maximum >= *start)
-                    })?;
+                    },
+                )?;
                 let selected = block.cells.is_some();
+                reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
                 stats.read += usize::from(selected);
                 stats.decoded += usize::from(selected);
                 stats.pruned += usize::from(!selected);
@@ -630,9 +738,10 @@ pub(crate) fn read_row_headers_range(
         let decode_column = system_column != 0;
         let mut column_cells = Vec::new();
         for (block_index, selected) in selected_blocks.iter().copied().enumerate() {
-            let block = read_block_if(&path, &mut decoder, logical_type, |_, _| {
-                Ok(selected && decode_column)
-            })?;
+            let block =
+                read_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
+                    Ok(selected && decode_column)
+                })?;
             if block.row_count != block_row_counts[block_index] {
                 return Err(corrupt_here(
                     &path,
@@ -640,6 +749,7 @@ pub(crate) fn read_row_headers_range(
                     "column block row count mismatch",
                 ));
             }
+            reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
             stats.decoded += usize::from(block.cells.is_some());
             if let Some(cells) = block.cells {
                 column_cells.extend(cells);
@@ -665,7 +775,21 @@ pub(crate) fn read_row_headers_range(
         versions.ok_or_else(|| corrupt_here(&path, &decoder, "missing version column"))?;
     let tombstones =
         tombstones.ok_or_else(|| corrupt_here(&path, &decoder, "missing tombstone column"))?;
-    let mut rows = Vec::new();
+    let cloned_key_bytes = keys
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Key(key) if key >= start && key <= end => Some(
+                key.parts()
+                    .len()
+                    .saturating_mul(std::mem::size_of::<pintail_types::KeyPart>())
+                    .saturating_add(key.heap_bytes()),
+            ),
+            _ => None,
+        })
+        .fold(0_usize, usize::saturating_add);
+    memory.reserve(cloned_key_bytes)?;
+    reserved_bytes = reserved_bytes.saturating_add(cloned_key_bytes);
+    let mut rows = Vec::with_capacity(row_count);
     for row_index in 0..keys.len() {
         let Cell::Key(key) = &keys[row_index] else {
             return Err(corrupt_here(&path, &decoder, "invalid primary-key cell"));
@@ -686,7 +810,11 @@ pub(crate) fn read_row_headers_range(
             physical_index: selected_row_indices[row_index],
         });
     }
-    Ok(ProjectedSegmentScan { rows, stats })
+    Ok(ProjectedSegmentScan {
+        rows,
+        stats,
+        reserved_bytes,
+    })
 }
 
 #[allow(clippy::too_many_lines)]
@@ -696,6 +824,7 @@ pub(crate) fn read_projected_rows(
     schema: &TableSchema,
     projection: &[usize],
     row_indices: &[usize],
+    memory: &ScanMemoryBudget<'_>,
 ) -> Result<ProjectedValueFetch, StoreError> {
     if row_indices.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(StoreError::FormatLimit(
@@ -703,6 +832,13 @@ pub(crate) fn read_projected_rows(
         ));
     }
     let path = directory.join(&meta.file_name);
+    let file_bytes = usize::try_from(
+        std::fs::metadata(&path)
+            .map_err(|error| StoreError::io(format!("stat segment {}", path.display()), error))?
+            .len(),
+    )
+    .map_err(|_| StoreError::FormatLimit("segment file length exceeds usize".into()))?;
+    let _file_memory = memory.reserve_temporary(file_bytes.saturating_add(1))?;
     let bytes = std::fs::read(&path)
         .map_err(|error| StoreError::io(format!("read segment {}", path.display()), error))?;
     validate_footer(&path, &bytes, meta, schema)?;
@@ -758,6 +894,18 @@ pub(crate) fn read_projected_rows(
         ));
     }
 
+    let option_matrix_reserved = row_indices
+        .len()
+        .saturating_mul(
+            std::mem::size_of::<Vec<Option<Value>>>().saturating_add(
+                projection
+                    .len()
+                    .saturating_mul(std::mem::size_of::<Option<Value>>()),
+            ),
+        )
+        .saturating_add(projection.len().saturating_mul(std::mem::size_of::<bool>()));
+    memory.reserve(option_matrix_reserved)?;
+    let mut reserved_bytes = option_matrix_reserved;
     let mut values = vec![vec![None; projection.len()]; row_indices.len()];
     let mut found = vec![false; projection.len()];
     let mut blocks_decoded = 0;
@@ -800,12 +948,24 @@ pub(crate) fn read_projected_rows(
                 && row_indices
                     .iter()
                     .any(|index| *index >= block_start && *index < block_limit);
-            let block = read_block_if(&path, &mut decoder, logical_type, |_, _| Ok(selected))?;
+            let block =
+                read_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
+                    Ok(selected)
+                })?;
+            reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
             let block_end = block_start
                 .checked_add(block.row_count)
                 .ok_or_else(|| corrupt_here(&path, &decoder, "column row count overflow"))?;
             if let (Some(position), Some(cells)) = (projected_position, block.cells) {
                 blocks_decoded += 1;
+                let cloned_value_bytes = row_indices
+                    .iter()
+                    .copied()
+                    .filter(|row_index| *row_index >= block_start && *row_index < block_end)
+                    .map(|row_index| cells[row_index - block_start].heap_bytes())
+                    .fold(0_usize, usize::saturating_add);
+                memory.reserve(cloned_value_bytes)?;
+                reserved_bytes = reserved_bytes.saturating_add(cloned_value_bytes);
                 for (result_index, row_index) in row_indices.iter().copied().enumerate() {
                     if row_index < block_start || row_index >= block_end {
                         continue;
@@ -841,6 +1001,15 @@ pub(crate) fn read_projected_rows(
             row[position] = Some(Value::Null);
         }
     }
+    let output_matrix_reserved = row_indices.len().saturating_mul(
+        std::mem::size_of::<Vec<Value>>().saturating_add(
+            projection
+                .len()
+                .saturating_mul(std::mem::size_of::<Value>()),
+        ),
+    );
+    memory.reserve(output_matrix_reserved)?;
+    reserved_bytes = reserved_bytes.saturating_add(output_matrix_reserved);
     let values = values
         .into_iter()
         .map(|row| {
@@ -854,6 +1023,7 @@ pub(crate) fn read_projected_rows(
     Ok(ProjectedValueFetch {
         values,
         blocks_decoded,
+        reserved_bytes,
     })
 }
 
@@ -1042,6 +1212,7 @@ fn read_block(
 struct BlockRead {
     row_count: usize,
     cells: Option<Vec<Cell>>,
+    reserved_bytes: usize,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1049,6 +1220,33 @@ fn read_block_if<F>(
     path: &Path,
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
+    should_decode: F,
+) -> Result<BlockRead, StoreError>
+where
+    F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
+{
+    read_block_if_with_budget(path, decoder, logical_type, None, should_decode)
+}
+
+fn read_block_if_bounded<F>(
+    path: &Path,
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    memory: &ScanMemoryBudget<'_>,
+    should_decode: F,
+) -> Result<BlockRead, StoreError>
+where
+    F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
+{
+    read_block_if_with_budget(path, decoder, logical_type, Some(memory), should_decode)
+}
+
+#[allow(clippy::too_many_lines)]
+fn read_block_if_with_budget<F>(
+    path: &Path,
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    memory: Option<&ScanMemoryBudget<'_>>,
     should_decode: F,
 ) -> Result<BlockRead, StoreError>
 where
@@ -1071,8 +1269,7 @@ where
         as usize;
     let null_bitmap = block
         .bytes()
-        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?
-        .to_vec();
+        .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
     if null_bitmap.len() != row_count.div_ceil(8) {
         return Err(corrupt(
             path,
@@ -1135,11 +1332,35 @@ where
         return Ok(BlockRead {
             row_count,
             cells: None,
+            reserved_bytes: 0,
         });
     }
+    let non_null_count = row_count - actual_nulls;
+    let _uncompressed_memory = memory
+        .map(|memory| memory.reserve_temporary(uncompressed_length))
+        .transpose()?;
     let uncompressed = decompress_block(compression, compressed, uncompressed_length)
         .map_err(|reason| corrupt(path, compressed_offset, reason))?;
-    let non_null_count = row_count - actual_nulls;
+    let decoded_heap =
+        decoded_heap_upper_bound(&uncompressed, logical_type, encoding, non_null_count)
+            .map_err(|reason| corrupt(path, compressed_offset, reason))?;
+    let _decode_memory = memory
+        .map(|memory| {
+            memory.reserve_temporary(
+                uncompressed_length
+                    .saturating_add(non_null_count.saturating_mul(
+                        std::mem::size_of::<Cell>().saturating_add(std::mem::size_of::<u64>()),
+                    ))
+                    .saturating_add(row_count.saturating_mul(std::mem::size_of::<Cell>()))
+                    .saturating_add(decoded_heap),
+            )
+        })
+        .transpose()?;
+    let reserved_bytes =
+        decoded_heap.saturating_add(row_count.saturating_mul(std::mem::size_of::<Cell>()));
+    if let Some(memory) = memory {
+        memory.reserve(reserved_bytes)?;
+    }
     let decoded_values = decode_payload(&uncompressed, logical_type, encoding, non_null_count)
         .map_err(|reason| corrupt(path, compressed_offset, reason))?;
     let mut decoded_values = decoded_values.into_iter();
@@ -1163,6 +1384,7 @@ where
     Ok(BlockRead {
         row_count,
         cells: Some(cells),
+        reserved_bytes: memory.map_or(0, |_| reserved_bytes),
     })
 }
 
@@ -1290,6 +1512,78 @@ fn decode_payload(
     };
     decoder.finish()?;
     Ok(values)
+}
+
+fn decoded_heap_upper_bound(
+    bytes: &[u8],
+    logical_type: LogicalType,
+    encoding: Encoding,
+    value_count: usize,
+) -> Result<usize, String> {
+    if !matches!(logical_type, LogicalType::Utf8 | LogicalType::Binary) {
+        return Ok(if logical_type == LogicalType::PrimaryKey {
+            let payload_bytes = if matches!(encoding, Encoding::Plain) {
+                bytes.len().saturating_mul(4)
+            } else {
+                bytes.len().saturating_mul(value_count)
+            };
+            payload_bytes.saturating_add(value_count.saturating_mul(64))
+        } else {
+            0
+        });
+    }
+    let mut decoder = Decoder::new(bytes);
+    let heap_bytes = match encoding {
+        Encoding::Plain => {
+            let mut heap_bytes = 0_usize;
+            for _ in 0..value_count {
+                heap_bytes = heap_bytes.saturating_add(decoder.bytes()?.len());
+            }
+            heap_bytes
+        }
+        Encoding::Dictionary => {
+            let dictionary_count = decoder.u32()? as usize;
+            let mut maximum = 0_usize;
+            for _ in 0..dictionary_count {
+                maximum = maximum.max(decoder.bytes()?.len());
+            }
+            for _ in 0..value_count {
+                let index = decoder.u32()? as usize;
+                if index >= dictionary_count {
+                    return Err(format!("dictionary index {index} is out of bounds"));
+                }
+            }
+            maximum.saturating_mul(value_count)
+        }
+        Encoding::RunLength => {
+            let run_count = decoder.u32()? as usize;
+            let mut produced = 0_usize;
+            let mut heap_bytes = 0_usize;
+            for _ in 0..run_count {
+                let length = decoder.u32()? as usize;
+                if length == 0 {
+                    return Err("run length must be non-zero".to_owned());
+                }
+                produced = produced.saturating_add(length);
+                if produced > value_count {
+                    return Err("run lengths exceed block value count".to_owned());
+                }
+                heap_bytes =
+                    heap_bytes.saturating_add(decoder.bytes()?.len().saturating_mul(length));
+            }
+            if produced != value_count {
+                return Err(format!(
+                    "run lengths produce {produced} values, expected {value_count}"
+                ));
+            }
+            heap_bytes
+        }
+        Encoding::BitPacked | Encoding::DeltaBitPacked => {
+            return Err("string block uses an integer encoding".to_owned());
+        }
+    };
+    decoder.finish()?;
+    Ok(heap_bytes)
 }
 
 fn encode_dictionary(encoder: &mut Encoder, cells: &[Cell]) -> Result<(), StoreError> {
@@ -1616,6 +1910,21 @@ enum Cell {
 }
 
 impl Cell {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Utf8(value) => value.len(),
+            Self::Binary(value) => value.len(),
+            Self::Key(value) => value
+                .parts()
+                .len()
+                .saturating_mul(std::mem::size_of::<pintail_types::KeyPart>())
+                .saturating_add(value.heap_bytes()),
+            Self::Null | Self::Boolean(_) | Self::Int64(_) | Self::UInt64(_) | Self::Float64(_) => {
+                0
+            }
+        }
+    }
+
     fn to_value(&self) -> Value {
         match self {
             Self::Null => Value::Null,

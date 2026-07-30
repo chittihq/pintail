@@ -26,6 +26,12 @@ struct OracleCase {
     ordered: bool,
 }
 
+#[derive(Debug)]
+enum OracleValue {
+    Exact(String),
+    Float(String),
+}
+
 struct MysqlContainer {
     name: String,
 }
@@ -135,6 +141,22 @@ impl Drop for MysqlContainer {
 #[ignore = "requires Docker and the mysql:8.4 image; run explicitly as documented"]
 fn matches_mysql_8_4_for_six_hundred_queries() {
     run_oracle().unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn oracle_applies_tolerance_only_to_float_results() {
+    assert!(!oracle_values_equal(
+        &OracleValue::Exact("9007199254740993".to_owned()),
+        "9007199254740992",
+    ));
+    assert!(!oracle_values_equal(
+        &OracleValue::Exact("01".to_owned()),
+        "1",
+    ));
+    assert!(oracle_values_equal(
+        &OracleValue::Float("0.30000000000000004".to_owned()),
+        "0.3",
+    ));
 }
 
 #[allow(clippy::too_many_lines)]
@@ -290,7 +312,7 @@ fn execute_pintail(
     sql: &str,
     catalog: &CatalogSnapshot,
     provider: &SnapshotScanProvider<'_>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<Vec<OracleValue>>, String> {
     let statement = parse_statement(sql).map_err(|error| format!("parse: {error}"))?;
     let bound = Binder::new(catalog, Some("app"))
         .bind(&statement)
@@ -316,13 +338,13 @@ fn execute_pintail(
                         .ok_or_else(|| "result row falls outside a column vector".to_owned())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            rows.push(values.join("\t"));
+            rows.push(values);
         }
     }
     Ok(rows)
 }
 
-fn oracle_rows_equal(actual: &[String], expected: &[String], ordered: bool) -> bool {
+fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[String], ordered: bool) -> bool {
     if actual.len() != expected.len() {
         return false;
     }
@@ -347,8 +369,7 @@ fn oracle_rows_equal(actual: &[String], expected: &[String], ordered: bool) -> b
     })
 }
 
-fn oracle_row_equal(actual: &str, expected: &str) -> bool {
-    let actual = actual.split('\t').collect::<Vec<_>>();
+fn oracle_row_equal(actual: &[OracleValue], expected: &str) -> bool {
     let expected = expected.split('\t').collect::<Vec<_>>();
     actual.len() == expected.len()
         && actual
@@ -357,26 +378,30 @@ fn oracle_row_equal(actual: &str, expected: &str) -> bool {
             .all(|(actual, expected)| oracle_values_equal(actual, expected))
 }
 
-fn oracle_values_equal(actual: &str, expected: &str) -> bool {
-    if actual == expected {
-        return true;
+fn oracle_values_equal(actual: &OracleValue, expected: &str) -> bool {
+    match actual {
+        OracleValue::Exact(actual) => actual == expected,
+        OracleValue::Float(actual) if actual == expected => true,
+        OracleValue::Float(actual) => {
+            let (Ok(actual), Ok(expected)) = (actual.parse::<f64>(), expected.parse::<f64>())
+            else {
+                return false;
+            };
+            let scale = actual.abs().max(expected.abs()).max(1.0);
+            (actual - expected).abs() <= f64::EPSILON * 16.0 * scale
+        }
     }
-    let (Ok(actual), Ok(expected)) = (actual.parse::<f64>(), expected.parse::<f64>()) else {
-        return false;
-    };
-    let scale = actual.abs().max(expected.abs()).max(1.0);
-    (actual - expected).abs() <= f64::EPSILON * 16.0 * scale
 }
 
-fn canonical_value(value: &Value) -> String {
+fn canonical_value(value: &Value) -> OracleValue {
     match value {
-        Value::Null => "NULL".to_owned(),
-        Value::Boolean(value) => u8::from(*value).to_string(),
-        Value::Int64(value) => value.to_string(),
-        Value::UInt64(value) => value.to_string(),
-        Value::Float64(value) => value.get().to_string(),
-        Value::Utf8(value) => value.clone(),
-        Value::Binary(value) => String::from_utf8_lossy(value).into_owned(),
+        Value::Null => OracleValue::Exact("NULL".to_owned()),
+        Value::Boolean(value) => OracleValue::Exact(u8::from(*value).to_string()),
+        Value::Int64(value) => OracleValue::Exact(value.to_string()),
+        Value::UInt64(value) => OracleValue::Exact(value.to_string()),
+        Value::Float64(value) => OracleValue::Float(value.get().to_string()),
+        Value::Utf8(value) => OracleValue::Exact(value.clone()),
+        Value::Binary(value) => OracleValue::Exact(String::from_utf8_lossy(value).into_owned()),
     }
 }
 
@@ -519,7 +544,7 @@ fn oracle_cases() -> Vec<OracleCase> {
             ordered: true,
         });
     }
-    for value in 0..25 {
+    for value in 0..22 {
         let limit = value % 3 + 1;
         cases.push(OracleCase {
             family: "union all",
@@ -729,6 +754,27 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT id, CASE WHEN note IS NULL THEN 'none' \
              WHEN note = 'alpha' THEN 'a' ELSE 'b' END \
              FROM events WHERE id >= 7 ORDER BY id",
+        ),
+        ordered(
+            "hand-written exact mixed integers",
+            "SELECT CAST(9007199254740993 AS UNSIGNED) > \
+                    CAST(9007199254740992 AS SIGNED), \
+                    CAST(-1 AS SIGNED) < CAST(0 AS UNSIGNED)",
+        ),
+        ordered(
+            "hand-written mixed scalar join",
+            "SELECT e.id AS event_id, u.id AS user_id \
+             FROM events e INNER JOIN users u \
+             ON CAST(e.id AS DOUBLE) = CAST(u.id AS CHAR) \
+             ORDER BY event_id, user_id",
+        ),
+        ordered(
+            "hand-written large mixed scalar join",
+            "SELECT l.id, r.id FROM \
+             (SELECT CAST(9007199254740993 AS UNSIGNED) AS id) l \
+             INNER JOIN \
+             (SELECT CAST(9007199254740993 AS CHAR) AS id) r \
+             ON l.id = r.id",
         ),
     ]
 }

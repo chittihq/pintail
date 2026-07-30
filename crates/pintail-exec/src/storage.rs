@@ -471,6 +471,31 @@ impl BatchStream for SnapshotStream {
     fn retained_bytes(&self) -> usize {
         self.retained_bytes
     }
+
+    fn next_batch_memory_upper_bound(&self) -> usize {
+        let row_count = self.rows.len().min(DEFAULT_BATCH_ROWS);
+        if row_count == 0 {
+            return 0;
+        }
+        std::mem::size_of::<RecordBatch>()
+            .saturating_add(
+                self.types.len().saturating_mul(
+                    std::mem::size_of::<Vec<Value>>()
+                        .saturating_add(std::mem::size_of::<ColumnVector>()),
+                ),
+            )
+            .saturating_add(
+                self.types
+                    .len()
+                    .saturating_mul(row_count)
+                    .saturating_mul(std::mem::size_of::<Value>()),
+            )
+            .saturating_add(
+                row_count
+                    .div_ceil(64)
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+    }
 }
 
 #[cfg(test)]
