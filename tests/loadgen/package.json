@@ -1,0 +1,12 @@
+{
+  "name": "pintail-loadgen",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "soak": "bun run run.ts",
+    "smoke": "bun run run.ts"
+  },
+  "dependencies": {
+    "mysql2": "3.23.2"
+  }
+}
