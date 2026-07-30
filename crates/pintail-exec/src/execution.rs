@@ -14,6 +14,7 @@ use pintail_sql::{
     BoundJoinKind, BoundOrderKey, BoundProjection,
 };
 use pintail_types::{DataType, Value};
+use rayon::prelude::*;
 
 use crate::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, LogicalPlanner, Optimizer,
@@ -1729,6 +1730,16 @@ impl AggregateState {
         value: &Value,
         memory: &mut MemoryTracker,
     ) -> Result<(), ExecError> {
+        self.update_with_number(aggregate, value, None, memory)
+    }
+
+    fn update_with_number(
+        &mut self,
+        aggregate: &CompiledAggregate,
+        value: &Value,
+        number: Option<f64>,
+        memory: &mut MemoryTracker,
+    ) -> Result<(), ExecError> {
         if matches!(value, Value::Null) {
             return Ok(());
         }
@@ -1752,10 +1763,18 @@ impl AggregateState {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
             AggregateValue::Sum(sum) => {
-                *sum = Some(add_aggregate_value(sum.take(), value, aggregate.data_type)?);
+                *sum = Some(if let Some(number) = number {
+                    let result = sum.take().map_or(Ok(0.0), |value| mysql_f64(&value))? + number;
+                    if !result.is_finite() {
+                        return Err(ExecError::NumericOverflow);
+                    }
+                    Value::float64(result)
+                } else {
+                    add_aggregate_value(sum.take(), value, aggregate.data_type)?
+                });
             }
             AggregateValue::Average { sum, count } => {
-                *sum += mysql_f64(value)?;
+                *sum += number.map_or_else(|| mysql_f64(value), Ok)?;
                 if !sum.is_finite() {
                     return Err(ExecError::NumericOverflow);
                 }
@@ -1763,7 +1782,10 @@ impl AggregateState {
             }
             AggregateValue::Minimum(minimum) => {
                 let replace = match minimum.as_ref() {
-                    Some(current) => compare_mysql(value, current)? == Ordering::Less,
+                    Some(current) => {
+                        compare_aggregate_values(value, current, aggregate.data_type)?
+                            == Ordering::Less
+                    }
                     None => true,
                 };
                 if replace {
@@ -1772,7 +1794,10 @@ impl AggregateState {
             }
             AggregateValue::Maximum(maximum) => {
                 let replace = match maximum.as_ref() {
-                    Some(current) => compare_mysql(value, current)? == Ordering::Greater,
+                    Some(current) => {
+                        compare_aggregate_values(value, current, aggregate.data_type)?
+                            == Ordering::Greater
+                    }
                     None => true,
                 };
                 if replace {
@@ -1785,6 +1810,83 @@ impl AggregateState {
                 memory.reserve(value_bytes)?;
                 let value = aggregate_string(value)?;
                 values.push(value);
+            }
+        }
+        Ok(())
+    }
+
+    fn merge(
+        &mut self,
+        aggregate: &CompiledAggregate,
+        mut other: Self,
+        memory: &mut MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if aggregate.distinct {
+            for value in other.seen.take().unwrap_or_default() {
+                self.update(aggregate, &value, memory)?;
+            }
+            return Ok(());
+        }
+        match (&mut self.value, other.value) {
+            (AggregateValue::Count(left), AggregateValue::Count(right)) => {
+                *left = left.checked_add(right).ok_or(ExecError::NumericOverflow)?;
+            }
+            (AggregateValue::Sum(left), AggregateValue::Sum(Some(right))) => {
+                *left = Some(add_aggregate_value(
+                    left.take(),
+                    &right,
+                    aggregate.data_type,
+                )?);
+            }
+            (AggregateValue::Sum(_), AggregateValue::Sum(None))
+            | (AggregateValue::Minimum(_), AggregateValue::Minimum(None))
+            | (AggregateValue::Maximum(_), AggregateValue::Maximum(None)) => {}
+            (
+                AggregateValue::Average {
+                    sum: left_sum,
+                    count: left_count,
+                },
+                AggregateValue::Average {
+                    sum: right_sum,
+                    count: right_count,
+                },
+            ) => {
+                *left_sum += right_sum;
+                if !left_sum.is_finite() {
+                    return Err(ExecError::NumericOverflow);
+                }
+                *left_count = left_count
+                    .checked_add(right_count)
+                    .ok_or(ExecError::NumericOverflow)?;
+            }
+            (AggregateValue::Minimum(left), AggregateValue::Minimum(Some(right))) => {
+                let replace = match left.as_ref() {
+                    Some(current) => {
+                        compare_aggregate_values(&right, current, aggregate.data_type)?
+                            == Ordering::Less
+                    }
+                    None => true,
+                };
+                if replace {
+                    replace_retained_value(left, right, memory)?;
+                }
+            }
+            (AggregateValue::Maximum(left), AggregateValue::Maximum(Some(right))) => {
+                let replace = match left.as_ref() {
+                    Some(current) => {
+                        compare_aggregate_values(&right, current, aggregate.data_type)?
+                            == Ordering::Greater
+                    }
+                    None => true,
+                };
+                if replace {
+                    replace_retained_value(left, right, memory)?;
+                }
+            }
+            _ => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "aggregate states have incompatible merge shapes",
+                ));
             }
         }
         Ok(())
@@ -1835,13 +1937,56 @@ fn build_hash_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &mut MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
-    if !group_by.is_empty()
-        && let Some(group_columns) = group_by
+    if group_by.is_empty()
+        && !aggregates.is_empty()
+        && aggregates.iter().all(|aggregate| {
+            aggregate.function == AggregateFunction::Count
+                && aggregate.expr.is_none()
+                && !aggregate.distinct
+        })
+    {
+        let mut count = 0_u64;
+        while let Some(batch) = input.next_batch(memory)? {
+            count = count
+                .checked_add(
+                    u64::try_from(batch.visible_row_count())
+                        .map_err(|_| ExecError::NumericOverflow)?,
+                )
+                .ok_or(ExecError::NumericOverflow)?;
+        }
+        let row = vec![Value::UInt64(count); aggregates.len()];
+        memory.reserve(estimated_row_payload_bytes(&row))?;
+        return Ok(MaterializedRows {
+            rows: vec![row],
+            position: 0,
+        });
+    }
+    if !group_by.is_empty() {
+        let direct_columns = group_by
             .iter()
             .map(CompiledExpr::column_index)
-            .collect::<Option<Vec<_>>>()
-    {
-        return build_direct_column_aggregate(input, &group_columns, aggregates, memory);
+            .collect::<Option<Vec<_>>>();
+        if let Some(group_columns) = direct_columns.as_deref()
+            && let Some(rows) =
+                build_fused_inner_join_aggregate(input, group_columns, aggregates, memory)?
+        {
+            return Ok(rows);
+        }
+        if aggregates
+            .iter()
+            .all(|aggregate| aggregate.function != AggregateFunction::GroupConcat)
+        {
+            return build_buffered_hash_aggregate(
+                input,
+                group_by,
+                direct_columns.as_deref(),
+                aggregates,
+                memory,
+            );
+        }
+        if let Some(group_columns) = direct_columns {
+            return build_direct_column_aggregate(input, None, &group_columns, aggregates, memory);
+        }
     }
 
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
@@ -1956,8 +2101,447 @@ fn build_hash_aggregate(
 }
 
 #[allow(clippy::too_many_lines)]
+fn build_buffered_hash_aggregate(
+    input: &mut PullOperator,
+    group_by: &[CompiledExpr],
+    direct_columns: Option<&[usize]>,
+    aggregates: &[CompiledAggregate],
+    memory: &mut MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let Some(first_batch) = input.next_batch(memory)? else {
+        return Ok(MaterializedRows {
+            rows: Vec::new(),
+            position: 0,
+        });
+    };
+    if let Some([column]) = direct_columns
+        && first_batch.column(*column).is_some_and(|values| {
+            matches!(
+                values.data_type().storage_type(),
+                DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
+            )
+        })
+    {
+        return build_direct_column_aggregate(
+            input,
+            Some(first_batch),
+            direct_columns.expect("matched direct columns"),
+            aggregates,
+            memory,
+        );
+    }
+
+    let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
+    let mut first_batch = Some(first_batch);
+    loop {
+        let mut batches = Vec::with_capacity(8);
+        let mut batch_reserved = 0_usize;
+        while batches.len() < 8 {
+            let batch = if let Some(batch) = first_batch.take() {
+                Some(batch)
+            } else {
+                input.next_batch(memory)?
+            };
+            let Some(batch) = batch else {
+                break;
+            };
+            let bytes = batch.estimated_bytes();
+            memory.reserve(bytes)?;
+            batch_reserved = batch_reserved.saturating_add(bytes);
+            batches.push(batch);
+        }
+        if batches.is_empty() {
+            break;
+        }
+        let selected_rows = batches
+            .iter()
+            .map(RecordBatch::visible_row_count)
+            .sum::<usize>();
+        let local_upper = selected_rows.saturating_mul(
+            group_by
+                .len()
+                .saturating_mul(size_of::<Value>())
+                .saturating_mul(2)
+                .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+                .saturating_add(size_of::<AggregateGroup>())
+                .saturating_add(HASH_ENTRY_OVERHEAD)
+                .saturating_add(256),
+        );
+        memory.reserve(local_upper)?;
+        let partials = batches
+            .par_iter()
+            .map(|batch| {
+                direct_columns.map_or_else(
+                    || build_local_expression_groups(batch, group_by, aggregates),
+                    |columns| build_local_direct_groups(batch, columns, aggregates),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for partial in partials {
+            for (key, partial_group) in partial {
+                if groups.len() == groups.capacity() {
+                    let growth = groups.capacity().max(64);
+                    reserve_hash_map_entries(
+                        &mut groups,
+                        growth,
+                        size_of::<Vec<Value>>()
+                            .saturating_add(size_of::<AggregateGroup>())
+                            .saturating_add(HASH_ENTRY_OVERHEAD),
+                        batch_reserved,
+                        memory,
+                    )?;
+                }
+                let group = match groups.entry(key) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let bytes = estimated_row_payload_bytes(&partial_group.values)
+                            .saturating_add(estimated_row_payload_bytes(entry.key()))
+                            .saturating_add(
+                                aggregates.len().saturating_mul(size_of::<AggregateState>()),
+                            );
+                        memory.reserve(bytes)?;
+                        entry.insert(AggregateGroup {
+                            values: partial_group.values,
+                            states: aggregates.iter().map(AggregateState::new).collect(),
+                        })
+                    }
+                };
+                for ((state, partial_state), aggregate) in group
+                    .states
+                    .iter_mut()
+                    .zip(partial_group.states)
+                    .zip(aggregates)
+                {
+                    state.merge(aggregate, partial_state, memory)?;
+                }
+            }
+        }
+        memory.release(local_upper.saturating_add(batch_reserved));
+    }
+    finish_aggregate_groups(groups.into_values(), memory)
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_fused_inner_join_aggregate(
+    input: &mut PullOperator,
+    group_columns: &[usize],
+    aggregates: &[CompiledAggregate],
+    memory: &mut MemoryTracker,
+) -> Result<Option<MaterializedRows>, ExecError> {
+    let PullOperator::HashJoin {
+        left,
+        right,
+        kind,
+        left_key,
+        right_key,
+        key_mode,
+        column_types,
+        right_width,
+        state,
+    } = input
+    else {
+        return Ok(None);
+    };
+    let left_width = column_types.len().saturating_sub(*right_width);
+    if *kind != BoundJoinKind::Inner
+        || state.is_some()
+        || *right_width > column_types.len()
+        || group_columns
+            .iter()
+            .any(|column| *column < left_width || *column >= column_types.len())
+        || aggregates.iter().any(|aggregate| {
+            aggregate.distinct || aggregate.function == AggregateFunction::GroupConcat
+        })
+        || aggregates.iter().any(|aggregate| {
+            aggregate
+                .expr
+                .as_ref()
+                .is_some_and(|expression| expression.column_index().is_none())
+        })
+    {
+        return Ok(None);
+    }
+
+    let right_group_columns = group_columns
+        .iter()
+        .map(|column| column - left_width)
+        .collect::<Vec<_>>();
+    let build_start = memory.used();
+    let join = build_hash_join_state(right, right_key, *key_mode, memory)?;
+    let build_reserved = memory.used().saturating_sub(build_start);
+    let mut groups = Vec::<AggregateGroup>::new();
+    let mut raw_index = HashMap::<u64, usize>::new();
+    let mut index_reserved = 0_usize;
+
+    while let Some(batch) = left.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
+        for row in batch.selection().selected_rows() {
+            memory.ensure_transient(
+                batch_bytes.saturating_add(
+                    left_key
+                        .allocation_upper_bound(&batch, row)
+                        .saturating_mul(12),
+                ),
+            )?;
+            let Some(key) = normalized_join_key(left_key.evaluate(&batch, row)?, *key_mode)? else {
+                continue;
+            };
+            let Some(matches) = join.build.get(&key) else {
+                continue;
+            };
+            for right_values in matches {
+                let raw_hash = joined_right_group_hash(right_values, &right_group_columns)?;
+                let existing = raw_index
+                    .get(&raw_hash)
+                    .copied()
+                    .filter(|index| {
+                        joined_right_group_matches(
+                            &groups[*index].values,
+                            right_values,
+                            &right_group_columns,
+                            true,
+                        )
+                    })
+                    .or_else(|| {
+                        groups.iter().position(|group| {
+                            joined_right_group_matches(
+                                &group.values,
+                                right_values,
+                                &right_group_columns,
+                                false,
+                            )
+                        })
+                    });
+                let group_index = if let Some(index) = existing {
+                    index
+                } else {
+                    let values = right_group_columns
+                        .iter()
+                        .map(|column| {
+                            right_values.get(*column).cloned().ok_or(
+                                ExecError::InvalidPhysicalPlan(
+                                    "join aggregate group is outside the build-side layout",
+                                ),
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let bytes = estimated_row_payload_bytes(&values).saturating_add(
+                        aggregates.len().saturating_mul(size_of::<AggregateState>()),
+                    );
+                    memory.ensure_transient(batch_bytes.saturating_add(bytes))?;
+                    reserve_vec_elements(&mut groups, 1, 64, memory)?;
+                    memory.reserve(bytes)?;
+                    let index = groups.len();
+                    groups.push(AggregateGroup {
+                        values,
+                        states: aggregates.iter().map(AggregateState::new).collect(),
+                    });
+                    index
+                };
+                if !raw_index.contains_key(&raw_hash) {
+                    index_reserved = index_reserved.saturating_add(reserve_hash_map_entries(
+                        &mut raw_index,
+                        1,
+                        size_of::<u64>()
+                            .saturating_add(size_of::<usize>())
+                            .saturating_add(HASH_ENTRY_OVERHEAD),
+                        batch_bytes,
+                        memory,
+                    )?);
+                    raw_index.insert(raw_hash, group_index);
+                }
+                for (aggregate, aggregate_state) in
+                    aggregates.iter().zip(&mut groups[group_index].states)
+                {
+                    let value = match aggregate.expr.as_ref() {
+                        None => &Value::Boolean(true),
+                        Some(expression) => {
+                            let column =
+                                expression
+                                    .column_index()
+                                    .ok_or(ExecError::InvalidPhysicalPlan(
+                                        "fused join aggregate expression is not a column",
+                                    ))?;
+                            if column < left_width {
+                                direct_group_value(&batch, row, column)?
+                            } else {
+                                right_values.get(column - left_width).ok_or(
+                                    ExecError::InvalidPhysicalPlan(
+                                        "join aggregate column is outside the joined layout",
+                                    ),
+                                )?
+                            }
+                        }
+                    };
+                    aggregate_state.update(aggregate, value, memory)?;
+                }
+            }
+        }
+    }
+
+    drop(raw_index);
+    memory.release(index_reserved);
+    drop(join);
+    memory.release(build_reserved);
+    Ok(Some(finish_aggregate_groups(groups.into_iter(), memory)?))
+}
+
+fn joined_right_group_hash(values: &[Value], columns: &[usize]) -> Result<u64, ExecError> {
+    let mut hasher = DefaultHasher::new();
+    for column in columns {
+        values
+            .get(*column)
+            .ok_or(ExecError::InvalidPhysicalPlan(
+                "join aggregate group is outside the build-side layout",
+            ))?
+            .hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
+fn joined_right_group_matches(
+    grouped: &[Value],
+    values: &[Value],
+    columns: &[usize],
+    exact: bool,
+) -> bool {
+    grouped.iter().zip(columns).all(|(left, column)| {
+        values.get(*column).is_some_and(|right| {
+            if exact {
+                return left == right;
+            }
+            match (left, right) {
+                (Value::Utf8(left), Value::Utf8(right)) => {
+                    if left.is_ascii() && right.is_ascii() {
+                        left.eq_ignore_ascii_case(right)
+                    } else {
+                        compare_utf8_mysql(left, right) == Ordering::Equal
+                    }
+                }
+                _ => left == right,
+            }
+        })
+    })
+}
+
+fn build_local_direct_groups(
+    batch: &RecordBatch,
+    group_columns: &[usize],
+    aggregates: &[CompiledAggregate],
+) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+    let mut groups = Vec::<AggregateGroup>::new();
+    let mut raw_index = HashMap::<u64, usize>::new();
+    let mut memory = MemoryTracker::new(usize::MAX);
+    let batch_bytes = batch.estimated_bytes();
+    for row in batch.selection().selected_rows() {
+        let raw_hash = direct_group_hash(batch, row, group_columns)?;
+        let existing = raw_index
+            .get(&raw_hash)
+            .copied()
+            .filter(|index| {
+                direct_group_matches_exact(&groups[*index].values, batch, row, group_columns)
+            })
+            .or_else(|| {
+                groups.iter().position(|group| {
+                    direct_group_matches(&group.values, batch, row, group_columns)
+                })
+            });
+        let group_index = existing.unwrap_or_else(|| {
+            let values = group_columns
+                .iter()
+                .map(|column| {
+                    direct_group_value(batch, row, *column)
+                        .expect("validated direct grouping column")
+                        .clone()
+                })
+                .collect();
+            let index = groups.len();
+            groups.push(AggregateGroup {
+                values,
+                states: aggregates.iter().map(AggregateState::new).collect(),
+            });
+            index
+        });
+        raw_index.entry(raw_hash).or_insert(group_index);
+        update_aggregate_states(
+            batch,
+            row,
+            batch_bytes,
+            aggregates,
+            &mut groups[group_index].states,
+            &mut memory,
+        )?;
+    }
+    Ok(groups
+        .into_iter()
+        .map(|group| {
+            let key = group
+                .values
+                .iter()
+                .cloned()
+                .map(normalized_collation_value)
+                .collect();
+            (key, group)
+        })
+        .collect())
+}
+
+fn build_local_expression_groups(
+    batch: &RecordBatch,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+    let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
+    let mut memory = MemoryTracker::new(usize::MAX);
+    let batch_bytes = batch.estimated_bytes();
+    for row in batch.selection().selected_rows() {
+        let values = group_by
+            .iter()
+            .map(|expression| expression.evaluate(batch, row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let key = values
+            .iter()
+            .cloned()
+            .map(normalized_collation_value)
+            .collect::<Vec<_>>();
+        let group = groups.entry(key).or_insert_with(|| AggregateGroup {
+            values,
+            states: aggregates.iter().map(AggregateState::new).collect(),
+        });
+        update_aggregate_states(
+            batch,
+            row,
+            batch_bytes,
+            aggregates,
+            &mut group.states,
+            &mut memory,
+        )?;
+    }
+    Ok(groups)
+}
+
+fn finish_aggregate_groups(
+    groups: impl ExactSizeIterator<Item = AggregateGroup>,
+    memory: &mut MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    memory.reserve(groups.len().saturating_mul(size_of::<Vec<Value>>()))?;
+    let mut rows = Vec::with_capacity(groups.len());
+    for group in groups {
+        let mut row = group.values;
+        reserve_vec_elements(&mut row, group.states.len(), 0, memory)?;
+        for state in group.states {
+            row.push(state.finish(memory)?);
+        }
+        memory.reserve(estimated_row_payload_bytes(&row))?;
+        rows.push(row);
+    }
+    Ok(MaterializedRows { rows, position: 0 })
+}
+
+#[allow(clippy::too_many_lines)]
 fn build_direct_column_aggregate(
     input: &mut PullOperator,
+    mut first_batch: Option<RecordBatch>,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     memory: &mut MemoryTracker,
@@ -1967,7 +2551,14 @@ fn build_direct_column_aggregate(
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut index_reserved = 0_usize;
 
-    while let Some(batch) = input.next_batch(memory)? {
+    loop {
+        let batch = if let Some(batch) = first_batch.take() {
+            batch
+        } else if let Some(batch) = input.next_batch(memory)? {
+            batch
+        } else {
+            break;
+        };
         let batch_bytes = batch.estimated_bytes();
         let indexed = group_columns.len() == 1
             && batch.column(group_columns[0]).is_some_and(|column| {
@@ -2133,6 +2724,8 @@ fn update_aggregate_states(
     states: &mut [AggregateState],
     memory: &mut MemoryTracker,
 ) -> Result<(), ExecError> {
+    let mut numeric_cache = [None::<(usize, f64)>; 8];
+    let mut numeric_cache_len = 0_usize;
     for (aggregate, state) in aggregates.iter().zip(states) {
         let direct_scalar = aggregate
             .expr
@@ -2160,7 +2753,26 @@ fn update_aggregate_states(
             Some(expression) => {
                 if let Some(column) = expression.column_index() {
                     let value = direct_group_value(batch, row, column)?;
-                    state.update(aggregate, value, memory)?;
+                    let number = if aggregate_uses_float(aggregate) && !matches!(value, Value::Null)
+                    {
+                        if let Some((_, number)) = numeric_cache[..numeric_cache_len]
+                            .iter()
+                            .filter_map(Option::as_ref)
+                            .find(|(cached_column, _)| *cached_column == column)
+                        {
+                            Some(*number)
+                        } else {
+                            let number = mysql_f64(value)?;
+                            if numeric_cache_len < numeric_cache.len() {
+                                numeric_cache[numeric_cache_len] = Some((column, number));
+                                numeric_cache_len += 1;
+                            }
+                            Some(number)
+                        }
+                    } else {
+                        None
+                    };
+                    state.update_with_number(aggregate, value, number, memory)?;
                 } else {
                     let value = expression.evaluate(batch, row)?;
                     state.update(aggregate, &value, memory)?;
@@ -2169,6 +2781,12 @@ fn update_aggregate_states(
         }
     }
     Ok(())
+}
+
+fn aggregate_uses_float(aggregate: &CompiledAggregate) -> bool {
+    aggregate.function == AggregateFunction::Average
+        || (aggregate.function == AggregateFunction::Sum
+            && aggregate.data_type == Some(DataType::Float64))
 }
 
 fn add_aggregate_value(
@@ -2199,6 +2817,79 @@ fn add_aggregate_value(
         }
         _ => Err(ExecError::InvalidExpressionType),
     }
+}
+
+fn compare_aggregate_values(
+    left: &Value,
+    right: &Value,
+    data_type: Option<DataType>,
+) -> Result<Ordering, ExecError> {
+    if matches!(data_type, Some(DataType::Decimal { .. })) {
+        let (Value::Utf8(left), Value::Utf8(right)) = (left, right) else {
+            return Err(ExecError::InvalidExpressionType);
+        };
+        return compare_decimal_text(left, right);
+    }
+    compare_mysql(left, right)
+}
+
+fn compare_decimal_text(left: &str, right: &str) -> Result<Ordering, ExecError> {
+    let (left_negative, left_integer, left_fraction) = decimal_parts(left)?;
+    let (right_negative, right_integer, right_fraction) = decimal_parts(right)?;
+    if left_negative != right_negative {
+        return Ok(if left_negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        });
+    }
+    let magnitude = left_integer
+        .len()
+        .cmp(&right_integer.len())
+        .then_with(|| left_integer.cmp(right_integer))
+        .then_with(|| {
+            let digits = left_fraction.len().max(right_fraction.len());
+            (0..digits)
+                .map(|index| {
+                    left_fraction
+                        .as_bytes()
+                        .get(index)
+                        .copied()
+                        .unwrap_or(b'0')
+                        .cmp(
+                            &right_fraction
+                                .as_bytes()
+                                .get(index)
+                                .copied()
+                                .unwrap_or(b'0'),
+                        )
+                })
+                .find(|ordering| *ordering != Ordering::Equal)
+                .unwrap_or(Ordering::Equal)
+        });
+    Ok(if left_negative {
+        magnitude.reverse()
+    } else {
+        magnitude
+    })
+}
+
+fn decimal_parts(value: &str) -> Result<(bool, &str, &str), ExecError> {
+    let (negative, unsigned) = value
+        .strip_prefix('-')
+        .map_or((false, value), |unsigned| (true, unsigned));
+    let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
+    let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if integer.is_empty()
+        || !integer.bytes().all(|digit| digit.is_ascii_digit())
+        || !fraction.bytes().all(|digit| digit.is_ascii_digit())
+    {
+        return Err(ExecError::InvalidExpressionType);
+    }
+    let integer = integer.trim_start_matches('0');
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let zero = integer == "0" && fraction.bytes().all(|digit| digit == b'0');
+    Ok((negative && !zero, integer, fraction))
 }
 
 fn aggregate_string(value: &Value) -> Result<String, ExecError> {
@@ -2988,7 +3679,7 @@ mod tests {
         PhysicalPlanner, RecordBatch, Scan, ScanProvider,
     };
 
-    use super::reserve_vec_elements;
+    use super::{compare_decimal_text, reserve_vec_elements};
 
     struct StaticProvider {
         batches: Mutex<Vec<RecordBatch>>,
@@ -3100,6 +3791,26 @@ mod tests {
             Some(&Value::Utf8("Beta".to_owned()))
         );
         assert!(execution.next_batch().expect("end").is_none());
+    }
+
+    #[test]
+    fn compares_canonical_decimals_by_numeric_value() {
+        assert_eq!(
+            compare_decimal_text("9.00", "10.00").expect("decimal comparison"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_decimal_text("-10.00", "-9.00").expect("negative decimal comparison"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_decimal_text("1.0", "1.00").expect("scale-insensitive comparison"),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_decimal_text("-0.00", "0").expect("signed zero comparison"),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
@@ -3353,6 +4064,66 @@ mod tests {
                 [Value::UInt64(1), Value::UInt64(2), Value::UInt64(3)]
             );
         }
+    }
+
+    #[test]
+    fn aggregates_inner_joins_without_materializing_joined_rows() {
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    3,
+                    vec![
+                        ColumnVector::new(
+                            DataType::UInt64,
+                            vec![Value::UInt64(1), Value::UInt64(1), Value::UInt64(2)],
+                        )
+                        .expect("ids"),
+                        ColumnVector::new(
+                            DataType::Utf8,
+                            vec![
+                                Value::Utf8("alpha".to_owned()),
+                                Value::Utf8("Alpha".to_owned()),
+                                Value::Utf8("beta".to_owned()),
+                            ],
+                        )
+                        .expect("names"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        let plan = physical(
+            "SELECT u.name, COUNT(*) AS rows, SUM(e.id) AS total, MIN(e.name) AS first_name \
+             FROM events e INNER JOIN events u ON e.id = u.id \
+             GROUP BY u.name ORDER BY u.name",
+        );
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+
+        assert_eq!(batch.visible_row_count(), 2);
+        assert_eq!(
+            batch.column(0).expect("names").values(),
+            [
+                Value::Utf8("alpha".to_owned()),
+                Value::Utf8("beta".to_owned())
+            ]
+        );
+        assert_eq!(
+            batch.column(1).expect("counts").values(),
+            [Value::UInt64(4), Value::UInt64(1)]
+        );
+        assert_eq!(
+            batch.column(2).expect("totals").values(),
+            [Value::UInt64(4), Value::UInt64(2)]
+        );
+        assert_eq!(
+            batch.column(3).expect("minimums").values(),
+            [
+                Value::Utf8("alpha".to_owned()),
+                Value::Utf8("beta".to_owned())
+            ]
+        );
+        assert!(execution.next_batch().expect("end").is_none());
     }
 
     #[test]

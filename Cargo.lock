@@ -2443,6 +2443,7 @@ dependencies = [
  "pintail-sql",
  "pintail-store",
  "pintail-types",
+ "rayon",
  "tempfile",
 ]
 
