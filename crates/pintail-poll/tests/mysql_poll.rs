@@ -265,6 +265,7 @@ async fn polling_crud_delete_repair_unique_reuse_cascade_and_noop_storage() {
     .await
     .expect("audit-triggered repair");
     assert!(outcome(&repaired, "cursor_rows").reconciled);
+    assert_eq!(outcome(&repaired, "cursor_rows").unique_repairs, 1);
     targets = repaired.targets;
     assert_ids(&targets, "cursor_rows", &[3, 4]);
 

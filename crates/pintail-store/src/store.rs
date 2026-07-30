@@ -257,6 +257,19 @@ impl ProjectedRow {
         self.values
     }
 
+    /// Keeps values at the supplied positions in caller order.
+    ///
+    /// Positions are expected to have been validated against this row's
+    /// projected layout.
+    #[must_use]
+    pub fn project_values(mut self, positions: &[usize]) -> Self {
+        self.values = positions
+            .iter()
+            .map(|position| self.values[*position].clone())
+            .collect();
+        self
+    }
+
     /// Estimates bytes retained by this projected row.
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {

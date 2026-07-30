@@ -131,6 +131,8 @@ pub struct TablePollOutcome {
     pub chunks_scanned: usize,
     /// Mismatched chunks whose full rows were fetched.
     pub chunks_redumped: usize,
+    /// Stale rows tombstoned by targeted secondary-UNIQUE lookups.
+    pub unique_repairs: usize,
 }
 
 /// Successful database polling cycle.
@@ -155,6 +157,7 @@ struct TableSync {
     chunks: Vec<PollChunkCheckpoint>,
     chunks_scanned: usize,
     chunks_redumped: usize,
+    unique_repairs: usize,
 }
 
 /// Polling failure.
@@ -303,6 +306,7 @@ async fn poll_table(
             reconciled: false,
             chunks_scanned: 0,
             chunks_redumped: 0,
+            unique_repairs: 0,
         });
     }
     version = version
@@ -339,9 +343,11 @@ async fn poll_table(
                 CursorValue::Null => None,
                 maximum => Some(maximum.encode()?),
             };
-            let collision = has_unique_collision(target)?;
-            let reconcile = reconcile_requested || collision;
-            let missing = if reconcile {
+            let collisions = unique_collision_keys(target)?;
+            let repaired =
+                repair_unique_collisions(connection, source_database, target, &collisions, version)
+                    .await?;
+            let missing = if reconcile_requested {
                 reconcile_missing_keys(
                     connection,
                     source_database,
@@ -355,11 +361,12 @@ async fn poll_table(
             };
             TableSync {
                 ingested,
-                tombstones: soft_tombstones + missing,
-                reconciled: reconcile,
+                tombstones: soft_tombstones + repaired + missing,
+                reconciled: reconcile_requested || repaired > 0,
                 chunks: Vec::new(),
                 chunks_scanned: 0,
                 chunks_redumped: 0,
+                unique_repairs: repaired,
             }
         }
         PollStrategy::KeyedChecksum => {
@@ -392,6 +399,7 @@ async fn poll_table(
                 chunks: Vec::new(),
                 chunks_scanned: 0,
                 chunks_redumped: 0,
+                unique_repairs: 0,
             }
         }
     };
@@ -439,6 +447,7 @@ async fn poll_table(
         reconciled: sync.reconciled,
         chunks_scanned: sync.chunks_scanned,
         chunks_redumped: sync.chunks_redumped,
+        unique_repairs: sync.unique_repairs,
     })
 }
 
@@ -723,6 +732,7 @@ async fn sync_checksum_table(
         chunks,
         chunks_scanned: source_chunks.len(),
         chunks_redumped: redumped,
+        unique_repairs: 0,
     })
 }
 
@@ -834,11 +844,12 @@ async fn fetch_source_keys(
     Ok(output)
 }
 
-fn has_unique_collision(target: &PollTarget) -> Result<bool, PollError> {
+fn unique_collision_keys(target: &PollTarget) -> Result<BTreeSet<PrimaryKey>, PollError> {
     if target.source.unique_keys.is_empty() {
-        return Ok(false);
+        return Ok(BTreeSet::new());
     }
     let rows = target.store.snapshot().scan()?;
+    let mut collisions = BTreeSet::new();
     for unique in &target.source.unique_keys {
         let indices = unique
             .iter()
@@ -856,18 +867,84 @@ fn has_unique_collision(target: &PollTarget) -> Result<bool, PollError> {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut seen = BTreeSet::new();
+        let mut seen = BTreeMap::<Vec<String>, PrimaryKey>::new();
         for row in &rows {
             let key = indices
                 .iter()
                 .map(|index| format!("{:?}", row.values()[*index]))
                 .collect::<Vec<_>>();
-            if !seen.insert(key) {
-                return Ok(true);
+            if let Some(previous) = seen.insert(key, row.key().clone()) {
+                collisions.insert(previous);
+                collisions.insert(row.key().clone());
             }
         }
     }
-    Ok(false)
+    Ok(collisions)
+}
+
+async fn repair_unique_collisions(
+    connection: &mut Conn,
+    database: &str,
+    target: &mut PollTarget,
+    collisions: &BTreeSet<PrimaryKey>,
+    version: u64,
+) -> Result<usize, PollError> {
+    if collisions.is_empty() {
+        return Ok(0);
+    }
+    let current = target
+        .store
+        .snapshot()
+        .scan()?
+        .into_iter()
+        .map(|row| (row.key().clone(), row))
+        .collect::<BTreeMap<_, _>>();
+    let condition = target
+        .source
+        .key
+        .columns
+        .iter()
+        .map(|column| format!("{} <=> ?", quote_identifier(column)))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "SELECT 1 FROM {}.{} WHERE {condition} LIMIT 1",
+        quote_identifier(database),
+        quote_identifier(&target.source.name)
+    );
+    let mut tombstones = Vec::new();
+    for key in collisions {
+        let parameters = key
+            .parts()
+            .iter()
+            .map(key_part_mysql_value)
+            .collect::<Vec<_>>();
+        let exists: Option<u8> = connection
+            .exec_first(&sql, Params::Positional(parameters))
+            .await?;
+        if exists.is_none()
+            && let Some(row) = current.get(key)
+        {
+            tombstones.push(StoredRow::new(
+                key.clone(),
+                row.values().to_vec(),
+                version,
+                true,
+            ));
+        }
+    }
+    let repaired = tombstones.len();
+    target.store.ingest(tombstones)?;
+    Ok(repaired)
+}
+
+fn key_part_mysql_value(part: &pintail_types::KeyPart) -> MysqlValue {
+    match part {
+        pintail_types::KeyPart::Int64(value) => MysqlValue::Int(*value),
+        pintail_types::KeyPart::UInt64(value) => MysqlValue::UInt(*value),
+        pintail_types::KeyPart::Utf8(value) => MysqlValue::Bytes(value.as_bytes().to_vec()),
+        pintail_types::KeyPart::Binary(value) => MysqlValue::Bytes(value.clone()),
+    }
 }
 
 async fn fetch_rows(

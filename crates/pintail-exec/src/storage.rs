@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Mutex,
 };
 
@@ -15,6 +15,7 @@ use crate::{
 /// Storage scan provider backed by reader-pinned table snapshots.
 pub struct SnapshotScanProvider<'snapshot> {
     snapshots: BTreeMap<(DatabaseId, TableId), &'snapshot TableSnapshot>,
+    unique_visibility: BTreeMap<(DatabaseId, TableId), Vec<Vec<u32>>>,
     stats: Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>,
 }
 
@@ -88,8 +89,51 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
         }
         Ok(Self {
             snapshots: indexed,
+            unique_visibility: BTreeMap::new(),
             stats: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Opts one table into higher-version visibility for transient secondary
+    /// UNIQUE collisions.
+    ///
+    /// Each inner vector is one non-empty unique constraint expressed as
+    /// stable column IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table snapshot or a configured column is
+    /// absent.
+    pub fn enable_unique_visibility_policy(
+        &mut self,
+        database_id: DatabaseId,
+        table_id: TableId,
+        unique_keys: Vec<Vec<u32>>,
+    ) -> Result<(), ExecError> {
+        let key = (database_id, table_id);
+        let snapshot = self.snapshots.get(&key).ok_or(ExecError::MissingSnapshot {
+            database_id,
+            table_id,
+        })?;
+        if unique_keys.iter().any(Vec::is_empty) {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "unique visibility constraints cannot be empty",
+            ));
+        }
+        for column_id in unique_keys.iter().flatten() {
+            if !snapshot
+                .schema()
+                .columns()
+                .iter()
+                .any(|column| column.id() == *column_id)
+            {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "unique visibility references an unknown stable column ID",
+                ));
+            }
+        }
+        self.unique_visibility.insert(key, unique_keys);
+        Ok(())
     }
 
     /// Returns physical work accumulated for one stable table identity.
@@ -118,6 +162,7 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
 }
 
 impl ScanProvider for SnapshotScanProvider<'_> {
+    #[allow(clippy::too_many_lines)]
     fn open_scan(
         &self,
         scan: &Scan,
@@ -137,7 +182,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             });
         }
 
-        let positions = scan
+        let output_positions = scan
             .projected_column_ids
             .iter()
             .map(|id| {
@@ -151,7 +196,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     ))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let types = positions
+        let types = output_positions
             .iter()
             .map(|position| snapshot.schema().columns()[*position].data_type())
             .collect::<Vec<_>>();
@@ -173,11 +218,20 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 retained_bytes: stream_overhead,
             }));
         };
+        let unique_keys = self.unique_visibility.get(&key);
+        let mut physical_column_ids = scan.projected_column_ids.clone();
+        if let Some(unique_keys) = unique_keys {
+            for column_id in unique_keys.iter().flatten() {
+                if !physical_column_ids.contains(column_id) {
+                    physical_column_ids.push(*column_id);
+                }
+            }
+        }
         let projected = snapshot
             .scan_projected_range_bounded(
                 &start,
                 &end,
-                &scan.projected_column_ids,
+                &physical_column_ids,
                 memory_limit - stream_overhead,
             )
             .map_err(|error| match error {
@@ -194,6 +248,23 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             })?;
         self.record_stats(key, projected.stats().into());
         let mut rows = projected.into_rows();
+        if let Some(unique_keys) = unique_keys {
+            apply_unique_visibility(&mut rows, &physical_column_ids, unique_keys);
+            let positions = scan
+                .projected_column_ids
+                .iter()
+                .map(|column_id| {
+                    physical_column_ids
+                        .iter()
+                        .position(|candidate| candidate == column_id)
+                        .expect("output column is included in the physical projection")
+                })
+                .collect::<Vec<_>>();
+            rows = rows
+                .into_iter()
+                .map(|row| row.project_values(&positions))
+                .collect();
+        }
         if scan.predicates.is_empty()
             && let Some(limit) = scan.limit
         {
@@ -215,6 +286,56 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             types,
             retained_bytes,
         }))
+    }
+}
+
+fn apply_unique_visibility(
+    rows: &mut Vec<ProjectedRow>,
+    physical_column_ids: &[u32],
+    unique_keys: &[Vec<u32>],
+) {
+    let mut hidden = BTreeSet::new();
+    for unique_key in unique_keys {
+        let positions = unique_key
+            .iter()
+            .map(|column_id| {
+                physical_column_ids
+                    .iter()
+                    .position(|candidate| candidate == column_id)
+                    .expect("unique column is included in the physical projection")
+            })
+            .collect::<Vec<_>>();
+        let mut winners = BTreeMap::<Vec<Value>, (u64, PrimaryKey)>::new();
+        for row in rows.iter() {
+            let values = positions
+                .iter()
+                .map(|position| normalize_unique_value(&row.values()[*position]))
+                .collect::<Vec<_>>();
+            if values.iter().any(|value| value == &Value::Null) {
+                continue;
+            }
+            let candidate = (row.version(), row.key().clone());
+            match winners.get_mut(&values) {
+                Some(winner) if candidate > *winner => {
+                    hidden.insert(winner.1.clone());
+                    *winner = candidate;
+                }
+                Some(_) => {
+                    hidden.insert(row.key().clone());
+                }
+                None => {
+                    winners.insert(values, candidate);
+                }
+            }
+        }
+    }
+    rows.retain(|row| !hidden.contains(row.key()));
+}
+
+fn normalize_unique_value(value: &Value) -> Value {
+    match value {
+        Value::Utf8(value) => Value::Utf8(value.to_lowercase()),
+        value => value.clone(),
     }
 }
 
@@ -622,6 +743,57 @@ mod tests {
             Some(&Value::Utf8("Beta".to_owned()))
         );
         assert!(execution.next_batch().expect("CTE end").is_none());
+    }
+
+    #[test]
+    fn opt_in_unique_visibility_hides_the_lower_version_collision() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "email", DataType::Utf8, false),
+            ],
+        )
+        .expect("collision schema");
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open collision table");
+        let collision_row = |id, email: &str, version| {
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("collision key"),
+                vec![Value::UInt64(id), Value::Utf8(email.to_owned())],
+                version,
+                false,
+            )
+        };
+        table
+            .ingest(vec![
+                collision_row(1, "User@Example.com", 1),
+                collision_row(2, "user@example.com", 2),
+            ])
+            .expect("ingest collision");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "collisions",
+            schema,
+            TableStatistics::with_row_count(2),
+        )
+        .expect("collision catalog table");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("collision database");
+        let catalog = CatalogSnapshot::new([database]).expect("collision catalog");
+        let mut provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+        provider
+            .enable_unique_visibility_policy(database_id, table_id, vec![vec![2]])
+            .expect("enable unique visibility");
+
+        assert_eq!(
+            execute_values("SELECT id FROM collisions ORDER BY id", &catalog, &provider),
+            [Value::UInt64(2)]
+        );
     }
 
     #[test]

@@ -28,6 +28,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   quarantine only their table for resnapshot, DROP retains orphaned data, and
   matching CREATE TABLE events auto-snapshot a new target. Durable stable
   column IDs allow evolved writers to reopen safely after restart.
+- Polling UNIQUE audits now issue targeted primary-key existence lookups and
+  tombstone only stale colliding rows. An opt-in query scan policy can hide
+  lower-version secondary-UNIQUE collisions until that repair completes,
+  including when the unique columns were not selected by the query.
 - Secondary-UNIQUE collision audits now trigger immediate delete repair, and
   probe-flagged cascade/SET NULL child tables can run reconciliation even when
   their primary replication mode is CDC.
