@@ -1,4 +1,8 @@
-use std::fmt;
+use std::{
+    collections::HashSet,
+    fmt,
+    mem::{size_of, size_of_val},
+};
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{BoundColumn, BoundExpr, BoundProjection};
@@ -8,6 +12,10 @@ use crate::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, RecordBatch, Scan,
     expression::{CompiledExpr, predicate_truth},
 };
+
+/// Maximum estimated result rows accepted by the unqualified cross-join
+/// operator.
+pub const MAX_CROSS_JOIN_ROWS: u64 = 1_000_000;
 
 /// Client-visible output field metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,6 +37,13 @@ pub enum PhysicalPlan {
     OneRow,
     /// Reads a projected and pruned storage relation.
     Scan(Scan),
+    /// Guarded Cartesian product.
+    CrossJoin {
+        /// Inputs in physical execution order.
+        inputs: Vec<Self>,
+        /// Catalog-derived result cardinality.
+        estimated_rows: u64,
+    },
     /// Applies a row-selection mask.
     Filter {
         /// Input operator.
@@ -42,6 +57,11 @@ pub enum PhysicalPlan {
         input: Box<Self>,
         /// Named result expressions.
         expressions: Vec<BoundProjection>,
+    },
+    /// Removes duplicate selected rows.
+    Distinct {
+        /// Input operator.
+        input: Box<Self>,
     },
     /// Skips and caps selected rows.
     Limit {
@@ -67,7 +87,10 @@ impl PhysicalPlan {
                     nullable: expression.expr.nullable,
                 })
                 .collect(),
-            Self::Filter { input, .. } | Self::Limit { input, .. } => input.output_fields(),
+            Self::Filter { input, .. } | Self::Distinct { input } | Self::Limit { input, .. } => {
+                input.output_fields()
+            }
+            Self::CrossJoin { inputs, .. } => inputs.iter().flat_map(Self::output_fields).collect(),
             Self::Scan(scan) => scan
                 .projected_column_ids
                 .iter()
@@ -117,8 +140,30 @@ impl PhysicalPlanner {
                 offset: limit.offset,
                 count: limit.count,
             }),
-            LogicalPlan::CrossJoin { .. } => Err(ExecError::UnsupportedOperator("CrossJoin")),
-            LogicalPlan::Distinct { .. } => Err(ExecError::UnsupportedOperator("Distinct")),
+            LogicalPlan::CrossJoin { inputs } => {
+                let estimated_rows = inputs
+                    .iter()
+                    .try_fold(1_u64, |rows, input| {
+                        rows.checked_mul(input.estimated_rows()?)
+                    })
+                    .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
+                if estimated_rows > MAX_CROSS_JOIN_ROWS {
+                    return Err(ExecError::CrossJoinGuardExceeded {
+                        estimated_rows,
+                        limit: MAX_CROSS_JOIN_ROWS,
+                    });
+                }
+                Ok(PhysicalPlan::CrossJoin {
+                    inputs: inputs
+                        .into_iter()
+                        .map(Self::plan)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    estimated_rows,
+                })
+            }
+            LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
+                input: Box::new(Self::plan(*input)?),
+            }),
         }
     }
 }
@@ -265,6 +310,11 @@ enum PullOperator {
         stream: Box<dyn BatchStream>,
         expected_types: Vec<DataType>,
     },
+    CrossJoin {
+        inputs: Vec<Self>,
+        column_types: Vec<DataType>,
+        state: Option<CrossJoinState>,
+    },
     Filter {
         input: Box<Self>,
         predicate: CompiledExpr,
@@ -272,6 +322,10 @@ enum PullOperator {
     Project {
         input: Box<Self>,
         expressions: Vec<(CompiledExpr, Option<DataType>)>,
+    },
+    Distinct {
+        input: Box<Self>,
+        seen: HashSet<Vec<Value>>,
     },
     Limit {
         input: Box<Self>,
@@ -281,6 +335,7 @@ enum PullOperator {
 }
 
 impl PullOperator {
+    #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, memory: &mut MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
         match self {
             Self::Empty => Ok(None),
@@ -301,6 +356,28 @@ impl PullOperator {
                     return Ok(None);
                 };
                 validate_scan_batch(&batch, expected_types)?;
+                memory.ensure_transient(batch.estimated_bytes())?;
+                Ok(Some(batch))
+            }
+            Self::CrossJoin {
+                inputs,
+                column_types,
+                state,
+            } => {
+                if state.is_none() {
+                    let mut materialized = Vec::with_capacity(inputs.len());
+                    for input in inputs {
+                        materialized.push(materialize(input, memory)?);
+                    }
+                    *state = Some(CrossJoinState::new(materialized));
+                }
+                let state = state.as_mut().expect("initialized above");
+                let rows = state.next_rows(DEFAULT_BATCH_ROWS);
+                if rows.is_empty() {
+                    return Ok(None);
+                }
+                let columns = rows_to_columns(&rows, column_types)?;
+                let batch = RecordBatch::new(rows.len(), columns)?;
                 memory.ensure_transient(batch.estimated_bytes())?;
                 Ok(Some(batch))
             }
@@ -345,6 +422,35 @@ impl PullOperator {
                 )?;
                 Ok(Some(output))
             }
+            Self::Distinct { input, seen } => loop {
+                let Some(mut batch) = input.next_batch(memory)? else {
+                    return Ok(None);
+                };
+                let selected = batch.selection().selected_rows().collect::<Vec<_>>();
+                for row in selected {
+                    let key = batch
+                        .columns()
+                        .iter()
+                        .map(|column| {
+                            column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+                                "distinct row is outside an input column",
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if seen.contains(&key) {
+                        batch.selection_mut().set(row, false)?;
+                    } else {
+                        let row_bytes = estimated_row_bytes(&key);
+                        memory
+                            .ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
+                        memory.reserve(row_bytes)?;
+                        seen.insert(key);
+                    }
+                }
+                if batch.visible_row_count() > 0 {
+                    return Ok(Some(batch));
+                }
+            },
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
                     return Ok(None);
@@ -376,6 +482,7 @@ impl PullOperator {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_operator(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
@@ -417,6 +524,30 @@ fn build_operator(
             }
             Ok((operator, columns))
         }
+        PhysicalPlan::CrossJoin {
+            inputs,
+            estimated_rows: _,
+        } => {
+            let built = inputs
+                .into_iter()
+                .map(|input| build_operator(input, provider))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut operators = Vec::with_capacity(built.len());
+            let mut columns = Vec::new();
+            for (operator, input_columns) in built {
+                operators.push(operator);
+                columns.extend(input_columns);
+            }
+            let column_types = columns.iter().map(|column| column.data_type).collect();
+            Ok((
+                PullOperator::CrossJoin {
+                    inputs: operators,
+                    column_types,
+                    state: None,
+                },
+                columns,
+            ))
+        }
         PhysicalPlan::Filter { input, predicate } => {
             let (input, columns) = build_operator(*input, provider)?;
             let predicate = CompiledExpr::compile(&predicate, &columns)?;
@@ -447,6 +578,16 @@ fn build_operator(
                 Vec::new(),
             ))
         }
+        PhysicalPlan::Distinct { input } => {
+            let (input, columns) = build_operator(*input, provider)?;
+            Ok((
+                PullOperator::Distinct {
+                    input: Box::new(input),
+                    seen: HashSet::new(),
+                },
+                columns,
+            ))
+        }
         PhysicalPlan::Limit {
             input,
             offset,
@@ -462,6 +603,100 @@ fn build_operator(
                 columns,
             ))
         }
+    }
+}
+
+fn materialize(
+    input: &mut PullOperator,
+    memory: &mut MemoryTracker,
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    let mut rows = Vec::new();
+    while let Some(batch) = input.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            let values = batch
+                .columns()
+                .iter()
+                .map(|column| {
+                    column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+                        "cross-join row is outside an input column",
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let row_bytes = estimated_row_bytes(&values);
+            memory.ensure_transient(batch.estimated_bytes().saturating_add(row_bytes))?;
+            memory.reserve(row_bytes)?;
+            rows.push(values);
+        }
+    }
+    Ok(rows)
+}
+
+fn rows_to_columns(
+    rows: &[Vec<Value>],
+    column_types: &[DataType],
+) -> Result<Vec<ColumnVector>, ExecError> {
+    column_types
+        .iter()
+        .enumerate()
+        .map(|(column, data_type)| {
+            let values = rows
+                .iter()
+                .map(|row| {
+                    row.get(column).cloned().ok_or(ExecError::InvalidBatch(
+                        "cross-join result is shorter than its layout",
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            ColumnVector::new(*data_type, values).map_err(ExecError::from)
+        })
+        .collect()
+}
+
+fn estimated_row_bytes(row: &[Value]) -> usize {
+    size_of::<Vec<Value>>()
+        + size_of_val(row)
+        + row.iter().map(Value::heap_bytes).sum::<usize>()
+        + 2 * size_of::<usize>()
+}
+
+struct CrossJoinState {
+    inputs: Vec<Vec<Vec<Value>>>,
+    indexes: Vec<usize>,
+    done: bool,
+}
+
+impl CrossJoinState {
+    fn new(inputs: Vec<Vec<Vec<Value>>>) -> Self {
+        let done = inputs.is_empty() || inputs.iter().any(Vec::is_empty);
+        Self {
+            indexes: vec![0; inputs.len()],
+            inputs,
+            done,
+        }
+    }
+
+    fn next_rows(&mut self, maximum: usize) -> Vec<Vec<Value>> {
+        let mut rows = Vec::with_capacity(maximum);
+        while !self.done && rows.len() < maximum {
+            let mut row = Vec::new();
+            for (input, index) in self.inputs.iter().zip(&self.indexes) {
+                row.extend(input[*index].iter().cloned());
+            }
+            rows.push(row);
+            self.advance();
+        }
+        rows
+    }
+
+    fn advance(&mut self) {
+        for position in (0..self.indexes.len()).rev() {
+            self.indexes[position] += 1;
+            if self.indexes[position] < self.inputs[position].len() {
+                return;
+            }
+            self.indexes[position] = 0;
+        }
+        self.done = true;
     }
 }
 
@@ -494,6 +729,15 @@ fn validate_scan_batch(batch: &RecordBatch, expected_types: &[DataType]) -> Resu
 pub enum ExecError {
     /// A logical operator has no physical implementation yet.
     UnsupportedOperator(&'static str),
+    /// A cross join has no safe catalog cardinality estimate.
+    CrossJoinCardinalityUnknown,
+    /// A cross join exceeds the v1 Cartesian-product guard.
+    CrossJoinGuardExceeded {
+        /// Estimated result rows.
+        estimated_rows: u64,
+        /// Configured safety ceiling.
+        limit: u64,
+    },
     /// A physical plan violates an internal layout invariant.
     InvalidPhysicalPlan(&'static str),
     /// A source returned a malformed batch.
@@ -557,6 +801,16 @@ impl fmt::Display for ExecError {
             Self::UnsupportedOperator(operator) => {
                 write!(formatter, "physical operator {operator} is not implemented")
             }
+            Self::CrossJoinCardinalityUnknown => {
+                formatter.write_str("cross join requires known catalog row counts for every input")
+            }
+            Self::CrossJoinGuardExceeded {
+                estimated_rows,
+                limit,
+            } => write!(
+                formatter,
+                "cross join estimate {estimated_rows} exceeds safety limit {limit}"
+            ),
             Self::InvalidPhysicalPlan(message) => {
                 write!(formatter, "invalid physical plan: {message}")
             }
@@ -672,9 +926,20 @@ mod tests {
     }
 
     fn physical(sql: &str) -> crate::PhysicalPlan {
-        let table = TableEntry::new(
-            TableId::new(1),
-            "events",
+        let table = catalog_table(1, "events", 3);
+        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let statement = parse_statement(sql).expect("parse");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind");
+        PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound))).expect("physical")
+    }
+
+    fn catalog_table(id: u64, name: &str, rows: u64) -> TableEntry {
+        TableEntry::new(
+            TableId::new(id),
+            name,
             TableSchema::new(
                 1,
                 vec![
@@ -683,16 +948,9 @@ mod tests {
                 ],
             )
             .expect("schema"),
-            TableStatistics::with_row_count(3),
+            TableStatistics::with_row_count(rows),
         )
-        .expect("table");
-        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
-        let catalog = CatalogSnapshot::new([database]).expect("catalog");
-        let statement = parse_statement(sql).expect("parse");
-        let bound = Binder::new(&catalog, Some("app"))
-            .bind(&statement)
-            .expect("bind");
-        PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound))).expect("physical")
+        .expect("table")
     }
 
     fn source_batch() -> RecordBatch {
@@ -784,6 +1042,58 @@ mod tests {
             Err(ExecError::InvalidBatch(
                 "scan batch column count differs from its projection"
             ))
+        );
+    }
+
+    #[test]
+    fn distinct_masks_duplicates_across_the_stream() {
+        let names = ColumnVector::new(
+            DataType::Utf8,
+            vec![
+                Value::Utf8("alpha".to_owned()),
+                Value::Utf8("alpha".to_owned()),
+                Value::Utf8("Beta".to_owned()),
+            ],
+        )
+        .expect("names");
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(3, vec![names]).expect("batch")]),
+        };
+        let plan = physical("SELECT DISTINCT name FROM events");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.selection().selected_rows().collect::<Vec<_>>(),
+            [0, 2]
+        );
+        assert!(execution.next_batch().expect("end").is_none());
+        assert!(execution.memory().used() > 0);
+    }
+
+    #[test]
+    fn rejects_cross_joins_above_the_cardinality_guard() {
+        let database = DatabaseEntry::new(
+            DatabaseId::new(1),
+            "app",
+            [
+                catalog_table(1, "events", 2_000),
+                catalog_table(2, "users", 2_000),
+            ],
+        )
+        .expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let statement =
+            parse_statement("SELECT events.id FROM events, users").expect("parse query");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind query");
+        let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
+        assert_eq!(
+            PhysicalPlanner::plan(logical),
+            Err(ExecError::CrossJoinGuardExceeded {
+                estimated_rows: 4_000_000,
+                limit: crate::MAX_CROSS_JOIN_ROWS
+            })
         );
     }
 }

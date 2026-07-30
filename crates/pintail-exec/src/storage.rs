@@ -223,6 +223,114 @@ mod tests {
         );
     }
 
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn executes_guarded_cross_joins_in_bounded_output_batches() {
+        let events_directory = tempfile::tempdir().expect("events directory");
+        let users_directory = tempfile::tempdir().expect("users directory");
+        let schema = schema();
+        let mut events = TableStore::open(
+            events_directory.path(),
+            schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("open events");
+        let mut users = TableStore::open(
+            users_directory.path(),
+            schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("open users");
+        events
+            .ingest(vec![row(1, "event-a"), row(2, "event-b")])
+            .expect("ingest events");
+        users
+            .ingest(vec![row(1, "user-a"), row(2, "user-b")])
+            .expect("ingest users");
+        let events_snapshot = events.snapshot();
+        let users_snapshot = users.snapshot();
+
+        let database_id = DatabaseId::new(5);
+        let events_id = TableId::new(7);
+        let users_id = TableId::new(8);
+        let database = DatabaseEntry::new(
+            database_id,
+            "app",
+            [
+                TableEntry::new(
+                    events_id,
+                    "events",
+                    schema.clone(),
+                    TableStatistics::with_row_count(2),
+                )
+                .expect("events entry"),
+                TableEntry::new(
+                    users_id,
+                    "users",
+                    schema,
+                    TableStatistics::with_row_count(2),
+                )
+                .expect("users entry"),
+            ],
+        )
+        .expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider = SnapshotScanProvider::new([
+            (database_id, events_id, &events_snapshot),
+            (database_id, users_id, &users_snapshot),
+        ])
+        .expect("provider");
+
+        let statement = parse_statement(
+            "SELECT events.name AS event_name, users.name AS user_name \
+             FROM events, users LIMIT 3",
+        )
+        .expect("parse query");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind query");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let rows = batch
+            .selection()
+            .selected_rows()
+            .map(|row| {
+                (
+                    batch
+                        .column(0)
+                        .and_then(|column| column.value(row))
+                        .cloned()
+                        .expect("event"),
+                    batch
+                        .column(1)
+                        .and_then(|column| column.value(row))
+                        .cloned()
+                        .expect("user"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [
+                (
+                    Value::Utf8("event-a".to_owned()),
+                    Value::Utf8("user-a".to_owned())
+                ),
+                (
+                    Value::Utf8("event-a".to_owned()),
+                    Value::Utf8("user-b".to_owned())
+                ),
+                (
+                    Value::Utf8("event-b".to_owned()),
+                    Value::Utf8("user-a".to_owned())
+                )
+            ]
+        );
+        assert!(execution.next_batch().expect("end").is_none());
+    }
+
     fn schema() -> TableSchema {
         TableSchema::new(
             1,

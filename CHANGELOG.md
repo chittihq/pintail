@@ -31,6 +31,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Storage-backed scan provider that reads pinned table snapshots into bounded
   projected batches, validates schema generations, and supports zero-column
   scans for constant-per-row queries.
+- Memory-accounted streaming DISTINCT and materialized cross-join execution,
+  with catalog cardinality required up front and a one-million-row Cartesian
+  safety guard.
 
 ## [M1] - 2026-07-30
 
