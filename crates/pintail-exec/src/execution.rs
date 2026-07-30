@@ -2113,6 +2113,20 @@ mod tests {
     }
 
     #[test]
+    fn count_star_uses_catalog_metadata_without_opening_a_scan() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical("SELECT COUNT(*) AS rows FROM events");
+        let mut execution = Execution::start(plan, &provider, 4 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(3))
+        );
+    }
+
+    #[test]
     fn executes_case_insensitive_top_k_sort_with_mysql_null_ordering() {
         let names = ColumnVector::new(
             DataType::Utf8,

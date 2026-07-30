@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   extraction, `DATE_FORMAT`, single-field `DATE_ADD`/`DATE_SUB`, `DATEDIFF`,
   `UNIX_TIMESTAMP`, and `FROM_UNIXTIME`, including calendar-aware month
   arithmetic and invalid-date errors.
+- Optimizer metadata substitution for predicate-free global `COUNT(*)`,
+  returning exact catalog row counts without opening a storage scan.
 
 ## [M1] - 2026-07-30
 

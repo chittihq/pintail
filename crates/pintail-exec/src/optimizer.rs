@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
-    BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundProjection, UnaryOp,
+    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
+    BoundProjection, UnaryOp,
 };
 use pintail_types::{DataType, Float64, Value};
 
@@ -18,11 +19,102 @@ impl Optimizer {
     pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
         let plan = fold_constants(plan);
         let plan = push_predicates(plan);
+        let plan = replace_metadata_counts(plan);
         let plan = reorder_cross_joins(plan);
         let mut plan = plan;
         prune_projections(&mut plan);
         push_limits(&mut plan);
         plan
+    }
+}
+
+fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
+    match plan {
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } if group_by.is_empty()
+            && aggregates.as_slice()
+                == [BoundAggregate {
+                    function: AggregateFunction::Count,
+                    expr: None,
+                    distinct: false,
+                    data_type: Some(DataType::UInt64),
+                    nullable: false,
+                }] =>
+        {
+            match *input {
+                LogicalPlan::Scan(scan) if scan.predicates.is_empty() => {
+                    if let Some(row_count) = scan.table.row_count {
+                        LogicalPlan::Project {
+                            input: Box::new(LogicalPlan::OneRow),
+                            expressions: vec![BoundProjection {
+                                name: "COUNT(*)".to_owned(),
+                                expr: literal_expr(Value::UInt64(row_count)),
+                            }],
+                        }
+                    } else {
+                        LogicalPlan::Aggregate {
+                            input: Box::new(LogicalPlan::Scan(scan)),
+                            group_by,
+                            aggregates,
+                        }
+                    }
+                }
+                input => LogicalPlan::Aggregate {
+                    input: Box::new(replace_metadata_counts(input)),
+                    group_by,
+                    aggregates,
+                },
+            }
+        }
+        LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
+            inputs: inputs.into_iter().map(replace_metadata_counts).collect(),
+        },
+        LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
+            inputs: inputs.into_iter().map(replace_metadata_counts).collect(),
+        },
+        LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } => LogicalPlan::Join {
+            left: Box::new(replace_metadata_counts(*left)),
+            right: Box::new(replace_metadata_counts(*right)),
+            kind,
+            condition,
+        },
+        LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
+            input: Box::new(replace_metadata_counts(*input)),
+            predicate,
+        },
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => LogicalPlan::Aggregate {
+            input: Box::new(replace_metadata_counts(*input)),
+            group_by,
+            aggregates,
+        },
+        LogicalPlan::Project { input, expressions } => LogicalPlan::Project {
+            input: Box::new(replace_metadata_counts(*input)),
+            expressions,
+        },
+        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+            input: Box::new(replace_metadata_counts(*input)),
+        },
+        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+            input: Box::new(replace_metadata_counts(*input)),
+            keys,
+        },
+        LogicalPlan::Limit { input, limit } => LogicalPlan::Limit {
+            input: Box::new(replace_metadata_counts(*input)),
+            limit,
+        },
+        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
     }
 }
 
@@ -916,5 +1008,24 @@ mod tests {
             expressions[1].expr.kind,
             BoundExprKind::Literal(pintail_types::Value::Null)
         ));
+    }
+
+    #[test]
+    fn answers_predicate_free_count_star_from_exact_catalog_metadata() {
+        let plan = optimized("SELECT COUNT(*) AS rows FROM events");
+        let LogicalPlan::Project { input, .. } = plan else {
+            panic!("client projection");
+        };
+        let LogicalPlan::Project { input, expressions } = *input else {
+            panic!("metadata projection");
+        };
+        assert_eq!(
+            expressions[0].expr.kind,
+            BoundExprKind::Literal(pintail_types::Value::UInt64(100))
+        );
+        assert_eq!(*input, LogicalPlan::OneRow);
+
+        let plan = project_input(optimized("SELECT COUNT(*) FROM events WHERE id > 0"));
+        assert!(matches!(plan, LogicalPlan::Aggregate { .. }));
     }
 }
