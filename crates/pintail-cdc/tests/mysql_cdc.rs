@@ -1,14 +1,15 @@
 use std::{
     collections::BTreeMap,
     io::Write as _,
+    path::Path,
     process::{Command, Output, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use mysql_async::{Opts, Pool};
-use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
+use pintail_cdc::{CdcCheckpoint, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
-use pintail_probe::probe;
+use pintail_probe::{ProbeReport, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreOptions, TableStore};
 use pintail_types::Value;
@@ -204,7 +205,123 @@ async fn m4_cdc_crud_gipk_append_and_type_fidelity() {
     assert_eq!(result.mutations, 7);
     assert_eq!(result.checkpoint.kind, "gtid");
     assert_replica(&result.targets);
+    assert_restart_replay(
+        &mysql,
+        &pool,
+        &metadata_path,
+        workspace.path(),
+        &report,
+        result.targets,
+        result.checkpoint,
+    )
+    .await;
     pool.disconnect().await.expect("disconnect source pool");
+}
+
+async fn assert_restart_replay(
+    mysql: &MysqlContainer,
+    pool: &Pool,
+    metadata_path: &Path,
+    workspace: &Path,
+    report: &ProbeReport,
+    targets: Vec<CdcTarget>,
+    checkpoint_before: CdcCheckpoint,
+) {
+    mysql
+        .query_batch(
+            "START TRANSACTION;\
+               UPDATE primary_rows SET value='ONE-again' WHERE id=1;\
+               INSERT INTO primary_rows VALUES (5,'five');\
+               INSERT INTO append_rows VALUES ('replayed-once');\
+               UPDATE gipk_rows SET value='updated-again' WHERE value='updated';\
+             COMMIT;",
+        )
+        .expect("restart mutations");
+    let first = finite_catch_up(pool, metadata_path, report, targets)
+        .await
+        .expect("first restart catch-up");
+    assert_eq!(first.mutations, 4);
+    let checkpoint_after = first.checkpoint.clone();
+    assert_restart_rows(&first.targets);
+    drop(first.targets);
+
+    MetaStore::open(metadata_path)
+        .expect("rewind metadata")
+        .upsert_snapshot_checkpoint(
+            DATABASE_ID,
+            &checkpoint_before.kind,
+            checkpoint_before.gtid_set.as_deref(),
+            Some(&checkpoint_before.binlog_file),
+            Some(checkpoint_before.binlog_pos),
+            "2026-07-30T02:00:00Z",
+        )
+        .expect("rewind durable checkpoint");
+    let reopened = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.join(&source.name),
+                source.table_schema().expect("reopen schema"),
+                StoreOptions::default(),
+            )
+            .expect("reopen CDC store");
+            CdcTarget::new(source.clone(), store).expect("reopened CDC target")
+        })
+        .collect();
+    let replay = finite_catch_up(pool, metadata_path, report, reopened)
+        .await
+        .expect("replayed catch-up");
+    assert_eq!(replay.mutations, 4);
+    assert_eq!(replay.checkpoint, checkpoint_after);
+    assert_restart_rows(&replay.targets);
+}
+
+async fn finite_catch_up(
+    pool: &Pool,
+    metadata_path: &Path,
+    report: &ProbeReport,
+    targets: Vec<CdcTarget>,
+) -> Result<pintail_cdc::CdcResult, pintail_cdc::CdcError> {
+    run_cdc(
+        pool,
+        metadata_path,
+        DATABASE_ID,
+        report,
+        targets,
+        CdcOptions {
+            blocking: false,
+            ..CdcOptions::default()
+        },
+    )
+    .await
+}
+
+fn assert_restart_rows(targets: &[CdcTarget]) {
+    let targets = targets
+        .iter()
+        .map(|target| (target.source().name.as_str(), target))
+        .collect::<BTreeMap<_, _>>();
+    let primary = targets["primary_rows"]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("restart primary scan");
+    assert_eq!(primary.len(), 4);
+    assert_eq!(primary[0].values()[1], Value::Utf8("ONE-again".to_owned()));
+    let append = targets["append_rows"]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("restart append scan");
+    assert_eq!(append.len(), 4);
+    assert_eq!(
+        append
+            .iter()
+            .filter(|row| row.values()[0] == Value::Utf8("replayed-once".to_owned()))
+            .count(),
+        1
+    );
 }
 
 fn assert_replica(targets: &[CdcTarget]) {
