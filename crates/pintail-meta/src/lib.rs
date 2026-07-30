@@ -387,7 +387,7 @@ impl MetaStore {
             transaction
                 .execute(
                     "UPDATE tables SET state = 'streaming', last_error = NULL \
-                     WHERE db_id = ?1 AND name = ?2",
+                     WHERE db_id = ?1 AND name = ?2 AND state != 'needs_resync'",
                     (database_id, table_name),
                 )
                 .with_context(|| format!("failed to mark {database_id}.{table_name} streaming"))?;
@@ -423,6 +423,26 @@ impl MetaStore {
             )
             .with_context(|| format!("failed to mark {database_id}.{table_name} for resnapshot"))?;
         Ok(())
+    }
+
+    /// Returns included tables whose CDC stream must wait for a new snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be queried.
+    pub fn tables_needing_resync(&self, database_id: &str) -> Result<BTreeSet<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT name FROM tables \
+                 WHERE db_id = ?1 AND state = 'needs_resync' ORDER BY name",
+            )
+            .context("failed to prepare resnapshot table query")?;
+        statement
+            .query_map([database_id], |row| row.get(0))
+            .context("failed to query resnapshot tables")?
+            .collect::<rusqlite::Result<BTreeSet<_>>>()
+            .context("failed to decode resnapshot tables")
     }
 
     /// Marks every included table as requiring a new snapshot.

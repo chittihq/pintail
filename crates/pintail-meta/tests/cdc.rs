@@ -57,11 +57,24 @@ fn cdc_checkpoint_updates_position_and_streaming_state_atomically() {
 fn resync_and_dlq_updates_are_durable_and_idempotent() {
     let workspace = tempfile::tempdir().expect("metadata workspace");
     let path = workspace.path().join("pintail-meta.db");
-    let store = MetaStore::open(&path).expect("metadata");
+    let mut store = MetaStore::open(&path).expect("metadata");
     register_source(&store);
     store
         .mark_table_needs_resync("source", "events", "cannot decode row")
         .expect("mark table");
+    store
+        .commit_cdc_checkpoint(
+            "source",
+            &SnapshotCheckpointRecord {
+                kind: "filepos".to_owned(),
+                gtid_set: None,
+                binlog_file: Some("mysql-bin.000001".to_owned()),
+                binlog_pos: Some(124),
+            },
+            &["events".to_owned()],
+            "2026-07-30T01:00:00Z",
+        )
+        .expect("advance checkpoint without clearing resync");
     store
         .record_dlq(
             "cdc:source:mysql-bin.000001:123",
