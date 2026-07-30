@@ -39,6 +39,8 @@ fn run_until_healthy(data_dir: &Path) -> String {
         .arg(data_dir)
         .arg("--http-bind")
         .arg(address.to_string())
+        .arg("--wire-bind")
+        .arg("127.0.0.1:0")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()

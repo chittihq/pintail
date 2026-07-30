@@ -9,14 +9,27 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
 opensrv-mysql.workspace = true
 pintail-catalog.workspace = true
+pintail-cdc.workspace = true
 pintail-exec.workspace = true
 pintail-meta.workspace = true
+pintail-probe.workspace = true
 pintail-sql.workspace = true
 pintail-store.workspace = true
 pintail-types.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
 tokio.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+mysql_async.workspace = true
+sha2.workspace = true
+tempfile.workspace = true

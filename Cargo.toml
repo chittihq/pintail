@@ -28,6 +28,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 anyhow = "1.0.98"
 argon2 = "0.5.3"
+async-trait = "0.1.91"
 axum = { version = "0.8.4", features = ["ws"] }
 chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.41", default-features = false, features = ["clock"] }
@@ -52,6 +53,7 @@ pintail-snapshot = { path = "crates/pintail-snapshot" }
 pintail-store = { path = "crates/pintail-store" }
 pintail-sql = { path = "crates/pintail-sql" }
 pintail-types = { path = "crates/pintail-types" }
+pintail-wire = { path = "crates/pintail-wire" }
 rand = "0.9.1"
 rayon = "1.10.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }

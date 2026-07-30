@@ -1,0 +1,8 @@
+{
+  "name": "pintail-wire-clients",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "mysql2": "^3.14.3"
+  }
+}

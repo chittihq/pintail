@@ -27,6 +27,7 @@ pintail-snapshot.workspace = true
 pintail-sql.workspace = true
 pintail-store.workspace = true
 pintail-types.workspace = true
+pintail-wire.workspace = true
 rand.workspace = true
 rust-embed.workspace = true
 serde.workspace = true

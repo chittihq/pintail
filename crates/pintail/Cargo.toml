@@ -14,6 +14,7 @@ clap.workspace = true
 fs2.workspace = true
 pintail-api.workspace = true
 pintail-meta.workspace = true
+pintail-wire.workspace = true
 rand.workspace = true
 serde.workspace = true
 tokio.workspace = true

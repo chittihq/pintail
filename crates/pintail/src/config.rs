@@ -15,6 +15,7 @@ use serde::Deserialize;
 const DEFAULT_CONFIG_FILE: &str = "pintail.toml";
 const DEFAULT_DATA_DIR: &str = "./data";
 const DEFAULT_HTTP_PORT: u16 = 8080;
+const DEFAULT_WIRE_PORT: u16 = 3306;
 
 /// Pintail command-line options.
 #[derive(Clone, Debug, Parser)]
@@ -31,6 +32,10 @@ pub struct Cli {
     /// Address used by the dashboard and HTTP API.
     #[arg(long)]
     pub http_bind: Option<SocketAddr>,
+
+    /// Address used by `MySQL` wire-protocol clients.
+    #[arg(long)]
+    pub wire_bind: Option<SocketAddr>,
 }
 
 /// Effective process configuration after all sources have been merged.
@@ -38,6 +43,7 @@ pub struct Cli {
 pub struct AppConfig {
     data_dir: PathBuf,
     http_bind: SocketAddr,
+    wire_bind: SocketAddr,
 }
 
 impl AppConfig {
@@ -109,10 +115,26 @@ impl AppConfig {
             .or(environment_http_bind)
             .or(file.http.bind)
             .unwrap_or_else(default_http_bind);
+        let environment_wire_bind = environment
+            .get(&OsString::from("PINTAIL_WIRE_BIND"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_WIRE_BIND must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_WIRE_BIND must be an IP address and port")
+            })
+            .transpose()?;
+        let wire_bind = cli
+            .wire_bind
+            .or(environment_wire_bind)
+            .or(file.wire.bind)
+            .unwrap_or_else(default_wire_bind);
 
         Ok(Self {
             data_dir,
             http_bind,
+            wire_bind,
         })
     }
 
@@ -127,6 +149,12 @@ impl AppConfig {
     pub fn http_bind(&self) -> SocketAddr {
         self.http_bind
     }
+
+    /// Address used by `MySQL` wire-protocol clients.
+    #[must_use]
+    pub fn wire_bind(&self) -> SocketAddr {
+        self.wire_bind
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -134,11 +162,18 @@ impl AppConfig {
 struct FileConfig {
     data_dir: Option<PathBuf>,
     http: FileHttpConfig,
+    wire: FileWireConfig,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct FileHttpConfig {
+    bind: Option<SocketAddr>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct FileWireConfig {
     bind: Option<SocketAddr>,
 }
 
@@ -149,6 +184,10 @@ fn default_config_path() -> Option<PathBuf> {
 
 fn default_http_bind() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_HTTP_PORT)
+}
+
+fn default_wire_bind() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_WIRE_PORT)
 }
 
 fn load_file(path: &Path) -> Result<FileConfig> {

@@ -12,6 +12,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   double-SHA-1 verifier alongside each new hash-only API key, enabling standard
   MySQL challenge-response authentication without retaining or recovering the
   one-time plaintext secret.
+- A read-only MySQL wire server now listens on the configurable `wire.bind`
+  address, authenticates database-scoped query keys, and routes text and
+  prepared statements through the same reader-pinned SQL engine as HTTP.
+  `SHOW`, `DESCRIBE`, `information_schema`, BI-style aggregates, EXPLAIN,
+  session setup commands, bounded results, typed binary rows, and clear write
+  rejection are covered by the compatibility gate.
+
+### Verification
+
+- The wire compatibility gate passes `mysql_async`, the MySQL 8.4 CLI, mysql2
+  under Bun, and PyMySQL, including native challenge authentication, database
+  selection, metadata discovery, prepared parameters, BI-style queries, and
+  exact binary-protocol values for decimal, temporal, JSON, Unicode, blob, and
+  narrow numeric columns.
 
 ## [M6] - 2026-07-30
 

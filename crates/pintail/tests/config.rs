@@ -13,6 +13,9 @@ fn cli_and_environment_override_the_toml_configuration() {
 
             [http]
             bind = "127.0.0.1:7000"
+
+            [wire]
+            bind = "127.0.0.1:3307"
         "#,
     )
     .expect("write config");
@@ -22,6 +25,7 @@ fn cli_and_environment_override_the_toml_configuration() {
         config: Some(config_path),
         data_dir: Some(cli_data_dir.clone()),
         http_bind: None,
+        wire_bind: None,
     };
     let environment = [(
         OsString::from("PINTAIL_HTTP_BIND"),
@@ -36,4 +40,10 @@ fn cli_and_environment_override_the_toml_configuration() {
         "127.0.0.1:7100".parse::<SocketAddr>().expect("address")
     );
     assert_ne!(config.data_dir(), PathBuf::from("./from-file"));
+    assert_eq!(
+        config.wire_bind(),
+        "127.0.0.1:3307"
+            .parse::<SocketAddr>()
+            .expect("wire address")
+    );
 }

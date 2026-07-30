@@ -47,3 +47,20 @@ polling gate covers cursor and cursor-less CRUD, composite keys, count-neutral
 same-token changes, full delete repair, unique-value reuse, soft deletes,
 append generations, and ten idle cycles with no row-storage growth. Later
 end-to-end supervisor/API suites will compose these gates from this directory.
+
+M7's wire compatibility gate lives at
+`crates/pintail-wire/tests/wire_compat.rs`. Its default run uses a real Rust
+MySQL client; set the external-client flag to add the `mysql` CLI, mysql2 under
+Bun, and PyMySQL:
+
+```sh
+PINTAIL_EXTERNAL_WIRE_CLIENTS=1 \
+PINTAIL_MYSQL_CLI=/opt/homebrew/opt/mysql-client@8.4/bin/mysql \
+cargo test -p pintail-wire --test wire_compat -- --nocapture
+```
+
+`PINTAIL_MYSQL_CLI` is optional and defaults to `mysql`. MySQL 9.x clients no
+longer ship the `mysql_native_password` client plugin, so use a MySQL 8.4 or
+compatible MariaDB client binary for Pintail's hash-only native challenge
+gate. JavaScript dependencies in `tests/integration/wire-clients` are locked
+and installed with Bun.

@@ -8,6 +8,7 @@ use pintail::{
 };
 use pintail_api::{ApiState, router_with_state};
 use pintail_meta::MetaStore;
+use pintail_wire::serve_until;
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -35,15 +36,46 @@ async fn main() -> Result<()> {
         boot_secrets.secrets().dsn_encryption_key(),
     )?;
 
-    let listener = TcpListener::bind(config.http_bind())
+    let http_listener = TcpListener::bind(config.http_bind())
         .await
         .with_context(|| format!("failed to bind HTTP server to {}", config.http_bind()))?;
-    eprintln!("pintail listening on http://{}", config.http_bind());
-
-    axum::serve(listener, router_with_state(api_state))
-        .with_graceful_shutdown(shutdown_signal())
+    let wire_listener = TcpListener::bind(config.wire_bind())
         .await
-        .context("HTTP server failed")
+        .with_context(|| format!("failed to bind MySQL wire server to {}", config.wire_bind()))?;
+    eprintln!(
+        "pintail listening on http://{}",
+        http_listener.local_addr()?
+    );
+    eprintln!(
+        "pintail MySQL wire listening on {}",
+        wire_listener.local_addr()?
+    );
+
+    let (shutdown, _) = tokio::sync::broadcast::channel::<()>(1);
+    let shutdown_signal_sender = shutdown.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = shutdown_signal_sender.send(());
+    });
+    let mut http_shutdown = shutdown.subscribe();
+    let mut wire_shutdown = shutdown.subscribe();
+    let http = axum::serve(http_listener, router_with_state(api_state)).with_graceful_shutdown(
+        async move {
+            let _ = http_shutdown.recv().await;
+        },
+    );
+    let wire = serve_until(
+        wire_listener,
+        config.data_dir(),
+        &metadata_path,
+        async move {
+            let _ = wire_shutdown.recv().await;
+        },
+    );
+    tokio::try_join!(async { http.await.context("HTTP server failed") }, async {
+        wire.await.context("MySQL wire server failed")
+    })?;
+    Ok(())
 }
 
 fn display_first_boot_secret(loaded: &LoadedBootSecrets, data_dir: &Path) {
