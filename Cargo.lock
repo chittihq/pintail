@@ -813,6 +813,8 @@ version = "0.1.0"
 name = "pintail-sql"
 version = "0.1.0"
 dependencies = [
+ "pintail-catalog",
+ "pintail-types",
  "sqlparser",
 ]
 

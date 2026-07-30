@@ -1,11 +1,20 @@
 //! `MySQL`-dialect SQL frontend for Pintail.
 
+mod binder;
+mod bound;
+
 use std::fmt;
 
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::{Parser, ParserError};
 
 pub use sqlparser::ast::Statement;
+
+pub use binder::{BindError, Binder};
+pub use bound::{
+    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundLimit, BoundProjection, BoundQuery,
+    BoundTable, UnaryOp,
+};
 
 /// An error produced while parsing a SQL request.
 #[derive(Debug, Clone, PartialEq, Eq)]

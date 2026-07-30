@@ -14,6 +14,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Immutable catalog snapshots with stable database and table identities,
   case-insensitive name indexes, deterministic metadata iteration, versioned
   table schemas, and exact row-count statistics for planning.
+- Query binder for table aliases, qualified and ambiguous columns, wildcard
+  expansion, literals, core scalar operators, predicates, DISTINCT, and
+  normalized MySQL limits, with stable catalog IDs in every bound reference.
 
 ## [M1] - 2026-07-30
 
