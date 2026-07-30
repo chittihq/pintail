@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use pintail_catalog::{DatabaseId, TableId};
-use pintail_sql::{BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundProjection, UnaryOp};
+use pintail_sql::{
+    BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundProjection, UnaryOp,
+};
 use pintail_types::{DataType, Float64, Value};
 
 use crate::LogicalPlan;
@@ -63,6 +65,21 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
                 })
                 .collect(),
         },
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => LogicalPlan::Aggregate {
+            input: Box::new(fold_constants(*input)),
+            group_by: group_by.into_iter().map(fold_expr).collect(),
+            aggregates: aggregates
+                .into_iter()
+                .map(|aggregate| BoundAggregate {
+                    expr: aggregate.expr.map(fold_expr),
+                    ..aggregate
+                })
+                .collect(),
+        },
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(fold_constants(*input)),
         },
@@ -75,7 +92,10 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
 
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
     let folded = match expr.kind {
-        BoundExprKind::Column(_) | BoundExprKind::Literal(_) => return expr,
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Literal(_) => return expr,
         BoundExprKind::Unary { op, expr: child } => BoundExpr {
             kind: BoundExprKind::Unary {
                 op,
@@ -111,7 +131,7 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
-        BoundExprKind::Column(_) => None,
+        BoundExprKind::Column(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => None,
         BoundExprKind::Literal(value) => Some(value.clone()),
         BoundExprKind::Unary { op, expr } => {
             let value = evaluate_constant(expr)?;
@@ -332,6 +352,15 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(push_predicates(*input)),
             expressions,
         },
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => LogicalPlan::Aggregate {
+            input: Box::new(push_predicates(*input)),
+            group_by,
+            aggregates,
+        },
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(push_predicates(*input)),
         },
@@ -434,6 +463,7 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
             contains_table(left, table) || contains_table(right, table)
         }
         LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Limit { input, .. } => contains_table(input, table),
@@ -465,6 +495,15 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
             input: Box::new(reorder_cross_joins(*input)),
             predicate,
+        },
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => LogicalPlan::Aggregate {
+            input: Box::new(reorder_cross_joins(*input)),
+            group_by,
+            aggregates,
         },
         LogicalPlan::Project { input, expressions } => LogicalPlan::Project {
             input: Box::new(reorder_cross_joins(*input)),
@@ -521,6 +560,21 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             }
             collect_plan_columns(input, required);
         }
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => {
+            for expression in group_by {
+                collect_expr_columns(expression, required);
+            }
+            for aggregate in aggregates {
+                if let Some(expression) = &aggregate.expr {
+                    collect_expr_columns(expression, required);
+                }
+            }
+            collect_plan_columns(input, required);
+        }
         LogicalPlan::Distinct { input } | LogicalPlan::Limit { input, .. } => {
             collect_plan_columns(input, required);
         }
@@ -549,6 +603,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
             prune_scan_columns(right, required);
         }
         LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Limit { input, .. } => prune_scan_columns(input, required),
@@ -574,7 +629,8 @@ fn push_limits(plan: &mut LogicalPlan) {
         }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Distinct { input } => push_limits(input),
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Aggregate { input, .. } => push_limits(input),
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
     }
 }
@@ -591,6 +647,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::CrossJoin { .. }
         | LogicalPlan::Join { .. }
         | LogicalPlan::Filter { .. }
+        | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Limit { .. } => {}
     }
@@ -617,7 +674,7 @@ fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
             collect_expr_columns(left, columns);
             collect_expr_columns(right, columns);
         }
-        BoundExprKind::Literal(_) => {}
+        BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => {}
     }
 }
 

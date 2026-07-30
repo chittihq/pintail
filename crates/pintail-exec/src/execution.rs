@@ -1,18 +1,19 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
     mem::{size_of, size_of_val},
 };
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
-    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundProjection,
+    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
+    BoundJoinKind, BoundProjection,
 };
 use pintail_types::{DataType, Value};
 
 use crate::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, RecordBatch, Scan,
-    expression::{CompiledExpr, predicate_truth},
+    expression::{CompiledExpr, mysql_f64, mysql_i64, mysql_u64, predicate_truth},
 };
 
 /// Maximum estimated result rows accepted by the unqualified cross-join
@@ -66,6 +67,15 @@ pub enum PhysicalPlan {
         /// Bound row predicate.
         predicate: BoundExpr,
     },
+    /// Memory-capped hash grouping and aggregate computation.
+    HashAggregate {
+        /// Input operator.
+        input: Box<Self>,
+        /// Ordered grouping expressions.
+        group_by: Vec<BoundExpr>,
+        /// Deduplicated aggregate computations.
+        aggregates: Vec<BoundAggregate>,
+    },
     /// Evaluates ordered result expressions.
     Project {
         /// Input operator.
@@ -105,6 +115,23 @@ impl PhysicalPlan {
             Self::Filter { input, .. } | Self::Distinct { input } | Self::Limit { input, .. } => {
                 input.output_fields()
             }
+            Self::HashAggregate {
+                group_by,
+                aggregates,
+                ..
+            } => group_by
+                .iter()
+                .map(|expression| OutputField {
+                    name: String::new(),
+                    data_type: expression.data_type,
+                    nullable: expression.nullable,
+                })
+                .chain(aggregates.iter().map(|aggregate| OutputField {
+                    name: String::new(),
+                    data_type: aggregate.data_type,
+                    nullable: aggregate.nullable,
+                }))
+                .collect(),
             Self::CrossJoin { inputs, .. } => inputs.iter().flat_map(Self::output_fields).collect(),
             Self::HashJoin {
                 left, right, kind, ..
@@ -160,6 +187,15 @@ impl PhysicalPlanner {
             LogicalPlan::Filter { input, predicate } => Ok(PhysicalPlan::Filter {
                 input: Box::new(Self::plan(*input)?),
                 predicate,
+            }),
+            LogicalPlan::Aggregate {
+                input,
+                group_by,
+                aggregates,
+            } => Ok(PhysicalPlan::HashAggregate {
+                input: Box::new(Self::plan(*input)?),
+                group_by,
+                aggregates,
             }),
             LogicalPlan::Project { input, expressions } => Ok(PhysicalPlan::Project {
                 input: Box::new(Self::plan(*input)?),
@@ -283,6 +319,7 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
             collect_logical_tables(right, tables);
         }
         LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Limit { input, .. } => collect_logical_tables(input, tables),
@@ -308,7 +345,7 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(Data
             collect_expression_tables(left, tables);
             collect_expression_tables(right, tables);
         }
-        BoundExprKind::Literal(_) => {}
+        BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => {}
     }
 }
 
@@ -473,6 +510,13 @@ enum PullOperator {
         input: Box<Self>,
         predicate: CompiledExpr,
     },
+    HashAggregate {
+        input: Box<Self>,
+        group_by: Vec<CompiledExpr>,
+        aggregates: Vec<CompiledAggregate>,
+        column_types: Vec<DataType>,
+        state: Option<MaterializedRows>,
+    },
     Project {
         input: Box<Self>,
         expressions: Vec<(CompiledExpr, Option<DataType>)>,
@@ -577,6 +621,22 @@ impl PullOperator {
                     return Ok(Some(batch));
                 }
             },
+            Self::HashAggregate {
+                input,
+                group_by,
+                aggregates,
+                column_types,
+                state,
+            } => {
+                if state.is_none() {
+                    *state = Some(build_hash_aggregate(input, group_by, aggregates, memory)?);
+                }
+                next_materialized_batch(
+                    state.as_mut().expect("initialized above"),
+                    column_types,
+                    memory,
+                )
+            }
             Self::Project { input, expressions } => {
                 let Some(batch) = input.next_batch(memory)? else {
                     return Ok(None);
@@ -774,6 +834,40 @@ fn build_operator(
                 columns,
             ))
         }
+        PhysicalPlan::HashAggregate {
+            input,
+            group_by,
+            aggregates,
+        } => {
+            let (input, columns) = build_operator(*input, provider)?;
+            let column_types = group_by
+                .iter()
+                .map(|expression| expression.data_type.unwrap_or(DataType::Utf8))
+                .chain(
+                    aggregates
+                        .iter()
+                        .map(|aggregate| aggregate.data_type.unwrap_or(DataType::Utf8)),
+                )
+                .collect();
+            let group_by = group_by
+                .iter()
+                .map(|expression| CompiledExpr::compile(expression, &columns))
+                .collect::<Result<Vec<_>, _>>()?;
+            let aggregates = aggregates
+                .iter()
+                .map(|aggregate| CompiledAggregate::compile(aggregate, &columns))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((
+                PullOperator::HashAggregate {
+                    input: Box::new(input),
+                    group_by,
+                    aggregates,
+                    column_types,
+                    state: None,
+                },
+                Vec::new(),
+            ))
+        }
         PhysicalPlan::Project { input, expressions } => {
             let (input, columns) = build_operator(*input, provider)?;
             let expressions = expressions
@@ -894,6 +988,239 @@ fn build_hash_join(
         }
     }
     Ok(MaterializedRows { rows, position: 0 })
+}
+
+struct CompiledAggregate {
+    function: AggregateFunction,
+    expr: Option<CompiledExpr>,
+    distinct: bool,
+    data_type: Option<DataType>,
+}
+
+impl CompiledAggregate {
+    fn compile(aggregate: &BoundAggregate, columns: &[BoundColumn]) -> Result<Self, ExecError> {
+        Ok(Self {
+            function: aggregate.function,
+            expr: aggregate
+                .expr
+                .as_ref()
+                .map(|expression| CompiledExpr::compile(expression, columns))
+                .transpose()?,
+            distinct: aggregate.distinct,
+            data_type: aggregate.data_type,
+        })
+    }
+}
+
+struct AggregateGroup {
+    values: Vec<Value>,
+    states: Vec<AggregateState>,
+}
+
+struct AggregateState {
+    value: AggregateValue,
+    seen: Option<HashSet<Value>>,
+}
+
+enum AggregateValue {
+    Count(u64),
+    Sum(Option<Value>),
+    Average { sum: f64, count: u64 },
+    Minimum(Option<Value>),
+    Maximum(Option<Value>),
+    GroupConcat(Vec<String>),
+}
+
+impl AggregateState {
+    fn new(aggregate: &CompiledAggregate) -> Self {
+        let value = match aggregate.function {
+            AggregateFunction::Count => AggregateValue::Count(0),
+            AggregateFunction::Sum => AggregateValue::Sum(None),
+            AggregateFunction::Average => AggregateValue::Average { sum: 0.0, count: 0 },
+            AggregateFunction::Minimum => AggregateValue::Minimum(None),
+            AggregateFunction::Maximum => AggregateValue::Maximum(None),
+            AggregateFunction::GroupConcat => AggregateValue::GroupConcat(Vec::new()),
+        };
+        Self {
+            value,
+            seen: aggregate.distinct.then(HashSet::new),
+        }
+    }
+
+    fn update(
+        &mut self,
+        aggregate: &CompiledAggregate,
+        value: Value,
+        memory: &mut MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if matches!(value, Value::Null) {
+            return Ok(());
+        }
+        if let Some(seen) = &mut self.seen {
+            let key = normalized_hash_key(value.clone()).unwrap_or(Value::Null);
+            if !seen.insert(key.clone()) {
+                return Ok(());
+            }
+            memory.reserve(size_of::<Value>().saturating_add(key.heap_bytes()))?;
+        }
+        match &mut self.value {
+            AggregateValue::Count(count) => {
+                *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+            }
+            AggregateValue::Sum(sum) => {
+                *sum = Some(add_aggregate_value(
+                    sum.take(),
+                    &value,
+                    aggregate.data_type,
+                )?);
+            }
+            AggregateValue::Average { sum, count } => {
+                *sum += mysql_f64(&value)?;
+                if !sum.is_finite() {
+                    return Err(ExecError::NumericOverflow);
+                }
+                *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+            }
+            AggregateValue::Minimum(minimum) => {
+                if minimum.as_ref().is_none_or(|current| value < *current) {
+                    *minimum = Some(value);
+                }
+            }
+            AggregateValue::Maximum(maximum) => {
+                if maximum.as_ref().is_none_or(|current| value > *current) {
+                    *maximum = Some(value);
+                }
+            }
+            AggregateValue::GroupConcat(values) => {
+                let value = aggregate_string(&value)?;
+                memory.reserve(value.len())?;
+                values.push(value);
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn finish(self) -> Value {
+        match self.value {
+            AggregateValue::Count(count) => Value::UInt64(count),
+            AggregateValue::Sum(value)
+            | AggregateValue::Minimum(value)
+            | AggregateValue::Maximum(value) => value.unwrap_or(Value::Null),
+            AggregateValue::Average { sum: _, count: 0 } => Value::Null,
+            AggregateValue::Average { sum, count } => Value::float64(sum / count as f64),
+            AggregateValue::GroupConcat(values) if values.is_empty() => Value::Null,
+            AggregateValue::GroupConcat(values) => Value::Utf8(values.join(",")),
+        }
+    }
+}
+
+fn build_hash_aggregate(
+    input: &mut PullOperator,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &mut MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let mut groups = BTreeMap::<Vec<Value>, AggregateGroup>::new();
+    if group_by.is_empty() {
+        groups.insert(
+            Vec::new(),
+            AggregateGroup {
+                values: Vec::new(),
+                states: aggregates.iter().map(AggregateState::new).collect(),
+            },
+        );
+        memory.reserve(size_of::<AggregateGroup>())?;
+    }
+
+    while let Some(batch) = input.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            let values = group_by
+                .iter()
+                .map(|expression| expression.evaluate(&batch, row))
+                .collect::<Result<Vec<_>, _>>()?;
+            let key = values
+                .iter()
+                .cloned()
+                .map(|value| normalized_hash_key(value).unwrap_or(Value::Null))
+                .collect::<Vec<_>>();
+            if !groups.contains_key(&key) {
+                let bytes = estimated_row_bytes(&values).saturating_add(estimated_row_bytes(&key));
+                memory.ensure_transient(batch.estimated_bytes().saturating_add(bytes))?;
+                memory.reserve(bytes.saturating_add(size_of::<AggregateGroup>()))?;
+                groups.insert(
+                    key.clone(),
+                    AggregateGroup {
+                        values,
+                        states: aggregates.iter().map(AggregateState::new).collect(),
+                    },
+                );
+            }
+            let group = groups.get_mut(&key).expect("inserted above");
+            for (aggregate, state) in aggregates.iter().zip(&mut group.states) {
+                let value = aggregate
+                    .expr
+                    .as_ref()
+                    .map_or(Ok(Value::Boolean(true)), |expression| {
+                        expression.evaluate(&batch, row)
+                    })?;
+                state.update(aggregate, value, memory)?;
+            }
+        }
+    }
+
+    let mut rows = Vec::with_capacity(groups.len());
+    for (_, group) in groups {
+        let mut row = group.values;
+        row.extend(group.states.into_iter().map(AggregateState::finish));
+        memory.reserve(estimated_row_bytes(&row))?;
+        rows.push(row);
+    }
+    Ok(MaterializedRows { rows, position: 0 })
+}
+
+fn add_aggregate_value(
+    current: Option<Value>,
+    value: &Value,
+    data_type: Option<DataType>,
+) -> Result<Value, ExecError> {
+    match data_type {
+        Some(DataType::UInt64) => {
+            let left = current.map_or(Ok(0), |value| mysql_u64(&value))?;
+            left.checked_add(mysql_u64(value)?)
+                .map(Value::UInt64)
+                .ok_or(ExecError::NumericOverflow)
+        }
+        Some(DataType::Int64) => {
+            let left = current.map_or(Ok(0), |value| mysql_i64(&value))?;
+            left.checked_add(mysql_i64(value)?)
+                .map(Value::Int64)
+                .ok_or(ExecError::NumericOverflow)
+        }
+        Some(DataType::Float64) => {
+            let result = current.map_or(Ok(0.0), |value| mysql_f64(&value))? + mysql_f64(value)?;
+            if result.is_finite() {
+                Ok(Value::float64(result))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
+        _ => Err(ExecError::InvalidExpressionType),
+    }
+}
+
+fn aggregate_string(value: &Value) -> Result<String, ExecError> {
+    match value {
+        Value::Null => Err(ExecError::InvalidExpressionType),
+        Value::Boolean(value) => Ok(if *value { "1" } else { "0" }.to_owned()),
+        Value::Int64(value) => Ok(value.to_string()),
+        Value::UInt64(value) => Ok(value.to_string()),
+        Value::Float64(value) => Ok(value.get().to_string()),
+        Value::Utf8(value) => Ok(value.clone()),
+        Value::Binary(value) => {
+            String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
+        }
+    }
 }
 
 fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
@@ -1418,6 +1745,75 @@ mod tests {
         );
         assert!(execution.next_batch().expect("end").is_none());
         assert!(execution.memory().used() > 0);
+    }
+
+    #[test]
+    fn executes_case_insensitive_grouping_distinct_aggregates_and_having() {
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    3,
+                    vec![
+                        ColumnVector::new(
+                            DataType::UInt64,
+                            vec![Value::UInt64(1), Value::UInt64(2), Value::UInt64(2)],
+                        )
+                        .expect("ids"),
+                        ColumnVector::new(
+                            DataType::Utf8,
+                            vec![
+                                Value::Utf8("alpha".to_owned()),
+                                Value::Utf8("Alpha".to_owned()),
+                                Value::Utf8("beta".to_owned()),
+                            ],
+                        )
+                        .expect("names"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        let plan = physical(
+            "SELECT name, COUNT(*) AS rows, SUM(DISTINCT id) AS total \
+             FROM events GROUP BY name HAVING COUNT(*) > 1",
+        );
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+
+        assert_eq!(batch.visible_row_count(), 1);
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("alpha".to_owned()))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(2))
+        );
+        assert_eq!(
+            batch.column(2).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(3))
+        );
+        assert!(execution.next_batch().expect("end").is_none());
+    }
+
+    #[test]
+    fn global_aggregates_emit_sql_empty_input_results() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical("SELECT COUNT(*) AS rows, SUM(id) AS total FROM events");
+        let mut execution = Execution::start(plan, &provider, 16 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+
+        assert_eq!(batch.row_count(), 1);
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(0))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Null)
+        );
     }
 
     #[test]

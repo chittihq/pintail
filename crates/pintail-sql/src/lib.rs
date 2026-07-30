@@ -12,8 +12,8 @@ pub use sqlparser::ast::Statement;
 
 pub use binder::{BindError, Binder};
 pub use bound::{
-    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundFrom, BoundJoin, BoundJoinKind,
-    BoundLimit, BoundProjection, BoundQuery, BoundTable, UnaryOp,
+    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
+    BoundJoin, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery, BoundTable, UnaryOp,
 };
 
 /// An error produced while parsing a SQL request.

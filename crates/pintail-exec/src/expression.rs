@@ -46,6 +46,9 @@ impl CompiledExpr {
                     })?;
                 Ok(Self::Column(index))
             }
+            BoundExprKind::GroupKey(index) | BoundExprKind::Aggregate(index) => {
+                Ok(Self::Column(*index))
+            }
             BoundExprKind::Literal(value) => Ok(Self::Literal(value.clone())),
             BoundExprKind::Unary { op, expr: child } => Ok(Self::Unary {
                 op: *op,
@@ -322,7 +325,7 @@ fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
     }
 }
 
-fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
+pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
     match value {
         Value::Boolean(value) => Ok(if *value { 1.0 } else { 0.0 }),
         Value::Int64(value) => value
@@ -343,7 +346,7 @@ fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
     }
 }
 
-fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
+pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
     match value {
         Value::Boolean(value) => Ok(i64::from(*value)),
         Value::Int64(value) => Ok(*value),
@@ -358,7 +361,7 @@ fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
     }
 }
 
-fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
+pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
     match value {
         Value::Boolean(value) => Ok(u64::from(*value)),
         Value::Int64(value) => u64::try_from(*value).map_err(|_| ExecError::NumericOverflow),

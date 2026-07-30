@@ -3,14 +3,15 @@ use std::fmt;
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
-    BinaryOperator, Distinct, Expr, GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause,
-    ObjectName, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement,
-    TableFactor, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    BinaryOperator, Distinct, DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr,
+    FunctionArguments, GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName,
+    Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement, TableFactor,
+    UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
 };
 
 use crate::bound::{
-    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundFrom, BoundJoin, BoundJoinKind,
-    BoundLimit, BoundProjection, BoundQuery, BoundTable, UnaryOp,
+    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
+    BoundJoin, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery, BoundTable, UnaryOp,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -64,7 +65,6 @@ impl<'catalog> Binder<'catalog> {
         validate_select_shape(select)?;
 
         let (from, tables) = self.bind_from(select)?;
-        let projection = bind_projection(&select.projection, &tables)?;
         let filter = select
             .selection
             .as_ref()
@@ -76,6 +76,33 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::ExpectedPredicate {
                 actual: filter.data_type,
             });
+        }
+        let group_by = bind_group_by(&select.group_by, &tables)?;
+        let mut aggregates = Vec::new();
+        let mut projection = bind_projection(&select.projection, &tables, Some(&mut aggregates))?;
+        let mut having = select
+            .having
+            .as_ref()
+            .map(|expr| bind_aggregate_expr(expr, &tables, &mut aggregates))
+            .transpose()?;
+        if let Some(predicate) = &having
+            && !is_truth_value(predicate.data_type)
+        {
+            return Err(BindError::ExpectedPredicate {
+                actual: predicate.data_type,
+            });
+        }
+        if !group_by.is_empty() || !aggregates.is_empty() {
+            for item in &mut projection {
+                rewrite_group_references(&mut item.expr, &group_by)?;
+            }
+            if let Some(predicate) = &mut having {
+                rewrite_group_references(predicate, &group_by)?;
+            }
+        } else if having.is_some() {
+            return Err(BindError::InvalidGrouping(
+                "HAVING requires GROUP BY or an aggregate".to_owned(),
+            ));
         }
         let distinct = match select.distinct {
             None | Some(Distinct::All) => false,
@@ -91,6 +118,9 @@ impl<'catalog> Binder<'catalog> {
             tables,
             projection,
             filter,
+            group_by,
+            aggregates,
+            having,
             distinct,
             limit,
         })
@@ -275,7 +305,6 @@ fn bind_join_operator(
 }
 
 fn validate_select_shape(select: &Select) -> Result<(), BindError> {
-    let group_by_is_empty = matches!(&select.group_by, GroupByExpr::Expressions(items, modifiers) if items.is_empty() && modifiers.is_empty());
     if !select.optimizer_hints.is_empty()
         || select.select_modifiers.is_some()
         || select.top.is_some()
@@ -284,11 +313,9 @@ fn validate_select_shape(select: &Select) -> Result<(), BindError> {
         || !select.lateral_views.is_empty()
         || select.prewhere.is_some()
         || !select.connect_by.is_empty()
-        || !group_by_is_empty
         || !select.cluster_by.is_empty()
         || !select.distribute_by.is_empty()
         || !select.sort_by.is_empty()
-        || select.having.is_some()
         || !select.named_window.is_empty()
         || select.qualify.is_some()
         || select.value_table_mode.is_some()
@@ -301,12 +328,13 @@ fn validate_select_shape(select: &Select) -> Result<(), BindError> {
 fn bind_projection(
     items: &[SelectItem],
     tables: &[BoundTable],
+    mut aggregates: Option<&mut Vec<BoundAggregate>>,
 ) -> Result<Vec<BoundProjection>, BindError> {
     let mut projection = Vec::new();
     for item in items {
         match item {
             SelectItem::UnnamedExpr(expr) => {
-                let bound = bind_expr(expr, tables)?;
+                let bound = bind_expr_inner(expr, tables, &mut aggregates)?;
                 projection.push(BoundProjection {
                     name: projection_name(expr),
                     expr: bound,
@@ -315,7 +343,7 @@ fn bind_projection(
             SelectItem::ExprWithAlias { expr, alias } => {
                 projection.push(BoundProjection {
                     name: alias.value.clone(),
-                    expr: bind_expr(expr, tables)?,
+                    expr: bind_expr_inner(expr, tables, &mut aggregates)?,
                 });
             }
             SelectItem::Wildcard(options) => {
@@ -341,6 +369,22 @@ fn bind_projection(
         }
     }
     Ok(projection)
+}
+
+fn bind_group_by(
+    group_by: &GroupByExpr,
+    tables: &[BoundTable],
+) -> Result<Vec<BoundExpr>, BindError> {
+    let GroupByExpr::Expressions(expressions, modifiers) = group_by else {
+        return Err(BindError::UnsupportedQueryClause(group_by.to_string()));
+    };
+    if !modifiers.is_empty() {
+        return Err(BindError::UnsupportedQueryClause(group_by.to_string()));
+    }
+    expressions
+        .iter()
+        .map(|expr| bind_expr(expr, tables))
+        .collect()
 }
 
 fn reject_wildcard_options(options: &WildcardAdditionalOptions) -> Result<(), BindError> {
@@ -386,15 +430,36 @@ fn resolve_wildcard_table<'a>(
 }
 
 fn bind_expr(expr: &Expr, tables: &[BoundTable]) -> Result<BoundExpr, BindError> {
+    let mut aggregates = None;
+    bind_expr_inner(expr, tables, &mut aggregates)
+}
+
+fn bind_aggregate_expr(
+    expr: &Expr,
+    tables: &[BoundTable],
+    aggregates: &mut Vec<BoundAggregate>,
+) -> Result<BoundExpr, BindError> {
+    let mut aggregate_context = Some(aggregates);
+    bind_expr_inner(expr, tables, &mut aggregate_context)
+}
+
+fn bind_expr_inner(
+    expr: &Expr,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
     match expr {
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
         Expr::Value(value) => bind_literal(&value.value),
-        Expr::Nested(expr) => bind_expr(expr, tables),
-        Expr::UnaryOp { op, expr } => bind_unary(*op, expr, tables),
-        Expr::BinaryOp { left, op, right } => bind_binary(left, op, right, tables),
-        Expr::IsNull(expr) => bind_is_null(expr, false, tables),
-        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables),
+        Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates),
+        Expr::UnaryOp { op, expr } => bind_unary(*op, expr, tables, aggregates),
+        Expr::BinaryOp { left, op, right } => bind_binary(left, op, right, tables, aggregates),
+        Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates),
+        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates),
+        Expr::Function(function) if aggregates.is_some() => {
+            bind_aggregate(function, tables, aggregates)
+        }
         _ => Err(BindError::UnsupportedExpression(expr.to_string())),
     }
 }
@@ -485,8 +550,9 @@ fn bind_unary(
     operator: UnaryOperator,
     expr: &Expr,
     tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
 ) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr(expr, tables)?;
+    let expr = bind_expr_inner(expr, tables, aggregates)?;
     let (op, data_type) = match operator {
         UnaryOperator::Plus if is_numeric(expr.data_type) => (UnaryOp::Plus, expr.data_type),
         UnaryOperator::Minus if is_numeric(expr.data_type) => (UnaryOp::Minus, expr.data_type),
@@ -515,9 +581,10 @@ fn bind_binary(
     operator: &BinaryOperator,
     right: &Expr,
     tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
 ) -> Result<BoundExpr, BindError> {
-    let left = bind_expr(left, tables)?;
-    let right = bind_expr(right, tables)?;
+    let left = bind_expr_inner(left, tables, aggregates)?;
+    let right = bind_expr_inner(right, tables, aggregates)?;
     let (op, data_type) = match operator {
         BinaryOperator::Plus
         | BinaryOperator::Minus
@@ -589,8 +656,13 @@ fn bind_binary(
     })
 }
 
-fn bind_is_null(expr: &Expr, negated: bool, tables: &[BoundTable]) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr(expr, tables)?;
+fn bind_is_null(
+    expr: &Expr,
+    negated: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    let expr = bind_expr_inner(expr, tables, aggregates)?;
     Ok(BoundExpr {
         kind: BoundExprKind::IsNull {
             expr: Box::new(expr),
@@ -599,6 +671,136 @@ fn bind_is_null(expr: &Expr, negated: bool, tables: &[BoundTable]) -> Result<Bou
         data_type: Some(DataType::Boolean),
         nullable: false,
     })
+}
+
+fn bind_aggregate(
+    function: &Function,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    if function.uses_odbc_syntax
+        || !matches!(function.parameters, FunctionArguments::None)
+        || function.filter.is_some()
+        || function.null_treatment.is_some()
+        || function.over.is_some()
+        || !function.within_group.is_empty()
+    {
+        return Err(BindError::UnsupportedAggregate(function.to_string()));
+    }
+    let name = object_name_parts(&function.name)?;
+    let [name] = name.as_slice() else {
+        return Err(BindError::UnsupportedAggregate(function.to_string()));
+    };
+    let aggregate_function = match name.to_ascii_uppercase().as_str() {
+        "COUNT" => AggregateFunction::Count,
+        "SUM" => AggregateFunction::Sum,
+        "AVG" => AggregateFunction::Average,
+        "MIN" => AggregateFunction::Minimum,
+        "MAX" => AggregateFunction::Maximum,
+        "GROUP_CONCAT" => AggregateFunction::GroupConcat,
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    };
+    let FunctionArguments::List(arguments) = &function.args else {
+        return Err(BindError::UnsupportedAggregate(function.to_string()));
+    };
+    if !arguments.clauses.is_empty() || arguments.args.len() != 1 {
+        return Err(BindError::UnsupportedAggregate(function.to_string()));
+    }
+    let distinct = match arguments.duplicate_treatment {
+        Some(DuplicateTreatment::Distinct) => true,
+        None | Some(DuplicateTreatment::All) => false,
+    };
+    let expr = match &arguments.args[0] {
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(bind_expr(expr, tables)?),
+        FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
+            if aggregate_function == AggregateFunction::Count && !distinct =>
+        {
+            None
+        }
+        _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
+    };
+    let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
+    let aggregate = BoundAggregate {
+        function: aggregate_function,
+        expr,
+        distinct,
+        data_type,
+        nullable,
+    };
+    let aggregate_list = aggregates
+        .as_deref_mut()
+        .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?;
+    let index = aggregate_list
+        .iter()
+        .position(|existing| existing == &aggregate)
+        .unwrap_or_else(|| {
+            let index = aggregate_list.len();
+            aggregate_list.push(aggregate);
+            index
+        });
+    Ok(BoundExpr {
+        kind: BoundExprKind::Aggregate(index),
+        data_type,
+        nullable,
+    })
+}
+
+fn aggregate_result_type(
+    function: AggregateFunction,
+    expr: Option<&BoundExpr>,
+) -> Result<(Option<DataType>, bool), BindError> {
+    let input_type = expr.and_then(|expr| expr.data_type);
+    match function {
+        AggregateFunction::Count => Ok((Some(DataType::UInt64), false)),
+        AggregateFunction::Average if is_numeric(input_type) => Ok((Some(DataType::Float64), true)),
+        AggregateFunction::Sum if is_numeric(input_type) => {
+            let result = if input_type == Some(DataType::UInt64) {
+                DataType::UInt64
+            } else if input_type == Some(DataType::Float64)
+                || matches!(input_type, Some(DataType::Utf8 | DataType::Binary))
+            {
+                DataType::Float64
+            } else {
+                DataType::Int64
+            };
+            Ok((Some(result), true))
+        }
+        AggregateFunction::Minimum | AggregateFunction::Maximum if is_mysql_scalar(input_type) => {
+            Ok((input_type, true))
+        }
+        AggregateFunction::GroupConcat if is_mysql_scalar(input_type) => {
+            Ok((Some(DataType::Utf8), true))
+        }
+        _ => Err(BindError::InvalidAggregateType {
+            function,
+            actual: input_type,
+        }),
+    }
+}
+
+fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Result<(), BindError> {
+    if let Some(index) = group_by.iter().position(|group| group == expr) {
+        expr.kind = BoundExprKind::GroupKey(index);
+        return Ok(());
+    }
+    match &mut expr.kind {
+        BoundExprKind::Column(column) => Err(BindError::UngroupedColumn(format!(
+            "{}.{}",
+            column.relation_name, column.name
+        ))),
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            rewrite_group_references(expr, group_by)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            rewrite_group_references(left, group_by)?;
+            rewrite_group_references(right, group_by)
+        }
+        BoundExprKind::Aggregate(index) => {
+            *index = index.saturating_add(group_by.len());
+            Ok(())
+        }
+        BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) => Ok(()),
+    }
 }
 
 fn arithmetic_type(
@@ -721,6 +923,8 @@ pub enum BindError {
     UnsupportedJoinConstraint(String),
     /// A scalar expression is not implemented yet.
     UnsupportedExpression(String),
+    /// An aggregate call uses an unsupported shape or modifier.
+    UnsupportedAggregate(String),
     /// A literal representation is not implemented yet.
     UnsupportedLiteral(String),
     /// A table name requires a current database.
@@ -766,6 +970,17 @@ pub enum BindError {
         /// Right operand type.
         right: Option<DataType>,
     },
+    /// An aggregate does not accept this input type.
+    InvalidAggregateType {
+        /// Aggregate operation.
+        function: AggregateFunction,
+        /// Input expression type.
+        actual: Option<DataType>,
+    },
+    /// A selected column is neither grouped nor aggregated.
+    UngroupedColumn(String),
+    /// GROUP BY and HAVING have an invalid combination.
+    InvalidGrouping(String),
     /// A row filter does not have `MySQL` truth-value semantics.
     ExpectedPredicate {
         /// Actual expression type.
@@ -802,6 +1017,9 @@ impl fmt::Display for BindError {
             Self::UnsupportedExpression(value) => {
                 write!(formatter, "unsupported expression: {value}")
             }
+            Self::UnsupportedAggregate(value) => {
+                write!(formatter, "unsupported aggregate: {value}")
+            }
             Self::UnsupportedLiteral(value) => {
                 write!(formatter, "unsupported literal: {value}")
             }
@@ -833,6 +1051,19 @@ impl fmt::Display for BindError {
                 formatter,
                 "operator {operation} does not accept {left:?} and {right:?}"
             ),
+            Self::InvalidAggregateType { function, actual } => {
+                write!(
+                    formatter,
+                    "aggregate {function:?} does not accept {actual:?}"
+                )
+            }
+            Self::UngroupedColumn(column) => {
+                write!(
+                    formatter,
+                    "column {column} is neither grouped nor aggregated"
+                )
+            }
+            Self::InvalidGrouping(message) => formatter.write_str(message),
             Self::ExpectedPredicate { actual } => {
                 write!(formatter, "row filter has non-boolean type {actual:?}")
             }
@@ -851,7 +1082,7 @@ mod tests {
     use pintail_types::{Column, DataType, TableSchema, Value};
 
     use super::{BindError, Binder};
-    use crate::{BinaryOp, BoundExprKind, BoundJoinKind, parse_statement};
+    use crate::{AggregateFunction, BinaryOp, BoundExprKind, BoundJoinKind, parse_statement};
 
     fn catalog() -> CatalogSnapshot {
         let events = TableEntry::new(
@@ -1022,9 +1253,45 @@ mod tests {
             bind("SELECT * FROM Events ORDER BY id"),
             Err(BindError::UnsupportedQueryClause(_))
         ));
+    }
+
+    #[test]
+    fn binds_grouping_aggregates_and_having_to_positional_slots() {
+        let query = bind(
+            "SELECT active, COUNT(*) AS rows, SUM(DISTINCT id) AS total \
+             FROM Events GROUP BY active HAVING COUNT(*) > 1",
+        )
+        .expect("aggregate query");
+
+        assert_eq!(query.group_by.len(), 1);
+        assert_eq!(query.aggregates.len(), 2);
+        assert_eq!(query.aggregates[0].function, AggregateFunction::Count);
+        assert_eq!(query.aggregates[1].function, AggregateFunction::Sum);
+        assert!(query.aggregates[1].distinct);
         assert!(matches!(
-            bind("SELECT COUNT(*) FROM Events"),
-            Err(BindError::UnsupportedExpression(_))
+            query.projection[0].expr.kind,
+            BoundExprKind::GroupKey(0)
+        ));
+        assert!(matches!(
+            query.projection[1].expr.kind,
+            BoundExprKind::Aggregate(1)
+        ));
+        assert!(query.having.is_some());
+    }
+
+    #[test]
+    fn deduplicates_aggregates_and_enforces_full_grouping() {
+        let query =
+            bind("SELECT COUNT(*) AS first, COUNT(*) + 1 AS second FROM Events").expect("bind");
+        assert_eq!(query.aggregates.len(), 1);
+
+        assert!(matches!(
+            bind("SELECT Name, COUNT(*) FROM Events"),
+            Err(BindError::UngroupedColumn(_))
+        ));
+        assert!(matches!(
+            bind("SELECT COUNT(DISTINCT *) FROM Events"),
+            Err(BindError::UnsupportedAggregate(_))
         ));
     }
 }

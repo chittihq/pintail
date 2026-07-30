@@ -57,6 +57,10 @@ pub struct BoundExpr {
 pub enum BoundExprKind {
     /// Stable catalog column reference.
     Column(BoundColumn),
+    /// Positional grouping-key reference after hash aggregation.
+    GroupKey(usize),
+    /// Absolute positional aggregate-result reference after hash aggregation.
+    Aggregate(usize),
     /// Typed scalar literal.
     Literal(Value),
     /// Unary scalar operation.
@@ -82,6 +86,38 @@ pub enum BoundExprKind {
         /// Whether this is `IS NOT NULL`.
         negated: bool,
     },
+}
+
+/// Aggregate functions supported by the v1 query engine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AggregateFunction {
+    /// Count all rows or non-NULL argument values.
+    Count,
+    /// Sum non-NULL numeric values.
+    Sum,
+    /// Average non-NULL numeric values.
+    Average,
+    /// Minimum non-NULL value.
+    Minimum,
+    /// Maximum non-NULL value.
+    Maximum,
+    /// Concatenate non-NULL string values.
+    GroupConcat,
+}
+
+/// One deduplicated aggregate computation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundAggregate {
+    /// Aggregate operation.
+    pub function: AggregateFunction,
+    /// Optional input expression. `COUNT(*)` has no expression.
+    pub expr: Option<BoundExpr>,
+    /// Whether duplicate non-NULL input values are ignored.
+    pub distinct: bool,
+    /// Aggregate result type.
+    pub data_type: Option<DataType>,
+    /// Whether an empty input can produce `NULL`.
+    pub nullable: bool,
 }
 
 /// Supported unary scalar operations.
@@ -194,6 +230,12 @@ pub struct BoundQuery {
     pub projection: Vec<BoundProjection>,
     /// Optional row predicate.
     pub filter: Option<BoundExpr>,
+    /// Ordered grouping expressions evaluated against source rows.
+    pub group_by: Vec<BoundExpr>,
+    /// Deduplicated aggregate computations.
+    pub aggregates: Vec<BoundAggregate>,
+    /// Optional post-aggregation predicate.
+    pub having: Option<BoundExpr>,
     /// Whether duplicate output rows must be removed.
     pub distinct: bool,
     /// Optional normalized row limit.

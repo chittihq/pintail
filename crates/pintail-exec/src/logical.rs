@@ -1,5 +1,6 @@
 use pintail_sql::{
-    BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery, BoundTable,
+    BoundAggregate, BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundProjection, BoundQuery,
+    BoundTable,
 };
 
 /// A logical table scan with optimizer-controlled storage inputs.
@@ -59,6 +60,15 @@ pub enum LogicalPlan {
         /// `MySQL` truth-valued expression.
         predicate: BoundExpr,
     },
+    /// Hash grouping and aggregate computation.
+    Aggregate {
+        /// Input relation.
+        input: Box<LogicalPlan>,
+        /// Ordered grouping expressions.
+        group_by: Vec<BoundExpr>,
+        /// Deduplicated aggregate computations.
+        aggregates: Vec<BoundAggregate>,
+    },
     /// Ordered client-visible expressions.
     Project {
         /// Input relation.
@@ -103,9 +113,10 @@ impl LogicalPlan {
                     .checked_mul(right.estimated_rows()?.max(1)),
                 BoundJoinKind::Semi | BoundJoinKind::Anti => left.estimated_rows(),
             },
-            Self::Filter { input, .. } | Self::Distinct { input } | Self::Project { input, .. } => {
-                input.estimated_rows()
-            }
+            Self::Filter { input, .. }
+            | Self::Distinct { input }
+            | Self::Project { input, .. }
+            | Self::Aggregate { input, .. } => input.estimated_rows(),
             Self::Limit { input, limit } => input
                 .estimated_rows()
                 .map(|rows| rows.saturating_sub(limit.offset).min(limit.count)),
@@ -126,6 +137,9 @@ impl LogicalPlanner {
             tables,
             projection,
             filter,
+            group_by,
+            aggregates,
+            having,
             distinct,
             limit,
         } = query;
@@ -138,6 +152,19 @@ impl LogicalPlanner {
         );
         let mut plan = source_plan(from);
         if let Some(predicate) = filter {
+            plan = LogicalPlan::Filter {
+                input: Box::new(plan),
+                predicate,
+            };
+        }
+        if !group_by.is_empty() || !aggregates.is_empty() {
+            plan = LogicalPlan::Aggregate {
+                input: Box::new(plan),
+                group_by,
+                aggregates,
+            };
+        }
+        if let Some(predicate) = having {
             plan = LogicalPlan::Filter {
                 input: Box::new(plan),
                 predicate,
@@ -335,5 +362,28 @@ mod tests {
         assert!(condition.is_some());
         assert!(matches!(*left, LogicalPlan::Scan(_)));
         assert!(matches!(*right, LogicalPlan::Scan(_)));
+    }
+
+    #[test]
+    fn places_having_between_aggregate_and_projection() {
+        let plan =
+            plan("SELECT name, COUNT(*) AS rows FROM events GROUP BY name HAVING COUNT(*) > 1");
+        let LogicalPlan::Project { input, .. } = plan else {
+            panic!("project root");
+        };
+        let LogicalPlan::Filter { input, .. } = *input else {
+            panic!("having filter");
+        };
+        let LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } = *input
+        else {
+            panic!("aggregate");
+        };
+        assert_eq!(group_by.len(), 1);
+        assert_eq!(aggregates.len(), 1);
+        assert!(matches!(*input, LogicalPlan::Scan(_)));
     }
 }

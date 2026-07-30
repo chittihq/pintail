@@ -39,6 +39,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   placement for physical hash-join planning.
 - Memory-capped build-right equi hash joins with case-insensitive UTF-8 keys,
   SQL NULL non-matching, and inner, left, semi, and anti output semantics.
+- Typed `GROUP BY` and `HAVING` binding with strict grouped-column validation,
+  deduplicated aggregate slots, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, and
+  `GROUP_CONCAT`, including DISTINCT aggregate inputs.
+- Memory-capped hash aggregation with case-insensitive UTF-8 grouping,
+  SQL empty-input aggregate results, post-aggregate HAVING evaluation, and
+  positional projection of grouping keys and aggregate results.
 
 ## [M1] - 2026-07-30
 
