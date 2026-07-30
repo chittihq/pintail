@@ -98,14 +98,44 @@ plausible but incorrect result.
   query arithmetic still coerces them through the existing numeric executor
   and is not exact decimal arithmetic.
 - `DECIMAL` precision above 38 maps to text with a probe warning. ENUM and SET
-  snapshot values are textual; CDC fidelity will require full binlog row
-  metadata in M4. Virtual generated columns are skipped, while stored
-  generated columns are included.
+  snapshot values are textual. Virtual generated columns are skipped, while
+  stored generated columns are included.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB. Durable completed row and chunk counts are exact.
 
+## M4 CDC engine
+
+- M4 is still an in-process library surface. The multi-database supervisor,
+  retention-pressure metrics and alerts, REST/SSE controls, and DLQ UI arrive
+  in M6 and M8. The runner itself retries eight consecutive connection
+  failures with exponential backoff capped at five seconds.
+- MariaDB GTID text is captured and retained for diagnostics, but
+  `mysql_common` 0.37 does not encode MariaDB's GTID dump request. MariaDB 11
+  therefore resumes from the file/position captured alongside its GTID.
+- DDL/schema-history handling belongs to M5. M4 uses live TableMap metadata for
+  each row event but expects the probed target schema to remain compatible.
+- Tables without a primary or safe UNIQUE key support idempotent INSERT CDC
+  through deterministic append keys. UPDATE and DELETE have no stable source
+  identity, so they enter the DLQ and mark that table `needs_resync`. MySQL 8
+  GIPK tables have a real invisible key and support full CRUD.
+- Binlog text transcoding currently covers utf8mb4/utf8mb3, ASCII, and MySQL
+  latin1 (cp1252). Another source charset is quarantined through the DLQ
+  instead of being silently interpreted.
+- Versions reserve 16 bits for the intra-transaction mutation ordinal. GTID
+  sequences must fit 48 bits. File/position versions support a 16-bit numeric
+  file suffix and 32-bit event offset. A source transaction above 65,535
+  physical mutations or the configured retained-byte cap fails explicitly.
+- Automatic purge recovery is deliberately database-wide and attempted once
+  per runner invocation. It resets every included target because one global
+  source coordinate cannot safely advance while a table retains an
+  unfillable gap.
+- The M4 type gate asserts source-to-storage fidelity. HTTP and MySQL wire
+  assertions cannot exist before their M6 and M7 server surfaces and remain
+  future gates.
+
 ## Milestone boundary
 
-M3 is an in-process replication-library milestone. CDC, polling, HTTP query
-API, MySQL wire server, prepared-statement compatibility, and BI-client smokes
-belong to M4 through M7 and are not claimed here.
+M4 completes native snapshot plus CDC replication-library behavior. Polling,
+DDL evolution, HTTP query APIs, the MySQL wire server, prepared-statement
+compatibility, and BI-client smokes belong to M5 through M7 and are not
+claimed here.

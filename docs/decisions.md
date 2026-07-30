@@ -151,3 +151,49 @@ enables its `minimal-rust`, Rustls, and ring features instead of the default
 feature set so the workspace keeps its declared Rust 1.85 MSRV and does not
 pull a native TLS dependency. Snapshot tests exercise the resulting client
 against MySQL 5.7, MySQL 8.4, and MariaDB 11.
+
+### CDC checkpoints follow every synchronized table WAL
+
+M4 buffers one source transaction and groups its mutations by target. Each
+table accepts its deterministic batch into the WAL, then every touched WAL is
+synchronized. Only after all those calls succeed does one SQLite transaction
+advance the source coordinate and table state. A failure before SQLite commit
+replays the transaction; a failure after it cannot lose a WAL-backed row.
+
+Independent table WALs mean a storage failure can leave a prefix of table
+batches accepted without advancing the global coordinate. Replay is safe
+because keyed rows carry the same source version. Append-mode INSERTs use that
+version as their storage key through the CDC-specific ingest path, rather than
+allocating a new local row ID.
+
+### File/position versions allocate non-overlapping fields
+
+The prose design describes the binlog file index, end position, and
+intra-event counter conceptually. M4 encodes them as 16 file-index bits, 32
+event-position bits, and 16 ordinal bits. GTID versions use 48 sequence bits
+and the same ordinal field. This makes ordering and replay deterministic
+without overlapping bit ranges; exceeding a field returns an explicit decode
+error.
+
+### MariaDB resumes from its captured classic coordinate
+
+The selected protocol client parses MariaDB row events but does not encode the
+MariaDB GTID dump request. Snapshot capture therefore retains both
+`gtid_binlog_pos` and `SHOW MASTER STATUS`; M4 uses the latter for MariaDB and
+persists file/position after its first commit. Live tests cover MariaDB 11,
+including its extra query/metadata commit boundaries.
+
+MariaDB rotate events decoded by this dependency may expose trailing
+non-filename bytes. Pintail accepts only the ASCII binlog filename prefix
+before persisting that event, while file availability is independently
+validated with `SHOW BINARY LOGS`.
+
+### Purge recovery replaces a table generation
+
+A missing checkpoint cannot be repaired incrementally. M4 marks the database
+and all included tables `needs_resync`, publishes an empty manifest generation
+for every target, clears the old snapshot journal and coordinate, and runs one
+new consistent snapshot. Existing readers retain the previous manifest and
+segments until their snapshots release; new readers see only the replacement
+generation. One automatic attempt per runner prevents an unbounded resnapshot
+loop on a source whose retention policy is still unsafe.

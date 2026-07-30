@@ -6,6 +6,59 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [M4] - 2026-07-30
+
+### Added
+
+- Native `mysql_async` row-binlog streaming from MySQL GTID sets or classic
+  file/position checkpoints, with MariaDB GTID sources using their captured
+  file/position fallback.
+- FULL-image INSERT, UPDATE, primary-key-changing UPDATE, and DELETE decoding
+  into deterministic versioned rows and tombstones. GIPK/invisible primary
+  keys, ENUM/SET indexes, packed timestamps, BIT, exact decimal text, JSON,
+  blobs, utf8mb4, and latin1 are covered by live source tests.
+- Transaction buffering with a 64 MiB default hard cap, InnoDB XID/query
+  boundaries, MyISAM statement boundaries, WAL synchronization before the
+  SQLite source checkpoint, and durable progress callbacks.
+- Bounded exponential reconnect from the last durable checkpoint. Purged or
+  out-of-range file positions and server error 1236 durably mark the source
+  `needs_resync`.
+- One-shot automatic resnapshot recovery that clears the stale chunk journal
+  and checkpoint, publishes empty table generations without invalidating
+  pinned readers, captures a fresh handoff, and resumes CDC.
+- Idempotent SQLite DLQ records for row decode failures. A failed table is
+  quarantined across restarts while unrelated tables keep streaming.
+- A CDC-specific append ingest path whose binlog-derived keys make replayed
+  inserts invisible instead of allocating duplicate local row IDs.
+- Docker gates for GTID and file/position CRUD, type fidelity, GIPK,
+  append-only rows, MyISAM, MySQL 5.7/8.4, MariaDB 11, checkpoint rewind,
+  real-process SIGKILL under sustained writes, decode quarantine, binlog
+  purge, and automatic resnapshot.
+
+### Changed
+
+- `mysql_async` now enables its protocol `binlog` feature while retaining the
+  minimal Rustls/ring client feature set.
+- Snapshot value normalization is shared with CDC after binlog-specific value
+  adaptation, so zero and out-of-range temporal values become `NULL`
+  consistently in both engines.
+- CDC checkpoints update source/table streaming state in the same SQLite
+  transaction and never clear a table's sticky `needs_resync` state.
+
+### Verification
+
+- Rust formatting, strict workspace Clippy, the locked workspace tests, Bun's
+  frozen install/typecheck/static generation, the plan-quality suite, and the
+  600-query MySQL differential oracle pass.
+- The serialized CDC Docker suite passes all five worker tests against MySQL
+  5.7, MySQL 8.4 GTID and file/position, and MariaDB 11.
+- A CDC worker is SIGKILLed after ten durable checkpoints while its paced
+  writer is still active; reopen converges to exactly 200 rows with the
+  expected 19,900 ID sum.
+- A captured binlog is purged on MySQL 8.4, producing durable resync state;
+  the default one-shot recovery snapshots the missing row and resumes from a
+  newly captured file/position.
+
 ## [M3] - 2026-07-30
 
 ### Added

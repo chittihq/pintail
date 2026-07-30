@@ -3,11 +3,12 @@
 Pintail is a columnar analytical database for MySQL, built from scratch in
 Rust and distributed as one binary.
 
-The project is under active development. Milestones M0 through M3 provide the
+The project is under active development. Milestones M0 through M4 provide the
 single-process skeleton, Pintail's durable PTSEG columnar storage core, and
 the in-process MySQL-dialect query engine, plus real MySQL/MariaDB source
-probing and resumable consistent snapshots. CDC, polling, the external query
-APIs, and the MySQL wire endpoint arrive in later milestones.
+probing, resumable consistent snapshots, and native row-binlog CDC. Polling,
+the external query APIs, and the MySQL wire endpoint arrive in later
+milestones.
 
 ## Run locally
 
@@ -64,12 +65,16 @@ cargo test -p pintail-snapshot --test mysql_snapshot \
 cargo test -p pintail-snapshot --test mysql_snapshot \
   snapshot_compatibility_matrix_covers_file_position_mariadb_and_polling_sources \
   -- --ignored --nocapture
+cargo test -p pintail-cdc --test mysql_cdc \
+  -- --ignored --nocapture --test-threads=1
 ```
 
 The oracle starts a uniquely named MySQL 8.4 container and compares 600
 generated and hand-written queries over equivalent nullable MySQL and Pintail
-data. The M3 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11, and a
-binlog-disabled source; the primary gate snapshots one million rows and kills
-a real child process mid-snapshot before resuming it. Current compatibility
-boundaries are recorded in
+data. The M3 and M4 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
+and a binlog-disabled source. They snapshot one million rows, SIGKILL real
+snapshot and CDC worker processes, verify restart replay, exercise GTID and
+file/position CRUD plus MyISAM boundaries, quarantine a decode failure, and
+purge the captured log before automatic resnapshot recovery. Current
+compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
