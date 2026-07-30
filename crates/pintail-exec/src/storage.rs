@@ -5,7 +5,7 @@ use std::{
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction};
-use pintail_store::{ProjectedRow, ScanStats, StoreError, TableSnapshot};
+use pintail_store::{ProjectedRow, ProjectedScanStream, ScanStats, StoreError, TableSnapshot};
 use pintail_types::{KeyPart, PrimaryKey, Value};
 
 use crate::{
@@ -214,8 +214,10 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             self.record_stats(key, PhysicalScanStats::default());
             return Ok(Box::new(SnapshotStream {
                 rows: VecDeque::new(),
+                stream: None,
                 types,
                 retained_bytes: stream_overhead,
+                remaining: None,
             }));
         };
         let unique_keys = self.unique_visibility.get(&key);
@@ -226,6 +228,32 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     physical_column_ids.push(*column_id);
                 }
             }
+        }
+        if unique_keys.is_none()
+            && let Some(stream) = snapshot
+                .scan_projected_range_stream(&start, &end, &physical_column_ids)
+                .map_err(|error| ExecError::Source(error.to_string()))?
+        {
+            self.record_stats(
+                key,
+                PhysicalScanStats {
+                    segments_pruned: stream.pruned_segment_count(),
+                    segments_read: stream.segment_count(),
+                    ..PhysicalScanStats::default()
+                },
+            );
+            return Ok(Box::new(SnapshotStream {
+                rows: VecDeque::new(),
+                stream: Some(stream),
+                types,
+                retained_bytes: stream_overhead,
+                remaining: scan
+                    .predicates
+                    .is_empty()
+                    .then_some(scan.limit)
+                    .flatten()
+                    .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+            }));
         }
         let projected = snapshot
             .scan_projected_range_bounded(
@@ -283,8 +311,10 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 .saturating_add(stream_overhead);
         Ok(Box::new(SnapshotStream {
             rows: rows.into(),
+            stream: None,
             types,
             retained_bytes,
+            remaining: None,
         }))
     }
 }
@@ -539,16 +569,41 @@ fn predecessor(value: &KeyPart) -> Option<KeyPart> {
 
 struct SnapshotStream {
     rows: VecDeque<ProjectedRow>,
+    stream: Option<ProjectedScanStream>,
     types: Vec<pintail_types::DataType>,
     retained_bytes: usize,
+    remaining: Option<usize>,
 }
 
 impl BatchStream for SnapshotStream {
-    fn next_batch(&mut self) -> Result<Option<RecordBatch>, ExecError> {
+    fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        while self.rows.is_empty()
+            && self.remaining != Some(0)
+            && let Some(stream) = &mut self.stream
+        {
+            let batch_overhead = batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS);
+            let Some(chunk) = stream
+                .next_chunk(available_memory.saturating_sub(batch_overhead))
+                .map_err(|error| ExecError::Source(error.to_string()))?
+            else {
+                self.stream = None;
+                break;
+            };
+            self.retained_bytes = self.retained_bytes.saturating_add(
+                chunk
+                    .retained_bytes()
+                    .saturating_sub(std::mem::size_of_val(&chunk)),
+            );
+            self.rows = chunk.into_rows().into();
+        }
         if self.rows.is_empty() {
             return Ok(None);
         }
-        let row_count = self.rows.len().min(DEFAULT_BATCH_ROWS);
+        let row_count = self
+            .rows
+            .len()
+            .min(DEFAULT_BATCH_ROWS)
+            .min(self.remaining.unwrap_or(usize::MAX));
         let mut values_by_column = self
             .types
             .iter()
@@ -568,6 +623,22 @@ impl BatchStream for SnapshotStream {
             }
             for (position, value) in values.into_iter().enumerate() {
                 values_by_column[position].push(value);
+            }
+        }
+        if let Some(remaining) = &mut self.remaining {
+            *remaining = remaining.saturating_sub(row_count);
+            if *remaining == 0 {
+                self.retained_bytes = self.retained_bytes.saturating_sub(
+                    self.rows
+                        .iter()
+                        .map(|row| {
+                            row.estimated_bytes()
+                                .saturating_sub(std::mem::size_of::<ProjectedRow>())
+                        })
+                        .sum(),
+                );
+                self.rows.clear();
+                self.stream = None;
             }
         }
         if self.rows.is_empty() {
@@ -596,27 +667,30 @@ impl BatchStream for SnapshotStream {
     fn next_batch_memory_upper_bound(&self) -> usize {
         let row_count = self.rows.len().min(DEFAULT_BATCH_ROWS);
         if row_count == 0 {
-            return 0;
+            return self.stream.as_ref().map_or(0, |_| {
+                batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS)
+            });
         }
-        std::mem::size_of::<RecordBatch>()
-            .saturating_add(
-                self.types.len().saturating_mul(
-                    std::mem::size_of::<Vec<Value>>()
-                        .saturating_add(std::mem::size_of::<ColumnVector>()),
-                ),
-            )
-            .saturating_add(
-                self.types
-                    .len()
-                    .saturating_mul(row_count)
-                    .saturating_mul(std::mem::size_of::<Value>()),
-            )
-            .saturating_add(
-                row_count
-                    .div_ceil(64)
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
+        batch_memory_upper_bound(&self.types, row_count)
     }
+}
+
+fn batch_memory_upper_bound(types: &[pintail_types::DataType], row_count: usize) -> usize {
+    std::mem::size_of::<RecordBatch>()
+        .saturating_add(types.len().saturating_mul(
+            std::mem::size_of::<Vec<Value>>().saturating_add(std::mem::size_of::<ColumnVector>()),
+        ))
+        .saturating_add(
+            types
+                .len()
+                .saturating_mul(row_count)
+                .saturating_mul(std::mem::size_of::<Value>()),
+        )
+        .saturating_add(
+            row_count
+                .div_ceil(64)
+                .saturating_mul(std::mem::size_of::<u64>()),
+        )
 }
 
 #[cfg(test)]
@@ -638,6 +712,15 @@ mod tests {
         catalog: &CatalogSnapshot,
         provider: &SnapshotScanProvider<'_>,
     ) -> Vec<Value> {
+        execute_values_with_limit(sql, catalog, provider, 64 * 1024)
+    }
+
+    fn execute_values_with_limit(
+        sql: &str,
+        catalog: &CatalogSnapshot,
+        provider: &SnapshotScanProvider<'_>,
+        memory_limit: usize,
+    ) -> Vec<Value> {
         let statement = parse_statement(sql).expect("parse query");
         let bound = Binder::new(catalog, Some("app"))
             .bind(&statement)
@@ -645,7 +728,7 @@ mod tests {
         let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
             .expect("physical plan");
         let mut execution =
-            Execution::start(physical, provider, 64 * 1024).expect("start execution");
+            Execution::start(physical, provider, memory_limit).expect("start execution");
         let mut values = Vec::new();
         while let Some(batch) = execution.next_batch().expect("pull batch") {
             values.extend(batch.selection().selected_rows().map(|row| {
@@ -657,6 +740,47 @@ mod tests {
             }));
         }
         values
+    }
+
+    #[test]
+    fn streams_non_overlapping_snapshot_segments_under_the_query_cap() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        for start in [1_u64, 1001, 2001, 3001] {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 1000)
+                        .map(|key| row(key, &format!("value-{key}")))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(4000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT COUNT(name) FROM events",
+                &catalog,
+                &provider,
+                1024 * 1024,
+            ),
+            [Value::UInt64(4000)]
+        );
     }
 
     #[test]

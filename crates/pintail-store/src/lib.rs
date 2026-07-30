@@ -19,6 +19,6 @@ pub use database::DatabaseStore;
 pub use error::StoreError;
 pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, CompactionOutcome, CompactionStatus,
-    FlushOutcome, IngestOutcome, ProjectedRow, ProjectedScan, ScanStats, StorageMetrics,
-    StoreOptions, TableSnapshot, TableStore, WalSync,
+    FlushOutcome, IngestOutcome, ProjectedRow, ProjectedScan, ProjectedScanStream, ScanStats,
+    StorageMetrics, StoreOptions, TableSnapshot, TableStore, WalSync,
 };

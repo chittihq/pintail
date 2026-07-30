@@ -369,6 +369,59 @@ impl ProjectedScan {
     }
 }
 
+/// Pull-based projected scan over independently visible immutable segments.
+///
+/// This fast path is available only when every selected segment is marked
+/// unique, their key ranges do not overlap, and no WAL-backed memtable rows
+/// are present. Those conditions make each segment independently visible
+/// without weakening merge-on-read semantics.
+pub struct ProjectedScanStream {
+    snapshot: TableSnapshot,
+    segments: Vec<segment::SegmentMeta>,
+    start: PrimaryKey,
+    end: PrimaryKey,
+    column_ids: Vec<u32>,
+    next_segment: usize,
+    pruned_segments: usize,
+}
+
+impl ProjectedScanStream {
+    /// Decodes the next independently visible segment within `memory_limit`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise storage, corruption, schema, or memory-limit error.
+    pub fn next_chunk(&mut self, memory_limit: usize) -> Result<Option<ProjectedScan>, StoreError> {
+        let Some(segment) = self.segments.get(self.next_segment).cloned() else {
+            return Ok(None);
+        };
+        self.next_segment += 1;
+        let mut manifest = self.snapshot.manifest.as_ref().clone();
+        manifest.segments = vec![segment];
+        let chunk = TableSnapshot {
+            memtable: Arc::new(BTreeMap::new()),
+            manifest: Arc::new(manifest),
+            directory: self.snapshot.directory.clone(),
+            schema: self.snapshot.schema.clone(),
+        };
+        chunk
+            .scan_projected_range_bounded(&self.start, &self.end, &self.column_ids, memory_limit)
+            .map(Some)
+    }
+
+    /// Returns immutable segments that will be decoded.
+    #[must_use]
+    pub fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Returns immutable segments excluded by key-range or bloom pruning.
+    #[must_use]
+    pub const fn pruned_segment_count(&self) -> usize {
+        self.pruned_segments
+    }
+}
+
 impl CompactionOutcome {
     /// Returns the number of segments replaced by this pass.
     #[must_use]
@@ -1164,6 +1217,7 @@ fn ranges_overlap(candidates: &[CompactionCandidate]) -> bool {
 }
 
 /// A reader-owned immutable table view.
+#[derive(Clone)]
 pub struct TableSnapshot {
     memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
     manifest: Arc<Manifest>,
@@ -1480,6 +1534,81 @@ impl TableSnapshot {
         column_ids: &[u32],
     ) -> Result<ProjectedScan, StoreError> {
         self.scan_projected_range_bounded(start, end, column_ids, usize::MAX)
+    }
+
+    /// Opens a bounded pull scan when immutable segments are independently
+    /// visible without merge-on-read.
+    ///
+    /// Returns `None` when overlapping generations or memtable rows require
+    /// the general materializing merge path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reversed range, duplicate or unknown columns,
+    /// or a corrupt point-lookup bloom filter.
+    pub fn scan_projected_range_stream(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        column_ids: &[u32],
+    ) -> Result<Option<ProjectedScanStream>, StoreError> {
+        if start > end {
+            return Err(StoreError::FormatLimit(
+                "scan range start follows its end".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for id in column_ids {
+            if !seen.insert(*id) {
+                return Err(StoreError::FormatLimit(format!(
+                    "projection repeats column id {id}"
+                )));
+            }
+            if !self
+                .schema
+                .columns()
+                .iter()
+                .any(|column| column.id() == *id)
+            {
+                return Err(StoreError::FormatLimit(format!(
+                    "unknown projected column id {id}"
+                )));
+            }
+        }
+        if !self.memtable.is_empty() {
+            return Ok(None);
+        }
+
+        let mut segments = Vec::new();
+        let mut pruned_segments = 0;
+        for meta in &self.manifest.segments {
+            let overlaps = segment::overlaps_key_range(meta, start, end);
+            let point_might_match = start != end
+                || segment::might_contain_key(&self.directory, meta, &self.schema, start)?;
+            if !overlaps || !point_might_match {
+                pruned_segments += 1;
+            } else if !meta.unique_keys {
+                return Ok(None);
+            } else {
+                segments.push(meta.clone());
+            }
+        }
+        segments.sort_by(|left, right| left.min_key.cmp(&right.min_key));
+        if segments
+            .windows(2)
+            .any(|pair| pair[0].max_key >= pair[1].min_key)
+        {
+            return Ok(None);
+        }
+        Ok(Some(ProjectedScanStream {
+            snapshot: self.clone(),
+            segments,
+            start: start.clone(),
+            end: end.clone(),
+            column_ids: column_ids.to_vec(),
+            next_segment: 0,
+            pruned_segments,
+        }))
     }
 
     /// Scans a projected range while enforcing a caller-owned memory budget

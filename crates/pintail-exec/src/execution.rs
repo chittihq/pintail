@@ -472,7 +472,7 @@ pub trait BatchStream: Send {
     /// # Errors
     ///
     /// Returns a source-specific execution error.
-    fn next_batch(&mut self) -> Result<Option<RecordBatch>, ExecError>;
+    fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError>;
 
     /// Returns bytes retained between pulls by this stream.
     #[must_use]
@@ -907,11 +907,16 @@ impl PullOperator {
             } => {
                 memory.ensure_transient(stream.next_batch_memory_upper_bound())?;
                 let retained_before = stream.retained_bytes();
-                let Some(batch) = stream.next_batch()? else {
-                    memory.release(retained_before.saturating_sub(stream.retained_bytes()));
+                let batch = stream.next_batch(memory.remaining())?;
+                let retained_after = stream.retained_bytes();
+                if retained_after > retained_before {
+                    memory.reserve(retained_after - retained_before)?;
+                } else {
+                    memory.release(retained_before - retained_after);
+                }
+                let Some(batch) = batch else {
                     return Ok(None);
                 };
-                memory.release(retained_before.saturating_sub(stream.retained_bytes()));
                 validate_scan_batch(&batch, expected_types)?;
                 memory.ensure_transient(batch.estimated_bytes())?;
                 Ok(Some(batch))
@@ -2791,7 +2796,10 @@ mod tests {
     }
 
     impl BatchStream for StaticStream {
-        fn next_batch(&mut self) -> Result<Option<RecordBatch>, ExecError> {
+        fn next_batch(
+            &mut self,
+            _available_memory: usize,
+        ) -> Result<Option<RecordBatch>, ExecError> {
             Ok(self.batches.pop_front())
         }
 
