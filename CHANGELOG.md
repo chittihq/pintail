@@ -50,6 +50,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ordering, and LIMIT-aware top-K partitioning.
 - Type-checked `UNION ALL` binding and streaming branch concatenation, with
   outer ordering and limits applied after every branch in SQL source order.
+- Typed and vectorized MySQL scalar expressions for `CONCAT`, `SUBSTRING`,
+  `LOWER`, `UPPER`, `TRIM`, `LENGTH`, `CHAR_LENGTH`, `REPLACE`, `LEFT`,
+  `RIGHT`, `LOCATE`, `IF`, `IFNULL`, `COALESCE`, `NULLIF`, searched and simple
+  `CASE`, `LIKE`, list `IN`, `BETWEEN`, and core scalar casts, including SQL
+  three-valued NULL behavior and short-circuit conditional evaluation.
 
 ## [M1] - 2026-07-30
 

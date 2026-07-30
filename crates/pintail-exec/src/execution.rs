@@ -388,6 +388,11 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(Data
             collect_expression_tables(left, tables);
             collect_expression_tables(right, tables);
         }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                collect_expression_tables(argument, tables);
+            }
+        }
         BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => {}
     }
 }
@@ -1900,6 +1905,44 @@ mod tests {
         assert_eq!(
             batch.column(2).and_then(|column| column.value(0)),
             Some(&Value::float64(13.0))
+        );
+    }
+
+    #[test]
+    fn executes_mysql_string_conditional_pattern_and_cast_functions() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT CONCAT(LOWER('Hello'), '-', UPPER('world')), \
+             SUBSTRING('abcdef', 2, 3), TRIM('  space  '), \
+             CASE WHEN 0 THEN 'bad' ELSE 'ok' END, IFNULL(NULL, 'fallback'), \
+             NULLIF(1, 1), 2 IN (1, 2, NULL), 3 NOT IN (1, 2, NULL), \
+             'Alphabet' LIKE 'a%bet', 5 BETWEEN 2 AND 8, \
+             CAST('12x' AS SIGNED)",
+        );
+        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let values = batch
+            .columns()
+            .iter()
+            .map(|column| column.value(0).cloned().expect("value"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                Value::Utf8("hello-WORLD".to_owned()),
+                Value::Utf8("bcd".to_owned()),
+                Value::Utf8("space".to_owned()),
+                Value::Utf8("ok".to_owned()),
+                Value::Utf8("fallback".to_owned()),
+                Value::Null,
+                Value::Boolean(true),
+                Value::Null,
+                Value::Boolean(true),
+                Value::Boolean(true),
+                Value::Int64(12),
+            ]
         );
     }
 

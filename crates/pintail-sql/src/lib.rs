@@ -14,7 +14,7 @@ pub use binder::{BindError, Binder};
 pub use bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
-    UnaryOp,
+    ScalarFunction, UnaryOp,
 };
 
 /// An error produced while parsing a SQL request.

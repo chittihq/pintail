@@ -86,6 +86,65 @@ pub enum BoundExprKind {
         /// Whether this is `IS NOT NULL`.
         negated: bool,
     },
+    /// Built-in scalar function or lowered SQL expression.
+    Scalar {
+        /// Scalar operation.
+        function: ScalarFunction,
+        /// Ordered operands.
+        args: Vec<BoundExpr>,
+    },
+}
+
+/// Built-in scalar operations supported by the v1 executor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScalarFunction {
+    /// Concatenate strings, returning NULL when any argument is NULL.
+    Concat,
+    /// Extract a one-based string slice.
+    Substring,
+    /// Unicode lowercase conversion.
+    Lower,
+    /// Unicode uppercase conversion.
+    Upper,
+    /// Trim surrounding whitespace.
+    Trim,
+    /// UTF-8 byte length.
+    Length,
+    /// Unicode scalar-value count.
+    CharLength,
+    /// Replace every substring occurrence.
+    Replace,
+    /// Return the leftmost characters.
+    Left,
+    /// Return the rightmost characters.
+    Right,
+    /// Find a substring using one-based positions.
+    Locate,
+    /// `MySQL` truth-valued conditional.
+    If,
+    /// Return the first non-NULL argument.
+    Coalesce,
+    /// Return NULL when two arguments compare equal.
+    NullIf,
+    /// Case-insensitive SQL pattern matching.
+    Like {
+        /// Whether the result is negated.
+        negated: bool,
+        /// Optional single-character escape.
+        escape: Option<char>,
+    },
+    /// SQL list membership.
+    InList {
+        /// Whether the result is negated.
+        negated: bool,
+    },
+    /// Inclusive range membership.
+    Between {
+        /// Whether the result is negated.
+        negated: bool,
+    },
+    /// Explicit scalar conversion.
+    Cast(DataType),
 }
 
 /// Aggregate functions supported by the v1 query engine.

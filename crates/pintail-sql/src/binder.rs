@@ -3,17 +3,17 @@ use std::fmt;
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
-    BinaryOperator, Distinct, DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr,
-    FunctionArguments, GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName,
-    OrderByKind, Query, Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, SetOperator,
-    SetQuantifier, Statement, TableFactor, UnaryOperator, Value as SqlValue,
-    WildcardAdditionalOptions,
+    BinaryOperator, CastKind, DataType as SqlDataType, Distinct, DuplicateTreatment, Expr,
+    Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident, JoinConstraint,
+    JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
+    SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableFactor,
+    UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
 };
 
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
-    UnaryOp,
+    ScalarFunction, UnaryOp,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -501,9 +501,80 @@ fn bind_expr_inner(
         Expr::BinaryOp { left, op, right } => bind_binary(left, op, right, tables, aggregates),
         Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates),
         Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates),
-        Expr::Function(function) if aggregates.is_some() => {
+        Expr::Function(function)
+            if aggregates.is_some() && aggregate_function_name(function).is_some() =>
+        {
             bind_aggregate(function, tables, aggregates)
         }
+        Expr::Function(function) => bind_scalar_function(function, tables, aggregates),
+        Expr::InList {
+            expr,
+            list,
+            negated,
+        } => bind_in_list(expr, list, *negated, tables, aggregates),
+        Expr::Between {
+            expr,
+            negated,
+            low,
+            high,
+        } => bind_between(expr, low, high, *negated, tables, aggregates),
+        Expr::Like {
+            negated,
+            any: false,
+            expr,
+            pattern,
+            escape_char,
+        } => bind_like(
+            expr,
+            pattern,
+            *negated,
+            escape_char.as_ref(),
+            tables,
+            aggregates,
+        ),
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => bind_case(
+            operand.as_deref(),
+            conditions,
+            else_result.as_deref(),
+            tables,
+            aggregates,
+        ),
+        Expr::Cast {
+            kind: CastKind::Cast,
+            expr,
+            data_type,
+            array: false,
+            format: None,
+        } => bind_cast(expr, data_type, tables, aggregates),
+        Expr::Substring {
+            expr,
+            substring_from: Some(from),
+            substring_for,
+            ..
+        } => {
+            let mut args = vec![
+                bind_expr_inner(expr, tables, aggregates)?,
+                bind_expr_inner(from, tables, aggregates)?,
+            ];
+            if let Some(length) = substring_for {
+                args.push(bind_expr_inner(length, tables, aggregates)?);
+            }
+            bind_scalar(ScalarFunction::Substring, args)
+        }
+        Expr::Trim {
+            trim_where: None,
+            trim_what: None,
+            expr,
+            trim_characters: None,
+        } => bind_scalar(
+            ScalarFunction::Trim,
+            vec![bind_expr_inner(expr, tables, aggregates)?],
+        ),
         _ => Err(BindError::UnsupportedExpression(expr.to_string())),
     }
 }
@@ -717,6 +788,311 @@ fn bind_is_null(
     })
 }
 
+fn bind_scalar_function(
+    function: &Function,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    if function.uses_odbc_syntax
+        || !matches!(function.parameters, FunctionArguments::None)
+        || function.filter.is_some()
+        || function.null_treatment.is_some()
+        || function.over.is_some()
+        || !function.within_group.is_empty()
+    {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    let name = object_name_parts(&function.name)?;
+    let [name] = name.as_slice() else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    let FunctionArguments::List(arguments) = &function.args else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    if arguments.duplicate_treatment.is_some() || !arguments.clauses.is_empty() {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    let mut args = Vec::with_capacity(arguments.args.len());
+    for argument in &arguments.args {
+        let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
+            return Err(BindError::UnsupportedExpression(function.to_string()));
+        };
+        args.push(bind_expr_inner(expression, tables, aggregates)?);
+    }
+    let function_name = name.to_ascii_uppercase();
+    let scalar = match function_name.as_str() {
+        "CONCAT" if !args.is_empty() => ScalarFunction::Concat,
+        "SUBSTRING" | "SUBSTR" if matches!(args.len(), 2 | 3) => ScalarFunction::Substring,
+        "LOWER" | "LCASE" if args.len() == 1 => ScalarFunction::Lower,
+        "UPPER" | "UCASE" if args.len() == 1 => ScalarFunction::Upper,
+        "TRIM" if args.len() == 1 => ScalarFunction::Trim,
+        "LENGTH" if args.len() == 1 => ScalarFunction::Length,
+        "CHAR_LENGTH" | "CHARACTER_LENGTH" if args.len() == 1 => ScalarFunction::CharLength,
+        "REPLACE" if args.len() == 3 => ScalarFunction::Replace,
+        "LEFT" if args.len() == 2 => ScalarFunction::Left,
+        "RIGHT" if args.len() == 2 => ScalarFunction::Right,
+        "LOCATE" if matches!(args.len(), 2 | 3) => ScalarFunction::Locate,
+        "IF" if args.len() == 3 => ScalarFunction::If,
+        "IFNULL" if args.len() == 2 => ScalarFunction::Coalesce,
+        "COALESCE" if !args.is_empty() => ScalarFunction::Coalesce,
+        "NULLIF" if args.len() == 2 => ScalarFunction::NullIf,
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    };
+    bind_scalar(scalar, args)
+}
+
+fn bind_in_list(
+    expr: &Expr,
+    list: &[Expr],
+    negated: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    if list.is_empty() {
+        return Err(BindError::UnsupportedExpression(expr.to_string()));
+    }
+    let mut args = Vec::with_capacity(list.len() + 1);
+    args.push(bind_expr_inner(expr, tables, aggregates)?);
+    for value in list {
+        args.push(bind_expr_inner(value, tables, aggregates)?);
+    }
+    if args[1..]
+        .iter()
+        .any(|value| !comparable(args[0].data_type, value.data_type))
+    {
+        return Err(BindError::InvalidScalarFunction("IN".to_owned()));
+    }
+    bind_scalar(ScalarFunction::InList { negated }, args)
+}
+
+fn bind_between(
+    expr: &Expr,
+    low: &Expr,
+    high: &Expr,
+    negated: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    let args = vec![
+        bind_expr_inner(expr, tables, aggregates)?,
+        bind_expr_inner(low, tables, aggregates)?,
+        bind_expr_inner(high, tables, aggregates)?,
+    ];
+    if !comparable(args[0].data_type, args[1].data_type)
+        || !comparable(args[0].data_type, args[2].data_type)
+    {
+        return Err(BindError::InvalidScalarFunction("BETWEEN".to_owned()));
+    }
+    bind_scalar(ScalarFunction::Between { negated }, args)
+}
+
+fn bind_like(
+    expr: &Expr,
+    pattern: &Expr,
+    negated: bool,
+    escape: Option<&sqlparser::ast::ValueWithSpan>,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    let escape = match escape {
+        None => None,
+        Some(escape) => Some(
+            match &escape.value {
+                SqlValue::SingleQuotedString(value) => {
+                    let mut chars = value.chars();
+                    let character = chars.next();
+                    if chars.next().is_none() {
+                        character
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+            .ok_or_else(|| BindError::InvalidScalarFunction("LIKE ESCAPE".to_owned()))?,
+        ),
+    };
+    let args = vec![
+        bind_expr_inner(expr, tables, aggregates)?,
+        bind_expr_inner(pattern, tables, aggregates)?,
+    ];
+    bind_scalar(ScalarFunction::Like { negated, escape }, args)
+}
+
+fn bind_case(
+    operand: Option<&Expr>,
+    conditions: &[sqlparser::ast::CaseWhen],
+    else_result: Option<&Expr>,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    if conditions.is_empty() {
+        return Err(BindError::InvalidScalarFunction("CASE".to_owned()));
+    }
+    let operand = operand
+        .map(|expression| bind_expr_inner(expression, tables, aggregates))
+        .transpose()?;
+    let mut result = else_result.map_or_else(
+        || {
+            Ok(BoundExpr {
+                kind: BoundExprKind::Literal(Value::Null),
+                data_type: None,
+                nullable: true,
+            })
+        },
+        |expression| bind_expr_inner(expression, tables, aggregates),
+    )?;
+    for clause in conditions.iter().rev() {
+        let condition = bind_expr_inner(&clause.condition, tables, aggregates)?;
+        let condition = if let Some(operand) = &operand {
+            equality_expr(operand.clone(), condition)?
+        } else {
+            if !is_truth_value(condition.data_type) {
+                return Err(BindError::ExpectedPredicate {
+                    actual: condition.data_type,
+                });
+            }
+            condition
+        };
+        let value = bind_expr_inner(&clause.result, tables, aggregates)?;
+        result = bind_scalar(ScalarFunction::If, vec![condition, value, result])?;
+    }
+    Ok(result)
+}
+
+fn bind_cast(
+    expr: &Expr,
+    data_type: &SqlDataType,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+) -> Result<BoundExpr, BindError> {
+    let target = cast_data_type(data_type)
+        .ok_or_else(|| BindError::InvalidScalarFunction(format!("CAST AS {data_type}")))?;
+    bind_scalar(
+        ScalarFunction::Cast(target),
+        vec![bind_expr_inner(expr, tables, aggregates)?],
+    )
+}
+
+fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
+    let name = data_type.to_string().to_ascii_uppercase();
+    if name.contains("BINARY") || name.contains("BLOB") {
+        Some(DataType::Binary)
+    } else if name.contains("CHAR") || name.contains("TEXT") {
+        Some(DataType::Utf8)
+    } else if name.contains("UNSIGNED") {
+        Some(DataType::UInt64)
+    } else if name.contains("DOUBLE")
+        || name.contains("FLOAT")
+        || name.contains("REAL")
+        || name.contains("DECIMAL")
+    {
+        Some(DataType::Float64)
+    } else if name.contains("INT") || name == "SIGNED" {
+        Some(DataType::Int64)
+    } else if name.contains("BOOL") {
+        Some(DataType::Boolean)
+    } else {
+        None
+    }
+}
+
+fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundExpr, BindError> {
+    let (data_type, nullable) = match function {
+        ScalarFunction::Concat
+        | ScalarFunction::Substring
+        | ScalarFunction::Lower
+        | ScalarFunction::Upper
+        | ScalarFunction::Trim
+        | ScalarFunction::Replace
+        | ScalarFunction::Left
+        | ScalarFunction::Right => (
+            Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::Length | ScalarFunction::CharLength | ScalarFunction::Locate => (
+            Some(DataType::UInt64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::Like { .. }
+        | ScalarFunction::InList { .. }
+        | ScalarFunction::Between { .. } => (
+            Some(DataType::Boolean),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::If => (
+            common_result_type(&args[1..])?,
+            args[1..].iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::Coalesce => (
+            common_result_type(&args)?,
+            args.iter().all(|argument| argument.nullable),
+        ),
+        ScalarFunction::NullIf => (args[0].data_type, true),
+        ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
+    };
+    Ok(BoundExpr {
+        kind: BoundExprKind::Scalar { function, args },
+        data_type,
+        nullable,
+    })
+}
+
+fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
+    let types = args
+        .iter()
+        .filter_map(|argument| argument.data_type)
+        .collect::<Vec<_>>();
+    let Some(first) = types.first().copied() else {
+        return Ok(None);
+    };
+    if types.iter().all(|data_type| *data_type == first) {
+        return Ok(Some(first));
+    }
+    if types
+        .iter()
+        .all(|data_type| is_mysql_scalar(Some(*data_type)))
+    {
+        if types
+            .iter()
+            .any(|data_type| matches!(data_type, DataType::Utf8 | DataType::Binary))
+        {
+            Ok(Some(DataType::Utf8))
+        } else if types.contains(&DataType::Float64)
+            || types.contains(&DataType::Int64) && types.contains(&DataType::UInt64)
+        {
+            Ok(Some(DataType::Float64))
+        } else if types.contains(&DataType::UInt64) {
+            Ok(Some(DataType::UInt64))
+        } else {
+            Ok(Some(DataType::Int64))
+        }
+    } else {
+        Err(BindError::InvalidScalarFunction(
+            "incompatible result types".to_owned(),
+        ))
+    }
+}
+
+fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
+    if !comparable(left.data_type, right.data_type) {
+        return Err(BindError::InvalidBinaryTypes {
+            operation: "=".to_owned(),
+            left: left.data_type,
+            right: right.data_type,
+        });
+    }
+    Ok(BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type: Some(DataType::Boolean),
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    })
+}
+
 fn bind_aggregate(
     function: &Function,
     tables: &[BoundTable],
@@ -732,18 +1108,11 @@ fn bind_aggregate(
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     }
     let name = object_name_parts(&function.name)?;
-    let [name] = name.as_slice() else {
+    let [_] = name.as_slice() else {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     };
-    let aggregate_function = match name.to_ascii_uppercase().as_str() {
-        "COUNT" => AggregateFunction::Count,
-        "SUM" => AggregateFunction::Sum,
-        "AVG" => AggregateFunction::Average,
-        "MIN" => AggregateFunction::Minimum,
-        "MAX" => AggregateFunction::Maximum,
-        "GROUP_CONCAT" => AggregateFunction::GroupConcat,
-        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
-    };
+    let aggregate_function = aggregate_function_name(function)
+        .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?;
     let FunctionArguments::List(arguments) = &function.args else {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     };
@@ -787,6 +1156,22 @@ fn bind_aggregate(
         data_type,
         nullable,
     })
+}
+
+fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
+    let parts = object_name_parts(&function.name).ok()?;
+    let [name] = parts.as_slice() else {
+        return None;
+    };
+    match name.to_ascii_uppercase().as_str() {
+        "COUNT" => Some(AggregateFunction::Count),
+        "SUM" => Some(AggregateFunction::Sum),
+        "AVG" => Some(AggregateFunction::Average),
+        "MIN" => Some(AggregateFunction::Minimum),
+        "MAX" => Some(AggregateFunction::Maximum),
+        "GROUP_CONCAT" => Some(AggregateFunction::GroupConcat),
+        _ => None,
+    }
 }
 
 fn aggregate_result_type(
@@ -838,6 +1223,12 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
         BoundExprKind::Binary { left, right, .. } => {
             rewrite_group_references(left, group_by)?;
             rewrite_group_references(right, group_by)
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                rewrite_group_references(argument, group_by)?;
+            }
+            Ok(())
         }
         BoundExprKind::Aggregate(index) => {
             *index = index.saturating_add(group_by.len());
@@ -1084,6 +1475,8 @@ pub enum BindError {
         /// Input expression type.
         actual: Option<DataType>,
     },
+    /// A scalar function has invalid arguments or result types.
+    InvalidScalarFunction(String),
     /// A selected column is neither grouped nor aggregated.
     UngroupedColumn(String),
     /// GROUP BY and HAVING have an invalid combination.
@@ -1168,6 +1561,9 @@ impl fmt::Display for BindError {
                     formatter,
                     "aggregate {function:?} does not accept {actual:?}"
                 )
+            }
+            Self::InvalidScalarFunction(function) => {
+                write!(formatter, "invalid scalar function {function}")
             }
             Self::UngroupedColumn(column) => {
                 write!(
@@ -1416,6 +1812,23 @@ mod tests {
             bind("SELECT id FROM Events UNION ALL SELECT email FROM users"),
             Err(BindError::IncompatibleSetOperation(_))
         ));
+    }
+
+    #[test]
+    fn binds_string_condition_list_range_pattern_case_and_cast_expressions() {
+        let query = bind(
+            "SELECT CONCAT(LOWER(Name), UPPER('x')) AS text_value, \
+             IF(active, id, 0) AS chosen, \
+             CASE WHEN id BETWEEN 1 AND 3 THEN 'yes' ELSE 'no' END AS ranged, \
+             Name LIKE 'a%' AS matched, id IN (1, 2, NULL) AS listed, \
+             CAST(Name AS CHAR) AS cast_name FROM Events",
+        )
+        .expect("scalar functions");
+        assert_eq!(query.projection.len(), 6);
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Float64));
+        assert_eq!(query.projection[3].expr.data_type, Some(DataType::Boolean));
+        assert_eq!(query.projection[5].expr.data_type, Some(DataType::Utf8));
     }
 
     #[test]

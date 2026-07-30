@@ -131,6 +131,14 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             data_type: expr.data_type,
             nullable: expr.nullable,
         },
+        BoundExprKind::Scalar { function, args } => BoundExpr {
+            kind: BoundExprKind::Scalar {
+                function,
+                args: args.into_iter().map(fold_expr).collect(),
+            },
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+        },
     };
 
     evaluate_constant(&folded).map_or(folded, literal_expr)
@@ -138,7 +146,10 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
-        BoundExprKind::Column(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => None,
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Scalar { .. } => None,
         BoundExprKind::Literal(value) => Some(value.clone()),
         BoundExprKind::Unary { op, expr } => {
             let value = evaluate_constant(expr)?;
@@ -702,6 +713,11 @@ fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
         BoundExprKind::Binary { left, right, .. } => {
             collect_expr_columns(left, columns);
             collect_expr_columns(right, columns);
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                collect_expr_columns(argument, columns);
+            }
         }
         BoundExprKind::Literal(_) | BoundExprKind::GroupKey(_) | BoundExprKind::Aggregate(_) => {}
     }
