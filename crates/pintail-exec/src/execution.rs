@@ -374,7 +374,7 @@ enum JoinKeyMode {
 }
 
 fn hash_join_key_mode(left: Option<DataType>, right: Option<DataType>) -> Option<JoinKeyMode> {
-    match (left?, right?) {
+    match (left?.storage_type(), right?.storage_type()) {
         (DataType::Utf8, DataType::Utf8) => Some(JoinKeyMode::CollatedText),
         (DataType::Binary, DataType::Binary) => Some(JoinKeyMode::Binary),
         (DataType::Boolean, DataType::Boolean) => Some(JoinKeyMode::Boolean),
@@ -395,6 +395,7 @@ fn hash_join_key_mode(left: Option<DataType>, right: Option<DataType>) -> Option
             | DataType::Utf8
             | DataType::Binary,
         ) => Some(JoinKeyMode::MysqlNumber),
+        _ => None,
     }
 }
 

@@ -235,7 +235,7 @@ fn storage_key_range(scan: &Scan, snapshot: &TableSnapshot) -> Option<(PrimaryKe
         return Some((minimum, maximum));
     };
     if !matches!(
-        key_column.data_type(),
+        key_column.data_type().storage_type(),
         pintail_types::DataType::Int64 | pintail_types::DataType::UInt64
     ) {
         return Some((minimum, maximum));
@@ -331,7 +331,7 @@ fn key_literal(expression: &BoundExpr, key_type: &KeyPart) -> Option<KeyPart> {
 
 fn key_part_matches_column(key: &KeyPart, data_type: pintail_types::DataType) -> bool {
     matches!(
-        (key, data_type),
+        (key, data_type.storage_type()),
         (KeyPart::Int64(_), pintail_types::DataType::Int64)
             | (KeyPart::UInt64(_), pintail_types::DataType::UInt64)
             | (KeyPart::Utf8(_), pintail_types::DataType::Utf8)

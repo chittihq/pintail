@@ -275,7 +275,7 @@ fn information_columns(catalog: &CatalogSnapshot) -> MetadataResult {
                     Value::Null,
                     utf8(if column.is_nullable() { "YES" } else { "NO" }),
                     utf8(mysql_data_type(column.data_type())),
-                    utf8(column_type),
+                    utf8(&column_type),
                     utf8(""),
                     utf8(""),
                 ]);
@@ -638,7 +638,7 @@ fn describe_table(table: &TableEntry) -> MetadataResult {
         .map(|column| {
             vec![
                 Value::Utf8(column.name().to_owned()),
-                Value::Utf8(mysql_type(column.data_type()).to_owned()),
+                Value::Utf8(mysql_type(column.data_type())),
                 Value::Utf8(if column.is_nullable() { "YES" } else { "NO" }.to_owned()),
                 Value::Utf8(String::new()),
                 Value::Utf8(if column.is_nullable() { "NULL" } else { "" }.to_owned()),
@@ -649,24 +649,44 @@ fn describe_table(table: &TableEntry) -> MetadataResult {
     MetadataResult { fields, rows }
 }
 
-const fn mysql_type(data_type: DataType) -> &'static str {
+fn mysql_type(data_type: DataType) -> String {
     match data_type {
-        DataType::Boolean => "tinyint(1)",
-        DataType::Int64 => "bigint",
-        DataType::UInt64 => "bigint unsigned",
-        DataType::Float64 => "double",
-        DataType::Utf8 => "text",
-        DataType::Binary => "blob",
+        DataType::Boolean => "tinyint(1)".to_owned(),
+        DataType::Int8 => "tinyint".to_owned(),
+        DataType::Int16 => "smallint".to_owned(),
+        DataType::Int32 => "int".to_owned(),
+        DataType::Int64 => "bigint".to_owned(),
+        DataType::UInt8 => "tinyint unsigned".to_owned(),
+        DataType::UInt16 => "smallint unsigned".to_owned(),
+        DataType::UInt32 => "int unsigned".to_owned(),
+        DataType::UInt64 => "bigint unsigned".to_owned(),
+        DataType::Float32 => "float".to_owned(),
+        DataType::Float64 => "double".to_owned(),
+        DataType::Decimal { precision, scale } => format!("decimal({precision},{scale})"),
+        DataType::Date32 => "date".to_owned(),
+        DataType::DateTime64 { fsp } => format!("datetime({fsp})"),
+        DataType::Time64 { fsp } => format!("time({fsp})"),
+        DataType::Utf8 => "text".to_owned(),
+        DataType::Binary => "blob".to_owned(),
+        DataType::Json => "json".to_owned(),
     }
 }
 
 const fn mysql_data_type(data_type: DataType) -> &'static str {
     match data_type {
-        DataType::Boolean => "tinyint",
+        DataType::Boolean | DataType::Int8 | DataType::UInt8 => "tinyint",
+        DataType::Int16 | DataType::UInt16 => "smallint",
+        DataType::Int32 | DataType::UInt32 => "int",
         DataType::Int64 | DataType::UInt64 => "bigint",
+        DataType::Float32 => "float",
         DataType::Float64 => "double",
+        DataType::Decimal { .. } => "decimal",
+        DataType::Date32 => "date",
+        DataType::DateTime64 { .. } => "datetime",
+        DataType::Time64 { .. } => "time",
         DataType::Utf8 => "text",
         DataType::Binary => "blob",
+        DataType::Json => "json",
     }
 }
 

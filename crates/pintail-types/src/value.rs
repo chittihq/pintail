@@ -1,20 +1,103 @@
 use std::cmp::Ordering;
 
 /// Logical scalar types supported by the storage format.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum DataType {
     /// Boolean value.
     Boolean,
+    /// Signed 8-bit integer.
+    Int8,
+    /// Signed 16-bit integer.
+    Int16,
+    /// Signed 32-bit integer.
+    Int32,
     /// Signed 64-bit integer.
     Int64,
+    /// Unsigned 8-bit integer.
+    UInt8,
+    /// Unsigned 16-bit integer.
+    UInt16,
+    /// Unsigned 32-bit integer.
+    UInt32,
     /// Unsigned 64-bit integer.
     UInt64,
+    /// IEEE-754 32-bit floating-point value.
+    Float32,
     /// IEEE-754 64-bit floating-point value.
     Float64,
+    /// Fixed-point decimal carried losslessly as canonical text.
+    Decimal {
+        /// Total number of decimal digits.
+        precision: u8,
+        /// Number of digits after the decimal point.
+        scale: u8,
+    },
+    /// `MySQL` calendar date carried as canonical `YYYY-MM-DD` text.
+    Date32,
+    /// `MySQL` date-time carried as canonical text with the declared precision.
+    DateTime64 {
+        /// Fractional-second precision in the range `0..=6`.
+        fsp: u8,
+    },
+    /// Signed `MySQL` time interval with the declared fractional precision.
+    Time64 {
+        /// Fractional-second precision in the range `0..=6`.
+        fsp: u8,
+    },
     /// UTF-8 string.
     Utf8,
     /// Arbitrary bytes.
     Binary,
+    /// Canonical JSON text.
+    Json,
+}
+
+impl DataType {
+    /// Returns the physical scalar carrier used by the version-one executor
+    /// and segment encodings.
+    ///
+    /// Narrow numeric types preserve their source range while sharing the
+    /// corresponding 64-bit carrier. Decimal and temporal values use a
+    /// canonical UTF-8 representation so invalid `MySQL` dates can be normalized
+    /// before they enter storage.
+    #[must_use]
+    pub const fn storage_type(self) -> Self {
+        match self {
+            Self::Boolean => Self::Boolean,
+            Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64 => Self::Int64,
+            Self::UInt8 | Self::UInt16 | Self::UInt32 | Self::UInt64 => Self::UInt64,
+            Self::Float32 | Self::Float64 => Self::Float64,
+            Self::Decimal { .. }
+            | Self::Date32
+            | Self::DateTime64 { .. }
+            | Self::Time64 { .. }
+            | Self::Utf8
+            | Self::Json => Self::Utf8,
+            Self::Binary => Self::Binary,
+        }
+    }
+
+    /// Returns whether the type parameters are valid for Pintail v1.
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        match self {
+            Self::Decimal { precision, scale } => {
+                precision > 0 && precision <= 38 && scale <= precision
+            }
+            Self::DateTime64 { fsp } | Self::Time64 { fsp } => fsp <= 6,
+            _ => true,
+        }
+    }
+
+    /// Returns whether a physical value type is accepted by this logical
+    /// column type.
+    #[must_use]
+    pub fn accepts(self, physical: Self) -> bool {
+        self.storage_type() == physical
+    }
 }
 
 /// An IEEE-754 value with bitwise equality and total ordering.

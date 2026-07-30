@@ -119,6 +119,27 @@ pub struct FlushOutcome {
     segment_path: Option<PathBuf>,
 }
 
+/// Result of publishing a sorted snapshot chunk directly as a segment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkIngestOutcome {
+    row_count: usize,
+    segment_path: Option<PathBuf>,
+}
+
+impl BulkIngestOutcome {
+    /// Returns the number of rows published into the immutable segment.
+    #[must_use]
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns the published segment, or `None` for an empty chunk.
+    #[must_use]
+    pub fn segment_path(&self) -> Option<&Path> {
+        self.segment_path.as_deref()
+    }
+}
+
 impl FlushOutcome {
     /// Returns the number of latest row versions written to the segment.
     #[must_use]
@@ -583,6 +604,93 @@ impl TableStore {
         self.wal.sync()
     }
 
+    /// Publishes one initial-snapshot chunk directly as an immutable segment.
+    ///
+    /// This path bypasses both the WAL and memtable. It is intended only for
+    /// source rows that can be replayed from a durable snapshot-chunk journal;
+    /// normal CDC and polling writes must continue to use [`Self::ingest`].
+    /// Rows are sorted here, and duplicate primary/unique keys within the
+    /// chunk collapse to the greatest version before publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid rows, pending memtable data, or a failed
+    /// checksummed segment/manifest publication.
+    pub fn bulk_ingest_snapshot(
+        &mut self,
+        mut rows: Vec<StoredRow>,
+    ) -> Result<BulkIngestOutcome, StoreError> {
+        if self.has_pending_rows() {
+            return Err(StoreError::FormatLimit(
+                "direct snapshot ingest requires an empty memtable".to_owned(),
+            ));
+        }
+        for row in &rows {
+            self.schema.validate_row(row)?;
+        }
+        if rows.is_empty() {
+            return Ok(BulkIngestOutcome {
+                row_count: 0,
+                segment_path: None,
+            });
+        }
+        rows.sort_by(|left, right| {
+            left.key()
+                .cmp(right.key())
+                .then_with(|| left.version().cmp(&right.version()))
+        });
+        if self.schema.key_mode() == KeyMode::AppendRowId {
+            for row in &rows {
+                if let [KeyPart::UInt64(row_id)] = row.key().parts() {
+                    self.next_append_row_id = self.next_append_row_id.max(row_id.saturating_add(1));
+                }
+            }
+        } else {
+            let mut deduplicated: Vec<StoredRow> = Vec::with_capacity(rows.len());
+            for row in rows {
+                if let Some(previous) = deduplicated.last_mut()
+                    && previous.key() == row.key()
+                {
+                    *previous = row;
+                } else {
+                    deduplicated.push(row);
+                }
+            }
+            rows = deduplicated;
+        }
+
+        let segment = segment::write(
+            &self.directory,
+            self.manifest.next_segment_id,
+            &self.schema,
+            &rows,
+            self.options.block_rows,
+            segment::Compression::Lz4,
+            true,
+        )?;
+        let segment_path = self.directory.join(&segment.file_name);
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = next_manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.next_segment_id = next_manifest
+            .next_segment_id
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.segments.push(segment);
+        manifest::publish(&self.directory, &next_manifest)?;
+        self.manifest = Arc::new(next_manifest);
+        Ok(BulkIngestOutcome {
+            row_count: rows.len(),
+            segment_path: Some(segment_path),
+        })
+    }
+
     pub(crate) fn has_pending_rows(&self) -> bool {
         !self.memtable.snapshot().is_empty()
     }
@@ -831,6 +939,12 @@ impl TableStore {
     #[must_use]
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    /// Returns the logical schema enforced by this store handle.
+    #[must_use]
+    pub const fn schema(&self) -> &TableSchema {
+        &self.schema
     }
 
     fn compaction_plan(&self) -> Result<Option<CompactionPlan>, StoreError> {
@@ -1402,7 +1516,7 @@ fn adapt_recovered_row(
             .enumerate()
             .find(|(_, wal_column)| wal_column.id == column.id())
         {
-            if wal_column.data_type != column.data_type() {
+            if wal_column.data_type != column.data_type().storage_type() {
                 return Err(StoreError::IncompatibleSchema(format!(
                     "column {} ({}) changed physical type",
                     column.name(),
@@ -1449,11 +1563,13 @@ fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), S
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if path
+        let orphan_segment = path
             .extension()
             .is_some_and(|extension| extension == "ptseg")
-            && !live.contains(file_name)
-        {
+            && !live.contains(file_name);
+        let interrupted_segment_write =
+            file_name.starts_with(".segment-") && file_name.ends_with(".ptseg.tmp");
+        if orphan_segment || interrupted_segment_write {
             std::fs::remove_file(&path).map_err(|error| {
                 StoreError::io(format!("remove orphan segment {}", path.display()), error)
             })?;

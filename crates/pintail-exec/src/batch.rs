@@ -22,7 +22,7 @@ impl ColumnVector {
     pub fn new(data_type: DataType, values: Vec<Value>) -> Result<Self, BatchError> {
         for (row, value) in values.iter().enumerate() {
             if let Some(actual) = value.data_type()
-                && actual != data_type
+                && !data_type.accepts(actual)
             {
                 return Err(BatchError::WrongValueType {
                     row,
@@ -417,6 +417,25 @@ mod tests {
                 expected: 2,
                 actual: 1
             })
+        );
+
+        let narrow =
+            ColumnVector::new(DataType::Int8, vec![Value::Int64(-128)]).expect("narrow carrier");
+        assert_eq!(narrow.data_type(), DataType::Int8);
+        let decimal = ColumnVector::new(
+            DataType::Decimal {
+                precision: 10,
+                scale: 2,
+            },
+            vec![Value::Utf8("123.45".to_owned())],
+        )
+        .expect("decimal carrier");
+        assert_eq!(
+            decimal.data_type(),
+            DataType::Decimal {
+                precision: 10,
+                scale: 2
+            }
         );
     }
 

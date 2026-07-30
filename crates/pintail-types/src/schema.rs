@@ -3,7 +3,10 @@ use std::{collections::HashSet, fmt};
 use crate::{DataType, StoredRow};
 
 /// Physical sort-key and duplicate-resolution mode selected by the catalog.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum KeyMode {
     /// Use the source table's primary key.
     #[default]
@@ -96,6 +99,12 @@ impl TableSchema {
         let mut ids = HashSet::with_capacity(columns.len());
         let mut names = HashSet::with_capacity(columns.len());
         for column in &columns {
+            if !column.data_type.is_valid() {
+                return Err(SchemaError::InvalidDataType {
+                    column: column.name.clone(),
+                    data_type: column.data_type,
+                });
+            }
             if column.name.is_empty() {
                 return Err(SchemaError::EmptyColumnName);
             }
@@ -153,7 +162,7 @@ impl TableSchema {
                 None if !column.nullable => {
                     return Err(SchemaError::NullInRequiredColumn(column.name.clone()));
                 }
-                Some(actual) if actual != column.data_type => {
+                Some(actual) if !column.data_type.accepts(actual) => {
                     return Err(SchemaError::WrongType {
                         column: column.name.clone(),
                         expected: column.data_type,
@@ -183,6 +192,13 @@ pub enum SchemaError {
     ReservedColumnId(u32),
     /// Column names must be unique.
     DuplicateColumnName(String),
+    /// A parameterized logical type is outside Pintail's supported range.
+    InvalidDataType {
+        /// Column containing the invalid type.
+        column: String,
+        /// Invalid logical type.
+        data_type: DataType,
+    },
     /// A row has a different number of values than its schema.
     WrongArity {
         /// Required number of values.
@@ -214,6 +230,9 @@ impl fmt::Display for SchemaError {
                 write!(formatter, "column id {id} is reserved for storage metadata")
             }
             Self::DuplicateColumnName(name) => write!(formatter, "duplicate column name {name}"),
+            Self::InvalidDataType { column, data_type } => {
+                write!(formatter, "column {column} has invalid type {data_type:?}")
+            }
             Self::WrongArity { expected, actual } => {
                 write!(
                     formatter,

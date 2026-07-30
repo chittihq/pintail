@@ -149,10 +149,18 @@ fn reopen_removes_unpublished_segments_left_by_a_crash() {
     };
     let orphan = directory.path().join("segment-99999999999999999999.ptseg");
     std::fs::copy(&live_path, &orphan).expect("simulate pre-manifest segment");
+    let interrupted = directory
+        .path()
+        .join(".segment-99999999999999999998.ptseg.tmp");
+    std::fs::copy(&live_path, &interrupted).expect("simulate interrupted segment write");
 
     let reopened = TableStore::open(directory.path(), account_schema(), StoreOptions::default())
         .expect("reopen");
     assert!(!orphan.exists(), "unpublished segment is not live");
+    assert!(
+        !interrupted.exists(),
+        "interrupted segment write is removed"
+    );
     assert_eq!(
         reopened.snapshot().scan().expect("scan"),
         vec![account(1, "Ada", 1, false)]

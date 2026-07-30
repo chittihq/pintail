@@ -256,7 +256,7 @@ fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
         for (column, value) in columns.iter().zip(row.values()) {
             if value
                 .data_type()
-                .is_some_and(|data_type| data_type != column.data_type)
+                .is_some_and(|data_type| !column.data_type.accepts(data_type))
             {
                 return Err(format!(
                     "row value does not match WAL column {} type",
@@ -276,13 +276,14 @@ fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
 }
 
 fn encode_data_type(data_type: DataType) -> u8 {
-    match data_type {
+    match data_type.storage_type() {
         DataType::Boolean => 0,
         DataType::Int64 => 1,
         DataType::UInt64 => 2,
         DataType::Float64 => 3,
         DataType::Utf8 => 4,
         DataType::Binary => 5,
+        _ => unreachable!("storage_type returns a physical scalar type"),
     }
 }
 

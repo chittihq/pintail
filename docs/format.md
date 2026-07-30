@@ -22,8 +22,9 @@ Each physical table directory owns:
 
 Opening a database locks its writer and validates or repairs the shared WAL
 record framing. It then verifies each table's live segment footers, removes
-unreferenced `.ptseg` crash orphans, routes records by stable table ID, and
-replays sequences newer than that table's manifest checkpoint.
+unreferenced `.ptseg` crash orphans and interrupted `.ptseg.tmp` writes,
+routes records by stable table ID, and replays sequences newer than that
+table's manifest checkpoint.
 Flushing one table leaves the shared WAL intact while any other table has
 unpublished rows. The compatibility `TableStore` API uses the same format for
 one table with ID `0` and a local `table.wal`.
@@ -56,7 +57,8 @@ Key tags are signed 64-bit `0`, unsigned 64-bit `1`, UTF-8 `2`, and binary
 `3`. Value tags are null `0`, boolean `1`, signed 64-bit `2`, unsigned 64-bit
 `3`, IEEE-754 64-bit `4`, UTF-8 `5`, and binary `6`. Integer and float
 payloads are fixed-width little-endian; UTF-8 and binary payloads are
-length-prefixed. WAL schema type tags use the segment logical type IDs.
+length-prefixed. WAL schema type tags use the segment physical type IDs;
+logical M3 types are validated against the caller-owned schema on replay.
 Stable IDs let recovery project reordered or dropped columns and materialize
 new nullable columns as `NULL`.
 
@@ -122,8 +124,12 @@ columns in schema order. Their system IDs are respectively `u32::MAX - 2`,
 `u32::MAX - 1`, and `u32::MAX`; schemas reject those IDs for user columns.
 Other user identifiers are stable catalog column IDs.
 
-Logical type IDs are boolean `0`, signed 64-bit `1`, unsigned 64-bit `2`,
-IEEE-754 64-bit `3`, UTF-8 `4`, binary `5`, and composite key `6`.
+Physical type IDs are boolean `0`, signed 64-bit `1`, unsigned 64-bit `2`,
+IEEE-754 64-bit `3`, UTF-8 `4`, binary `5`, and composite key `6`. M3 logical
+types reuse these carriers: `Int8/16/32` use signed 64-bit,
+`UInt8/16/32` use unsigned 64-bit, `Float32` uses IEEE-754 64-bit, and
+decimal/date/date-time/time/JSON use canonical UTF-8. The exact logical type
+remains part of the schema fingerprint and caller-owned schema.
 
 ### Column chunks and blocks
 
@@ -232,11 +238,21 @@ additions over existing data and physical type changes are rejected.
 
 The schema fingerprint is xxh3 over: `u32 schema_version`, `u8 key_mode`,
 `u32 column_count`, then for each physical-order user column its `u32` ID,
-one-byte logical type, one-byte nullable flag, raw UTF-8 name bytes, and a zero
-terminator. HLL uses the low six hash bits as the register index and the
+one-byte logical type plus decimal precision/scale or temporal fractional
+precision where applicable, one-byte nullable flag, raw UTF-8 name bytes, and
+a zero terminator. Original M1 physical types retain tags `0..=5`; M3 adds
+logical tags `6..=17` only inside the fingerprint input, not as PTSEG column
+type tags. HLL uses the low six hash bits as the register index and the
 leading-zero rank of the remaining 58 bits. Packed integers are written
 least-significant bit first within each byte; bit width is the number of
 significant bits in the maximum normalized value.
+
+Snapshot bulk ingest validates and sorts one source chunk, writes its
+version-zero rows directly as an immutable segment, and publishes the manifest
+using the same segment-before-manifest ordering as flush. It does not append
+snapshot rows to the WAL or memtable. The SQLite chunk journal is completed
+only after manifest publication; replaying an interrupted chunk is
+at-least-once and merge-on-read hides duplicate keys.
 
 Compaction selects a bounded fan-in of overlapping files whose sizes differ
 by at most fourfold. The debt value is the selected input bytes. Partial

@@ -619,7 +619,7 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
-    match data_type {
+    match data_type.map(DataType::storage_type) {
         None => Ok(Value::Null),
         Some(DataType::Boolean) => Ok(mysql_truth(value)?.map_or(Value::Null, Value::Boolean)),
         Some(DataType::Int64) => Ok(Value::Int64(mysql_i64(value)?)),
@@ -627,6 +627,7 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         Some(DataType::Float64) => Ok(Value::float64(mysql_f64(value)?)),
         Some(DataType::Utf8) => Ok(Value::Utf8(scalar_string(value)?)),
         Some(DataType::Binary) => Ok(Value::Binary(scalar_string(value)?.into_bytes())),
+        Some(_) => unreachable!("storage_type returns a physical scalar type"),
     }
 }
 
@@ -772,7 +773,7 @@ pub(crate) fn evaluate_unary(
     match op {
         UnaryOp::Not => Ok(mysql_truth(value)?.map_or(Value::Null, |value| Value::Boolean(!value))),
         UnaryOp::Plus => cast_numeric(value, data_type),
-        UnaryOp::Minus => match data_type {
+        UnaryOp::Minus => match data_type.map(DataType::storage_type) {
             Some(DataType::Float64) => Ok(Value::float64(-mysql_f64(value)?)),
             Some(DataType::Int64) => mysql_i64(value)?
                 .checked_neg()
@@ -783,6 +784,7 @@ pub(crate) fn evaluate_unary(
             Some(DataType::Boolean | DataType::Utf8 | DataType::Binary) => {
                 Err(ExecError::InvalidExpressionType)
             }
+            Some(_) => unreachable!("storage_type returns a physical scalar type"),
         },
     }
 }
@@ -896,7 +898,7 @@ fn evaluate_arithmetic(
     if matches!(left, Value::Null) || matches!(right, Value::Null) {
         return Ok(Value::Null);
     }
-    match data_type {
+    match data_type.map(DataType::storage_type) {
         Some(DataType::Float64) => {
             let left = mysql_f64(left)?;
             let right = mysql_f64(right)?;
@@ -968,11 +970,12 @@ fn evaluate_arithmetic(
         Some(DataType::Boolean | DataType::Utf8 | DataType::Binary) => {
             Err(ExecError::InvalidExpressionType)
         }
+        Some(_) => unreachable!("storage_type returns a physical scalar type"),
     }
 }
 
 fn cast_numeric(value: &Value, data_type: Option<DataType>) -> Result<Value, ExecError> {
-    match data_type {
+    match data_type.map(DataType::storage_type) {
         Some(DataType::Float64) => Ok(Value::float64(mysql_f64(value)?)),
         Some(DataType::Int64) => Ok(Value::Int64(mysql_i64(value)?)),
         Some(DataType::UInt64) => Ok(Value::UInt64(mysql_u64(value)?)),
@@ -980,6 +983,7 @@ fn cast_numeric(value: &Value, data_type: Option<DataType>) -> Result<Value, Exe
         Some(DataType::Boolean | DataType::Utf8 | DataType::Binary) => {
             Err(ExecError::InvalidExpressionType)
         }
+        Some(_) => unreachable!("storage_type returns a physical scalar type"),
     }
 }
 

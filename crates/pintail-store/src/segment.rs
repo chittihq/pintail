@@ -154,13 +154,14 @@ impl Encoding {
 
 impl LogicalType {
     fn from_data_type(data_type: DataType) -> Self {
-        match data_type {
+        match data_type.storage_type() {
             DataType::Boolean => Self::Boolean,
             DataType::Int64 => Self::Int64,
             DataType::UInt64 => Self::UInt64,
             DataType::Float64 => Self::Float64,
             DataType::Utf8 => Self::Utf8,
             DataType::Binary => Self::Binary,
+            _ => unreachable!("storage_type returns a physical scalar type"),
         }
     }
 
@@ -198,12 +199,45 @@ pub(crate) fn schema_fingerprint(schema: &TableSchema) -> u64 {
     encoder.u32(u32::try_from(schema.columns().len()).unwrap_or(u32::MAX));
     for column in schema.columns() {
         encoder.u32(column.id());
-        encoder.u8(LogicalType::from_data_type(column.data_type()) as u8);
+        encode_schema_data_type(&mut encoder, column.data_type());
         encoder.u8(u8::from(column.is_nullable()));
         encoder.raw(column.name().as_bytes());
         encoder.u8(0);
     }
     xxh3_64(&encoder.finish())
+}
+
+fn encode_schema_data_type(encoder: &mut Encoder, data_type: DataType) {
+    match data_type {
+        DataType::Boolean => encoder.u8(0),
+        DataType::Int64 => encoder.u8(1),
+        DataType::UInt64 => encoder.u8(2),
+        DataType::Float64 => encoder.u8(3),
+        DataType::Utf8 => encoder.u8(4),
+        DataType::Binary => encoder.u8(5),
+        DataType::Int8 => encoder.u8(6),
+        DataType::Int16 => encoder.u8(7),
+        DataType::Int32 => encoder.u8(8),
+        DataType::UInt8 => encoder.u8(9),
+        DataType::UInt16 => encoder.u8(10),
+        DataType::UInt32 => encoder.u8(11),
+        DataType::Float32 => encoder.u8(12),
+        DataType::Decimal { precision, scale } => {
+            encoder.u8(13);
+            encoder.u8(precision);
+            encoder.u8(scale);
+        }
+        DataType::Date32 => encoder.u8(14),
+        DataType::DateTime64 { fsp } => {
+            encoder.u8(15);
+            encoder.u8(fsp);
+        }
+        DataType::Time64 { fsp } => {
+            encoder.u8(16);
+            encoder.u8(fsp);
+        }
+        DataType::Json => encoder.u8(17),
+    }
 }
 
 fn key_mode_tag(key_mode: KeyMode) -> u8 {
