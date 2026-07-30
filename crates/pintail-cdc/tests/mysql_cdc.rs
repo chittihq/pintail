@@ -1243,6 +1243,7 @@ async fn m4_cdc_crud_gipk_append_and_type_fidelity() {
         cdc_targets,
         CdcOptions {
             blocking: false,
+            max_transaction_bytes: 1,
             ..CdcOptions::default()
         },
     )

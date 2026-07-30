@@ -101,7 +101,7 @@ impl DataType {
 }
 
 /// An IEEE-754 value with bitwise equality and total ordering.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct Float64(u64);
 
 impl Float64 {
@@ -151,7 +151,9 @@ impl std::hash::Hash for Float64 {
 }
 
 /// A nullable scalar value stored in a table row.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub enum Value {
     /// SQL `NULL`.
     Null,

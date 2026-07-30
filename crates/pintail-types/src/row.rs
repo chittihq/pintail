@@ -1,7 +1,9 @@
 use crate::Value;
 
 /// A typed component of a composite primary or unique key.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub enum KeyPart {
     /// Signed integer key component.
     Int64(i64),
@@ -26,7 +28,9 @@ impl KeyPart {
 }
 
 /// A non-empty, lexicographically ordered composite key.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub struct PrimaryKey(Vec<KeyPart>);
 
 impl PrimaryKey {
@@ -56,7 +60,7 @@ impl PrimaryKey {
 }
 
 /// A versioned row accepted by the storage engine.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct StoredRow {
     key: PrimaryKey,
     values: Vec<Value>,

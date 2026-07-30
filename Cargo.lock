@@ -2426,6 +2426,7 @@ dependencies = [
  "pintail-store",
  "pintail-types",
  "rusqlite",
+ "serde",
  "serde_json",
  "sqlparser",
  "tempfile",

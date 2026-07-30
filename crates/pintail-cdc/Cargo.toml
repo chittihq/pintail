@@ -17,8 +17,10 @@ pintail-probe = { path = "../pintail-probe" }
 pintail-snapshot = { path = "../pintail-snapshot" }
 pintail-store.workspace = true
 pintail-types.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

@@ -11,7 +11,9 @@ mod gtid;
 
 use std::{
     collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher},
+    fs::File,
     hash::{Hash as _, Hasher as _},
+    io::{Seek as _, Write as _},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -126,7 +128,8 @@ pub struct CdcOptions {
     pub blocking: bool,
     /// Optional deterministic commit budget for supervisors and tests.
     pub max_commits: Option<usize>,
-    /// Maximum retained bytes for one uncommitted source transaction.
+    /// Maximum in-memory bytes retained before an uncommitted transaction
+    /// spills to an anonymous temporary file.
     pub max_transaction_bytes: usize,
     /// Consecutive connection failures tolerated before surfacing an error.
     pub max_reconnect_attempts: usize,
@@ -156,7 +159,7 @@ impl Default for CdcOptions {
             server_id: 0,
             blocking: true,
             max_commits: None,
-            max_transaction_bytes: 64 * 1024 * 1024,
+            max_transaction_bytes: 256 * 1024 * 1024,
             max_reconnect_attempts: 8,
             reconnect_initial_delay: Duration::from_millis(100),
             auto_resnapshot: true,
@@ -244,14 +247,10 @@ pub enum CdcError {
     /// A source DDL statement could not be classified or applied safely.
     #[error("CDC schema tracking failed: {0}")]
     Ddl(String),
-    /// One source transaction exceeded the configured hard memory cap.
-    #[error("CDC transaction retained {retained_bytes} bytes, above the {maximum_bytes}-byte cap")]
-    TransactionTooLarge {
-        /// Current retained estimate.
-        retained_bytes: usize,
-        /// Configured cap.
-        maximum_bytes: usize,
-    },
+    /// An oversized transaction could not be written to or read from its
+    /// anonymous spill file.
+    #[error("CDC transaction spill failed: {0}")]
+    TransactionSpill(String),
 }
 
 type ProgressListener = Arc<dyn Fn(CdcProgress) + Send + Sync>;
@@ -528,7 +527,7 @@ async fn run_cdc_inner(
                     let tracks_schema = !actions.is_empty()
                         && (query.schema().is_empty()
                             || query.schema().eq_ignore_ascii_case(&report.database));
-                    if tracks_schema && !pending.mutations.is_empty() {
+                    if tracks_schema && pending.has_mutations() {
                         let outcome = commit_pending(
                             &mut targets,
                             &mut metadata,
@@ -628,7 +627,7 @@ async fn run_cdc_inner(
             pending = PendingTransaction::default();
             continue;
         }
-        if !pending.mutations.is_empty() {
+        if pending.has_mutations() {
             return Err(CdcError::Decode(
                 "binlog stream ended inside a source transaction".to_owned(),
             ));
@@ -1143,13 +1142,75 @@ fn validate_configuration(
 #[derive(Default)]
 struct PendingTransaction {
     mutations: Vec<PendingMutation>,
+    spill: Option<File>,
+    spilled_mutations: usize,
+    discarded_targets: BTreeSet<usize>,
     retained_bytes: usize,
     ordinal: u32,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
 struct PendingMutation {
     target_index: usize,
     row: StoredRow,
+}
+
+impl PendingTransaction {
+    fn has_mutations(&self) -> bool {
+        !self.mutations.is_empty() || self.spilled_mutations > 0
+    }
+
+    fn spill(&mut self, mutations: Vec<PendingMutation>) -> Result<(), CdcError> {
+        if self.spill.is_none() {
+            self.spill = Some(
+                tempfile::tempfile()
+                    .map_err(|error| CdcError::TransactionSpill(error.to_string()))?,
+            );
+            let retained = std::mem::take(&mut self.mutations);
+            self.write_spilled(retained)?;
+            self.retained_bytes = 0;
+        }
+        self.write_spilled(mutations)
+    }
+
+    fn write_spilled(&mut self, mutations: Vec<PendingMutation>) -> Result<(), CdcError> {
+        let file = self.spill.as_mut().ok_or_else(|| {
+            CdcError::TransactionSpill("spill file was not initialized".to_owned())
+        })?;
+        for mutation in mutations {
+            serde_json::to_writer(&mut *file, &mutation)
+                .map_err(|error| CdcError::TransactionSpill(error.to_string()))?;
+            file.write_all(b"\n")
+                .map_err(|error| CdcError::TransactionSpill(error.to_string()))?;
+            self.spilled_mutations = self.spilled_mutations.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn take_mutations(&mut self) -> Result<Vec<PendingMutation>, CdcError> {
+        let mut mutations =
+            Vec::with_capacity(self.spilled_mutations.saturating_add(self.mutations.len()));
+        if let Some(file) = &mut self.spill {
+            file.flush()
+                .and_then(|()| file.rewind())
+                .map_err(|error| CdcError::TransactionSpill(error.to_string()))?;
+            for mutation in
+                serde_json::Deserializer::from_reader(file).into_iter::<PendingMutation>()
+            {
+                let mutation =
+                    mutation.map_err(|error| CdcError::TransactionSpill(error.to_string()))?;
+                if !self.discarded_targets.contains(&mutation.target_index) {
+                    mutations.push(mutation);
+                }
+            }
+        }
+        mutations.extend(
+            self.mutations
+                .drain(..)
+                .filter(|mutation| !self.discarded_targets.contains(&mutation.target_index)),
+        );
+        Ok(mutations)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1220,6 +1281,7 @@ fn decode_rows_event(
 }
 
 fn discard_target_mutations(pending: &mut PendingTransaction, target_index: usize) {
+    pending.discarded_targets.insert(target_index);
     let mut removed_bytes = 0_usize;
     pending.mutations.retain(|mutation| {
         if mutation.target_index == target_index {
@@ -1342,21 +1404,18 @@ fn push_mutations(
             "one source transaction exceeds 65,535 row mutations".to_owned(),
         ));
     }
-    let retained_bytes = mutations
-        .iter()
-        .fold(pending.retained_bytes, |bytes, mutation| {
-            bytes
-                .saturating_add(mutation.row.estimated_bytes())
-                .saturating_add(std::mem::size_of::<PendingMutation>())
-        });
-    if retained_bytes > maximum_bytes {
-        return Err(CdcError::TransactionTooLarge {
-            retained_bytes,
-            maximum_bytes,
-        });
+    let added_bytes = mutations.iter().fold(0_usize, |bytes, mutation| {
+        bytes
+            .saturating_add(mutation.row.estimated_bytes())
+            .saturating_add(std::mem::size_of::<PendingMutation>())
+    });
+    if pending.spill.is_some() || pending.retained_bytes.saturating_add(added_bytes) > maximum_bytes
+    {
+        pending.spill(mutations)?;
+    } else {
+        pending.retained_bytes = pending.retained_bytes.saturating_add(added_bytes);
+        pending.mutations.extend(mutations);
     }
-    pending.retained_bytes = retained_bytes;
-    pending.mutations.extend(mutations);
     pending.ordinal = next_ordinal;
     Ok(())
 }
@@ -1369,7 +1428,7 @@ fn commit_pending(
     pending: &mut PendingTransaction,
 ) -> Result<usize, CdcError> {
     let mut grouped = BTreeMap::<usize, Vec<StoredRow>>::new();
-    for mutation in pending.mutations.drain(..) {
+    for mutation in pending.take_mutations()? {
         grouped
             .entry(mutation.target_index)
             .or_default()
@@ -1647,11 +1706,12 @@ fn generated_server_id(database_id: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CdcOptions, StreamPosition, generated_server_id, new_table_matches,
-        sanitize_binlog_filename,
+        CdcOptions, PendingMutation, PendingTransaction, StreamPosition, generated_server_id,
+        new_table_matches, push_mutations, sanitize_binlog_filename,
     };
     use pintail_meta::SnapshotCheckpointRecord;
     use pintail_probe::SourceFlavor;
+    use pintail_types::{KeyPart, PrimaryKey, StoredRow, Value};
 
     #[test]
     fn file_position_versions_are_ordered_and_deterministic() {
@@ -1693,5 +1753,32 @@ mod tests {
         assert!(!new_table_matches("audit", &options));
         options.new_table_excludes.insert("EVENTS".to_owned());
         assert!(!new_table_matches("events", &options));
+    }
+
+    #[test]
+    fn oversized_transactions_spill_and_round_trip() {
+        let mut pending = PendingTransaction::default();
+        let row = StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::UInt64(7)]).expect("key"),
+            vec![Value::Utf8("large payload".repeat(32))],
+            9,
+            false,
+        );
+        push_mutations(
+            &mut pending,
+            vec![PendingMutation {
+                target_index: 2,
+                row: row.clone(),
+            }],
+            1,
+        )
+        .expect("spill mutation");
+
+        assert!(pending.spill.is_some());
+        assert!(pending.mutations.is_empty());
+        let mutations = pending.take_mutations().expect("read spill");
+        assert_eq!(mutations.len(), 1);
+        assert_eq!(mutations[0].target_index, 2);
+        assert_eq!(mutations[0].row, row);
     }
 }
