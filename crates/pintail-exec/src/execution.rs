@@ -1,5 +1,6 @@
 use std::fmt;
 
+use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{BoundColumn, BoundExpr, BoundProjection};
 use pintail_types::{DataType, Value};
 
@@ -512,6 +513,31 @@ pub enum ExecError {
     InvalidUtf8Number,
     /// A source-specific failure.
     Source(String),
+    /// The scan provider was configured twice for one stable table.
+    DuplicateSnapshot {
+        /// Stable database identity.
+        database_id: DatabaseId,
+        /// Stable table identity.
+        table_id: TableId,
+    },
+    /// The scan provider has no pinned reader for a stable table.
+    MissingSnapshot {
+        /// Stable database identity.
+        database_id: DatabaseId,
+        /// Stable table identity.
+        table_id: TableId,
+    },
+    /// The pinned reader and bound catalog used different schema versions.
+    SnapshotSchemaChanged {
+        /// Stable database identity.
+        database_id: DatabaseId,
+        /// Stable table identity.
+        table_id: TableId,
+        /// Version used while binding.
+        expected: u32,
+        /// Version pinned by storage.
+        actual: u32,
+    },
     /// The hard per-query memory cap would be exceeded.
     MemoryLimitExceeded {
         /// Bytes already reserved.
@@ -546,6 +572,35 @@ impl fmt::Display for ExecError {
                 formatter.write_str("binary value is not valid UTF-8 for numeric coercion")
             }
             Self::Source(message) => write!(formatter, "scan source failed: {message}"),
+            Self::DuplicateSnapshot {
+                database_id,
+                table_id,
+            } => write!(
+                formatter,
+                "snapshot provider repeats database {} table {}",
+                database_id.get(),
+                table_id.get()
+            ),
+            Self::MissingSnapshot {
+                database_id,
+                table_id,
+            } => write!(
+                formatter,
+                "no pinned snapshot for database {} table {}",
+                database_id.get(),
+                table_id.get()
+            ),
+            Self::SnapshotSchemaChanged {
+                database_id,
+                table_id,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "snapshot schema changed for database {} table {}: bound version {expected}, pinned version {actual}",
+                database_id.get(),
+                table_id.get()
+            ),
             Self::MemoryLimitExceeded {
                 used,
                 requested,

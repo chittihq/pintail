@@ -10,7 +10,11 @@ rust-version.workspace = true
 [dependencies]
 pintail-catalog.workspace = true
 pintail-sql.workspace = true
+pintail-store.workspace = true
 pintail-types.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

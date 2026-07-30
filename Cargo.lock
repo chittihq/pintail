@@ -790,7 +790,9 @@ version = "0.1.0"
 dependencies = [
  "pintail-catalog",
  "pintail-sql",
+ "pintail-store",
  "pintail-types",
+ "tempfile",
 ]
 
 [[package]]

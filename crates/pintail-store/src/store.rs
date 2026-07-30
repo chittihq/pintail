@@ -838,6 +838,12 @@ pub struct TableSnapshot {
 }
 
 impl TableSnapshot {
+    /// Returns the catalog schema pinned with this reader snapshot.
+    #[must_use]
+    pub const fn schema(&self) -> &TableSchema {
+        &self.schema
+    }
+
     /// Returns visible rows in primary-key order, excluding tombstones.
     ///
     /// # Errors

@@ -28,6 +28,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pull-based physical execution for empty, one-row, scan, filter, project, and
   limit plans, with compiled scalar expressions, MySQL three-valued coercion,
   validated scan layouts, and a clear hard query-memory-cap error.
+- Storage-backed scan provider that reads pinned table snapshots into bounded
+  projected batches, validates schema generations, and supports zero-column
+  scans for constant-per-row queries.
 
 ## [M1] - 2026-07-30
 
