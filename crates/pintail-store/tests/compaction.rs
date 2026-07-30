@@ -129,6 +129,44 @@ fn compaction_partitions_output_at_the_configured_row_bound() {
 }
 
 #[test]
+fn compaction_defers_candidates_above_the_input_row_bound() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        compaction_fan_in: 2,
+        max_compaction_input_rows: 3,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    for batch in [
+        vec![row(1, "old", 1, false), row(2, "first", 1, false)],
+        vec![row(1, "new", 2, false), row(3, "second", 1, false)],
+    ] {
+        table.ingest(batch).expect("ingest");
+        table.flush().expect("flush");
+    }
+
+    assert_eq!(
+        table
+            .compaction_status()
+            .expect("bounded status")
+            .eligible_segments(),
+        0
+    );
+    assert_eq!(
+        table.compact().expect("bounded compact").input_segments(),
+        0
+    );
+    assert_eq!(
+        table.snapshot().scan().expect("scan deferred segments"),
+        vec![
+            row(1, "new", 2, false),
+            row(2, "first", 1, false),
+            row(3, "second", 1, false),
+        ]
+    );
+}
+
+#[test]
 fn pinned_snapshot_segments_survive_writer_drop_and_reopen() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let options = StoreOptions {
