@@ -204,3 +204,39 @@ fn database_state(database: &DatabaseStore) -> Result<[Option<StoredRow>; 2], St
     }
     Ok([users.into_iter().next(), orders.into_iter().next()])
 }
+
+/// A freshly spawned child briefly keeps inherited copies of every open
+/// file description alive, so a writer flock the previous owner just
+/// released can transiently read as held (reproduced at ~3.8% per acquire
+/// under a spawn loop before the bounded retry in `lock_writer` landed).
+/// Reopen loops must absorb that instead of surfacing `WriterBusy`.
+#[test]
+fn reopen_absorbs_transient_locks_held_by_spawned_children() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let schema = schemas().remove(0).1;
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !stop.load(Ordering::Relaxed) {
+                let children = (0..4)
+                    .filter_map(|_| std::process::Command::new("/usr/bin/true").spawn().ok())
+                    .collect::<Vec<_>>();
+                for mut child in children {
+                    let _ = child.wait();
+                }
+            }
+        });
+        for iteration in 0..500 {
+            let table = pintail_store::TableStore::open(
+                directory.path(),
+                schema.clone(),
+                pintail_store::StoreOptions::default(),
+            )
+            .unwrap_or_else(|error| panic!("reopen {iteration}: {error}"));
+            drop(table);
+        }
+        stop.store(true, Ordering::Relaxed);
+    });
+}

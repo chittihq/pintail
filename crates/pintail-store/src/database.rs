@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fs2::FileExt;
 use pintail_types::{StoredRow, TableSchema};
 
 use crate::{
@@ -52,13 +51,7 @@ impl DatabaseStore {
             .map_err(|error| StoreError::io("canonicalize database directory", error))?;
 
         let writer_lock = open_lock(&directory.join(WRITER_LOCK_FILE))?;
-        FileExt::try_lock_exclusive(&writer_lock).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::WouldBlock {
-                StoreError::WriterBusy
-            } else {
-                StoreError::io("lock database writer", error)
-            }
-        })?;
+        crate::store::lock_writer(&writer_lock, "lock database writer")?;
 
         let mut schemas_by_id = BTreeMap::new();
         for (table_id, schema) in schemas {

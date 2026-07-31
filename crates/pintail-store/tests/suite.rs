@@ -1,10 +1,12 @@
-//! Consolidated integration-test harness: one linked binary for the suites
-//! that tolerate sharing a process. `compaction`, `schema_evolution`, and `crash_fuzz` stay
-//! separate binaries: their drop-then-reopen loops intermittently hit
-//! `WriterBusy` when 50+ tests share one process (under investigation — the
-//! writer flock should be free the moment the store drops).
+//! Consolidated integration-test harness: one linked binary instead of one
+//! per file. Reopen loops under concurrent process spawns transiently see
+//! the old writer flock as held (spawned children briefly keep inherited
+//! file descriptions alive); `lock_writer`'s bounded retry absorbs that, so
+//! sharing a process is safe again. `crash_fuzz` stays separate: it spawns
+//! and kill -9s real workers of its own binary by design.
 
 mod suite {
+    mod compaction;
     mod database;
     mod encodings;
     mod flush;
@@ -14,4 +16,5 @@ mod suite {
     mod partitioned_scan;
     mod reader;
     mod recovery;
+    mod schema_evolution;
 }
