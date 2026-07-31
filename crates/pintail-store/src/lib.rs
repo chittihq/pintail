@@ -20,7 +20,7 @@ pub use error::StoreError;
 pub use segment::NativeUnits;
 pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, CompactionOutcome, CompactionStatus,
-    DecodedColumn, FlushOutcome, IngestOutcome, ProjectedColumnChunk, ProjectedRow, ProjectedScan,
-    ProjectedScanStream, ProjectedValueChunk, ScanStats, StorageMetrics, StoreOptions,
-    TableSnapshot, TableStore, WalSync,
+    DecodedColumn, FlushOutcome, IngestOutcome, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,
+    ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, StorageMetrics,
+    StoreOptions, TableSnapshot, TableStore, WalSync,
 };

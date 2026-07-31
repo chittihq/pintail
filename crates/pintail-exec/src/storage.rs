@@ -223,6 +223,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 column_rows: 0,
                 prefetched: VecDeque::new(),
                 stream: None,
+                prewhere: None,
                 key_position: None,
                 started: true,
                 types,
@@ -262,6 +263,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 column_rows: 0,
                 prefetched: VecDeque::new(),
                 stream: Some(stream),
+                prewhere: build_prewhere_spec(scan, snapshot),
                 key_position,
                 started: false,
                 types,
@@ -331,6 +333,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             column_rows: 0,
             prefetched: VecDeque::new(),
             stream: None,
+            prewhere: None,
             key_position: None,
             started: true,
             types,
@@ -588,10 +591,19 @@ fn predecessor(value: &KeyPart) -> Option<KeyPart> {
     }
 }
 
+/// Compiled scan predicates for filter-first chunk decoding: evaluated over
+/// the predicate columns alone, before the rest of the projection decodes.
+struct PrewhereSpec {
+    predicate_ids: Vec<u32>,
+    predicates: Vec<crate::expression::CompiledExpr>,
+    data_types: Vec<pintail_types::DataType>,
+}
+
 struct SnapshotStream {
     rows: VecDeque<Vec<Value>>,
     columns: Vec<DecodedColumn>,
     column_rows: usize,
+    prewhere: Option<PrewhereSpec>,
     /// Projected position of the table's single primary-key column, when
     /// projected — the only column a probe-side restriction can prune on.
     key_position: Option<usize>,
@@ -616,12 +628,24 @@ impl BatchStream for SnapshotStream {
             let batch_overhead = batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS);
             if self.prefetched.is_empty() {
                 let prefetch_width = if self.types.len() <= 2 { 8 } else { 4 };
-                let chunks = stream
-                    .next_column_chunks(
-                        prefetch_width,
-                        available_memory.saturating_sub(batch_overhead),
-                    )
-                    .map_err(|error| ExecError::Source(error.to_string()))?;
+                let chunk_budget = available_memory.saturating_sub(batch_overhead);
+                let chunks = if let Some(spec) = &self.prewhere {
+                    let select = |columns: &[DecodedColumn], row_count: usize| {
+                        prewhere_ranges(spec, columns, row_count)
+                    };
+                    stream
+                        .next_column_chunks_filtered(
+                            prefetch_width,
+                            chunk_budget,
+                            &spec.predicate_ids,
+                            &select,
+                        )
+                        .map_err(|error| ExecError::Source(error.to_string()))?
+                } else {
+                    stream
+                        .next_column_chunks(prefetch_width, chunk_budget)
+                        .map_err(|error| ExecError::Source(error.to_string()))?
+                };
                 if chunks.is_empty() {
                     self.stream = None;
                     break;
@@ -852,6 +876,141 @@ fn projected_columns_retained_bytes(outer_capacity: usize, columns: &[DecodedCol
     outer_capacity
         .saturating_mul(std::mem::size_of::<DecodedColumn>())
         .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum())
+}
+
+/// Builds the filter-first spec for a scan: every predicate must reference
+/// only projected columns and compile against the predicate-subset layout.
+fn build_prewhere_spec(scan: &Scan, snapshot: &TableSnapshot) -> Option<PrewhereSpec> {
+    if scan.predicates.is_empty() {
+        return None;
+    }
+    let mut predicate_ids = Vec::new();
+    for predicate in &scan.predicates {
+        collect_predicate_columns(predicate, &mut predicate_ids);
+    }
+    predicate_ids.sort_unstable();
+    predicate_ids.dedup();
+    if predicate_ids.is_empty()
+        || !predicate_ids
+            .iter()
+            .all(|id| scan.projected_column_ids.contains(id))
+    {
+        return None;
+    }
+    let mut layout = Vec::with_capacity(predicate_ids.len());
+    let mut data_types = Vec::with_capacity(predicate_ids.len());
+    for id in &predicate_ids {
+        let column = snapshot
+            .schema()
+            .columns()
+            .iter()
+            .find(|column| column.id() == *id)?;
+        layout.push(pintail_sql::BoundColumn {
+            database_id: scan.table.database_id,
+            table_id: scan.table.table_id,
+            column_id: *id,
+            relation_name: scan.table.table_name.clone(),
+            name: column.name().to_owned(),
+            data_type: column.data_type(),
+            nullable: column.is_nullable(),
+        });
+        data_types.push(column.data_type());
+    }
+    let predicates = scan
+        .predicates
+        .iter()
+        .map(|predicate| crate::expression::CompiledExpr::compile(predicate, &layout))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    Some(PrewhereSpec {
+        predicate_ids,
+        predicates,
+        data_types,
+    })
+}
+
+fn collect_predicate_columns(expr: &BoundExpr, ids: &mut Vec<u32>) {
+    match &expr.kind {
+        BoundExprKind::Column(column) => ids.push(column.column_id),
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            collect_predicate_columns(expr, ids);
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            collect_predicate_columns(left, ids);
+            collect_predicate_columns(right, ids);
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                collect_predicate_columns(argument, ids);
+            }
+        }
+        BoundExprKind::InSubquery { expr, .. } => collect_predicate_columns(expr, ids),
+        _ => {}
+    }
+}
+
+/// Evaluates the compiled predicates over one chunk's predicate columns and
+/// returns the surviving row ranges (coalesced), or `None` when the chunk
+/// cannot or need not be restricted.
+fn prewhere_ranges(
+    spec: &PrewhereSpec,
+    columns: &[DecodedColumn],
+    row_count: usize,
+) -> Result<Option<Vec<std::ops::Range<usize>>>, String> {
+    /// Runs separated by fewer than this many rows merge, so near-adjacent
+    /// survivors decode as one block-friendly region.
+    const COALESCE_GAP: usize = 1024;
+    let vectors = spec
+        .data_types
+        .iter()
+        .zip(columns)
+        .map(|(data_type, column)| column_vector_from_decoded(*data_type, column.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let batch = RecordBatch::new(row_count, vectors).map_err(|error| error.to_string())?;
+    let mut combined: Option<crate::batch::SelectionMask> = None;
+    for predicate in &spec.predicates {
+        let Some(mask) = predicate
+            .evaluate_filter_mask(&batch)
+            .map_err(|error| error.to_string())?
+        else {
+            // A predicate outside the typed kernels: keep every row; the
+            // Filter operator above applies the exact mask.
+            return Ok(None);
+        };
+        match &mut combined {
+            None => combined = Some(mask),
+            Some(existing) => existing
+                .intersect(&mask)
+                .map_err(|error| error.to_string())?,
+        }
+    }
+    let Some(mask) = combined else {
+        return Ok(None);
+    };
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut row = 0;
+    while row < row_count {
+        if !mask.is_selected(row) {
+            row += 1;
+            continue;
+        }
+        let start = row;
+        while row < row_count && mask.is_selected(row) {
+            row += 1;
+        }
+        match ranges.last_mut() {
+            Some(last) if start.saturating_sub(last.end) < COALESCE_GAP => last.end = row,
+            _ => ranges.push(start..row),
+        }
+    }
+    if ranges.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    if ranges.len() == 1 && ranges[0] == (0..row_count) {
+        return Ok(None);
+    }
+    Ok(Some(ranges))
 }
 
 /// Adopts one store-decoded column as a typed executor vector, parsing
@@ -2095,6 +2254,79 @@ mod tests {
         assert!(
             stream.next_batch(64 * 1024 * 1024).expect("pull").is_some(),
             "started streams ignore restrictions"
+        );
+    }
+
+    #[test]
+    fn prewhere_scans_return_exact_rows_for_non_key_predicates() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        for start in [1_u64, 1001, 2001, 3001] {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 1000)
+                        .map(|key| row(key, &format!("value-{key}")))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(4000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let limit = 8 * 1024 * 1024;
+        // Highly selective equality on a non-key string column.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT id FROM events WHERE name = 'value-1500'",
+                &catalog,
+                &provider,
+                limit,
+            ),
+            [Value::UInt64(1500)]
+        );
+        // A predicate matching nothing.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT id FROM events WHERE name = 'value-9999'",
+                &catalog,
+                &provider,
+                limit,
+            ),
+            []
+        );
+        // An unselective predicate keeps every row.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT COUNT(*) FROM events WHERE name != 'value-1500'",
+                &catalog,
+                &provider,
+                limit,
+            ),
+            [Value::UInt64(3999)]
+        );
+        // Scattered survivors across segments and blocks.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT COUNT(*) FROM events WHERE name IN ('value-2', 'value-1500', 'value-3999')",
+                &catalog,
+                &provider,
+                limit,
+            ),
+            [Value::UInt64(3)]
         );
     }
 }

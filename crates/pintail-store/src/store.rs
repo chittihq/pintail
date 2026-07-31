@@ -489,6 +489,14 @@ pub struct ProjectedValueChunk {
     retained_bytes: usize,
 }
 
+/// Chooses surviving row ranges from a chunk's decoded predicate columns:
+/// `Ok(None)` keeps every row (no restriction); ranges must be ascending and
+/// disjoint. Errors abort the scan.
+pub type PrewhereSelect<'a> = &'a (
+        dyn Fn(&[DecodedColumn], usize) -> Result<Option<Vec<std::ops::Range<usize>>>, String>
+            + Sync
+    );
+
 /// One projected column decoded straight into packed columnar storage.
 ///
 /// Typed variants pad null slots with defaults and carry per-row validity so
@@ -1165,6 +1173,33 @@ impl ProjectedScanStream {
         max_chunks: usize,
         memory_limit: usize,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        self.next_column_chunks_inner(max_chunks, memory_limit, None)
+    }
+
+    /// Like [`Self::next_column_chunks`], but full direct segments decode
+    /// filter-first: the predicate columns decode alone, `select` chooses the
+    /// surviving row ranges (or `None` to keep everything), and only those
+    /// ranges of the full projection decode afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise storage, corruption, schema, or memory-limit error.
+    pub fn next_column_chunks_filtered(
+        &mut self,
+        max_chunks: usize,
+        memory_limit: usize,
+        predicate_ids: &[u32],
+        select: PrewhereSelect<'_>,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        self.next_column_chunks_inner(max_chunks, memory_limit, Some((predicate_ids, select)))
+    }
+
+    fn next_column_chunks_inner(
+        &mut self,
+        max_chunks: usize,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
         if self.merge.is_some() || self.memtable_cursor.is_some() || self.direct_range.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
         }
@@ -1172,7 +1207,7 @@ impl ProjectedScanStream {
             if !self.advance_part()? {
                 return Ok(Vec::new());
             }
-            return self.next_column_chunks(max_chunks, memory_limit);
+            return self.next_column_chunks_inner(max_chunks, memory_limit, prewhere);
         }
         let max_chunks = if memory_limit < 64 * 1024 * 1024 {
             1
@@ -1193,21 +1228,112 @@ impl ProjectedScanStream {
         if chunk_count == 1 {
             return segments
                 .into_iter()
-                .map(|segment| self.decode_column_chunk(segment, memory_limit))
+                .map(|segment| {
+                    self.decode_column_chunk_maybe_filtered(segment, memory_limit, prewhere)
+                })
                 .collect();
         }
         let per_chunk_limit = memory_limit / chunk_count;
         let decoded = projected_scan_pool()?.install(|| {
             segments
                 .into_par_iter()
-                .map(|segment| self.decode_column_chunk(segment, per_chunk_limit))
+                .map(|segment| {
+                    self.decode_column_chunk_maybe_filtered(segment, per_chunk_limit, prewhere)
+                })
                 .collect()
         });
         if matches!(decoded, Err(StoreError::MemoryLimitExceeded { .. })) {
             self.next_segment = first_segment;
-            return self.next_column_chunks(chunk_count.div_ceil(2), memory_limit);
+            return self.next_column_chunks_inner(chunk_count.div_ceil(2), memory_limit, prewhere);
         }
         decoded
+    }
+
+    /// Routes one segment through the filter-first path when a predicate
+    /// selector applies and the segment decodes as a full direct chunk.
+    fn decode_column_chunk_maybe_filtered(
+        &self,
+        segment: segment::SegmentMeta,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
+        let full_direct = self.start <= segment.min_key && self.end >= segment.max_key;
+        if let Some((predicate_ids, select)) = prewhere
+            && full_direct
+            && !predicate_ids.is_empty()
+        {
+            let map_projection = |ids: &[u32]| -> Result<Vec<usize>, StoreError> {
+                ids.iter()
+                    .map(|id| {
+                        self.snapshot
+                            .schema
+                            .columns()
+                            .iter()
+                            .position(|column| column.id() == *id)
+                            .ok_or_else(|| {
+                                StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                            })
+                    })
+                    .collect()
+            };
+            let predicate_projection = map_projection(predicate_ids)?;
+            let row_count = usize::try_from(segment.row_count)
+                .map_err(|_| StoreError::FormatLimit("segment row count exceeds usize".into()))?;
+            let scan_memory = AtomicUsize::new(0);
+            let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+            let fetch = segment::read_projected_columns(
+                &self.snapshot.directory,
+                &segment,
+                &self.snapshot.schema,
+                &predicate_projection,
+                0,
+                row_count,
+                &scan_budget,
+            )?;
+            let predicate_blocks = fetch.blocks_decoded;
+            let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
+            let predicate_reserved = fetch.reserved_bytes;
+            drop(fetch);
+            scan_budget.release(predicate_reserved);
+            if let Some(ranges) = ranges {
+                let projection = map_projection(&self.column_ids)?;
+                let fetch = segment::read_projected_column_ranges(
+                    &self.snapshot.directory,
+                    &segment,
+                    &self.snapshot.schema,
+                    &projection,
+                    &ranges,
+                    &scan_budget,
+                )?;
+                let retained_bytes = size_of::<ProjectedColumnChunk>()
+                    .saturating_add(
+                        fetch
+                            .columns
+                            .capacity()
+                            .saturating_mul(size_of::<DecodedColumn>()),
+                    )
+                    .saturating_add(
+                        fetch
+                            .columns
+                            .iter()
+                            .map(DecodedColumn::retained_bytes)
+                            .sum(),
+                    );
+                scan_budget.release(fetch.reserved_bytes);
+                scan_budget.reserve(retained_bytes)?;
+                return Ok(ProjectedColumnChunk {
+                    columns: fetch.columns,
+                    row_count: ranges.iter().map(std::iter::ExactSizeIterator::len).sum(),
+                    stats: ScanStats {
+                        segments_read: 1,
+                        blocks_decoded: predicate_blocks + fetch.blocks_decoded,
+                        ..ScanStats::default()
+                    },
+                    retained_bytes,
+                });
+            }
+        }
+        self.decode_column_chunk(segment, memory_limit)
     }
 
     #[allow(clippy::too_many_lines)]
