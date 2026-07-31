@@ -1790,6 +1790,23 @@ impl ColumnBuilder {
         Ok(())
     }
 
+    /// Appends one pre-validated UTF-8 value without an intermediate `Cell`.
+    fn push_utf8(&mut self, bytes: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => {
+                heap.extend_from_slice(bytes);
+                offsets.push(heap.len());
+                validity.push(true);
+                Ok(())
+            }
+            _ => Err("string block value in a non-string column".to_owned()),
+        }
+    }
+
     /// Bytes retained by owned buffers, by length (used for reserve deltas).
     fn heap_len_bytes(&self) -> usize {
         match self {
@@ -1906,10 +1923,38 @@ pub(crate) fn read_projected_columns(
             let block_limit = block_start.saturating_add(header.block_rows);
             let selected =
                 projected_position.is_some() && block_start < end_row && block_limit > start_row;
-            let block =
+            let block = if let (Some(position), true, LogicalType::Utf8) =
+                (projected_position, selected, logical_type)
+            {
+                // String blocks decode straight into the column arena — no
+                // per-cell String allocation on the columnar scan path.
+                let builder = builders[position]
+                    .as_mut()
+                    .expect("builder exists for a projected column");
+                let before = builder.heap_len_bytes();
+                let block = read_file_block_utf8_into(
+                    &path,
+                    &mut decoder,
+                    memory,
+                    Utf8Sink {
+                        builder,
+                        lo: start_row.saturating_sub(block_start),
+                        hi: end_row.saturating_sub(block_start),
+                    },
+                )?;
+                blocks_decoded += 1;
+                let builder = builders[position]
+                    .as_ref()
+                    .expect("builder exists for a projected column");
+                let appended = builder.heap_len_bytes().saturating_sub(before);
+                memory.reserve(appended)?;
+                reserved_bytes = reserved_bytes.saturating_add(appended);
+                block
+            } else {
                 read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
                     Ok(selected)
-                })?;
+                })?
+            };
             reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
             let block_end = block_start
                 .checked_add(block.row_count)
@@ -2199,6 +2244,15 @@ struct BlockRead {
     reserved_bytes: usize,
 }
 
+/// A columnar destination for one string block: rows in `lo..hi`
+/// (block-relative) append straight into the builder's arena, so decode
+/// allocates no per-cell `String`.
+struct Utf8Sink<'a> {
+    builder: &'a mut ColumnBuilder,
+    lo: usize,
+    hi: usize,
+}
+
 #[allow(clippy::too_many_lines)]
 fn read_block_if<F>(
     path: &Path,
@@ -2209,7 +2263,7 @@ fn read_block_if<F>(
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
 {
-    read_block_if_with_budget(path, decoder, logical_type, None, should_decode)
+    read_block_if_with_budget(path, decoder, logical_type, None, should_decode, None)
 }
 
 fn read_block_if_bounded<F>(
@@ -2222,7 +2276,14 @@ fn read_block_if_bounded<F>(
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
 {
-    read_block_if_with_budget(path, decoder, logical_type, Some(memory), should_decode)
+    read_block_if_with_budget(
+        path,
+        decoder,
+        logical_type,
+        Some(memory),
+        should_decode,
+        None,
+    )
 }
 
 fn read_file_block_if_bounded<F>(
@@ -2267,6 +2328,47 @@ where
     )
 }
 
+/// Reads one string block from the segment file straight into a column
+/// builder's arena (see [`Utf8Sink`]), bypassing per-cell decode.
+fn read_file_block_utf8_into(
+    path: &Path,
+    decoder: &mut FileDecoder,
+    memory: &ScanMemoryBudget<'_>,
+    sink: Utf8Sink<'_>,
+) -> Result<BlockRead, StoreError> {
+    let block_offset = decoder.decode_position();
+    let payload_length = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    let encoded_length = payload_length.saturating_add(12);
+    let _encoded_memory = memory.reserve_temporary(encoded_length)?;
+    let mut encoded = Vec::with_capacity(encoded_length);
+    encoded.extend_from_slice(
+        &u32::try_from(payload_length)
+            .map_err(|_| StoreError::FormatLimit("block payload exceeds u32::MAX".into()))?
+            .to_le_bytes(),
+    );
+    encoded.resize(payload_length.saturating_add(4), 0);
+    decoder
+        .read_exact(&mut encoded[4..])
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    encoded.extend_from_slice(
+        &decoder
+            .u64()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?
+            .to_le_bytes(),
+    );
+    let mut block_decoder = Decoder::with_base_offset(&encoded, block_offset);
+    read_block_if_with_budget(
+        path,
+        &mut block_decoder,
+        LogicalType::Utf8,
+        Some(memory),
+        |_, _| Ok(true),
+        Some(sink),
+    )
+}
+
 #[allow(clippy::too_many_lines)]
 fn read_block_if_with_budget<F>(
     path: &Path,
@@ -2274,6 +2376,7 @@ fn read_block_if_with_budget<F>(
     logical_type: LogicalType,
     memory: Option<&ScanMemoryBudget<'_>>,
     should_decode: F,
+    utf8_sink: Option<Utf8Sink<'_>>,
 ) -> Result<BlockRead, StoreError>
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
@@ -2367,6 +2470,22 @@ where
         .transpose()?;
     let uncompressed = decompress_block(compression, compressed, uncompressed_length)
         .map_err(|reason| corrupt(path, compressed_offset, reason))?;
+    if let Some(sink) = utf8_sink {
+        decode_utf8_payload_into(
+            &uncompressed,
+            encoding,
+            row_count,
+            non_null_count,
+            null_bitmap,
+            sink,
+        )
+        .map_err(|reason| corrupt(path, compressed_offset, reason))?;
+        return Ok(BlockRead {
+            row_count,
+            cells: None,
+            reserved_bytes: 0,
+        });
+    }
     let decoded_heap =
         decoded_heap_upper_bound(&uncompressed, logical_type, encoding, non_null_count)
             .map_err(|reason| corrupt(path, compressed_offset, reason))?;
@@ -2412,6 +2531,118 @@ where
         cells: Some(cells),
         reserved_bytes: memory.map_or(0, |_| reserved_bytes),
     })
+}
+
+/// Decodes one string block payload straight into a column builder's arena.
+/// Values are UTF-8-validated once per distinct payload (per cell for Plain,
+/// per entry for `Dictionary`, per run for `RunLength`) — never cloned per row.
+fn decode_utf8_payload_into(
+    bytes: &[u8],
+    encoding: Encoding,
+    row_count: usize,
+    non_null_count: usize,
+    null_bitmap: &[u8],
+    sink: Utf8Sink<'_>,
+) -> Result<(), String> {
+    let Utf8Sink { builder, lo, hi } = sink;
+    let mut decoder = Decoder::new(bytes);
+    let is_null = |row: usize| null_bitmap[row / 8] & (1 << (row % 8)) != 0;
+    let validate = |value: &[u8]| {
+        std::str::from_utf8(value)
+            .map(|_| ())
+            .map_err(|_| "invalid UTF-8 block value".to_owned())
+    };
+    let mut produced = 0_usize;
+    match encoding {
+        Encoding::Plain => {
+            for row in 0..row_count {
+                let in_range = row >= lo && row < hi;
+                if is_null(row) {
+                    if in_range {
+                        builder.push(Cell::Null)?;
+                    }
+                    continue;
+                }
+                let value = decoder.bytes()?;
+                produced += 1;
+                if in_range {
+                    validate(value)?;
+                    builder.push_utf8(value)?;
+                }
+            }
+        }
+        Encoding::Dictionary => {
+            let dictionary_count = decoder.u32()? as usize;
+            let mut entries = Vec::with_capacity(dictionary_count);
+            for _ in 0..dictionary_count {
+                let entry = decoder.bytes()?;
+                validate(entry)?;
+                entries.push(entry);
+            }
+            for row in 0..row_count {
+                let in_range = row >= lo && row < hi;
+                if is_null(row) {
+                    if in_range {
+                        builder.push(Cell::Null)?;
+                    }
+                    continue;
+                }
+                let index = decoder.u32()? as usize;
+                let value = *entries
+                    .get(index)
+                    .ok_or_else(|| format!("dictionary index {index} is out of bounds"))?;
+                produced += 1;
+                if in_range {
+                    builder.push_utf8(value)?;
+                }
+            }
+        }
+        Encoding::RunLength => {
+            let run_count = decoder.u32()? as usize;
+            let mut runs_read = 0_usize;
+            let mut run_remaining = 0_usize;
+            let mut run_value: &[u8] = &[];
+            for row in 0..row_count {
+                let in_range = row >= lo && row < hi;
+                if is_null(row) {
+                    if in_range {
+                        builder.push(Cell::Null)?;
+                    }
+                    continue;
+                }
+                if run_remaining == 0 {
+                    if runs_read == run_count {
+                        return Err("run lengths produce too few values".to_owned());
+                    }
+                    run_remaining = decoder.u32()? as usize;
+                    if run_remaining == 0 {
+                        return Err("run length must be non-zero".to_owned());
+                    }
+                    run_value = decoder.bytes()?;
+                    validate(run_value)?;
+                    runs_read += 1;
+                }
+                run_remaining -= 1;
+                produced += 1;
+                if in_range {
+                    builder.push_utf8(run_value)?;
+                }
+            }
+            if run_remaining != 0 || runs_read != run_count {
+                return Err("run lengths exceed block value count".to_owned());
+            }
+        }
+        Encoding::BitPacked | Encoding::DeltaBitPacked => {
+            return Err("string block uses an integer encoding".to_owned());
+        }
+    }
+    if produced != non_null_count {
+        return Err(format!(
+            "encoding produced {produced} values, expected {non_null_count}"
+        ));
+    }
+    decoder.finish()?;
+    Ok(())
 }
 
 fn compress_block(compression: Compression, bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
