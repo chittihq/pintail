@@ -329,10 +329,12 @@ memory bandwidth while every materialized intermediate cost 2-8x.
 
 DECIMAL becomes i128-scaled Decimal128 and dates become Date32/DateTime64 in
 execution, populated by scan-time conversion from the current text carriers.
-A PTSEG v2 with fixed-width encodings is the intended end state but is a
-format-version bump and **remains pending explicit owner approval**, as does
-any relaxation of `unsafe_code = "forbid"` for SIMD intrinsics (current policy:
-autovectorizable scalar kernels plus safe SIMD crates only).
+A PTSEG v2 with fixed-width encodings **was approved by the owner on
+2026-07-31**: format-version bump, old segments stay readable, migration via
+compaction rewrite. In the same ruling the owner **confirmed
+`unsafe_code = "forbid"` stands**: kernels are autovectorizable scalar code
+plus safe SIMD crates only; any per-kernel exception requires new profiling
+evidence and a fresh ruling.
 
 ### Merge-on-read uses granule-level sweep-line classification
 
