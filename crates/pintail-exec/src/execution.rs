@@ -501,17 +501,40 @@ pub trait ScanProvider {
 }
 
 /// Hard per-query memory accounting.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct MemoryTracker {
     limit: usize,
-    used: usize,
+    /// Atomic so parallel operators can reserve from worker threads through
+    /// a shared `&MemoryTracker` (experiments/RESULTS.md e02: thread-local
+    /// partial state + merge is the adopted parallel-aggregation shape).
+    used: std::sync::atomic::AtomicUsize,
 }
+
+impl Clone for MemoryTracker {
+    fn clone(&self) -> Self {
+        Self {
+            limit: self.limit,
+            used: std::sync::atomic::AtomicUsize::new(self.used()),
+        }
+    }
+}
+
+impl PartialEq for MemoryTracker {
+    fn eq(&self, other: &Self) -> bool {
+        self.limit == other.limit && self.used() == other.used()
+    }
+}
+
+impl Eq for MemoryTracker {}
 
 impl MemoryTracker {
     /// Constructs a tracker with a hard byte limit.
     #[must_use]
     pub const fn new(limit: usize) -> Self {
-        Self { limit, used: 0 }
+        Self {
+            limit,
+            used: std::sync::atomic::AtomicUsize::new(0),
+        }
     }
 
     /// Returns the hard byte limit.
@@ -522,14 +545,14 @@ impl MemoryTracker {
 
     /// Returns bytes currently reserved by stateful operators.
     #[must_use]
-    pub const fn used(&self) -> usize {
-        self.used
+    pub fn used(&self) -> usize {
+        self.used.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Returns bytes still available to persistent query state.
     #[must_use]
-    pub const fn remaining(&self) -> usize {
-        self.limit.saturating_sub(self.used)
+    pub fn remaining(&self) -> usize {
+        self.limit.saturating_sub(self.used())
     }
 
     /// Reserves persistent operator memory.
@@ -538,28 +561,39 @@ impl MemoryTracker {
     ///
     /// Returns [`ExecError::MemoryLimitExceeded`] before exceeding the query
     /// limit.
-    pub fn reserve(&mut self, bytes: usize) -> Result<(), ExecError> {
-        let requested = self.used.saturating_add(bytes);
-        if requested > self.limit {
-            return Err(ExecError::MemoryLimitExceeded {
-                used: self.used,
+    pub fn reserve(&self, bytes: usize) -> Result<(), ExecError> {
+        let outcome = self.used.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |used| {
+                let requested = used.saturating_add(bytes);
+                (requested <= self.limit).then_some(requested)
+            },
+        );
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(used) => Err(ExecError::MemoryLimitExceeded {
+                used,
                 requested: bytes,
                 limit: self.limit,
-            });
+            }),
         }
-        self.used = requested;
-        Ok(())
     }
 
     /// Releases persistent operator memory.
-    pub fn release(&mut self, bytes: usize) {
-        self.used = self.used.saturating_sub(bytes);
+    pub fn release(&self, bytes: usize) {
+        let _ = self.used.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |used| Some(used.saturating_sub(bytes)),
+        );
     }
 
     fn ensure_transient(&self, bytes: usize) -> Result<(), ExecError> {
-        if self.used.saturating_add(bytes) > self.limit {
+        let used = self.used();
+        if used.saturating_add(bytes) > self.limit {
             return Err(ExecError::MemoryLimitExceeded {
-                used: self.used,
+                used,
                 requested: bytes,
                 limit: self.limit,
             });
@@ -590,9 +624,9 @@ impl Execution {
         let mut subquery_bytes = 0;
         resolve_plan_subqueries(&mut plan, provider, memory_limit, &mut subquery_bytes)?;
         let output_fields = plan.output_fields();
-        let mut memory = MemoryTracker::new(memory_limit);
+        let memory = MemoryTracker::new(memory_limit);
         memory.reserve(subquery_bytes)?;
-        let (root, _) = build_operator(plan, provider, &mut memory)?;
+        let (root, _) = build_operator(plan, provider, &memory)?;
         Ok(Self {
             root,
             memory,
@@ -612,7 +646,7 @@ impl Execution {
     ///
     /// Returns a source, expression, batch-invariant, or memory-limit error.
     pub fn next_batch(&mut self) -> Result<Option<RecordBatch>, ExecError> {
-        self.root.next_batch(&mut self.memory)
+        self.root.next_batch(&self.memory)
     }
 
     /// Returns current hard-cap accounting.
@@ -890,7 +924,7 @@ enum PullOperator {
 
 impl PullOperator {
     #[allow(clippy::too_many_lines)]
-    fn next_batch(&mut self, memory: &mut MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
+    fn next_batch(&mut self, memory: &MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
         match self {
             Self::Empty => Ok(None),
             Self::OneRow { emitted } => {
@@ -1184,7 +1218,7 @@ impl PullOperator {
 fn build_operator(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
     match plan {
         PhysicalPlan::Empty => Ok((PullOperator::Empty, Vec::new())),
@@ -1474,7 +1508,7 @@ struct HashJoinState {
 }
 
 impl HashJoinState {
-    fn clear_left(&mut self, memory: &mut MemoryTracker) {
+    fn clear_left(&mut self, memory: &MemoryTracker) {
         self.left_values = None;
         self.left_key = None;
         self.match_index = 0;
@@ -1482,7 +1516,7 @@ impl HashJoinState {
         self.left_reserved = 0;
     }
 
-    fn clear_batch(&mut self, memory: &mut MemoryTracker) {
+    fn clear_batch(&mut self, memory: &MemoryTracker) {
         self.clear_left(memory);
         self.batch = None;
         self.row = 0;
@@ -1495,7 +1529,7 @@ fn build_hash_join_state(
     right: &mut PullOperator,
     right_key: &CompiledExpr,
     key_mode: JoinKeyMode,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<HashJoinState, ExecError> {
     let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
     while let Some(batch) = right.next_batch(memory)? {
@@ -1564,7 +1598,7 @@ fn next_hash_join_batch(
     right_width: usize,
     column_types: &[DataType],
     state: &mut HashJoinState,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
     let mut rows = Vec::<Vec<Value>>::with_capacity(DEFAULT_BATCH_ROWS);
     let mut buffered_bytes = 0_usize;
@@ -1646,7 +1680,7 @@ fn prepare_hash_join_left(
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
     state: &mut HashJoinState,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<bool, ExecError> {
     loop {
         let exhausted = state
@@ -1750,7 +1784,7 @@ impl AggregateState {
         &mut self,
         aggregate: &CompiledAggregate,
         value: &Value,
-        memory: &mut MemoryTracker,
+        memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
         self.update_with_number(aggregate, value, None, memory)
     }
@@ -1760,7 +1794,7 @@ impl AggregateState {
         aggregate: &CompiledAggregate,
         value: &Value,
         number: Option<f64>,
-        memory: &mut MemoryTracker,
+        memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
         if matches!(value, Value::Null) {
             return Ok(());
@@ -1851,7 +1885,7 @@ impl AggregateState {
         &mut self,
         aggregate: &CompiledAggregate,
         mut other: Self,
-        memory: &mut MemoryTracker,
+        memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
         // Merging may replace the extreme through the Value path; the cached
         // f64 guide is conservative-invalidated rather than tracked.
@@ -1928,7 +1962,7 @@ impl AggregateState {
     }
 
     #[allow(clippy::cast_precision_loss)]
-    fn finish(self, memory: &mut MemoryTracker) -> Result<Value, ExecError> {
+    fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
             AggregateValue::Sum(value)
@@ -1952,7 +1986,7 @@ impl AggregateState {
 fn replace_retained_value(
     current: &mut Option<Value>,
     replacement: Value,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
     let current_bytes = current.as_ref().map_or(0, Value::heap_bytes);
     let replacement_bytes = replacement.heap_bytes();
@@ -1970,7 +2004,7 @@ fn build_hash_aggregate(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
     if group_by.is_empty()
         && !aggregates.is_empty()
@@ -2141,7 +2175,7 @@ fn build_buffered_hash_aggregate(
     group_by: &[CompiledExpr],
     direct_columns: Option<&[usize]>,
     aggregates: &[CompiledAggregate],
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
     let Some(first_batch) = input.next_batch(memory)? else {
         return Ok(MaterializedRows {
@@ -2149,23 +2183,10 @@ fn build_buffered_hash_aggregate(
             position: 0,
         });
     };
-    if let Some([column]) = direct_columns
-        && first_batch.column(*column).is_some_and(|values| {
-            matches!(
-                values.data_type().storage_type(),
-                DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
-            )
-        })
-    {
-        return build_direct_column_aggregate(
-            input,
-            Some(first_batch),
-            direct_columns.expect("matched direct columns"),
-            aggregates,
-            memory,
-        );
-    }
-
+    // Single int-typed group columns previously diverted to the serial
+    // build_direct_column_aggregate; per experiments/RESULTS.md e02,
+    // thread-local partial groups + merge win at both low and high
+    // cardinality, so they stay on the buffered parallel path below.
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     let mut first_batch = Some(first_batch);
     loop {
@@ -2261,7 +2282,7 @@ fn build_fused_inner_join_aggregate(
     input: &mut PullOperator,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<Option<MaterializedRows>, ExecError> {
     let PullOperator::HashJoin {
         left,
@@ -2454,7 +2475,7 @@ fn build_local_fused_join_groups(
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
-    let mut memory = MemoryTracker::new(usize::MAX);
+    let memory = MemoryTracker::new(usize::MAX);
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
@@ -2565,7 +2586,7 @@ fn build_local_fused_join_groups(
                         }
                     }
                 };
-                state.update(aggregate, value, &mut memory)?;
+                state.update(aggregate, value, &memory)?;
             }
         }
     }
@@ -2858,7 +2879,7 @@ fn build_local_direct_groups(
     }
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
-    let mut memory = MemoryTracker::new(usize::MAX);
+    let memory = MemoryTracker::new(usize::MAX);
     let batch_bytes = batch.estimated_bytes();
     for row in batch.selection().selected_rows() {
         let raw_hash = direct_group_hash(batch, row, group_columns)?;
@@ -2896,7 +2917,7 @@ fn build_local_direct_groups(
             batch_bytes,
             aggregates,
             &mut groups[group_index].states,
-            &mut memory,
+            &memory,
         )?;
     }
     Ok(groups
@@ -2919,7 +2940,7 @@ fn build_local_expression_groups(
     aggregates: &[CompiledAggregate],
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
-    let mut memory = MemoryTracker::new(usize::MAX);
+    let memory = MemoryTracker::new(usize::MAX);
     let batch_bytes = batch.estimated_bytes();
     for row in batch.selection().selected_rows() {
         let values = group_by
@@ -2941,7 +2962,7 @@ fn build_local_expression_groups(
             batch_bytes,
             aggregates,
             &mut group.states,
-            &mut memory,
+            &memory,
         )?;
     }
     Ok(groups)
@@ -2949,7 +2970,7 @@ fn build_local_expression_groups(
 
 fn finish_aggregate_groups(
     groups: impl ExactSizeIterator<Item = AggregateGroup>,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
     memory.reserve(groups.len().saturating_mul(size_of::<Vec<Value>>()))?;
     let mut rows = Vec::with_capacity(groups.len());
@@ -2971,7 +2992,7 @@ fn build_direct_column_aggregate(
     mut first_batch: Option<RecordBatch>,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
     let mut groups = Vec::<AggregateGroup>::new();
     let mut scalar_index = HashMap::<Value, usize>::new();
@@ -3164,7 +3185,7 @@ fn update_aggregate_states(
     batch_bytes: usize,
     aggregates: &[CompiledAggregate],
     states: &mut [AggregateState],
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
     let mut numeric_cache = [None::<(usize, f64)>; 8];
     let mut numeric_cache_len = 0_usize;
@@ -3475,7 +3496,7 @@ fn next_materialized_batch(
 
 fn materialize(
     input: &mut PullOperator,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     let mut rows = Vec::new();
     while let Some(batch) = input.next_batch(memory)? {
@@ -3509,7 +3530,7 @@ fn build_sort(
     input: &mut PullOperator,
     keys: &[BoundOrderKey],
     top_k: Option<usize>,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
     let compare = |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys);
     let mut rows = if let Some(top_k) = top_k {
@@ -3526,7 +3547,7 @@ fn materialize_top_k(
     top_k: usize,
     keys: &[BoundOrderKey],
     compare: impl Copy + FnMut(&Vec<Value>, &Vec<Value>) -> Ordering,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     if top_k == 0 {
         return Ok(Vec::new());
@@ -3681,7 +3702,7 @@ fn reserve_vec_elements<T>(
     values: &mut Vec<T>,
     additional: usize,
     minimum_growth: usize,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<usize, ExecError> {
     let required = values.len().saturating_add(additional);
     if required <= values.capacity() {
@@ -3720,7 +3741,7 @@ fn reserve_hash_map_entries<K, V>(
     additional: usize,
     entry_bytes: usize,
     transient_bytes: usize,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<usize, ExecError>
 where
     K: Eq + Hash,
@@ -3758,7 +3779,7 @@ fn reserve_hash_set_entries<T>(
     additional: usize,
     entry_bytes: usize,
     transient_bytes: usize,
-    memory: &mut MemoryTracker,
+    memory: &MemoryTracker,
 ) -> Result<usize, ExecError>
 where
     T: Eq + Hash,
@@ -4459,17 +4480,16 @@ mod tests {
 
     #[test]
     fn accounts_for_reserved_vector_capacity_before_pushes() {
-        let mut memory = MemoryTracker::new(16 * 1024);
+        let memory = MemoryTracker::new(16 * 1024);
         let mut values = Vec::<String>::new();
 
-        let reserved =
-            reserve_vec_elements(&mut values, 1, 64, &mut memory).expect("reserve capacity");
+        let reserved = reserve_vec_elements(&mut values, 1, 64, &memory).expect("reserve capacity");
         assert_eq!(reserved, values.capacity() * size_of::<String>(),);
         assert_eq!(memory.used(), reserved);
 
         values.push("x".to_owned());
         assert_eq!(
-            reserve_vec_elements(&mut values, 1, 64, &mut memory).expect("reuse spare capacity"),
+            reserve_vec_elements(&mut values, 1, 64, &memory).expect("reuse spare capacity"),
             0
         );
         assert_eq!(memory.used(), reserved);
