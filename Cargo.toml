@@ -86,6 +86,8 @@ pedantic = "warn"
 # usable at roughly half the artifact size and link time.
 [profile.dev]
 debug = "line-tables-only"
+lto = "off"
 
 [profile.test]
 debug = "line-tables-only"
+lto = "off"

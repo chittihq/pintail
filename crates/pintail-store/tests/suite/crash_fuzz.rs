@@ -36,7 +36,7 @@ fn short_kill9_crash_fuzz_matches_the_acknowledged_commit_oracle() {
             .args([
                 "--ignored",
                 "--exact",
-                "crash_fuzz_worker",
+                "suite::crash_fuzz::crash_fuzz_worker",
                 "--test-threads=1",
             ])
             .env(WORKER_ENV, "1")
