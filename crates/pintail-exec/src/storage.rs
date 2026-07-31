@@ -223,6 +223,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 column_rows: 0,
                 prefetched: VecDeque::new(),
                 stream: None,
+                key_position: None,
+                started: true,
                 types,
                 retained_bytes: stream_overhead,
                 remaining: None,
@@ -250,12 +252,18 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     ..PhysicalScanStats::default()
                 },
             );
+            let key_position = match scan.table.key_column_ids.as_slice() {
+                [key_id] => scan.projected_column_ids.iter().position(|id| id == key_id),
+                _ => None,
+            };
             return Ok(Box::new(SnapshotStream {
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
                 prefetched: VecDeque::new(),
                 stream: Some(stream),
+                key_position,
+                started: false,
                 types,
                 retained_bytes: stream_overhead,
                 remaining: scan
@@ -323,6 +331,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             column_rows: 0,
             prefetched: VecDeque::new(),
             stream: None,
+            key_position: None,
+            started: true,
             types,
             retained_bytes,
             remaining: None,
@@ -582,6 +592,11 @@ struct SnapshotStream {
     rows: VecDeque<Vec<Value>>,
     columns: Vec<DecodedColumn>,
     column_rows: usize,
+    /// Projected position of the table's single primary-key column, when
+    /// projected — the only column a probe-side restriction can prune on.
+    key_position: Option<usize>,
+    /// Whether any batch was pulled; restrictions are ignored afterwards.
+    started: bool,
     prefetched: VecDeque<ProjectedColumnChunk>,
     stream: Option<ProjectedScanStream>,
     types: Vec<pintail_types::DataType>,
@@ -592,6 +607,7 @@ struct SnapshotStream {
 impl BatchStream for SnapshotStream {
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        self.started = true;
         while self.rows.is_empty()
             && self.column_rows == 0
             && self.remaining != Some(0)
@@ -755,6 +771,66 @@ impl BatchStream for SnapshotStream {
             });
         }
         batch_memory_upper_bound(&self.types, row_count)
+    }
+
+    fn restrict_key_position_range(&mut self, position: usize, min: &Value, max: &Value) {
+        if self.started || self.key_position != Some(position) {
+            return;
+        }
+        let Some(stream) = &self.stream else {
+            return;
+        };
+        let (start, end) = stream.key_range();
+        let ([start_part], [end_part]) = (start.parts(), end.parts()) else {
+            return;
+        };
+        let Some(min_part) = key_part_for_bound(min, start_part) else {
+            return;
+        };
+        let Some(max_part) = key_part_for_bound(max, start_part) else {
+            return;
+        };
+        let new_start = if min_part > *start_part {
+            min_part
+        } else {
+            start_part.clone()
+        };
+        let new_end = if max_part < *end_part {
+            max_part
+        } else {
+            end_part.clone()
+        };
+        if new_start == *start_part && new_end == *end_part {
+            return;
+        }
+        if new_start > new_end {
+            // The build side proves no probe row can match.
+            self.stream = None;
+            return;
+        }
+        let column_ids = stream.column_ids().to_vec();
+        let new_start = PrimaryKey::new(vec![new_start]).expect("one-part key");
+        let new_end = PrimaryKey::new(vec![new_end]).expect("one-part key");
+        if let Ok(Some(rebuilt)) =
+            stream
+                .snapshot()
+                .scan_projected_range_stream(&new_start, &new_end, &column_ids)
+        {
+            self.stream = Some(rebuilt);
+        }
+        // On decline or error the original stream stays: best-effort pruning.
+    }
+}
+
+/// Converts a probe-side bound into the key-part shape of the scanned
+/// table's primary key, refusing any type mismatch (a mismatched bound
+/// cannot prune safely).
+fn key_part_for_bound(value: &Value, template: &KeyPart) -> Option<KeyPart> {
+    match (value, template) {
+        (Value::Int64(value), KeyPart::Int64(_)) => Some(KeyPart::Int64(*value)),
+        (Value::UInt64(value), KeyPart::UInt64(_)) => Some(KeyPart::UInt64(*value)),
+        (Value::Utf8(value), KeyPart::Utf8(_)) => Some(KeyPart::Utf8(value.clone())),
+        _ => None,
     }
 }
 
@@ -988,8 +1064,8 @@ mod tests {
     use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
     use crate::{
-        ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
-        explain_analyze_statement,
+        ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlanner, ScanProvider,
+        SnapshotScanProvider, explain_analyze_statement,
     };
 
     fn execute_values(
@@ -1943,5 +2019,82 @@ mod tests {
                 "{sql} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn probe_restriction_narrows_an_unstarted_scan() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        for start in [1_u64, 1001, 2001, 3001] {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 1000)
+                        .map(|key| row(key, &format!("value-{key}")))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(4000),
+        )
+        .expect("table entry")
+        .with_key_columns(vec![1])
+        .expect("key columns");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let statement = parse_statement("SELECT id FROM events").expect("parse");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical plan");
+        let crate::PhysicalPlan::Project { input, .. } = physical else {
+            panic!("expected projection over scan");
+        };
+        let crate::PhysicalPlan::Scan(scan) = *input else {
+            panic!("expected scan input");
+        };
+
+        let mut stream = provider.open_scan(&scan, 64 * 1024 * 1024).expect("open");
+        stream.restrict_key_position_range(0, &Value::UInt64(1500), &Value::UInt64(1600));
+        let mut ids = Vec::new();
+        while let Some(batch) = stream.next_batch(64 * 1024 * 1024).expect("pull") {
+            for row in batch.selection().selected_rows() {
+                let Some(Value::UInt64(id)) = batch.column(0).and_then(|c| c.value(row)) else {
+                    panic!("expected id");
+                };
+                ids.push(*id);
+            }
+        }
+        assert_eq!(ids, (1500..=1600).collect::<Vec<_>>());
+
+        // An empty intersection yields no rows at all.
+        let mut stream = provider.open_scan(&scan, 64 * 1024 * 1024).expect("open");
+        stream.restrict_key_position_range(0, &Value::UInt64(9000), &Value::UInt64(9001));
+        assert!(stream.next_batch(64 * 1024 * 1024).expect("pull").is_none());
+
+        // Restrictions after the stream starts are ignored.
+        let mut stream = provider.open_scan(&scan, 64 * 1024 * 1024).expect("open");
+        let first = stream
+            .next_batch(64 * 1024 * 1024)
+            .expect("pull")
+            .expect("first batch");
+        drop(first);
+        stream.restrict_key_position_range(0, &Value::UInt64(9000), &Value::UInt64(9001));
+        assert!(
+            stream.next_batch(64 * 1024 * 1024).expect("pull").is_some(),
+            "started streams ignore restrictions"
+        );
     }
 }

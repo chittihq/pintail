@@ -1585,6 +1585,24 @@ impl ProjectedScanStream {
         })
     }
 
+    /// Returns the scanned key range.
+    #[must_use]
+    pub fn key_range(&self) -> (&PrimaryKey, &PrimaryKey) {
+        (&self.start, &self.end)
+    }
+
+    /// Returns the projected stable column IDs in output order.
+    #[must_use]
+    pub fn column_ids(&self) -> &[u32] {
+        &self.column_ids
+    }
+
+    /// Returns the snapshot this stream decodes from.
+    #[must_use]
+    pub const fn snapshot(&self) -> &TableSnapshot {
+        &self.snapshot
+    }
+
     /// Returns immutable segments that will be decoded.
     #[must_use]
     pub const fn segment_count(&self) -> usize {

@@ -513,6 +513,11 @@ pub trait BatchStream: Send {
     /// pull while the stream's currently retained bytes are still live.
     #[must_use]
     fn next_batch_memory_upper_bound(&self) -> usize;
+
+    /// Narrows the stream to rows whose value in the projected column at
+    /// `position` lies within `[min, max]`. Best-effort: streams that cannot
+    /// prune (already started, non-key column, type mismatch) ignore it.
+    fn restrict_key_position_range(&mut self, _position: usize, _min: &Value, _max: &Value) {}
 }
 
 /// Opens storage scans for physical execution.
@@ -976,6 +981,17 @@ enum PullOperator {
 }
 
 impl PullOperator {
+    /// Forwards a probe-side key restriction to the underlying scan, passing
+    /// through filters only — any other operator changes row identity or
+    /// layout and stops the pushdown.
+    fn restrict_probe_range(&mut self, position: usize, min: &Value, max: &Value) {
+        match self {
+            Self::Scan { stream, .. } => stream.restrict_key_position_range(position, min, max),
+            Self::Filter { input, .. } => input.restrict_probe_range(position, min, max),
+            _ => {}
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, memory: &MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
         match self {
@@ -1055,9 +1071,18 @@ impl PullOperator {
                 state,
             } => {
                 if state.is_none() {
-                    *state = Some(Box::new(build_hash_join_state(
-                        right, right_key, *key_mode, memory,
-                    )?));
+                    let built = build_hash_join_state(right, right_key, *key_mode, memory)?;
+                    // Inner and semi joins cannot match probe rows outside
+                    // the build side's key range, so the probe scan can prune
+                    // storage before decoding anything. Left/anti joins need
+                    // every probe row.
+                    if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)
+                        && let Some((minimum, maximum)) = &built.key_bounds
+                        && let Some(position) = left_key.column_index()
+                    {
+                        left.restrict_probe_range(position, minimum, maximum);
+                    }
+                    *state = Some(Box::new(built));
                 }
                 next_hash_join_batch(
                     left,
@@ -1592,6 +1617,8 @@ const MAX_DENSE_SPAN: i128 = 1 << 22;
 
 struct HashJoinState {
     build: HashMap<JoinHashKey, Vec<Vec<Value>>>,
+    /// Min/max of non-null build keys, for probe-side scan restriction.
+    key_bounds: Option<(Value, Value)>,
     batch: Option<RecordBatch>,
     batch_reserved: usize,
     row: usize,
@@ -1626,6 +1653,12 @@ fn build_hash_join_state(
     memory: &MemoryTracker,
 ) -> Result<HashJoinState, ExecError> {
     let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
+    let mut key_bounds: Option<(Value, Value)> = None;
+    let bound_order = BoundOrderKey {
+        index: 0,
+        ascending: true,
+        nulls_first: true,
+    };
     while let Some(batch) = right.next_batch(memory)? {
         let batch_bytes = batch.estimated_bytes();
         reserve_hash_map_entries(
@@ -1647,7 +1680,24 @@ fn build_hash_join_state(
                     .saturating_add(row_bytes)
                     .saturating_add(key_memory),
             )?;
-            let Some(key) = normalized_join_key(right_key.evaluate(&batch, row)?, key_mode)? else {
+            let value = right_key.evaluate(&batch, row)?;
+            if !matches!(value, Value::Null) {
+                match &mut key_bounds {
+                    None => {
+                        memory.reserve(value.heap_bytes().saturating_mul(2))?;
+                        key_bounds = Some((value.clone(), value.clone()));
+                    }
+                    Some((minimum, maximum)) => {
+                        if compare_sort_values(&value, minimum, bound_order) == Ordering::Less {
+                            *minimum = value.clone();
+                        }
+                        if compare_sort_values(&value, maximum, bound_order) == Ordering::Greater {
+                            *maximum = value.clone();
+                        }
+                    }
+                }
+            }
+            let Some(key) = normalized_join_key(value, key_mode)? else {
                 continue;
             };
             let key_bytes = if build.contains_key(&key) {
@@ -1673,6 +1723,7 @@ fn build_hash_join_state(
     }
     Ok(HashJoinState {
         build,
+        key_bounds,
         batch: None,
         batch_reserved: 0,
         row: 0,
