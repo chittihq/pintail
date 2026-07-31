@@ -1459,6 +1459,9 @@ fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> 
 /// Dense direct-address join table: (minimum key, per-offset build buckets).
 type DenseJoinTable<'a> = (i128, Vec<Option<&'a Vec<Vec<Value>>>>);
 
+/// Widest key span the dense join table will materialize (~4M slots).
+const MAX_DENSE_SPAN: i128 = 1 << 22;
+
 struct HashJoinState {
     build: HashMap<JoinHashKey, Vec<Vec<Value>>>,
     batch: Option<RecordBatch>,
@@ -2298,7 +2301,6 @@ fn build_fused_inner_join_aggregate(
         .iter()
         .map(|column| column - left_width)
         .collect::<Vec<_>>();
-    const MAX_DENSE_SPAN: i128 = 1 << 22;
     let build_start = memory.used();
     let join = build_hash_join_state(right, right_key, *key_mode, memory)?;
     let build_reserved = memory.used().saturating_sub(build_start);
