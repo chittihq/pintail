@@ -216,3 +216,77 @@ fn version_one_segments_remain_readable() {
         "v1 segment reads identically"
     );
 }
+
+#[test]
+fn compaction_rewrites_v1_segments_as_v2_with_native_units() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    // Two flushes of native-eligible rows, then downgrade both segments'
+    // version bytes to v1: compaction must read them fine and publish a
+    // v2 segment carrying units on the wire.
+    let versioned = |id: u64, version: u64, amount: &str, day: &str| {
+        StoredRow::new(
+            key(id),
+            vec![
+                Value::UInt64(id),
+                Value::Utf8(amount.into()),
+                Value::Utf8(day.into()),
+                Value::Null,
+            ],
+            version,
+            false,
+        )
+    };
+    let rows = vec![
+        versioned(1, 1, "10.00", "2024-01-01"),
+        versioned(2, 1, "20.50", "2024-01-02"),
+    ];
+    // Overlapping key range with higher versions, so compaction has work.
+    let more = vec![
+        versioned(1, 2, "11.00", "2024-02-01"),
+        versioned(3, 2, "30.25", "2024-01-03"),
+    ];
+    let options = StoreOptions {
+        compaction_fan_in: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open table");
+    table.ingest(rows.clone()).expect("first ingest");
+    let first = table.flush().expect("first flush");
+    let first_path = first.segment_path().expect("first segment").to_path_buf();
+    table.ingest(more.clone()).expect("second ingest");
+    let second = table.flush().expect("second flush");
+    let second_path = second.segment_path().expect("second segment").to_path_buf();
+    drop(table);
+    for path in [&first_path, &second_path] {
+        let mut bytes = std::fs::read(path).expect("segment bytes");
+        assert_eq!(bytes[5], 2);
+        bytes[5] = 1;
+        std::fs::write(path, bytes).expect("downgrade to v1");
+    }
+
+    let mut table =
+        TableStore::open(directory.path(), schema(), options).expect("reopen over v1 segments");
+    let outcome = table.compact().expect("compact");
+    assert_eq!(outcome.input_segments(), 2);
+    let output = outcome
+        .output_path()
+        .expect("compacted segment")
+        .to_path_buf();
+    let bytes = std::fs::read(&output).expect("compacted bytes");
+    assert_eq!(bytes[5], 2, "compaction publishes v2");
+    for (id, tag) in wire_types(&bytes) {
+        if let 2..=3 = id {
+            assert_eq!(tag, 1, "column {id} stores native units after rewrite");
+        }
+    }
+    let expected = vec![
+        versioned(1, 2, "11.00", "2024-02-01"),
+        versioned(2, 1, "20.50", "2024-01-02"),
+        versioned(3, 2, "30.25", "2024-01-03"),
+    ];
+    assert_eq!(
+        table.snapshot().scan().expect("post-compaction scan"),
+        expected,
+        "v1 data survives the v2 rewrite byte-identically"
+    );
+}
