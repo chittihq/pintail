@@ -2798,11 +2798,26 @@ fn direct_group_matches_exact(
 }
 
 fn direct_group_hash(batch: &RecordBatch, row: usize, columns: &[usize]) -> Result<u64, ExecError> {
-    let mut hasher = DefaultHasher::new();
+    // The result only routes rows into LOCAL per-batch groups; cross-batch
+    // merging keys on normalized values, so per-column path choice (typed vs
+    // Value hashing) just needs to be consistent within one batch — and it
+    // is, because a column's typed projection is a per-batch constant.
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for column in columns {
-        direct_group_value(batch, row, *column)?.hash(&mut hasher);
+        let typed_hash = batch
+            .column(*column)
+            .and_then(ColumnVector::typed)
+            .and_then(|(typed, validity)| typed.group_hash_at(row, validity));
+        let column_hash = if let Some(column_hash) = typed_hash {
+            column_hash
+        } else {
+            let mut hasher = DefaultHasher::new();
+            direct_group_value(batch, row, *column)?.hash(&mut hasher);
+            hasher.finish()
+        };
+        hash = crate::batch::mix64(hash ^ column_hash);
     }
-    Ok(hasher.finish())
+    Ok(hash)
 }
 
 fn update_aggregate_states(

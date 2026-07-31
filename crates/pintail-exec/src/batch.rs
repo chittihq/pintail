@@ -27,7 +27,42 @@ pub(crate) enum TypedValues {
     },
 }
 
+/// splitmix64 finalizer: cheap, well-distributed mixing for local group hashes.
+#[inline]
+pub(crate) const fn mix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
 impl TypedValues {
+    /// A cheap per-row hash for LOCAL group routing (never crosses batches —
+    /// cross-batch merging uses normalized value keys, so any within-batch
+    /// consistent function is correct). `None` when the row must fall back to
+    /// the `Value` hash path.
+    pub(crate) fn group_hash_at(&self, row: usize, validity: &ValidityMask) -> Option<u64> {
+        const NULL_SENTINEL: u64 = 0x6b8b_4567_327b_23c6;
+        if !validity.is_valid(row) {
+            return Some(NULL_SENTINEL);
+        }
+        Some(match self {
+            Self::Int64(values) => mix64(u64::from_ne_bytes(values.get(row)?.to_ne_bytes()) ^ 0x01),
+            Self::UInt64(values) => mix64(*values.get(row)? ^ 0x02),
+            Self::Float64(values) => mix64(values.get(row)?.to_bits() ^ 0x03),
+            Self::Utf8(column) => {
+                let (head, tail) = column.views().get(row)?.hash_words();
+                mix64(head) ^ mix64(tail ^ 0x04)
+            }
+            Self::Decimal128 { values, .. } => {
+                let bytes = values.get(row)?.to_ne_bytes();
+                let low = u64::from_ne_bytes(bytes[..8].try_into().expect("8 bytes"));
+                let high = u64::from_ne_bytes(bytes[8..].try_into().expect("8 bytes"));
+                mix64(low ^ 0x05) ^ mix64(high)
+            }
+        })
+    }
+
     /// The row's numeric value for float-accumulating aggregates, straight
     /// from packed storage. Matches `mysql_f64` semantics bit-for-bit inside
     /// f64's exact integer range: dividing an exactly-represented scaled

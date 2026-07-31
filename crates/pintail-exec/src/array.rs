@@ -209,6 +209,19 @@ impl StrView {
 }
 
 impl StrView {
+    /// The view's fixed-width words for cheap hashing: `(len | prefix, tail)`.
+    /// For inline strings this covers the full content; long strings expose
+    /// their heap offset, which is stable within one column — equal long
+    /// strings at different offsets may hash apart, which only costs an extra
+    /// local group later unified by the normalized-key merge.
+    #[must_use]
+    pub(crate) fn hash_words(&self) -> (u64, u64) {
+        (
+            (u64::from(self.len) << 32) | u64::from(u32::from_le_bytes(self.prefix)),
+            u64::from_le_bytes(self.tail),
+        )
+    }
+
     /// Runs `f` over the string's bytes without allocating, copying at most
     /// 12 inline bytes to the stack.
     ///
