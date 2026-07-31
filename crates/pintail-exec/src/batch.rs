@@ -39,76 +39,7 @@ pub(crate) enum TypedValues {
     },
 }
 
-/// Parses canonical `YYYY-MM-DD` into days since 1970-01-01 (proleptic
-/// Gregorian, Howard Hinnant's algorithm). `None` on any deviation.
-pub(crate) fn parse_date_days(text: &str) -> Option<i64> {
-    let bytes = text.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return None;
-    }
-    let digit = |byte: u8| -> Option<i64> { byte.is_ascii_digit().then(|| i64::from(byte - b'0')) };
-    let year =
-        digit(bytes[0])? * 1000 + digit(bytes[1])? * 100 + digit(bytes[2])? * 10 + digit(bytes[3])?;
-    let month = digit(bytes[5])? * 10 + digit(bytes[6])?;
-    let day = digit(bytes[8])? * 10 + digit(bytes[9])?;
-    if !(1..=12).contains(&month) || day < 1 {
-        return None;
-    }
-    // Reject impossible calendar dates: the day-count arithmetic below would
-    // otherwise normalize 2023-02-31 onto the same epoch day as 2023-03-03,
-    // letting an invalid literal match a valid stored date.
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days = match month {
-        2 if leap => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    };
-    if day > month_days {
-        return None;
-    }
-    let adjusted_year = if month <= 2 { year - 1 } else { year };
-    let era = adjusted_year.div_euclid(400);
-    let year_of_era = adjusted_year - era * 400;
-    let month_shifted = if month > 2 { month - 3 } else { month + 9 };
-    let day_of_year = (153 * month_shifted + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    Some(era * 146_097 + day_of_era - 719_468)
-}
-
-/// Parses canonical `YYYY-MM-DD HH:MM:SS[.ffffff]` into microseconds since
-/// the epoch. `None` on any deviation from the canonical shape.
-pub(crate) fn parse_datetime_micros(text: &str) -> Option<i64> {
-    let bytes = text.as_bytes();
-    if bytes.len() < 19 || bytes[10] != b' ' || bytes[13] != b':' || bytes[16] != b':' {
-        return None;
-    }
-    let days = parse_date_days(&text[..10])?;
-    let digit = |byte: u8| -> Option<i64> { byte.is_ascii_digit().then(|| i64::from(byte - b'0')) };
-    let hour = digit(bytes[11])? * 10 + digit(bytes[12])?;
-    let minute = digit(bytes[14])? * 10 + digit(bytes[15])?;
-    let second = digit(bytes[17])? * 10 + digit(bytes[18])?;
-    if hour > 23 || minute > 59 || second > 59 {
-        return None;
-    }
-    let mut micros = 0_i64;
-    let mut digits = 0_u32;
-    if bytes.len() > 19 {
-        // A trailing dot with no fractional digits is not canonical.
-        if bytes[19] != b'.' || bytes.len() == 20 || bytes.len() > 26 {
-            return None;
-        }
-        for &byte in &bytes[20..] {
-            micros = micros * 10 + digit(byte)?;
-            digits += 1;
-        }
-    }
-    for _ in digits..6 {
-        micros *= 10;
-    }
-    let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second;
-    seconds.checked_mul(1_000_000)?.checked_add(micros)
-}
+pub(crate) use pintail_types::{parse_date_days, parse_datetime_micros, parse_decimal_scaled};
 
 /// splitmix64 finalizer: cheap, well-distributed mixing for local group hashes.
 #[inline]
@@ -191,57 +122,6 @@ impl TypedValues {
             Self::Utf8(_) | Self::Temporal { .. } => None,
         }
     }
-}
-
-/// Parses canonical decimal text into a scaled i128. Conservative: returns
-/// `None` (falling back to text semantics) on any digit beyond `scale`,
-/// malformed byte, or overflow — never silently rounds.
-pub(crate) fn parse_decimal_scaled(text: &str, scale: u8) -> Option<i128> {
-    let bytes = text.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let (negative, rest) = match bytes[0] {
-        b'-' => (true, &bytes[1..]),
-        b'+' => (false, &bytes[1..]),
-        _ => (false, bytes),
-    };
-    let mut integer: i128 = 0;
-    let mut fraction: i128 = 0;
-    let mut fraction_digits: u8 = 0;
-    let mut seen_dot = false;
-    let mut seen_digit = false;
-    for &byte in rest {
-        match byte {
-            b'0'..=b'9' => {
-                seen_digit = true;
-                let digit = i128::from(byte - b'0');
-                if seen_dot {
-                    if fraction_digits < scale {
-                        fraction = fraction.checked_mul(10)?.checked_add(digit)?;
-                        fraction_digits += 1;
-                    } else if digit != 0 {
-                        return None;
-                    }
-                } else {
-                    integer = integer.checked_mul(10)?.checked_add(digit)?;
-                }
-            }
-            b'.' if !seen_dot => seen_dot = true,
-            _ => return None,
-        }
-    }
-    if !seen_digit {
-        return None;
-    }
-    while fraction_digits < scale {
-        fraction = fraction.checked_mul(10)?;
-        fraction_digits += 1;
-    }
-    let magnitude = integer
-        .checked_mul(10_i128.checked_pow(u32::from(scale))?)?
-        .checked_add(fraction)?;
-    Some(if negative { -magnitude } else { magnitude })
 }
 
 /// Builds the packed projection for a homogeneous column: one builder chosen
