@@ -19,7 +19,7 @@ export const benchmarkQueries: BenchmarkQuery[] = [
   },
   {
     name: 'Q4: Region × status breakdown',
-    sql: 'SELECT region, status, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total FROM orders GROUP BY region, status ORDER BY total DESC LIMIT 20',
+    sql: 'SELECT region, status, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total FROM orders GROUP BY region, status ORDER BY total DESC, region, status LIMIT 20',
   },
   {
     name: 'Q5: Monthly revenue (2023)',
@@ -29,7 +29,7 @@ export const benchmarkQueries: BenchmarkQuery[] = [
   },
   {
     name: 'Q6: Top 10 spenders',
-    sql: 'SELECT user_id, COUNT(*) AS order_count, ROUND(SUM(total_amount), 2) AS total_spent FROM orders GROUP BY user_id ORDER BY total_spent DESC LIMIT 10',
+    sql: 'SELECT user_id, COUNT(*) AS order_count, ROUND(SUM(total_amount), 2) AS total_spent FROM orders GROUP BY user_id ORDER BY total_spent DESC, user_id LIMIT 10',
   },
   {
     name: 'Q7: Regional analytics',
