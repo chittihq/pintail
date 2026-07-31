@@ -489,9 +489,215 @@ pub struct ProjectedValueChunk {
     retained_bytes: usize,
 }
 
+/// One projected column decoded straight into packed columnar storage.
+///
+/// Typed variants pad null slots with defaults and carry per-row validity so
+/// a columnar executor can adopt them without materializing per-row values;
+/// `Values` is the row-value fallback for shapes without a packed layout
+/// (Boolean, Binary, merged or memtable rows).
+#[derive(Clone, Debug)]
+pub enum DecodedColumn {
+    /// Row values, one per row.
+    Values(Vec<pintail_types::Value>),
+    /// Packed signed integers; null slots hold zero.
+    Int64 {
+        /// One packed value per row.
+        values: Vec<i64>,
+        /// Per-row null mask (`true` = non-null).
+        validity: Vec<bool>,
+    },
+    /// Packed unsigned integers; null slots hold zero.
+    UInt64 {
+        /// One packed value per row.
+        values: Vec<u64>,
+        /// Per-row null mask (`true` = non-null).
+        validity: Vec<bool>,
+    },
+    /// Packed IEEE-754 bit patterns; null slots hold zero.
+    Float64 {
+        /// One packed bit pattern per row.
+        bits: Vec<u64>,
+        /// Per-row null mask (`true` = non-null).
+        validity: Vec<bool>,
+    },
+    /// UTF-8 bytes in one arena; row `i` spans `heap[offsets[i]..offsets[i+1]]`
+    /// and null rows span zero bytes.
+    Utf8 {
+        /// Concatenated UTF-8 payloads.
+        heap: Vec<u8>,
+        /// `len + 1` row boundaries into `heap`.
+        offsets: Vec<usize>,
+        /// Per-row null mask (`true` = non-null).
+        validity: Vec<bool>,
+    },
+}
+
+impl DecodedColumn {
+    /// Returns the number of rows in the column.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Values(values) => values.len(),
+            Self::Int64 { validity, .. }
+            | Self::UInt64 { validity, .. }
+            | Self::Float64 { validity, .. }
+            | Self::Utf8 { validity, .. } => validity.len(),
+        }
+    }
+
+    /// Returns whether the column has no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Estimates bytes retained by the column's owned buffers.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        match self {
+            Self::Values(values) => values
+                .capacity()
+                .saturating_mul(size_of::<pintail_types::Value>())
+                .saturating_add(values.iter().map(pintail_types::Value::heap_bytes).sum()),
+            Self::Int64 { values, validity } => values
+                .capacity()
+                .saturating_mul(size_of::<i64>())
+                .saturating_add(validity.capacity()),
+            Self::UInt64 { values, validity } => values
+                .capacity()
+                .saturating_mul(size_of::<u64>())
+                .saturating_add(validity.capacity()),
+            Self::Float64 { bits, validity } => bits
+                .capacity()
+                .saturating_mul(size_of::<u64>())
+                .saturating_add(validity.capacity()),
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => heap
+                .capacity()
+                .saturating_add(offsets.capacity().saturating_mul(size_of::<usize>()))
+                .saturating_add(validity.capacity()),
+        }
+    }
+
+    /// Materializes one row's value, or `None` past the end.
+    #[must_use]
+    pub fn value_at(&self, row: usize) -> Option<pintail_types::Value> {
+        if row >= self.len() {
+            return None;
+        }
+        Some(match self {
+            Self::Values(values) => values[row].clone(),
+            Self::Int64 { values, validity } => {
+                if validity[row] {
+                    pintail_types::Value::Int64(values[row])
+                } else {
+                    pintail_types::Value::Null
+                }
+            }
+            Self::UInt64 { values, validity } => {
+                if validity[row] {
+                    pintail_types::Value::UInt64(values[row])
+                } else {
+                    pintail_types::Value::Null
+                }
+            }
+            Self::Float64 { bits, validity } => {
+                if validity[row] {
+                    pintail_types::Value::Float64(pintail_types::Float64::new(f64::from_bits(
+                        bits[row],
+                    )))
+                } else {
+                    pintail_types::Value::Null
+                }
+            }
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => {
+                if validity[row] {
+                    let bytes = heap[offsets[row]..offsets[row + 1]].to_vec();
+                    let text = String::from_utf8(bytes).unwrap_or_else(|error| {
+                        String::from_utf8_lossy(error.as_bytes()).into_owned()
+                    });
+                    pintail_types::Value::Utf8(text)
+                } else {
+                    pintail_types::Value::Null
+                }
+            }
+        })
+    }
+
+    /// Materializes the column into per-row values.
+    #[must_use]
+    pub fn into_values(self) -> Vec<pintail_types::Value> {
+        match self {
+            Self::Values(values) => values,
+            Self::Int64 { values, validity } => values
+                .into_iter()
+                .zip(validity)
+                .map(|(value, valid)| {
+                    if valid {
+                        pintail_types::Value::Int64(value)
+                    } else {
+                        pintail_types::Value::Null
+                    }
+                })
+                .collect(),
+            Self::UInt64 { values, validity } => values
+                .into_iter()
+                .zip(validity)
+                .map(|(value, valid)| {
+                    if valid {
+                        pintail_types::Value::UInt64(value)
+                    } else {
+                        pintail_types::Value::Null
+                    }
+                })
+                .collect(),
+            Self::Float64 { bits, validity } => bits
+                .into_iter()
+                .zip(validity)
+                .map(|(bits, valid)| {
+                    if valid {
+                        pintail_types::Value::Float64(pintail_types::Float64::new(f64::from_bits(
+                            bits,
+                        )))
+                    } else {
+                        pintail_types::Value::Null
+                    }
+                })
+                .collect(),
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => validity
+                .iter()
+                .enumerate()
+                .map(|(row, valid)| {
+                    if !valid {
+                        return pintail_types::Value::Null;
+                    }
+                    let bytes = heap[offsets[row]..offsets[row + 1]].to_vec();
+                    // Arena bytes were UTF-8-validated at block decode; the
+                    // lossy fallback never fires but avoids a panic path.
+                    let text = String::from_utf8(bytes).unwrap_or_else(|error| {
+                        String::from_utf8_lossy(error.as_bytes()).into_owned()
+                    });
+                    pintail_types::Value::Utf8(text)
+                })
+                .collect(),
+        }
+    }
+}
+
 /// One bounded column-major projection from an independently visible segment.
 pub struct ProjectedColumnChunk {
-    columns: Vec<Vec<pintail_types::Value>>,
+    columns: Vec<DecodedColumn>,
     row_count: usize,
     stats: ScanStats,
     retained_bytes: usize,
@@ -526,14 +732,23 @@ impl ProjectedValueChunk {
 impl ProjectedColumnChunk {
     /// Returns projected columns in query projection order.
     #[must_use]
-    pub fn columns(&self) -> &[Vec<pintail_types::Value>] {
+    pub fn columns(&self) -> &[DecodedColumn] {
         &self.columns
     }
 
-    /// Moves projected columns into a columnar executor.
+    /// Moves the packed projected columns into a columnar executor.
+    #[must_use]
+    pub fn into_decoded_columns(self) -> Vec<DecodedColumn> {
+        self.columns
+    }
+
+    /// Materializes projected columns into per-row values.
     #[must_use]
     pub fn into_columns(self) -> Vec<Vec<pintail_types::Value>> {
         self.columns
+            .into_iter()
+            .map(DecodedColumn::into_values)
+            .collect()
     }
 
     /// Returns the number of physical rows represented by the columns.
@@ -570,7 +785,14 @@ impl ProjectedScanStream {
         };
         let stats = chunk.stats;
         let row_count = chunk.row_count;
-        let rows = columns_to_rows(chunk.columns, row_count)?;
+        let rows = columns_to_rows(
+            chunk
+                .columns
+                .into_iter()
+                .map(DecodedColumn::into_values)
+                .collect(),
+            row_count,
+        )?;
         let retained_bytes = size_of::<ProjectedValueChunk>()
             .saturating_add(
                 rows.capacity()
@@ -796,7 +1018,7 @@ impl ProjectedScanStream {
             });
         }
         Ok(Some(ProjectedColumnChunk {
-            columns,
+            columns: columns.into_iter().map(DecodedColumn::Values).collect(),
             row_count,
             stats: ScanStats::default(),
             retained_bytes,
@@ -1056,7 +1278,7 @@ impl ProjectedScanStream {
             });
         }
         Ok(Some(ProjectedColumnChunk {
-            columns,
+            columns: columns.into_iter().map(DecodedColumn::Values).collect(),
             row_count,
             stats: ScanStats {
                 segments_read: usize::from(first_chunk) * self.segments.len(),
@@ -1098,39 +1320,23 @@ impl ProjectedScanStream {
         let row_count = end.saturating_sub(start);
         let scan_memory = AtomicUsize::new(0);
         let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
-        let row_index_bytes = row_count.saturating_mul(size_of::<usize>());
-        scan_budget.reserve(row_index_bytes)?;
-        let row_indices = (start..end).collect::<Vec<_>>();
-        let fetch = segment::read_projected_rows(
+        let fetch = segment::read_projected_columns(
             &self.snapshot.directory,
             segment,
             &self.snapshot.schema,
             &projection,
-            &row_indices,
+            start,
+            end,
             &scan_budget,
         )?;
-        scan_budget.release(row_index_bytes);
         let retained_bytes = size_of::<ProjectedColumnChunk>()
             .saturating_add(
                 fetch
                     .columns
                     .capacity()
-                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+                    .saturating_mul(size_of::<DecodedColumn>()),
             )
-            .saturating_add(
-                fetch
-                    .columns
-                    .iter()
-                    .map(|values| {
-                        values
-                            .capacity()
-                            .saturating_mul(size_of::<pintail_types::Value>())
-                            .saturating_add(
-                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
-                            )
-                    })
-                    .sum(),
-            );
+            .saturating_add(fetch.columns.iter().map(DecodedColumn::retained_bytes).sum());
         scan_budget.release(fetch.reserved_bytes);
         scan_budget.reserve(retained_bytes)?;
         Ok(ProjectedColumnChunk {
@@ -1170,39 +1376,23 @@ impl ProjectedScanStream {
                 .map_err(|_| StoreError::FormatLimit("segment row count exceeds usize".into()))?;
             let scan_memory = AtomicUsize::new(0);
             let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
-            let row_index_bytes = row_count.saturating_mul(size_of::<usize>());
-            scan_budget.reserve(row_index_bytes)?;
-            let row_indices = (0..row_count).collect::<Vec<_>>();
-            let fetch = segment::read_projected_rows(
+            let fetch = segment::read_projected_columns(
                 &self.snapshot.directory,
                 &segment,
                 &self.snapshot.schema,
                 &projection,
-                &row_indices,
+                0,
+                row_count,
                 &scan_budget,
             )?;
-            scan_budget.release(row_index_bytes);
             let retained_bytes = size_of::<ProjectedColumnChunk>()
                 .saturating_add(
                     fetch
                         .columns
                         .capacity()
-                        .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+                        .saturating_mul(size_of::<DecodedColumn>()),
                 )
-                .saturating_add(
-                    fetch
-                        .columns
-                        .iter()
-                        .map(|values| {
-                            values
-                                .capacity()
-                                .saturating_mul(size_of::<pintail_types::Value>())
-                                .saturating_add(
-                                    values.iter().map(pintail_types::Value::heap_bytes).sum(),
-                                )
-                        })
-                        .sum(),
-                );
+                .saturating_add(fetch.columns.iter().map(DecodedColumn::retained_bytes).sum());
             scan_budget.release(fetch.reserved_bytes);
             scan_budget.reserve(retained_bytes)?;
             return Ok(ProjectedColumnChunk {
@@ -1237,26 +1427,17 @@ impl ProjectedScanStream {
             .map(ProjectedRow::into_values)
             .collect::<Vec<_>>();
         let row_count = rows.len();
-        let columns = rows_to_columns(rows, self.column_ids.len())?;
+        let columns = rows_to_columns(rows, self.column_ids.len())?
+            .into_iter()
+            .map(DecodedColumn::Values)
+            .collect::<Vec<_>>();
         let retained_bytes = size_of::<ProjectedColumnChunk>()
             .saturating_add(
                 columns
                     .capacity()
-                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+                    .saturating_mul(size_of::<DecodedColumn>()),
             )
-            .saturating_add(
-                columns
-                    .iter()
-                    .map(|values| {
-                        values
-                            .capacity()
-                            .saturating_mul(size_of::<pintail_types::Value>())
-                            .saturating_add(
-                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
-                            )
-                    })
-                    .sum(),
-            );
+            .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum());
         Ok(ProjectedColumnChunk {
             columns,
             row_count,

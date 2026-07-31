@@ -64,12 +64,12 @@ fn non_overlapping_snapshot_segments_stream_with_bounded_memory() {
     assert_eq!(first.row_count(), 50);
     assert_eq!(first.columns().len(), 1);
     assert_eq!(
-        first.columns()[0].first(),
-        Some(&Value::Utf8("value-1".into()))
+        first.columns()[0].value_at(0),
+        Some(Value::Utf8("value-1".into()))
     );
     assert_eq!(
-        first.columns()[0].last(),
-        Some(&Value::Utf8("value-50".into()))
+        first.columns()[0].value_at(49),
+        Some(Value::Utf8("value-50".into()))
     );
     assert_eq!(second.rows().len(), 50);
     assert!(

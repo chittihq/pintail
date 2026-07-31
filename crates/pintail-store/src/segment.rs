@@ -14,6 +14,7 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::{
     StoreError,
     codec::{Decoder, Encoder, decode_key, encode_key},
+    store::DecodedColumn,
 };
 
 const MAGIC: &[u8; 5] = b"PTSEG";
@@ -1482,60 +1483,13 @@ pub(crate) fn read_projected_rows(
     let path = directory.join(&meta.file_name);
     verify(directory, meta, schema)?;
     let mut decoder = FileDecoder::open(&path)?;
-    if decoder
-        .raw(MAGIC.len())
-        .map_err(|reason| corrupt(&path, 0, reason))?
-        != MAGIC
-    {
-        return Err(corrupt(&path, 0, "invalid segment magic"));
-    }
-    if decoder
-        .u8()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?
-        != FORMAT_VERSION
-    {
-        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
-    }
-    let segment_schema_version = decoder
-        .u32()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-    if segment_schema_version > schema.version() {
-        return Err(StoreError::SchemaMismatch {
-            expected_version: schema.version(),
-            actual_version: segment_schema_version,
-        });
-    }
-    let fingerprint = decoder
-        .u64()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-    if fingerprint != meta.schema_fingerprint {
-        return Err(StoreError::SchemaFingerprintMismatch {
-            expected: meta.schema_fingerprint,
-            actual: fingerprint,
-        });
-    }
-    let row_count = usize::try_from(
-        decoder
-            .u64()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
-    )
-    .map_err(|_| corrupt_here(&path, &decoder, "segment row count exceeds usize"))?;
+    let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
+    let row_count = header.row_count;
+    let block_rows = header.block_rows;
+    let column_count = header.column_count;
     if row_indices.iter().any(|index| *index >= row_count) {
         return Err(StoreError::FormatLimit(
             "late-materialization row index exceeds segment row count".into(),
-        ));
-    }
-    let column_count = decoder
-        .u32()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-    let block_rows = decoder
-        .u32()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
-    if block_rows == 0 {
-        return Err(corrupt_here(
-            &path,
-            &decoder,
-            "segment block row target is zero",
         ));
     }
 
@@ -1643,6 +1597,376 @@ pub(crate) fn read_projected_rows(
         }
     }
     Ok(ProjectedValueFetch {
+        columns,
+        blocks_decoded,
+        reserved_bytes,
+    })
+}
+
+/// The fixed segment header preceding the column directory.
+struct SegmentColumnsHeader {
+    row_count: usize,
+    column_count: u32,
+    block_rows: usize,
+}
+
+fn read_segment_columns_header(
+    path: &Path,
+    decoder: &mut FileDecoder,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+) -> Result<SegmentColumnsHeader, StoreError> {
+    if decoder
+        .raw(MAGIC.len())
+        .map_err(|reason| corrupt(path, 0, reason))?
+        != MAGIC
+    {
+        return Err(corrupt(path, 0, "invalid segment magic"));
+    }
+    if decoder
+        .u8()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?
+        != FORMAT_VERSION
+    {
+        return Err(corrupt(path, MAGIC.len(), "unsupported format version"));
+    }
+    let segment_schema_version = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    if segment_schema_version > schema.version() {
+        return Err(StoreError::SchemaMismatch {
+            expected_version: schema.version(),
+            actual_version: segment_schema_version,
+        });
+    }
+    let fingerprint = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    if fingerprint != meta.schema_fingerprint {
+        return Err(StoreError::SchemaFingerprintMismatch {
+            expected: meta.schema_fingerprint,
+            actual: fingerprint,
+        });
+    }
+    let row_count = usize::try_from(
+        decoder
+            .u64()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?,
+    )
+    .map_err(|_| corrupt_here(path, decoder, "segment row count exceeds usize"))?;
+    let column_count = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    let block_rows = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    if block_rows == 0 {
+        return Err(corrupt_here(path, decoder, "segment block row target is zero"));
+    }
+    Ok(SegmentColumnsHeader {
+        row_count,
+        column_count,
+        block_rows,
+    })
+}
+
+/// Packed columns produced by [`read_projected_columns`].
+pub(crate) struct ProjectedColumnFetch {
+    pub(crate) columns: Vec<DecodedColumn>,
+    pub(crate) blocks_decoded: usize,
+    pub(crate) reserved_bytes: usize,
+}
+
+/// An in-progress [`DecodedColumn`] receiving one block of cells at a time.
+enum ColumnBuilder {
+    Int64 {
+        values: Vec<i64>,
+        validity: Vec<bool>,
+    },
+    UInt64 {
+        values: Vec<u64>,
+        validity: Vec<bool>,
+    },
+    Float64 {
+        bits: Vec<u64>,
+        validity: Vec<bool>,
+    },
+    Utf8 {
+        heap: Vec<u8>,
+        offsets: Vec<usize>,
+        validity: Vec<bool>,
+    },
+    Values(Vec<Value>),
+}
+
+impl ColumnBuilder {
+    fn new(logical_type: LogicalType, capacity: usize) -> Self {
+        match logical_type {
+            LogicalType::Int64 => Self::Int64 {
+                values: Vec::with_capacity(capacity),
+                validity: Vec::with_capacity(capacity),
+            },
+            LogicalType::UInt64 => Self::UInt64 {
+                values: Vec::with_capacity(capacity),
+                validity: Vec::with_capacity(capacity),
+            },
+            LogicalType::Float64 => Self::Float64 {
+                bits: Vec::with_capacity(capacity),
+                validity: Vec::with_capacity(capacity),
+            },
+            LogicalType::Utf8 => {
+                let mut offsets = Vec::with_capacity(capacity.saturating_add(1));
+                offsets.push(0);
+                Self::Utf8 {
+                    heap: Vec::new(),
+                    offsets,
+                    validity: Vec::with_capacity(capacity),
+                }
+            }
+            LogicalType::Boolean | LogicalType::Binary | LogicalType::PrimaryKey => {
+                Self::Values(Vec::with_capacity(capacity))
+            }
+        }
+    }
+
+    fn push(&mut self, cell: Cell) -> Result<(), String> {
+        match (&mut *self, cell) {
+            (Self::Int64 { values, validity }, Cell::Int64(value)) => {
+                values.push(value);
+                validity.push(true);
+            }
+            (Self::Int64 { values, validity }, Cell::Null) => {
+                values.push(0);
+                validity.push(false);
+            }
+            (Self::UInt64 { values, validity }, Cell::UInt64(value)) => {
+                values.push(value);
+                validity.push(true);
+            }
+            (Self::UInt64 { values, validity }, Cell::Null) => {
+                values.push(0);
+                validity.push(false);
+            }
+            (Self::Float64 { bits, validity }, Cell::Float64(value)) => {
+                bits.push(value);
+                validity.push(true);
+            }
+            (Self::Float64 { bits, validity }, Cell::Null) => {
+                bits.push(0);
+                validity.push(false);
+            }
+            (
+                Self::Utf8 {
+                    heap,
+                    offsets,
+                    validity,
+                },
+                Cell::Utf8(text),
+            ) => {
+                heap.extend_from_slice(text.as_bytes());
+                offsets.push(heap.len());
+                validity.push(true);
+            }
+            (Self::Utf8 { offsets, validity, .. }, Cell::Null) => {
+                let end = *offsets.last().expect("offsets seeded with zero");
+                offsets.push(end);
+                validity.push(false);
+            }
+            (Self::Values(_), Cell::Key(_)) => {
+                return Err("primary-key cell in a user column block".to_owned());
+            }
+            (Self::Values(values), cell) => values.push(cell.into_value()),
+            _ => return Err("block cell type differs from its column type".to_owned()),
+        }
+        Ok(())
+    }
+
+    /// Bytes retained by owned buffers, by length (used for reserve deltas).
+    fn heap_len_bytes(&self) -> usize {
+        match self {
+            Self::Int64 { values, validity } => values
+                .len()
+                .saturating_mul(std::mem::size_of::<i64>())
+                .saturating_add(validity.len()),
+            Self::UInt64 { values, validity } => values
+                .len()
+                .saturating_mul(std::mem::size_of::<u64>())
+                .saturating_add(validity.len()),
+            Self::Float64 { bits, validity } => bits
+                .len()
+                .saturating_mul(std::mem::size_of::<u64>())
+                .saturating_add(validity.len()),
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => heap
+                .len()
+                .saturating_add(offsets.len().saturating_mul(std::mem::size_of::<usize>()))
+                .saturating_add(validity.len()),
+            Self::Values(values) => values
+                .len()
+                .saturating_mul(std::mem::size_of::<Value>())
+                .saturating_add(values.iter().map(Value::heap_bytes).sum()),
+        }
+    }
+
+    fn finish(self) -> DecodedColumn {
+        match self {
+            Self::Int64 { values, validity } => DecodedColumn::Int64 { values, validity },
+            Self::UInt64 { values, validity } => DecodedColumn::UInt64 { values, validity },
+            Self::Float64 { bits, validity } => DecodedColumn::Float64 { bits, validity },
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => DecodedColumn::Utf8 {
+                heap,
+                offsets,
+                validity,
+            },
+            Self::Values(values) => DecodedColumn::Values(values),
+        }
+    }
+}
+
+/// Decodes one contiguous row range of every projected column into packed
+/// columnar storage, skipping blocks wholly outside the range.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn read_projected_columns(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    projection: &[usize],
+    start_row: usize,
+    end_row: usize,
+    memory: &ScanMemoryBudget<'_>,
+) -> Result<ProjectedColumnFetch, StoreError> {
+    let path = directory.join(&meta.file_name);
+    verify(directory, meta, schema)?;
+    let mut decoder = FileDecoder::open(&path)?;
+    let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
+    if start_row > end_row || end_row > header.row_count {
+        return Err(StoreError::FormatLimit(
+            "projected row range exceeds segment row count".into(),
+        ));
+    }
+    let selected_rows = end_row - start_row;
+    let mut builders: Vec<Option<ColumnBuilder>> =
+        (0..projection.len()).map(|_| None).collect();
+    let mut found = vec![false; projection.len()];
+    let mut reserved_bytes = 0_usize;
+    let mut blocks_decoded = 0_usize;
+    for _ in 0..header.column_count {
+        let id = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let logical_type = LogicalType::decode(
+            decoder
+                .u8()
+                .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+        )
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let block_count = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?
+            as usize;
+        let schema_index = schema.columns().iter().position(|column| column.id() == id);
+        if let Some(schema_index) = schema_index
+            && LogicalType::from_data_type(schema.columns()[schema_index].data_type())
+                != logical_type
+        {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "column {} ({id}) changed physical type",
+                schema.columns()[schema_index].name()
+            )));
+        }
+        let projected_position = schema_index
+            .and_then(|schema_index| projection.iter().position(|value| *value == schema_index));
+        if let Some(position) = projected_position {
+            if std::mem::replace(&mut found[position], true) {
+                return Err(corrupt_here(&path, &decoder, "duplicate user column"));
+            }
+            let builder = ColumnBuilder::new(logical_type, selected_rows);
+            let builder_bytes = builder.heap_len_bytes();
+            memory.reserve(builder_bytes)?;
+            reserved_bytes = reserved_bytes.saturating_add(builder_bytes);
+            builders[position] = Some(builder);
+        }
+        let mut block_start = 0_usize;
+        for _ in 0..block_count {
+            let block_limit = block_start.saturating_add(header.block_rows);
+            let selected =
+                projected_position.is_some() && block_start < end_row && block_limit > start_row;
+            let block =
+                read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
+                    Ok(selected)
+                })?;
+            reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
+            let block_end = block_start
+                .checked_add(block.row_count)
+                .ok_or_else(|| corrupt_here(&path, &decoder, "column row count overflow"))?;
+            if let (Some(position), Some(cells)) = (projected_position, block.cells) {
+                blocks_decoded += 1;
+                let lo = start_row.max(block_start) - block_start;
+                let hi = end_row.min(block_end).saturating_sub(block_start);
+                if lo < hi {
+                    let builder = builders[position]
+                        .as_mut()
+                        .expect("builder exists for a projected column");
+                    let before = builder.heap_len_bytes();
+                    for cell in cells.into_iter().skip(lo).take(hi - lo) {
+                        builder
+                            .push(cell)
+                            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+                    }
+                    let appended = builder.heap_len_bytes().saturating_sub(before);
+                    memory.reserve(appended)?;
+                    reserved_bytes = reserved_bytes.saturating_add(appended);
+                }
+            }
+            block_start = block_end;
+        }
+        if block_start != header.row_count {
+            return Err(corrupt_here(
+                &path,
+                &decoder,
+                "column row count differs from segment header",
+            ));
+        }
+    }
+
+    let mut columns = Vec::with_capacity(projection.len());
+    for (position, schema_index) in projection.iter().copied().enumerate() {
+        if found[position] {
+            let column = builders[position]
+                .take()
+                .expect("found column has a builder")
+                .finish();
+            if column.len() != selected_rows {
+                return Err(corrupt_here(
+                    &path,
+                    &decoder,
+                    "projected column row count differs from the requested range",
+                ));
+            }
+            columns.push(column);
+            continue;
+        }
+        let column = &schema.columns()[schema_index];
+        if !column.is_nullable() {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "required projected column {} ({}) is absent",
+                column.name(),
+                column.id()
+            )));
+        }
+        let null_bytes = selected_rows.saturating_mul(std::mem::size_of::<Value>());
+        memory.reserve(null_bytes)?;
+        reserved_bytes = reserved_bytes.saturating_add(null_bytes);
+        columns.push(DecodedColumn::Values(vec![Value::Null; selected_rows]));
+    }
+    Ok(ProjectedColumnFetch {
         columns,
         blocks_decoded,
         reserved_bytes,
