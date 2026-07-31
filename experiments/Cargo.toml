@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = [
+    "common",
+    "e01-filter-repr",
+    "e02-aggregation",
+    "e03-topk",
+    "e04-join",
+    "e05-merge-on-read",
+]
+
+[workspace.dependencies]
+common = { path = "common" }
+rayon = "1.10"
+hashbrown = "0.15"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
