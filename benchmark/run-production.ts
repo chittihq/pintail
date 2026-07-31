@@ -168,7 +168,7 @@ async function setupPintail(mysqlHost: string, mysqlPort: number): Promise<void>
   pintailBinary = await buildPintail()
   pintailDataDir = mkdtempSync(join(tmpdir(), 'pintail-prod-'))
   await startPintail()
-  const setup = await api<{ token: string }>('/api/setup', {
+  const setup = await api<{ token: string }>('/api/auth/setup', {
     method: 'POST',
     body: { email: 'bench@pintail.dev', password: 'pintail-bench-password' },
   })

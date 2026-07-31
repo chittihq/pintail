@@ -9,3 +9,8 @@ packages/dashboard/.data
 *.db-shm
 *.db-wal
 secrets.toml
+benchmark/node_modules
+benchmark/.dataset-cache
+benchmark/.dataset-export
+experiments/target
+output

@@ -6,12 +6,18 @@ import mysql from 'mysql2/promise'
 import { benchmarkQueries } from './queries'
 
 type CommandResult = { stdout: string; stderr: string }
+type EngineTiming = { medianMs: number; p95Ms: number; minMs: number; runs: number }
 type QueryResult = {
   name: string
   mysqlMs: number
   pintailMs: number
   clickhouseMs: number
+  clickhouseFinalMs: number
   speedup: number
+  timings: Record<string, EngineTiming>
+  pintailMatchesMysql: boolean
+  clickhouseFinalMatchesMysql: boolean
+  pintailExplain?: string
 }
 
 const benchmarkDir = import.meta.dir
@@ -26,7 +32,12 @@ const fullGate = orderRows === 20_000_000
 const runId = `pintail-m9-bench-${process.pid}-${Date.now()}`
 const mysqlName = `${runId}-mysql`
 const clickhouseName = `${runId}-clickhouse`
+const pintailName = `${runId}-pintail`
 const networkName = `${runId}-network`
+// Fairness: every engine runs on the docker host under identical limits.
+// PINTAIL_BENCHMARK_LOCAL=1 restores the old local-process mode for dev.
+const containerizedPintail = process.env.PINTAIL_BENCHMARK_LOCAL !== '1'
+const engineLimits = ['--cpus', '8', '--memory', '8g']
 const clickhouseHeaders = {
   Authorization: `Basic ${btoa('default:pintail-benchmark')}`,
 }
@@ -256,16 +267,26 @@ async function importClickhouse(baseUrl: string) {
         'toDecimal64(total_amount, 2), status, region, order_date, created_at, updated_at',
     },
   }
+  // benchmark:      plain MergeTree — the raw-speed ceiling reference.
+  // benchmark_rmt:  ReplacingMergeTree read with final=1 — ClickHouse doing
+  //                 the same always-correct merge-on-read duty pintail does
+  //                 (issue #3 step 0: the apples-to-apples reference).
+  await query('CREATE DATABASE benchmark_rmt')
   for (const [table, definition] of Object.entries(tables)) {
-    await query(
-      `CREATE TABLE benchmark.${table} (${definition.schema}) ` +
-        'ENGINE = MergeTree ORDER BY id',
-    )
-    await query(
-      `INSERT INTO benchmark.${table} SELECT ${definition.projection} ` +
-        `FROM mysql('${mysqlName}:3306', 'benchmark_db', '${table}', ` +
-        "'benchmark', 'benchmarkpass')",
-    )
+    for (const [database, engine] of [
+      ['benchmark', 'MergeTree'],
+      ['benchmark_rmt', 'ReplacingMergeTree'],
+    ]) {
+      await query(
+        `CREATE TABLE ${database}.${table} (${definition.schema}) ` +
+          `ENGINE = ${engine} ORDER BY id`,
+      )
+      await query(
+        `INSERT INTO ${database}.${table} SELECT ${definition.projection} ` +
+          `FROM mysql('${mysqlName}:3306', 'benchmark_db', '${table}', ` +
+          "'benchmark', 'benchmarkpass')",
+      )
+    }
   }
 }
 
@@ -363,6 +384,61 @@ async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; ms: nu
   return { value, ms: Math.max(1, Math.round(performance.now() - started)) }
 }
 
+/// Warm multi-iteration measurement: median/p95/min over `runs` after
+/// `warmups` unmeasured executions. MySQL keeps a single cold run (it is the
+/// baseline being escaped, and its full-scale queries run for minutes).
+async function measured<T>(
+  operation: () => Promise<T>,
+  warmups: number,
+  runs: number,
+): Promise<{ value: T; timing: EngineTiming }> {
+  let value!: T
+  for (let i = 0; i < warmups; i += 1) {
+    value = await operation()
+  }
+  const times: number[] = []
+  for (let i = 0; i < runs; i += 1) {
+    const started = performance.now()
+    value = await operation()
+    times.push(performance.now() - started)
+  }
+  times.sort((a, b) => a - b)
+  const at = (index: number) => Math.max(1, Math.round(times[Math.min(times.length - 1, index)]))
+  return {
+    value,
+    timing: {
+      medianMs: at(Math.floor(times.length / 2)),
+      p95Ms: at(Math.ceil(times.length * 0.95) - 1),
+      minMs: at(0),
+      runs,
+    },
+  }
+}
+
+/// Order-sensitive canonical form for cross-engine result comparison:
+/// numbers normalized to 4 decimal places, everything else stringified.
+function canonicalRows(rows: unknown[][]): string {
+  return rows
+    .map((row) =>
+      row
+        .map((value) => {
+          if (value === null || value === undefined) return 'NULL'
+          const text = String(value)
+          if (text !== '' && /^-?\d+(\.\d+)?$/.test(text)) {
+            return Number(text).toFixed(4)
+          }
+          return text
+        })
+        .join('\u0001'),
+    )
+    // Sorted before joining: the comparison is a multiset check, insensitive
+    // to tie-ordering under an under-determined ORDER BY (e.g. Q3 at smoke
+    // scale, where every status count ties). Presentation-order correctness
+    // belongs to the sqllogic oracle; this gate checks content.
+    .sort()
+    .join('\n')
+}
+
 async function runQueries(
   connection: mysql.Connection,
   clickhouseUrl: string,
@@ -371,37 +447,85 @@ async function runQueries(
   databaseId: string,
 ): Promise<QueryResult[]> {
   const results: QueryResult[] = []
+  const warmups = 1
+  const runs = 5
+  const clickhouseQuery = async (database: string, sql: string, settings: string) => {
+    const response = await fetch(`${clickhouseUrl}/?database=${database}`, {
+      method: 'POST',
+      headers: clickhouseHeaders,
+      body: `${sql}${settings} FORMAT JSONCompact`,
+    })
+    const text = await response.text()
+    if (!response.ok) throw new Error(`ClickHouse query failed: ${text}`)
+    return (JSON.parse(text) as { data: unknown[][] }).data
+  }
   for (const query of benchmarkQueries) {
     log(query.name)
-    const mysqlRun = await timed(() => connection.query(query.sql))
-    const pintailRun = await timed(() =>
-      api(pintailUrl, '/api/query', {
+    const mysqlRun = await timed(() =>
+      connection.query<mysql.RowDataPacket[]>({ sql: query.sql, rowsAsArray: true }),
+    )
+    const mysqlRows = mysqlRun.value[0] as unknown as unknown[][]
+    const pintailRun = await measured(
+      () =>
+        api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+          method: 'POST',
+          token,
+          body: { db: databaseId, sql: query.sql },
+        }),
+      warmups,
+      runs,
+    )
+    const clickhouseSql = query.clickhouseSql ?? query.sql
+    const clickhouseRun = await measured(
+      () => clickhouseQuery('benchmark', clickhouseSql, ''),
+      warmups,
+      runs,
+    )
+    // The fair reference: ReplacingMergeTree doing pintail's merge-on-read
+    // duty on every read (`final = 1`), same data, same host, same limits.
+    const clickhouseFinalRun = await measured(
+      () => clickhouseQuery('benchmark_rmt', clickhouseSql, ' SETTINGS final = 1'),
+      warmups,
+      runs,
+    )
+    const mysqlCanonical = canonicalRows(mysqlRows)
+    const pintailMatchesMysql = canonicalRows(pintailRun.value.rows) === mysqlCanonical
+    const clickhouseFinalMatchesMysql =
+      canonicalRows(clickhouseFinalRun.value) === mysqlCanonical
+    let pintailExplain: string | undefined
+    try {
+      const explain = await api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
         method: 'POST',
         token,
-        body: { db: databaseId, sql: query.sql },
-      }),
-    )
-    const clickhouseRun = await timed(async () => {
-      const response = await fetch(`${clickhouseUrl}/?database=benchmark`, {
-        method: 'POST',
-        headers: clickhouseHeaders,
-        body: `${query.clickhouseSql ?? query.sql} FORMAT JSONCompact`,
+        body: { db: databaseId, sql: `EXPLAIN ANALYZE ${query.sql}` },
       })
-      const text = await response.text()
-      if (!response.ok) throw new Error(`ClickHouse query failed: ${text}`)
-      return text
-    })
-    const speedup = mysqlRun.ms / pintailRun.ms
+      pintailExplain = explain.rows.map((row) => row.join(' ')).join('\n')
+    } catch {
+      pintailExplain = undefined
+    }
+    const speedup = mysqlRun.ms / pintailRun.timing.medianMs
     results.push({
       name: query.name,
       mysqlMs: mysqlRun.ms,
-      pintailMs: pintailRun.ms,
-      clickhouseMs: clickhouseRun.ms,
+      pintailMs: pintailRun.timing.medianMs,
+      clickhouseMs: clickhouseRun.timing.medianMs,
+      clickhouseFinalMs: clickhouseFinalRun.timing.medianMs,
       speedup,
+      timings: {
+        pintail: pintailRun.timing,
+        clickhouse: clickhouseRun.timing,
+        clickhouseFinal: clickhouseFinalRun.timing,
+        mysql: { medianMs: mysqlRun.ms, p95Ms: mysqlRun.ms, minMs: mysqlRun.ms, runs: 1 },
+      },
+      pintailMatchesMysql,
+      clickhouseFinalMatchesMysql,
+      pintailExplain,
     })
+    if (!pintailMatchesMysql) log(`RESULT MISMATCH: pintail differs from MySQL on ${query.name}`)
     log(
-      `MySQL ${mysqlRun.ms} ms | Pintail ${pintailRun.ms} ms | ` +
-        `ClickHouse ${clickhouseRun.ms} ms | ${speedup.toFixed(1)}×`,
+      `MySQL ${mysqlRun.ms} ms | Pintail ${pintailRun.timing.medianMs} ms | ` +
+        `ClickHouse ${clickhouseRun.timing.medianMs} ms | ` +
+        `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ${speedup.toFixed(1)}×`,
     )
   }
   return results
@@ -413,17 +537,34 @@ function publishResults(results: QueryResult[]) {
       mysqlMs: total.mysqlMs + row.mysqlMs,
       pintailMs: total.pintailMs + row.pintailMs,
       clickhouseMs: total.clickhouseMs + row.clickhouseMs,
+      clickhouseFinalMs: total.clickhouseFinalMs + row.clickhouseFinalMs,
     }),
-    { mysqlMs: 0, pintailMs: 0, clickhouseMs: 0 },
+    { mysqlMs: 0, pintailMs: 0, clickhouseMs: 0, clickhouseFinalMs: 0 },
   )
   const speedup = totals.mysqlMs / totals.pintailMs
   const suffix = fullGate ? '' : '-smoke'
   const generatedAt = new Date().toISOString()
+  const mismatches = results.filter((row) => !row.pintailMatchesMysql).map((row) => row.name)
   const report = {
     generatedAt,
     scale,
     rows: { users: 100_000, products: 10_000, orders: orderRows },
-    gate: { requiredSpeedup: 50, enforced: fullGate, passed: speedup >= 50 },
+    methodology: {
+      pintailPlacement: containerizedPintail
+        ? 'container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)'
+        : 'LOCAL PROCESS — cross-host numbers, not comparable',
+      iterations: '1 warmup + 5 measured (median reported); MySQL single cold run',
+      references: {
+        clickhouse: 'plain MergeTree (raw-speed ceiling)',
+        clickhouseFinal: 'ReplacingMergeTree, final=1 (apples-to-apples merge-on-read duty)',
+      },
+    },
+    gate: {
+      requiredSpeedup: 50,
+      enforced: fullGate,
+      passed: speedup >= 50 && mismatches.length === 0,
+      resultMismatches: mismatches,
+    },
     queries: results,
     totals: { ...totals, speedup },
   }
@@ -436,25 +577,36 @@ function publishResults(results: QueryResult[]) {
     '',
     `Measured ${generatedAt} with ${orderRows.toLocaleString()} orders.`,
     '',
-    '| Query | MySQL | Pintail | Speedup | ClickHouse reference |',
-    '|---|---:|---:|---:|---:|',
+    'All engines run on the docker host under identical limits (8 CPUs, 8 GB).',
+    'Pintail/ClickHouse: median of 5 warm runs. MySQL: single cold run (baseline).',
+    'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
+    "pintail's always-correct merge-on-read duty; the apples-to-apples reference.",
+    '',
+    '| Query | MySQL | Pintail | Speedup | CH MergeTree | CH RMT+FINAL | Exact |',
+    '|---|---:|---:|---:|---:|---:|:--|',
     ...results.map(
       (row) =>
         `| ${row.name} | ${row.mysqlMs.toLocaleString()} ms | ` +
         `${row.pintailMs.toLocaleString()} ms | ${row.speedup.toFixed(1)}× | ` +
-        `${row.clickhouseMs.toLocaleString()} ms |`,
+        `${row.clickhouseMs.toLocaleString()} ms | ` +
+        `${row.clickhouseFinalMs.toLocaleString()} ms | ` +
+        `${row.pintailMatchesMysql ? 'yes' : 'MISMATCH'} |`,
     ),
     `| **Total** | **${totals.mysqlMs.toLocaleString()} ms** | ` +
       `**${totals.pintailMs.toLocaleString()} ms** | **${speedup.toFixed(1)}×** | ` +
-      `**${totals.clickhouseMs.toLocaleString()} ms** |`,
+      `**${totals.clickhouseMs.toLocaleString()} ms** | ` +
+      `**${totals.clickhouseFinalMs.toLocaleString()} ms** | |`,
     '',
     fullGate
-      ? `Release gate: ${speedup >= 50 ? 'PASS' : 'FAIL'} (required ≥50×).`
+      ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
     '',
   ]
   writeFileSync(join(benchmarkDir, `results${suffix}.md`), `${lines.join('\n')}\n`)
   log(`aggregate speedup: ${speedup.toFixed(1)}×`)
+  if (mismatches.length > 0) {
+    throw new Error(`benchmark result mismatches vs MySQL: ${mismatches.join(', ')}`)
+  }
   if (fullGate && speedup < 50) {
     throw new Error(`benchmark gate failed: ${speedup.toFixed(1)}× is below 50×`)
   }
@@ -475,7 +627,9 @@ async function cleanup() {
     pintailProcess = undefined
   }
   if (dockerCreated) {
-    await docker('rm', '--force', '--volumes', mysqlName, clickhouseName).catch(() => undefined)
+    await docker('rm', '--force', '--volumes', mysqlName, clickhouseName, pintailName).catch(
+      () => undefined,
+    )
     await docker('network', 'rm', networkName).catch(() => undefined)
   }
   rmSync(dataDir, { recursive: true, force: true })
@@ -495,6 +649,7 @@ async function main() {
     networkName,
     '--publish',
     '0:3306',
+    ...engineLimits,
     '--env',
     'MYSQL_ROOT_PASSWORD=pintail-root',
     'mysql:8.4',
@@ -518,6 +673,7 @@ async function main() {
     networkName,
     '--publish',
     '0:8123',
+    ...engineLimits,
     '--env',
     'CLICKHOUSE_PASSWORD=pintail-benchmark',
     'clickhouse/clickhouse-server:25.8',
@@ -531,36 +687,60 @@ async function main() {
   await seedSource(mysqlConnection)
   await importClickhouse(clickhouseUrl)
 
-  const binary = await buildPintail()
-  const httpPort = await freePort()
-  const wirePort = await freePort()
-  const pintailUrl = `http://127.0.0.1:${httpPort}`
-  pintailProcess = Bun.spawn(
-    [
-      binary,
-      '--data-dir',
-      dataDir,
-      '--http-bind',
-      `127.0.0.1:${httpPort}`,
-      '--wire-bind',
-      `127.0.0.1:${wirePort}`,
-    ],
-    {
-      cwd: repository,
-      env: {
-        ...process.env,
-        PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(256 * 1024 * 1024),
+  let pintailUrl: string
+  let dsn: string
+  if (containerizedPintail) {
+    log('building the pintail image on the docker host (same host + limits as MySQL/ClickHouse)')
+    await docker('build', '--tag', 'pintail-benchmark:latest', repository)
+    await docker(
+      'run',
+      '--detach',
+      '--name',
+      pintailName,
+      '--network',
+      networkName,
+      '--publish',
+      '0:8080',
+      ...engineLimits,
+      '--env',
+      `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${256 * 1024 * 1024}`,
+      'pintail-benchmark:latest',
+    )
+    const pintailPort = await publishedPort(pintailName, 8080)
+    pintailUrl = `http://${host}:${pintailPort}`
+    dsn = `mysql://benchmark:benchmarkpass@${mysqlName}:3306/benchmark_db`
+  } else {
+    const binary = await buildPintail()
+    const httpPort = await freePort()
+    const wirePort = await freePort()
+    pintailUrl = `http://127.0.0.1:${httpPort}`
+    pintailProcess = Bun.spawn(
+      [
+        binary,
+        '--data-dir',
+        dataDir,
+        '--http-bind',
+        `127.0.0.1:${httpPort}`,
+        '--wire-bind',
+        `127.0.0.1:${wirePort}`,
+      ],
+      {
+        cwd: repository,
+        env: {
+          ...process.env,
+          PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(256 * 1024 * 1024),
+        },
+        stdout: 'inherit',
+        stderr: 'inherit',
       },
-      stdout: 'inherit',
-      stderr: 'inherit',
-    },
-  )
+    )
+    dsn = `mysql://benchmark:benchmarkpass@${host}:${mysqlPort}/benchmark_db`
+  }
   await waitForHttp(pintailUrl)
   const setup = await api<{ token: string }>(pintailUrl, '/api/auth/setup', {
     method: 'POST',
     body: { email: 'benchmark@pintail.local', password: 'benchmark-release-gate' },
   })
-  const dsn = `mysql://benchmark:benchmarkpass@${host}:${mysqlPort}/benchmark_db`
   const databaseId = await createReplica(pintailUrl, setup.token, dsn)
   await verifyCounts(mysqlConnection, clickhouseUrl, pintailUrl, setup.token, databaseId)
   const results = await runQueries(
