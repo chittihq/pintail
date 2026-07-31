@@ -36,21 +36,21 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
 - [x] **e05-merge-on-read** — the FINAL tax: fully-compacted floor vs naive 9-way heap
   merge vs sweep-classified 2-way merges vs scan+patch, at overlap 0.1/1/10%.
 
-## Pending (add before the corresponding issue-#3 step lands)
+## Implemented (second wave, 2026-07-31 — see RESULTS.md)
 
-- [ ] **e06-decode** — FastLanes crate transposed bit-packing vs plain `Vec<i64>` scan
+- [x] **e06-decode** — FastLanes crate transposed bit-packing vs plain `Vec<i64>` scan
   vs lz4-block decode: is scanning compressed actually free on our targets?
-- [ ] **e07-strings** — German-string 16-byte views vs `Vec<String>` vs flat
+- [x] **e07-strings** — German-string 16-byte views vs `Vec<String>` vs flat
   chars+offsets (CH ColumnString): filter, group-key hash, comparison workloads.
-- [ ] **e08-string-hash** — length-classed string hash tables (CH StringHashTable)
+- [x] **e08-string-hash** — length-classed string hash tables (CH StringHashTable)
   vs generic hashbrown on `&str` group keys.
-- [ ] **e09-predicate-cache** — granule-bitmap condition cache hit path vs re-evaluating
+- [x] **e09-predicate-cache** — granule-bitmap condition cache hit path vs re-evaluating
   the filter (dashboard repeat-query shape).
-- [ ] **e10-parallel-scan** — morsel size sweep + core scaling curve (1..10 cores) for
+- [x] **e10-parallel-scan** — morsel size sweep + core scaling curve (1..10 cores) for
   scan+filter+agg pipelines; measures whether tokio/rayon scheduling losses matter.
-- [ ] **e11-sweep-line** — granule-level (not segment-level) overlap classification on
+- [x] **e11-sweep-line** — granule-level (not segment-level) overlap classification on
   real PTSEG-shaped sparse indexes, including the level-0 memtable overlap case.
-- [ ] **e12-normalized-keys** — memcmp-able normalized composite sort keys + offset-value
+- [x] **e12-normalized-keys** — memcmp-able normalized composite sort keys + offset-value
   coding vs typed comparators for the k-way merge path.
 
 ## Decision criteria
@@ -61,3 +61,11 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
    paths are kept behind the kernel-dispatch layer.
 3. Margins < 15% are ties — prefer the simpler implementation.
 4. Results feed `docs/decisions.md` entries when adopted into `crates/pintail-*`.
+
+## Pending (third wave)
+
+- [ ] **e13-fastlanes** — the `fastlanes` crate's transposed layout vs e06's plain-scan
+  winner (e06 proved hand-rolled packing loses; the transposed layout is the open question).
+- [ ] **e14-predicate-cache-nonzonemap** — condition cache for predicates zone maps can't
+  express (LIKE, IN-list, JSON path) — e09 showed no value where zone maps already work.
+- [ ] **e15-ovc** — offset-value coding in a loser-tree merge vs e12's packed-u128 winner.

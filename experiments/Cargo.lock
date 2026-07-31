@@ -77,6 +77,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "e06-decode"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "lz4_flex",
+]
+
+[[package]]
+name = "e07-strings"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e08-string-hash"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "hashbrown",
+]
+
+[[package]]
+name = "e09-predicate-cache"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e10-parallel-scan"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "rayon",
+]
+
+[[package]]
+name = "e11-sweep-line"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e12-normalized-keys"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,6 +158,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,3 +185,9 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "twox-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8464ec13c3691491391d9fce00f6416c9a48e46972f72d7865688be2080192c9"

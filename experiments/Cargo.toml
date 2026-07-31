@@ -7,12 +7,20 @@ members = [
     "e03-topk",
     "e04-join",
     "e05-merge-on-read",
+    "e06-decode",
+    "e07-strings",
+    "e08-string-hash",
+    "e09-predicate-cache",
+    "e10-parallel-scan",
+    "e11-sweep-line",
+    "e12-normalized-keys",
 ]
 
 [workspace.dependencies]
 common = { path = "common" }
 rayon = "1.10"
 hashbrown = "0.15"
+lz4_flex = "0.11"
 
 [profile.release]
 lto = "thin"

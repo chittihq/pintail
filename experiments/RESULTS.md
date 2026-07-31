@@ -109,6 +109,99 @@ This empirically confirms the sweep-line classification (issue #3 / engine-resea
 the highest-priority structural change, and shows merge-on-read correctness does NOT
 have to cost a heap merge.
 
+## e06 — Scanning compressed data (naive FOR+bit-pack, lz4)
+
+| SUM over 20M i64 | local | remote |
+|---|---:|---:|
+| **plain Vec<i64> scan** | **2.9** | **12.1** |
+| FOR+bitpack fused unpack-sum | 17.7 | 26.6 |
+| lz4(raw) decompress+sum | 57.5 | 82.7 |
+| lz4(packed) decompress+unpack-sum | 19.8 | 32.9 |
+
+Ratios: packed 3.19×, lz4(raw) 1.62×, lz4(packed) 3.17×.
+
+**Verdict: honest negative — naive bit-packing loses 2.2–6× to plain scans despite 3.2×
+less memory traffic.** Variable-shift scalar unpacking doesn't autovectorize. This is
+precisely the problem the FastLanes transposed layout solves (>100B ints/s claimed);
+the follow-up is testing the `fastlanes` crate, NOT hand-rolling packing. Until then:
+store compressed (3.2× disk), decode to plain vectors at scan start, scan plain.
+
+## e07 — String representation
+
+| Workload | Vec<String> l/r | chars+offsets l/r | German views l/r |
+|---|---:|---:|---:|
+| eq short const | 48.0 / 182.5 | 53.7 / 90.1 | **34.5 / 54.6** |
+| eq long const | 9.1 / 40.9 | 18.1 / **24.1** | **6.9** / 32.1 |
+| ordering `< "m"` | 72.9 / 86.6 | 69.0 / **69.3** | **59.9** / 115.9 |
+
+Memory: Vec<String> 758 MB, chars+offsets 292 MB, views 415 MB.
+
+**Verdict: German-string views win equality workloads on both machines (the group-key
+and filter case that dominates pintail's workload) and always beat Vec<String>. Split
+decision on x86 for ordering/long-eq where flat chars+offsets wins** — the prefix
+fast path branch mispredicts on x86. Adopt views as the execution format; keep the
+ordering-comparison kernel eligible for flat-slice specialization (rule 2).
+
+## e08 — Length-classed string hashing
+
+Local: 288.8 vs 288.2 ms. Remote: 671.3 vs 647.9 ms. **Tie (<15%) on both — rule 3:
+keep generic hashbrown on byte slices.** ClickHouse's StringHashTable gains come from
+hardware-CRC + its whole table design, not length classing alone; revisit only
+after a dedicated aggregation table exists.
+
+## e09 — Predicate/condition cache
+
+| 100 dashboard queries | scattered l/r | clustered l/r |
+|---|---:|---:|
+| full scan | 557.9 / 3794 | 561.4 / 1334 |
+| zone-map pruned | 560.7 / 3875 | **31.1 / 132.0** |
+| predicate-cache warm | 557.5 / 3907 | 30.9 / 131.0 |
+
+**Verdict: pruning value is entirely a function of data clustering** — on scattered
+layouts nothing helps (every 64K-row granule contains every hot tenant); on clustered
+layouts zone maps alone give 10–18×, and the predicate cache adds nothing beyond zone
+maps *for zone-map-expressible predicates*. The cache's real niche is predicates zone
+maps can't express (LIKE, IN-lists, JSON paths) — that test still stands open; and the
+result strengthens the case for optional clustering keys / partitioning (GOAL §5.4).
+
+## e10 — Morsel size × core scaling (bandwidth-bound scan)
+
+Local: 3.0 ms @1t → 1.34 ms @4t, flat beyond (memory bandwidth saturates at ~4 cores).
+Remote: 17.4 ms @1t → 2.7 ms @10t (6.4× — x86 box has lower per-core bandwidth, scales
+further). Morsel size 4K–64K indistinguishable; 1M slightly worse at high thread
+counts on both. **Verdict: 64K-row morsels; expect scan parallelism to saturate well
+below core count on Apple-class memory systems — parallelism budget belongs to
+compute-heavy operators (agg/join), not scans.**
+
+## e11 — Granule-level sweep-line classification (with memtable overlay)
+
+| SUM latest, 250k updates | local | remote |
+|---|---:|---:|
+| full 10-way heap merge | 206.8 / 195.0 | 538.6 / 499.1 |
+| granule-classified, clustered updates (11/312 granules overlap) | **5.9** | **18.7** |
+| granule-classified, scattered updates (158/312 overlap) | 23.3 | 43.8 |
+
+**Verdict: the strongest result in the lab — 29–35× under the realistic CDC pattern
+(recent-hot updates), 8–11× even under adversarial uniform updates, on both machines.**
+Granule-level classification with a memtable overlay is confirmed as the merge-on-read
+design for `pintail-store`.
+
+## e12 — Composite-key comparison in k-way merges
+
+| 8×2.5M merge | local | remote |
+|---|---:|---:|
+| typed tuple heap | 446.8 | 920.6 |
+| normalized [u8;20] memcmp heap | 523.5 | 1482.1 |
+| **packed (u128,u64) heap** | **444.3** | **725.8** |
+
+Normalized-key encode cost (write-time): ~159–182 ms / 20M rows.
+
+**Verdict: packed u128 keys win-or-tie on both machines (+21% on x86); normalized
+memcmp byte keys LOSE 17–61% in heap merges on both — an honest counter to the DuckDB
+sorting-paper intuition, whose wins come from radix sort + row-payload locality, not
+heap comparisons.** Adopt: pack composite sort keys into ≤128-bit integers when they
+fit; keep typed tuples otherwise; offset-value coding remains untested (future).
+
 ## Cross-cutting conclusions
 
 1. **Both machines agree on every adopted verdict** (fused filters, dict-code arrays,
