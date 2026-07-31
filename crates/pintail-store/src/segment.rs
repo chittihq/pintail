@@ -1051,13 +1051,10 @@ fn assemble_rows(
     Ok(rows)
 }
 
-pub(crate) fn verify(
-    directory: &Path,
-    meta: &SegmentMeta,
-    schema: &TableSchema,
-) -> Result<(), StoreError> {
-    let path = directory.join(&meta.file_name);
-    let mut file = File::open(&path)
+/// Loads and checksum-verifies a segment's footer bytes, returning them with
+/// the footer offset and the 18-byte header.
+fn read_verified_footer(path: &Path) -> Result<(Vec<u8>, usize, [u8; 18]), StoreError> {
+    let mut file = File::open(path)
         .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))?;
     let length = usize::try_from(
         file.metadata()
@@ -1066,7 +1063,7 @@ pub(crate) fn verify(
     )
     .map_err(|_| StoreError::FormatLimit("segment file length exceeds usize".into()))?;
     if length < 18 {
-        return Err(corrupt(&path, 0, "segment is shorter than its trailer"));
+        return Err(corrupt(path, 0, "segment is shorter than its trailer"));
     }
 
     let mut header = [0_u8; 18];
@@ -1083,22 +1080,16 @@ pub(crate) fn verify(
     let expected = u64::from_le_bytes(
         trailer[..8]
             .try_into()
-            .map_err(|_| corrupt(&path, trailer_offset, "invalid footer checksum"))?,
+            .map_err(|_| corrupt(path, trailer_offset, "invalid footer checksum"))?,
     );
     let footer_offset =
         usize::try_from(u64::from_le_bytes(trailer[8..].try_into().map_err(
-            |_| corrupt(&path, trailer_offset + 8, "invalid footer offset"),
+            |_| corrupt(path, trailer_offset + 8, "invalid footer offset"),
         )?))
-        .map_err(|_| {
-            corrupt(
-                &path,
-                trailer_offset + 8,
-                "footer offset does not fit usize",
-            )
-        })?;
+        .map_err(|_| corrupt(path, trailer_offset + 8, "footer offset does not fit usize"))?;
     if footer_offset >= trailer_offset {
         return Err(corrupt(
-            &path,
+            path,
             trailer_offset + 8,
             "footer offset is outside segment",
         ));
@@ -1111,12 +1102,33 @@ pub(crate) fn verify(
     file.read_exact(&mut footer)
         .map_err(|error| StoreError::io("read segment footer", error))?;
     if xxh3_64(&footer) != expected {
-        return Err(corrupt(&path, footer_offset, "footer checksum mismatch"));
+        return Err(corrupt(path, footer_offset, "footer checksum mismatch"));
     }
     if footer.get(..FOOTER_MAGIC.len()) != Some(FOOTER_MAGIC) {
-        return Err(corrupt(&path, footer_offset, "invalid footer magic"));
+        return Err(corrupt(path, footer_offset, "invalid footer magic"));
     }
-    validate_footer_body(&path, &footer, footer_offset, meta)?;
+    Ok((footer, footer_offset, header))
+}
+
+/// Reads the sparse primary-key index (one `(row ordinal, first key)` entry
+/// per block) from a segment's checksum-verified footer.
+pub(crate) fn read_sparse_index(
+    directory: &Path,
+    meta: &SegmentMeta,
+) -> Result<Vec<(u64, PrimaryKey)>, StoreError> {
+    let path = directory.join(&meta.file_name);
+    let (footer, footer_offset, _) = read_verified_footer(&path)?;
+    parse_footer_body(&path, &footer, footer_offset, meta)
+}
+
+pub(crate) fn verify(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+) -> Result<(), StoreError> {
+    let path = directory.join(&meta.file_name);
+    let (footer, footer_offset, header) = read_verified_footer(&path)?;
+    parse_footer_body(&path, &footer, footer_offset, meta)?;
     if &header[..MAGIC.len()] != MAGIC {
         return Err(corrupt(&path, 0, "invalid segment header"));
     }
@@ -2691,12 +2703,12 @@ fn decode_cell(decoder: &mut Decoder<'_>, logical_type: LogicalType) -> Result<C
     }
 }
 
-fn validate_footer_body(
+fn parse_footer_body(
     path: &Path,
     bytes: &[u8],
     footer_offset: usize,
     meta: &SegmentMeta,
-) -> Result<(), StoreError> {
+) -> Result<Vec<(u64, PrimaryKey)>, StoreError> {
     let mut decoder = Decoder::new(bytes);
     expect_raw(&mut decoder, FOOTER_MAGIC)
         .map_err(|reason| corrupt(path, footer_offset, reason))?;
@@ -2745,11 +2757,14 @@ fn validate_footer_body(
     let sparse_count = decoder
         .u32()
         .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let mut sparse = Vec::with_capacity(sparse_count as usize);
     for _ in 0..sparse_count {
-        decoder
+        let ordinal = decoder
             .u64()
-            .and_then(|_| decode_key(&mut decoder).map(|_| 0))
             .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+        let key = decode_key(&mut decoder)
+            .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+        sparse.push((ordinal, key));
     }
     let bloom = decoder
         .bytes()
@@ -2771,7 +2786,7 @@ fn validate_footer_body(
     decoder
         .finish()
         .map_err(|reason| corrupt(path, footer_offset, reason))?;
-    Ok(())
+    Ok(sparse)
 }
 
 fn build_bloom(rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {

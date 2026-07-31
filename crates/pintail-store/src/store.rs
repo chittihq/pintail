@@ -385,15 +385,40 @@ enum ScanPart {
     Direct {
         segments: Vec<segment::SegmentMeta>,
     },
+    /// A contiguous row range of one segment, provably untouched by newer
+    /// segments or the memtable (granule-level sweep classification).
+    DirectRange {
+        segment: segment::SegmentMeta,
+        start_row: u64,
+        end_row: u64,
+    },
     Merge {
         segments: Vec<segment::SegmentMeta>,
-        lo: PrimaryKey,
-        hi: PrimaryKey,
+        lo: std::ops::Bound<PrimaryKey>,
+        hi: std::ops::Bound<PrimaryKey>,
     },
     MemtableOnly {
         lo: std::ops::Bound<PrimaryKey>,
         hi: std::ops::Bound<PrimaryKey>,
     },
+}
+
+/// Whether `key` lies within the inclusive/exclusive bound pair.
+fn bounds_contain(
+    lo: &std::ops::Bound<PrimaryKey>,
+    hi: &std::ops::Bound<PrimaryKey>,
+    key: &PrimaryKey,
+) -> bool {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    (match lo {
+        Included(bound) => key >= bound,
+        Excluded(bound) => key > bound,
+        Unbounded => true,
+    }) && (match hi {
+        Included(bound) => key <= bound,
+        Excluded(bound) => key < bound,
+        Unbounded => true,
+    })
 }
 
 /// Pull-based projected scan over immutable segments and WAL-backed rows.
@@ -414,6 +439,7 @@ pub struct ProjectedScanStream {
     reported_pruned: bool,
     parts: std::collections::VecDeque<ScanPart>,
     memtable_cursor: Option<(std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>)>,
+    direct_range: Option<(segment::SegmentMeta, u64, u64)>,
     merge: Option<MergedProjectedStream>,
 }
 
@@ -422,8 +448,8 @@ struct MergedProjectedStream {
     heads: Vec<Option<segment::SegmentRowHeader>>,
     memtable_head: Option<StoredRow>,
     reported_segments: bool,
-    lo: PrimaryKey,
-    hi: PrimaryKey,
+    lo: std::ops::Bound<PrimaryKey>,
+    hi: std::ops::Bound<PrimaryKey>,
 }
 
 /// Whether `BTreeMap::range((lo, hi))` may be called without panicking and
@@ -590,6 +616,10 @@ impl ProjectedScanStream {
                     return Ok(Some(chunk));
                 }
                 self.memtable_cursor = None;
+            } else if let Some((segment, start_row, end_row)) = self.direct_range.take() {
+                return self
+                    .decode_column_chunk_rows(&segment, start_row, end_row, memory_limit)
+                    .map(Some);
             } else if let Some(segment) = self.segments.get(self.next_segment).cloned() {
                 self.next_segment += 1;
                 return self.decode_column_chunk(segment, memory_limit).map(Some);
@@ -607,10 +637,20 @@ impl ProjectedScanStream {
         };
         self.merge = None;
         self.memtable_cursor = None;
+        self.direct_range = None;
         match part {
             ScanPart::Direct { segments } => {
                 self.segments = segments;
                 self.next_segment = 0;
+            }
+            ScanPart::DirectRange {
+                segment,
+                start_row,
+                end_row,
+            } => {
+                self.segments = Vec::new();
+                self.next_segment = 0;
+                self.direct_range = Some((segment, start_row, end_row));
             }
             ScanPart::Merge { segments, lo, hi } => {
                 let mut streams = segments
@@ -627,12 +667,15 @@ impl ProjectedScanStream {
                     .iter_mut()
                     .map(segment::SegmentRowStream::next_header)
                     .collect::<Result<Vec<_>, _>>()?;
-                let memtable_head = self
-                    .snapshot
-                    .memtable
-                    .range(lo.clone()..=hi.clone())
-                    .next()
-                    .map(|(_, row)| row.clone());
+                let memtable_head = if bound_range_is_searchable(&lo, &hi) {
+                    self.snapshot
+                        .memtable
+                        .range((lo.clone(), hi.clone()))
+                        .next()
+                        .map(|(_, row)| row.clone())
+                } else {
+                    None
+                };
                 self.segments = segments;
                 self.next_segment = self.segments.len();
                 self.merge = Some(MergedProjectedStream {
@@ -773,7 +816,7 @@ impl ProjectedScanStream {
         max_chunks: usize,
         memory_limit: usize,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
-        if self.merge.is_some() || self.memtable_cursor.is_some() {
+        if self.merge.is_some() || self.memtable_cursor.is_some() || self.direct_range.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
         }
         if self.next_segment >= self.segments.len() {
@@ -909,18 +952,19 @@ impl ProjectedScanStream {
                         ),
                     ));
                 }
-                merge.memtable_head = self
-                    .snapshot
-                    .memtable
-                    .range((
-                        std::ops::Bound::Excluded(minimum.clone()),
-                        std::ops::Bound::Included(part_hi.clone()),
-                    ))
-                    .next()
-                    .map(|(_, row)| row.clone());
+                let reseek_lo = std::ops::Bound::Excluded(minimum.clone());
+                merge.memtable_head = if bound_range_is_searchable(&reseek_lo, &part_hi) {
+                    self.snapshot
+                        .memtable
+                        .range((reseek_lo, part_hi.clone()))
+                        .next()
+                        .map(|(_, row)| row.clone())
+                } else {
+                    None
+                };
             }
             let winner = winner.expect("minimum key has a winning row");
-            if minimum < part_lo || minimum > part_hi || winner.1 {
+            if !bounds_contain(&part_lo, &part_hi, &minimum) || winner.1 {
                 continue;
             }
             winner_sources.push(winner.2);
@@ -1022,6 +1066,83 @@ impl ProjectedScanStream {
             },
             retained_bytes,
         }))
+    }
+
+    /// Decodes one contiguous row range of a segment (a granule-classified
+    /// direct part) into a column chunk, bypassing merge machinery.
+    fn decode_column_chunk_rows(
+        &self,
+        segment: &segment::SegmentMeta,
+        start_row: u64,
+        end_row: u64,
+        memory_limit: usize,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
+        let projection = self
+            .column_ids
+            .iter()
+            .map(|id| {
+                self.snapshot
+                    .schema
+                    .columns()
+                    .iter()
+                    .position(|column| column.id() == *id)
+                    .ok_or_else(|| {
+                        StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let start = usize::try_from(start_row)
+            .map_err(|_| StoreError::FormatLimit("range start exceeds usize".into()))?;
+        let end = usize::try_from(end_row)
+            .map_err(|_| StoreError::FormatLimit("range end exceeds usize".into()))?;
+        let row_count = end.saturating_sub(start);
+        let scan_memory = AtomicUsize::new(0);
+        let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+        let row_index_bytes = row_count.saturating_mul(size_of::<usize>());
+        scan_budget.reserve(row_index_bytes)?;
+        let row_indices = (start..end).collect::<Vec<_>>();
+        let fetch = segment::read_projected_rows(
+            &self.snapshot.directory,
+            segment,
+            &self.snapshot.schema,
+            &projection,
+            &row_indices,
+            &scan_budget,
+        )?;
+        scan_budget.release(row_index_bytes);
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                fetch
+                    .columns
+                    .capacity()
+                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+            )
+            .saturating_add(
+                fetch
+                    .columns
+                    .iter()
+                    .map(|values| {
+                        values
+                            .capacity()
+                            .saturating_mul(size_of::<pintail_types::Value>())
+                            .saturating_add(
+                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
+                            )
+                    })
+                    .sum(),
+            );
+        scan_budget.release(fetch.reserved_bytes);
+        scan_budget.reserve(retained_bytes)?;
+        Ok(ProjectedColumnChunk {
+            columns: fetch.columns,
+            row_count,
+            stats: ScanStats {
+                segments_read: 1,
+                blocks_decoded: fetch.blocks_decoded,
+                ..ScanStats::default()
+            },
+            retained_bytes,
+        })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2483,8 +2604,8 @@ impl TableSnapshot {
                 needs_visibility_resolution = true;
                 parts.push_back(ScanPart::Merge {
                     segments: segments[index..next].to_vec(),
-                    lo: part_lo,
-                    hi: part_hi.clone(),
+                    lo: std::ops::Bound::Included(part_lo),
+                    hi: std::ops::Bound::Included(part_hi.clone()),
                 });
             }
             cursor = std::ops::Bound::Excluded(part_hi);
@@ -2501,6 +2622,7 @@ impl TableSnapshot {
         if needs_visibility_resolution && candidate_rows < 64 * 1024 {
             return Ok(None);
         }
+        let parts = self.refine_merge_parts(start, end, parts);
         Ok(Some(ProjectedScanStream {
             snapshot: self.clone(),
             candidate_segments: segments.len(),
@@ -2513,8 +2635,119 @@ impl TableSnapshot {
             reported_pruned: false,
             parts,
             memtable_cursor: None,
+            direct_range: None,
             merge: None,
         }))
+    }
+
+    /// Granule-level refinement of merge clusters (docs/decisions.md,
+    /// "Merge-on-read uses granule-level sweep-line classification"): a
+    /// base+tail cluster whose dominant segment has unique keys splits into
+    /// direct row-ranges of the base outside the overlap span plus one merge
+    /// bounded to the actual overlap, located through the base's footer
+    /// sparse index. Best effort: any obstacle keeps the coarse part.
+    fn refine_merge_parts(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        parts: std::collections::VecDeque<ScanPart>,
+    ) -> std::collections::VecDeque<ScanPart> {
+        use std::ops::Bound::{Excluded, Included};
+        let mut refined = std::collections::VecDeque::with_capacity(parts.len());
+        for part in parts {
+            let ScanPart::Merge { segments, lo, hi } = part else {
+                refined.push_back(part);
+                continue;
+            };
+            if segments.len() != 2 {
+                refined.push_back(ScanPart::Merge { segments, lo, hi });
+                continue;
+            }
+            let (base_index, tail_index) = if segments[0].row_count >= segments[1].row_count {
+                (0, 1)
+            } else {
+                (1, 0)
+            };
+            let base = &segments[base_index];
+            let tail = &segments[tail_index];
+            let refinable = base.unique_keys
+                && base.row_count >= tail.row_count.saturating_mul(4)
+                && *start <= base.min_key
+                && *end >= base.max_key;
+            if !refinable {
+                refined.push_back(ScanPart::Merge { segments, lo, hi });
+                continue;
+            }
+            // Overlap span: tail keys plus memtable keys inside the part.
+            let mut overlap_lo = tail.min_key.clone();
+            let mut overlap_hi = tail.max_key.clone();
+            if bound_range_is_searchable(&lo, &hi) {
+                if let Some((first, _)) = self.memtable.range((lo.clone(), hi.clone())).next()
+                    && *first < overlap_lo
+                {
+                    overlap_lo = first.clone();
+                }
+                if let Some((last, _)) = self.memtable.range((lo.clone(), hi.clone())).next_back()
+                    && *last > overlap_hi
+                {
+                    overlap_hi = last.clone();
+                }
+            }
+            let Ok(sparse) = segment::read_sparse_index(&self.directory, base) else {
+                refined.push_back(ScanPart::Merge { segments, lo, hi });
+                continue;
+            };
+            if sparse.len() < 2 {
+                refined.push_back(ScanPart::Merge { segments, lo, hi });
+                continue;
+            }
+            let prefix_granules = sparse.partition_point(|(_, key)| *key < overlap_lo);
+            let suffix_start = sparse.partition_point(|(_, key)| *key <= overlap_hi);
+            let prefix_rows = prefix_granules
+                .checked_sub(1)
+                .map_or(0, |granule| sparse[granule].0);
+            let suffix_rows = if suffix_start < sparse.len() {
+                base.row_count - sparse[suffix_start].0
+            } else {
+                0
+            };
+            // Refining only pays when a meaningful share of the base skips
+            // the merge entirely.
+            if (prefix_rows + suffix_rows).saturating_mul(4) < base.row_count {
+                refined.push_back(ScanPart::Merge { segments, lo, hi });
+                continue;
+            }
+            let merge_lo = if prefix_granules >= 1 {
+                Included(sparse[prefix_granules - 1].1.clone())
+            } else {
+                lo.clone()
+            };
+            let merge_hi = if suffix_start < sparse.len() {
+                Excluded(sparse[suffix_start].1.clone())
+            } else {
+                hi.clone()
+            };
+            if prefix_rows > 0 {
+                refined.push_back(ScanPart::DirectRange {
+                    segment: base.clone(),
+                    start_row: 0,
+                    end_row: prefix_rows,
+                });
+            }
+            refined.push_back(ScanPart::Merge {
+                segments: segments.clone(),
+                lo: merge_lo,
+                hi: merge_hi,
+            });
+            if suffix_rows > 0 {
+                refined.push_back(ScanPart::DirectRange {
+                    segment: base.clone(),
+                    start_row: sparse[suffix_start].0,
+                    end_row: base.row_count,
+                });
+            }
+        }
+        refined
     }
 
     /// Scans a projected range while enforcing a caller-owned memory budget

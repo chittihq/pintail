@@ -99,3 +99,64 @@ fn partitioned_scan_merges_only_the_overlapping_cluster_and_matches_reference() 
     assert!(!streamed.contains(&Value::Utf8("b-150123".into())));
     assert!(!streamed.contains(&Value::Utf8("c-150123".into())));
 }
+
+#[test]
+fn granule_refinement_splits_base_and_tail_clusters() {
+    let directory = tempfile::tempdir().expect("table directory");
+    let schema =
+        TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)]).expect("schema");
+    let mut writer =
+        TableStore::open(directory.path(), schema, StoreOptions::default()).expect("writer");
+
+    // Base: 130_000 unique keys; tail: 8_000 newer versions clustered at the
+    // top of the keyspace (the CDC shape). Dominance 130k >= 4 * 8k holds.
+    writer
+        .bulk_ingest_snapshot(
+            (1..=130_000)
+                .map(|id| row(id, format!("base-{id}"), 0, false))
+                .collect(),
+        )
+        .expect("base segment");
+    writer
+        .bulk_ingest_snapshot(
+            (122_001..=130_000)
+                .map(|id| row(id, format!("tail-{id}"), 1, false))
+                .collect(),
+        )
+        .expect("tail segment");
+
+    let snapshot = writer.snapshot();
+    let reference: Vec<Value> = snapshot
+        .scan()
+        .expect("reference scan")
+        .into_iter()
+        .map(|stored| stored.values()[0].clone())
+        .collect();
+    assert_eq!(reference.len(), 130_000);
+    let (start, end) = snapshot.key_bounds().expect("bounds");
+    let mut stream = snapshot
+        .scan_projected_range_stream(&start, &end, &[1])
+        .expect("open stream")
+        .expect("stream available");
+
+    let mut streamed = Vec::new();
+    let mut chunk_rows = Vec::new();
+    while let Some(chunk) = stream.next_chunk(64 * 1024 * 1024).expect("stream chunk") {
+        chunk_rows.push(chunk.rows().len());
+        for values in chunk.rows() {
+            streamed.push(values[0].clone());
+        }
+    }
+    assert_eq!(streamed.len(), reference.len());
+    assert_eq!(streamed, reference);
+    // The refined plan serves the untouched prefix of the base as one large
+    // direct row-range chunk instead of pushing all 138k rows through the
+    // merge (which caps chunks at 8k rows).
+    assert!(
+        chunk_rows.iter().any(|rows| *rows >= 64 * 1024),
+        "expected a large direct-range chunk from granule refinement, got {chunk_rows:?}"
+    );
+    assert!(streamed.contains(&Value::Utf8("tail-125000".into())));
+    assert!(streamed.contains(&Value::Utf8("base-122000".into())));
+    assert!(!streamed.contains(&Value::Utf8("base-125000".into())));
+}
