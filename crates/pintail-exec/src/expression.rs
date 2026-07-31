@@ -24,6 +24,7 @@ const fn mirror_comparison(op: BinaryOp) -> BinaryOp {
 /// Builds a selection mask from a packed-value comparison. `None` when the
 /// literal's physical type doesn't match the column's packed type — mixed-type
 /// comparisons keep the row-at-a-time semantics of `evaluate_comparison`.
+#[allow(clippy::too_many_lines)]
 fn typed_comparison_mask(
     typed: &TypedValues,
     validity: &ValidityMask,
@@ -122,12 +123,55 @@ fn typed_comparison_mask(
             }
             Some(mask)
         }
-        // General Utf8 deliberately falls back: text comparison is
-        // collation-aware (utf8mb4 case-insensitive — see
-        // text_key_predicates_do_not_use_bytewise_storage_pruning), so a
-        // byte-wise kernel would change semantics. The collation-aware string
-        // fast path arrives with dictionary-code execution, where casefolding
-        // happens once per distinct value instead of per row.
+        // Collation-correct string equality over low-cardinality columns:
+        // dedup the batch's distinct views byte-exactly, casefold each
+        // distinct ONCE against the needle (the same compare_utf8_mysql the
+        // row path uses), then match rows by 16-byte view comparison against
+        // the matching distincts. Ordering comparisons and high-cardinality
+        // batches fall back to the row path.
+        (TypedValues::Utf8(column), Value::Utf8(text))
+            if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) =>
+        {
+            const MAX_DISTINCT: usize = 16;
+            let views = column.views();
+            let heap = column.heap();
+            let mut distinct: Vec<crate::array::StrView> = Vec::new();
+            for (row, view) in views.iter().enumerate() {
+                if !validity.is_valid(row) {
+                    continue;
+                }
+                if !distinct.iter().any(|seen| seen.same_bytes(view, heap)) {
+                    if distinct.len() >= MAX_DISTINCT {
+                        return None;
+                    }
+                    distinct.push(*view);
+                }
+            }
+            let matching: Vec<crate::array::StrView> = distinct
+                .iter()
+                .filter(|view| {
+                    view.with_bytes(heap, |bytes| {
+                        std::str::from_utf8(bytes).is_ok_and(|candidate| {
+                            compare_utf8_mysql(candidate, text) == Ordering::Equal
+                        })
+                    })
+                })
+                .copied()
+                .collect();
+            let want = op == BinaryOp::Equal;
+            let mut mask = SelectionMask::none(views.len());
+            for (row, view) in views.iter().enumerate() {
+                if validity.is_valid(row) {
+                    let hit = matching.iter().any(|m| m.same_bytes(view, heap));
+                    if hit == want {
+                        mask.set(row, true).expect("row within mask bounds");
+                    }
+                }
+            }
+            Some(mask)
+        }
+        // Remaining Utf8 shapes (ordering, high cardinality) fall back to the
+        // collation-aware row path.
         _ => None,
     }
 }
