@@ -401,6 +401,9 @@ impl CompiledExpr {
         columns: &[pintail_sql::BoundColumn],
     ) -> Result<Self, ExecError> {
         match &expr.kind {
+            BoundExprKind::Window(_) => Err(ExecError::InvalidPhysicalPlan(
+                "window expressions must be lowered before compilation",
+            )),
             BoundExprKind::Column(column) => {
                 let index = columns
                     .iter()

@@ -67,6 +67,8 @@ pub enum BoundExprKind {
     GroupKey(usize),
     /// Absolute positional aggregate-result reference after hash aggregation.
     Aggregate(usize),
+    /// Positional reference into [`BoundQuery::windows`].
+    Window(usize),
     /// Typed scalar literal.
     Literal(Value),
     /// One-column, at-most-one-row uncorrelated query.
@@ -255,6 +257,47 @@ pub struct BoundAggregate {
     pub nullable: bool,
 }
 
+/// One window ordering key evaluated against source rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundWindowOrderKey {
+    /// Key expression.
+    pub expr: BoundExpr,
+    /// Whether smaller values appear first.
+    pub ascending: bool,
+    /// Whether NULL values appear before non-NULL values.
+    pub nulls_first: bool,
+}
+
+/// Supported window computations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WindowFunction {
+    /// 1-based position within the partition in window order.
+    RowNumber,
+    /// Rank with gaps.
+    Rank,
+    /// Rank without gaps.
+    DenseRank,
+    /// An aggregate evaluated over the window frame: the whole partition
+    /// without `ORDER BY`, or the running frame up to the current row's
+    /// peers with it (`MySQL`'s default frame).
+    Aggregate(BoundAggregate),
+}
+
+/// One window computation over partitioned, ordered source rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundWindow {
+    /// Window computation.
+    pub function: WindowFunction,
+    /// Partition expressions evaluated against source rows.
+    pub partition_by: Vec<BoundExpr>,
+    /// In-partition ordering.
+    pub order_by: Vec<BoundWindowOrderKey>,
+    /// Result type.
+    pub data_type: Option<DataType>,
+    /// Whether the result can be NULL.
+    pub nullable: bool,
+}
+
 /// Supported unary scalar operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnaryOp {
@@ -380,6 +423,8 @@ pub struct BoundQuery {
     pub group_by: Vec<BoundExpr>,
     /// Deduplicated aggregate computations.
     pub aggregates: Vec<BoundAggregate>,
+    /// Window computations referenced by the projection.
+    pub windows: Vec<BoundWindow>,
     /// Optional post-aggregation predicate.
     pub having: Option<BoundExpr>,
     /// Whether duplicate output rows must be removed.

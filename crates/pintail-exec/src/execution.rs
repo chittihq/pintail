@@ -446,6 +446,7 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(Data
         BoundExprKind::Column(column) => {
             tables.insert((column.database_id, column.table_id));
         }
+        BoundExprKind::Window(_) => {}
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
             collect_expression_tables(expr, tables);
         }
@@ -734,6 +735,7 @@ fn resolve_expr_subqueries(
     retained_bytes: &mut usize,
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
+        BoundExprKind::Window(_) => {}
         BoundExprKind::ScalarSubquery(query) => {
             let values = materialize_subquery(
                 (**query).clone(),

@@ -167,8 +167,12 @@ impl LogicalPlanner {
             distinct,
             order_by,
             union_all,
+            windows,
             limit,
         } = query;
+        // W2 (task #12) lowers windows into a Window plan node; until then
+        // the binder never produces them past its own validation.
+        debug_assert!(windows.is_empty(), "window lowering not wired yet");
 
         debug_assert_eq!(
             tables.len(),

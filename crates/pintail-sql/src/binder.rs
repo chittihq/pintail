@@ -213,6 +213,7 @@ impl<'catalog> Binder<'catalog> {
             distinct,
             order_by: Vec::new(),
             union_all: Vec::new(),
+            windows: Vec::new(),
             limit: None,
         })
     }
@@ -1721,6 +1722,11 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
             Ok(())
         }
         BoundExprKind::InSubquery { expr, .. } => rewrite_group_references(expr, group_by),
+        // Windows never coexist with GROUP BY in v1; the binder rejects the
+        // combination before grouping rewrites run.
+        BoundExprKind::Window(_) => Err(BindError::UnsupportedExpression(
+            "window function in a grouped query".to_owned(),
+        )),
         BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_) => Ok(()),

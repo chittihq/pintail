@@ -305,6 +305,7 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
         | BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::Literal(_) => return expr,
         BoundExprKind::InSubquery {
@@ -366,6 +367,7 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
         | BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::InSubquery { .. }
         | BoundExprKind::Scalar { .. } => None,
@@ -790,6 +792,7 @@ fn referenced_tables(expr: &BoundExpr) -> BTreeSet<TableKey> {
 
 fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
     match &expr.kind {
+        BoundExprKind::Window(_) => {}
         BoundExprKind::Column(column) => {
             columns.insert(column_key(column));
         }
