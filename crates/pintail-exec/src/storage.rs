@@ -825,6 +825,46 @@ fn column_vector_from_decoded(
         } if matches!(storage, pintail_types::DataType::Utf8) => {
             Ok(typed_from_utf8_arena(data_type, &heap, &offsets, &validity))
         }
+        DecodedColumn::NativeUnits {
+            units,
+            values,
+            validity,
+        } if matches!(storage, pintail_types::DataType::Utf8) => {
+            // PTSEG v2 unit columns: the packed integers ARE the typed
+            // representation — no text parse. Text views are formatted once
+            // for the consumers that still need them (output, group keys).
+            let mut text = StrColumn::default();
+            for (row, valid) in validity.iter().enumerate() {
+                if *valid {
+                    let value = units
+                        .format(values[row])
+                        .expect("stored native units round-trip");
+                    text.push(value.as_bytes());
+                } else {
+                    text.push(&[]);
+                }
+            }
+            let mask = ValidityMask::from_bools(&validity);
+            let typed = match (units, data_type) {
+                (
+                    pintail_store::NativeUnits::Decimal { scale },
+                    pintail_types::DataType::Decimal { .. },
+                ) => TypedValues::Decimal128 {
+                    values: values.into_iter().map(i128::from).collect(),
+                    scale,
+                    text,
+                },
+                (
+                    pintail_store::NativeUnits::Date | pintail_store::NativeUnits::DateTime { .. },
+                    pintail_types::DataType::Date32 | pintail_types::DataType::DateTime64 { .. },
+                ) => TypedValues::Temporal {
+                    units: values,
+                    text,
+                },
+                _ => TypedValues::Utf8(text),
+            };
+            Ok(ColumnVector::from_typed(data_type, typed, mask))
+        }
         decoded => ColumnVector::new(data_type, decoded.into_values()).map_err(ExecError::from),
     }
 }

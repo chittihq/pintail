@@ -224,8 +224,7 @@ enum LogicalType {
 /// only when every stored value round-trips text -> units -> identical text
 /// (PTSEG v2; docs/decisions.md "PTSEG v2 approved").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // constructed by the v2 writer (task #10 step A)
-pub(crate) enum NativeUnits {
+pub enum NativeUnits {
     /// Days since 1970-01-01 for `Date32` columns.
     Date,
     /// Microseconds since the epoch for `DateTime64` columns; the fractional
@@ -235,10 +234,10 @@ pub(crate) enum NativeUnits {
     Decimal { scale: u8 },
 }
 
-#[allow(dead_code)] // consumed by the v2 writer and reader (task #10 step A)
 impl NativeUnits {
     /// The native representation a column's declared type could use, if any.
-    pub(crate) fn for_data_type(data_type: DataType) -> Option<Self> {
+    #[must_use]
+    pub fn for_data_type(data_type: DataType) -> Option<Self> {
         match data_type {
             DataType::Date32 => Some(Self::Date),
             DataType::DateTime64 { fsp } => Some(Self::DateTime { fsp }),
@@ -252,7 +251,8 @@ impl NativeUnits {
     /// Parses one canonical text value into units, returning `None` unless
     /// the units regenerate the identical text (the round-trip guarantee the
     /// v2 writer requires before storing units instead of text).
-    pub(crate) fn parse_exact(self, text: &str) -> Option<i64> {
+    #[must_use]
+    pub fn parse_exact(self, text: &str) -> Option<i64> {
         match self {
             Self::Date => {
                 let days = pintail_types::parse_date_days(text)?;
@@ -274,7 +274,8 @@ impl NativeUnits {
 
     /// Regenerates the canonical text for stored units. `None` indicates
     /// corruption: the writer only stores units that round-trip.
-    pub(crate) fn format(self, units: i64) -> Option<String> {
+    #[must_use]
+    pub fn format(self, units: i64) -> Option<String> {
         match self {
             Self::Date => pintail_types::format_date_days(units),
             Self::DateTime { fsp } => pintail_types::format_datetime_micros(units, fsp),
@@ -1869,12 +1870,12 @@ enum ColumnBuilder {
         offsets: Vec<usize>,
         validity: Vec<bool>,
     },
-    /// A v2 native-unit column materialized as text (step A): each Int64
-    /// cell formats into the arena through its canonical formatter.
-    NativeText {
+    /// A v2 native-unit column: unit cells accumulate packed and flow to
+    /// the executor untouched (step B); text regenerates only where a
+    /// consumer asks.
+    NativeUnits {
         units: NativeUnits,
-        heap: Vec<u8>,
-        offsets: Vec<usize>,
+        values: Vec<i64>,
         validity: Vec<bool>,
     },
     Values(Vec<Value>),
@@ -1890,12 +1891,9 @@ impl ColumnBuilder {
         capacity: usize,
     ) -> Self {
         if let Some(units) = native {
-            let mut offsets = Vec::with_capacity(capacity.saturating_add(1));
-            offsets.push(0);
-            return Self::NativeText {
+            return Self::NativeUnits {
                 units,
-                heap: Vec::new(),
-                offsets,
+                values: Vec::with_capacity(capacity),
                 validity: Vec::with_capacity(capacity),
             };
         }
@@ -1933,11 +1931,23 @@ impl ColumnBuilder {
 
     fn push(&mut self, cell: Cell) -> Result<(), String> {
         match (&mut *self, cell) {
-            (Self::Int64 { values, validity }, Cell::Int64(value)) => {
+            (
+                Self::Int64 { values, validity }
+                | Self::NativeUnits {
+                    values, validity, ..
+                },
+                Cell::Int64(value),
+            ) => {
                 values.push(value);
                 validity.push(true);
             }
-            (Self::Int64 { values, validity }, Cell::Null) => {
+            (
+                Self::Int64 { values, validity }
+                | Self::NativeUnits {
+                    values, validity, ..
+                },
+                Cell::Null,
+            ) => {
                 values.push(0);
                 validity.push(false);
             }
@@ -1972,31 +1982,12 @@ impl ColumnBuilder {
             (
                 Self::Utf8 {
                     offsets, validity, ..
-                }
-                | Self::NativeText {
-                    offsets, validity, ..
                 },
                 Cell::Null,
             ) => {
                 let end = *offsets.last().expect("offsets seeded with zero");
                 offsets.push(end);
                 validity.push(false);
-            }
-            (
-                Self::NativeText {
-                    units,
-                    heap,
-                    offsets,
-                    validity,
-                },
-                Cell::Int64(value),
-            ) => {
-                let text = units
-                    .format(value)
-                    .ok_or_else(|| "native units outside the canonical text range".to_owned())?;
-                heap.extend_from_slice(text.as_bytes());
-                offsets.push(heap.len());
-                validity.push(true);
             }
             (Self::Values(_), Cell::Key(_)) => {
                 return Err("primary-key cell in a user column block".to_owned());
@@ -2027,7 +2018,10 @@ impl ColumnBuilder {
     /// Bytes retained by owned buffers, by length (used for reserve deltas).
     fn heap_len_bytes(&self) -> usize {
         match self {
-            Self::Int64 { values, validity } => values
+            Self::Int64 { values, validity }
+            | Self::NativeUnits {
+                values, validity, ..
+            } => values
                 .len()
                 .saturating_mul(std::mem::size_of::<i64>())
                 .saturating_add(validity.len()),
@@ -2043,12 +2037,6 @@ impl ColumnBuilder {
                 heap,
                 offsets,
                 validity,
-            }
-            | Self::NativeText {
-                heap,
-                offsets,
-                validity,
-                ..
             } => heap
                 .len()
                 .saturating_add(offsets.len().saturating_mul(std::mem::size_of::<usize>()))
@@ -2069,15 +2057,18 @@ impl ColumnBuilder {
                 heap,
                 offsets,
                 validity,
-            }
-            | Self::NativeText {
-                heap,
-                offsets,
-                validity,
-                ..
             } => DecodedColumn::Utf8 {
                 heap,
                 offsets,
+                validity,
+            },
+            Self::NativeUnits {
+                units,
+                values,
+                validity,
+            } => DecodedColumn::NativeUnits {
+                units,
+                values,
                 validity,
             },
             Self::Values(values) => DecodedColumn::Values(values),

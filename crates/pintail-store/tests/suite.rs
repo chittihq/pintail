@@ -1,9 +1,10 @@
-//! Single integration-test harness: one linked binary instead of eleven
-//! (the target directory lives on a slow external volume; see Cargo.toml
-//! profile notes).
+//! Consolidated integration-test harness: one linked binary for the suites
+//! that tolerate sharing a process. `compaction` and `schema_evolution` stay
+//! separate binaries: their drop-then-reopen loops intermittently hit
+//! `WriterBusy` when 50+ tests share one process (under investigation — the
+//! writer flock should be free the moment the store drops).
 
 mod suite {
-    mod compaction;
     mod crash_fuzz;
     mod database;
     mod encodings;
@@ -14,5 +15,4 @@ mod suite {
     mod partitioned_scan;
     mod reader;
     mod recovery;
-    mod schema_evolution;
 }

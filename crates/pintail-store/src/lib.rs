@@ -17,6 +17,7 @@ mod wal;
 
 pub use database::DatabaseStore;
 pub use error::StoreError;
+pub use segment::NativeUnits;
 pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, CompactionOutcome, CompactionStatus,
     DecodedColumn, FlushOutcome, IngestOutcome, ProjectedColumnChunk, ProjectedRow, ProjectedScan,

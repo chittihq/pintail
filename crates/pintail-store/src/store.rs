@@ -520,6 +520,18 @@ pub enum DecodedColumn {
         /// Per-row null mask (`true` = non-null).
         validity: Vec<bool>,
     },
+    /// Fixed-width native units decoded from a PTSEG v2 column; canonical
+    /// text regenerates through `units.format` only where a consumer needs
+    /// it.
+    NativeUnits {
+        /// The unit interpretation (date days, datetime micros, or scaled
+        /// decimal) tied to the column's schema type.
+        units: crate::segment::NativeUnits,
+        /// One packed unit value per row; null slots hold zero.
+        values: Vec<i64>,
+        /// Per-row null mask (`true` = non-null).
+        validity: Vec<bool>,
+    },
     /// UTF-8 bytes in one arena; row `i` spans `heap[offsets[i]..offsets[i+1]]`
     /// and null rows span zero bytes.
     Utf8 {
@@ -541,6 +553,7 @@ impl DecodedColumn {
             Self::Int64 { validity, .. }
             | Self::UInt64 { validity, .. }
             | Self::Float64 { validity, .. }
+            | Self::NativeUnits { validity, .. }
             | Self::Utf8 { validity, .. } => validity.len(),
         }
     }
@@ -559,7 +572,10 @@ impl DecodedColumn {
                 .capacity()
                 .saturating_mul(size_of::<pintail_types::Value>())
                 .saturating_add(values.iter().map(pintail_types::Value::heap_bytes).sum()),
-            Self::Int64 { values, validity } => values
+            Self::Int64 { values, validity }
+            | Self::NativeUnits {
+                values, validity, ..
+            } => values
                 .capacity()
                 .saturating_mul(size_of::<i64>())
                 .saturating_add(validity.capacity()),
@@ -597,6 +613,19 @@ impl DecodedColumn {
                 let rest_values = values.split_off(count);
                 let rest_validity = validity.split_off(count);
                 Self::Int64 {
+                    values: std::mem::replace(values, rest_values),
+                    validity: std::mem::replace(validity, rest_validity),
+                }
+            }
+            Self::NativeUnits {
+                units,
+                values,
+                validity,
+            } => {
+                let rest_values = values.split_off(count);
+                let rest_validity = validity.split_off(count);
+                Self::NativeUnits {
+                    units: *units,
                     values: std::mem::replace(values, rest_values),
                     validity: std::mem::replace(validity, rest_validity),
                 }
@@ -640,6 +669,11 @@ impl DecodedColumn {
     }
 
     /// Materializes one row's value, or `None` past the end.
+    ///
+    /// # Panics
+    ///
+    /// Panics if stored native units cannot regenerate their text, which the
+    /// writer's round-trip probe makes impossible.
     #[must_use]
     pub fn value_at(&self, row: usize) -> Option<pintail_types::Value> {
         if row >= self.len() {
@@ -670,6 +704,20 @@ impl DecodedColumn {
                     pintail_types::Value::Null
                 }
             }
+            Self::NativeUnits {
+                units,
+                values,
+                validity,
+            } => {
+                if validity[row] {
+                    let text = units
+                        .format(values[row])
+                        .expect("stored native units round-trip");
+                    pintail_types::Value::Utf8(text)
+                } else {
+                    pintail_types::Value::Null
+                }
+            }
             Self::Utf8 {
                 heap,
                 offsets,
@@ -689,6 +737,11 @@ impl DecodedColumn {
     }
 
     /// Materializes the column into per-row values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if stored native units cannot regenerate their text, which the
+    /// writer's round-trip probe makes impossible.
     #[must_use]
     pub fn into_values(self) -> Vec<pintail_types::Value> {
         match self {
@@ -723,6 +776,23 @@ impl DecodedColumn {
                         pintail_types::Value::Float64(pintail_types::Float64::new(f64::from_bits(
                             bits,
                         )))
+                    } else {
+                        pintail_types::Value::Null
+                    }
+                })
+                .collect(),
+            Self::NativeUnits {
+                units,
+                values,
+                validity,
+            } => values
+                .into_iter()
+                .zip(validity)
+                .map(|(value, valid)| {
+                    if valid {
+                        pintail_types::Value::Utf8(
+                            units.format(value).expect("stored native units round-trip"),
+                        )
                     } else {
                         pintail_types::Value::Null
                     }
