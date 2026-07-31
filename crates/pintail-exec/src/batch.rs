@@ -174,10 +174,17 @@ impl ColumnVector {
     #[allow(clippy::too_many_lines)]
     pub fn new(data_type: DataType, values: Vec<Value>) -> Result<Self, BatchError> {
         let mut validity = Vec::with_capacity(values.len());
-        let mut int64 = Some(Vec::with_capacity(values.len()));
-        let mut uint64 = Some(Vec::with_capacity(values.len()));
-        let mut float64 = Some(Vec::with_capacity(values.len()));
-        let mut utf8 = Some(StrColumn::default());
+        // One builder, chosen by the declared logical type's physical carrier
+        // — speculative multi-builder construction taxed every intermediate
+        // vector.
+        let storage = data_type.storage_type();
+        let mut int64 =
+            matches!(storage, DataType::Int64).then(|| Vec::with_capacity(values.len()));
+        let mut uint64 =
+            matches!(storage, DataType::UInt64).then(|| Vec::with_capacity(values.len()));
+        let mut float64 =
+            matches!(storage, DataType::Float64).then(|| Vec::with_capacity(values.len()));
+        let mut utf8 = matches!(storage, DataType::Utf8).then(StrColumn::default);
         let decimal_scale = match data_type {
             DataType::Decimal { scale, .. } => Some(scale),
             _ => None,
