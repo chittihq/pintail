@@ -431,14 +431,28 @@ async function main() {
         const a = await mysqlFingerprints(mysqlConn!)
         const b = await pintailFingerprints(queryPintail)
         const mismatches = compareFingerprints(a, b)
+        // Known-limitation allowlist (each entry links its tracking issue):
+        // expected divergences warn, everything else is a gate failure.
+        const allowlist = JSON.parse(
+          readFileSync(join(benchmarkDir, 'expected-failures.json'), 'utf8'),
+        ) as Array<{ table: string; phase: string; reason: string; link: string }>
+        const expected = mismatches.filter((m) =>
+          allowlist.some((entry) => entry.table === m.table && entry.phase === phase.id),
+        )
+        const unexpected = mismatches.filter((m) => !expected.includes(m))
         ;(report.phases as Record<string, unknown>)[phase.id] = {
           mutationStats: stats,
           readerPasses: readerRuns.length,
-          fingerprintMismatches: mismatches,
+          fingerprintMismatches: unexpected,
+          expectedFingerprintMismatches: expected,
         }
-        if (mismatches.length > 0) {
-          log(`CONVERGENCE MISMATCHES: ${JSON.stringify(mismatches)}`)
-          log('note: shipment_items divergence is the expected cascade-delete negative control until the reconciler covers it')
+        for (const m of expected) {
+          const entry = allowlist.find((e) => e.table === m.table && e.phase === phase.id)
+          log(`expected divergence on ${m.table}: ${entry?.reason} (${entry?.link})`)
+        }
+        if (unexpected.length > 0) {
+          log(`CONVERGENCE MISMATCHES: ${JSON.stringify(unexpected)}`)
+          process.exitCode = 1
         }
         break
       }

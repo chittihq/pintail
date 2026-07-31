@@ -1,0 +1,146 @@
+# Production-shaped benchmark tiers (issue #5).
+#
+# All jobs need the remote docker host: set repository variable
+# BENCHMARK_DOCKER_SSH (e.g. "user@bench-host") and secret
+# BENCHMARK_SSH_KEY (private key authorized on that host). Jobs skip
+# cleanly when the variable is unset, so forks stay green.
+
+name: Production benchmark
+
+on:
+  push:
+    branches: [dev, main]
+    tags: ['v*']
+  schedule:
+    - cron: '0 2 * * *' # nightly: mixed CDC + restart phases
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'workload profile'
+        default: 'ci'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-bench
+  cancel-in-progress: false # benchmark runs must not be killed mid-measurement
+
+jobs:
+  ci-profile:
+    if: github.event_name == 'push' && vars.BENCHMARK_DOCKER_SSH != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Connect docker context
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BENCHMARK_SSH_KEY }}" > ~/.ssh/bench_key
+          chmod 600 ~/.ssh/bench_key
+          echo -e "Host bench\n  HostName ${BENCHMARK_HOST#*@}\n  User ${BENCHMARK_HOST%@*}\n  IdentityFile ~/.ssh/bench_key\n  StrictHostKeyChecking accept-new" >> ~/.ssh/config
+          docker context create bench --docker "host=ssh://bench"
+          docker context use bench
+          docker info --format '{{.Name}} {{.NCPU}}cpu'
+        env:
+          BENCHMARK_HOST: ${{ vars.BENCHMARK_DOCKER_SSH }}
+      - run: bun install --frozen-lockfile
+        working-directory: benchmark
+      - name: Dataset provenance (warn-only)
+        run: bun run verify-dataset-provenance.ts
+        working-directory: benchmark
+      - name: Run ci profile (dataset-loaded, snapshot/cold/warm)
+        run: bun run run-production.ts --profile ci --dataset ci --phases snapshot,cold,warm
+        working-directory: benchmark
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f benchmark/workloads/commerce-production-v1/results/latest.md ]; then
+            cat benchmark/workloads/commerce-production-v1/results/latest.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-ci-results
+          path: benchmark/workloads/commerce-production-v1/results/
+
+  nightly:
+    if: github.event_name == 'schedule' && vars.BENCHMARK_DOCKER_SSH != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Connect docker context
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BENCHMARK_SSH_KEY }}" > ~/.ssh/bench_key
+          chmod 600 ~/.ssh/bench_key
+          echo -e "Host bench\n  HostName ${BENCHMARK_HOST#*@}\n  User ${BENCHMARK_HOST%@*}\n  IdentityFile ~/.ssh/bench_key\n  StrictHostKeyChecking accept-new" >> ~/.ssh/config
+          docker context create bench --docker "host=ssh://bench"
+          docker context use bench
+        env:
+          BENCHMARK_HOST: ${{ vars.BENCHMARK_DOCKER_SSH }}
+      - run: bun install --frozen-lockfile
+        working-directory: benchmark
+      - name: Run ci profile with mixed CDC + restart phases
+        run: bun run run-production.ts --profile ci --dataset ci
+        working-directory: benchmark
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f benchmark/workloads/commerce-production-v1/results/latest.md ]; then
+            cat benchmark/workloads/commerce-production-v1/results/latest.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-nightly-results
+          path: benchmark/workloads/commerce-production-v1/results/
+
+  release-gate:
+    if: startsWith(github.ref, 'refs/tags/v') && vars.BENCHMARK_DOCKER_SSH != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 600
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Connect docker context
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BENCHMARK_SSH_KEY }}" > ~/.ssh/bench_key
+          chmod 600 ~/.ssh/bench_key
+          echo -e "Host bench\n  HostName ${BENCHMARK_HOST#*@}\n  User ${BENCHMARK_HOST%@*}\n  IdentityFile ~/.ssh/bench_key\n  StrictHostKeyChecking accept-new" >> ~/.ssh/config
+          docker context create bench --docker "host=ssh://bench"
+          docker context use bench
+        env:
+          BENCHMARK_HOST: ${{ vars.BENCHMARK_DOCKER_SSH }}
+      - run: bun install --frozen-lockfile
+        working-directory: benchmark
+      - name: Engine microbenchmark (20M, four-engine fairness table)
+        run: bun run run.ts
+        working-directory: benchmark
+      - name: Full production workload
+        run: bun run run-production.ts --profile full
+        working-directory: benchmark
+      - name: Publish summary
+        if: always()
+        run: |
+          for f in benchmark/results.md benchmark/workloads/commerce-production-v1/results/latest.md; do
+            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-gate-results
+          path: |
+            benchmark/results.json
+            benchmark/results.md
+            benchmark/workloads/commerce-production-v1/results/

@@ -1,0 +1,8 @@
+[
+  {
+    "table": "shipment_items",
+    "phase": "mixed",
+    "reason": "Cascade-delete negative control: MySQL does not write cascaded row events to the binlog, so shipment_items diverges until the CDC-mode reconciler ships.",
+    "link": "https://github.com/chittihq/pintail/issues/2"
+  }
+]
