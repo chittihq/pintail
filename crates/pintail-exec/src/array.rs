@@ -222,6 +222,27 @@ impl StrView {
         )
     }
 
+    /// Byte equality between two views over the SAME column heap. Inline
+    /// strings compare by their fixed words; heap strings compare content
+    /// (equal strings may live at different offsets).
+    ///
+    /// # Panics
+    ///
+    /// Panics if a long-string heap offset exceeds the platform pointer width.
+    #[must_use]
+    pub(crate) fn same_bytes(&self, other: &Self, heap: &[u8]) -> bool {
+        if self.len != other.len || self.prefix != other.prefix {
+            return false;
+        }
+        if self.len as usize <= INLINE_LEN {
+            self.tail == other.tail
+        } else {
+            let left = usize::try_from(u64::from_le_bytes(self.tail)).expect("heap offset");
+            let right = usize::try_from(u64::from_le_bytes(other.tail)).expect("heap offset");
+            heap[left..left + self.len as usize] == heap[right..right + self.len as usize]
+        }
+    }
+
     /// Runs `f` over the string's bytes without allocating, copying at most
     /// 12 inline bytes to the stack.
     ///

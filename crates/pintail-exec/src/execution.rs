@@ -2532,11 +2532,206 @@ fn joined_right_group_matches(
     })
 }
 
+/// Dictionary-code aggregation for one low-cardinality string group column
+/// (experiments/RESULTS.md e02: array-indexed accumulation, no hash table).
+/// Local dedup is byte-exact, mirroring the general path — collation
+/// unification still happens at the normalized-key merge. Falls back (`None`)
+/// whenever the shape doesn't qualify.
+#[allow(clippy::too_many_lines)]
+fn build_local_dictionary_groups(
+    batch: &RecordBatch,
+    group_columns: &[usize],
+    aggregates: &[CompiledAggregate],
+) -> Result<Option<HashMap<Vec<Value>, AggregateGroup>>, ExecError> {
+    struct DictAggregate {
+        function: AggregateFunction,
+        column: Option<usize>,
+    }
+    const MAX_CODES: usize = 256;
+    let [group_column] = group_columns else {
+        return Ok(None);
+    };
+    let Some(key_vector) = batch.column(*group_column) else {
+        return Ok(None);
+    };
+    let Some((crate::batch::TypedValues::Utf8(keys), key_validity)) = key_vector.typed() else {
+        return Ok(None);
+    };
+    // Aggregate inputs: plain typed columns (numbers via the packed path) or
+    // COUNT(*); anything else falls back to the general builder.
+    let mut dict_aggregates = Vec::with_capacity(aggregates.len());
+    for aggregate in aggregates {
+        if aggregate.distinct {
+            return Ok(None);
+        }
+        match aggregate.function {
+            AggregateFunction::Count => {}
+            AggregateFunction::Sum | AggregateFunction::Average
+                if aggregate_uses_float(aggregate)
+                    || aggregate.function == AggregateFunction::Average => {}
+            _ => return Ok(None),
+        }
+        let column = match &aggregate.expr {
+            None => None,
+            Some(expression) => match expression.column_index() {
+                Some(column) => Some(column),
+                None => return Ok(None),
+            },
+        };
+        if let Some(column) = column {
+            let typed = batch.column(column).and_then(ColumnVector::typed);
+            if aggregate.function != AggregateFunction::Count && typed.is_none() {
+                return Ok(None);
+            }
+            if aggregate.function != AggregateFunction::Count
+                && typed.is_some_and(|(values, _)| values.number_at(0).is_none())
+                && batch.row_count() > 0
+            {
+                return Ok(None);
+            }
+        }
+        dict_aggregates.push(DictAggregate {
+            function: aggregate.function,
+            column,
+        });
+    }
+
+    // Pass 1: dictionary-encode the selected rows (code 0 reserved for NULL).
+    let views = keys.views();
+    let heap = keys.heap();
+    let mut dict_rows: Vec<Option<usize>> = vec![None]; // representative row per code
+    let mut rows_buffer = Vec::with_capacity(batch.visible_row_count());
+    let mut codes_buffer = Vec::with_capacity(batch.visible_row_count());
+    for row in batch.selection().selected_rows() {
+        let code = if key_validity.is_valid(row) {
+            let view = &views[row];
+            let found = dict_rows[1..].iter().position(|representative| {
+                representative.is_some_and(|existing| view.same_bytes(&views[existing], heap))
+            });
+            if let Some(index) = found {
+                index + 1
+            } else {
+                if dict_rows.len() > MAX_CODES {
+                    return Ok(None);
+                }
+                dict_rows.push(Some(row));
+                dict_rows.len() - 1
+            }
+        } else {
+            if dict_rows[0].is_none() {
+                dict_rows[0] = Some(row);
+            }
+            0
+        };
+        rows_buffer.push(row);
+        codes_buffer.push(u16::try_from(code).expect("code fits u16"));
+    }
+
+    // Pass 2: per aggregate, one tight loop over (row, code).
+    let code_count = dict_rows.len();
+    let mut states: Vec<Vec<AggregateState>> = (0..code_count)
+        .map(|_| aggregates.iter().map(AggregateState::new).collect())
+        .collect();
+    for (aggregate_index, dict_aggregate) in dict_aggregates.iter().enumerate() {
+        match dict_aggregate.function {
+            AggregateFunction::Count => {
+                let mut counts = vec![0_u64; code_count];
+                match dict_aggregate.column {
+                    None => {
+                        for &code in &codes_buffer {
+                            counts[usize::from(code)] += 1;
+                        }
+                    }
+                    Some(column) => {
+                        let validity = batch
+                            .column(column)
+                            .and_then(ColumnVector::typed)
+                            .map(|(_, validity)| validity);
+                        for (&row, &code) in rows_buffer.iter().zip(&codes_buffer) {
+                            let non_null = match validity {
+                                Some(validity) => validity.is_valid(row),
+                                None => !matches!(
+                                    batch.column(column).and_then(|c| c.value(row)),
+                                    Some(Value::Null) | None
+                                ),
+                            };
+                            if non_null {
+                                counts[usize::from(code)] += 1;
+                            }
+                        }
+                    }
+                }
+                for (code, count) in counts.iter().enumerate() {
+                    states[code][aggregate_index].value = AggregateValue::Count(*count);
+                }
+            }
+            AggregateFunction::Sum | AggregateFunction::Average => {
+                let column = dict_aggregate.column.expect("validated column input");
+                let (typed, validity) = batch
+                    .column(column)
+                    .and_then(ColumnVector::typed)
+                    .expect("validated typed input");
+                let mut sums = vec![0.0_f64; code_count];
+                let mut counts = vec![0_u64; code_count];
+                for (&row, &code) in rows_buffer.iter().zip(&codes_buffer) {
+                    if validity.is_valid(row)
+                        && let Some(number) = typed.number_at(row)
+                    {
+                        let slot = usize::from(code);
+                        sums[slot] += number;
+                        counts[slot] += 1;
+                    }
+                }
+                for code in 0..code_count {
+                    if !sums[code].is_finite() {
+                        return Err(ExecError::NumericOverflow);
+                    }
+                    states[code][aggregate_index].value = if dict_aggregate.function
+                        == AggregateFunction::Sum
+                    {
+                        AggregateValue::Sum((counts[code] > 0).then(|| Value::float64(sums[code])))
+                    } else {
+                        AggregateValue::Average {
+                            sum: sums[code],
+                            count: counts[code],
+                        }
+                    };
+                }
+            }
+            _ => unreachable!("filtered above"),
+        }
+    }
+
+    // Finalize: original first-seen key values, normalized map keys — the
+    // same contract the general local builder produces.
+    let mut groups = HashMap::with_capacity(code_count * 2);
+    for (code, representative) in dict_rows.iter().enumerate() {
+        // The NULL bucket's representative is set only when a NULL key row
+        // was actually seen; real codes always have one.
+        let Some(row) = representative else {
+            continue;
+        };
+        let value = key_vector
+            .value(*row)
+            .cloned()
+            .ok_or(ExecError::InvalidBatch("dictionary key row out of range"))?;
+        let group = AggregateGroup {
+            values: vec![value.clone()],
+            states: std::mem::take(&mut states[code]),
+        };
+        groups.insert(vec![normalized_collation_value(value)], group);
+    }
+    Ok(Some(groups))
+}
+
 fn build_local_direct_groups(
     batch: &RecordBatch,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+    if let Some(groups) = build_local_dictionary_groups(batch, group_columns, aggregates)? {
+        return Ok(groups);
+    }
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut memory = MemoryTracker::new(usize::MAX);
