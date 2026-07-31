@@ -1,3 +1,5 @@
 node_modules/
 results-smoke.json
 results-smoke.md
+.dataset-cache/
+.dataset-export/
