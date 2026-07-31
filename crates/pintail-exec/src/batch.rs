@@ -146,12 +146,136 @@ pub(crate) fn parse_decimal_scaled(text: &str, scale: u8) -> Option<i128> {
     Some(if negative { -magnitude } else { magnitude })
 }
 
+/// Builds the packed projection for a homogeneous column: one builder chosen
+/// by the declared type's physical carrier, `None` when values defeat packing
+/// (mixed variants, unparseable decimal text, empty column).
+#[allow(clippy::too_many_lines)]
+fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, ValidityMask)> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut validity = Vec::with_capacity(values.len());
+    let storage = data_type.storage_type();
+    let mut int64 = matches!(storage, DataType::Int64).then(|| Vec::with_capacity(values.len()));
+    let mut uint64 = matches!(storage, DataType::UInt64).then(|| Vec::with_capacity(values.len()));
+    let mut float64 =
+        matches!(storage, DataType::Float64).then(|| Vec::with_capacity(values.len()));
+    let mut utf8 = matches!(storage, DataType::Utf8).then(StrColumn::default);
+    let decimal_scale = match data_type {
+        DataType::Decimal { scale, .. } => Some(scale),
+        _ => None,
+    };
+    let mut decimal = decimal_scale.map(|_| Vec::with_capacity(values.len()));
+    for value in values {
+        validity.push(!matches!(value, Value::Null));
+        match value {
+            Value::Null => {
+                if let Some(packed) = int64.as_mut() {
+                    packed.push(0);
+                }
+                if let Some(packed) = uint64.as_mut() {
+                    packed.push(0);
+                }
+                if let Some(packed) = float64.as_mut() {
+                    packed.push(0.0);
+                }
+                if let Some(packed) = utf8.as_mut() {
+                    packed.push(&[]);
+                }
+                if let Some(packed) = decimal.as_mut() {
+                    packed.push(0);
+                }
+            }
+            Value::Int64(v) => {
+                if let Some(packed) = int64.as_mut() {
+                    packed.push(*v);
+                }
+                uint64 = None;
+                float64 = None;
+                utf8 = None;
+                decimal = None;
+            }
+            Value::UInt64(v) => {
+                if let Some(packed) = uint64.as_mut() {
+                    packed.push(*v);
+                }
+                int64 = None;
+                float64 = None;
+                utf8 = None;
+                decimal = None;
+            }
+            Value::Float64(v) => {
+                if let Some(packed) = float64.as_mut() {
+                    packed.push(v.get());
+                }
+                int64 = None;
+                uint64 = None;
+                utf8 = None;
+                decimal = None;
+            }
+            Value::Utf8(text) => {
+                if let Some(packed) = utf8.as_mut() {
+                    packed.push(text.as_bytes());
+                }
+                if let (Some(packed), Some(scale)) = (decimal.as_mut(), decimal_scale) {
+                    match parse_decimal_scaled(text, scale) {
+                        Some(scaled) => packed.push(scaled),
+                        None => decimal = None,
+                    }
+                }
+                int64 = None;
+                uint64 = None;
+                float64 = None;
+            }
+            Value::Boolean(_) | Value::Binary(_) => {
+                int64 = None;
+                uint64 = None;
+                float64 = None;
+                utf8 = None;
+                decimal = None;
+            }
+        }
+    }
+    let typed = if let (Some(packed), Some(scale)) = (decimal.take(), decimal_scale) {
+        // Decimal outranks the Utf8 carrier: kernels get scaled integers.
+        Some(TypedValues::Decimal128 {
+            values: packed,
+            scale,
+        })
+    } else if let Some(packed) = int64 {
+        Some(TypedValues::Int64(packed))
+    } else if let Some(packed) = uint64 {
+        Some(TypedValues::UInt64(packed))
+    } else if let Some(packed) = float64 {
+        Some(TypedValues::Float64(packed))
+    } else {
+        utf8.map(TypedValues::Utf8)
+    };
+    typed.map(|packed| (packed, ValidityMask::from_bools(&validity)))
+}
+
 /// One typed, nullable, columnar value vector.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ColumnVector {
     data_type: DataType,
     values: Vec<Value>,
-    typed: Option<(TypedValues, ValidityMask)>,
+    /// Lazily-built packed projection: batches whose kernels never touch it
+    /// (projections, join intermediates, fallback-only filters) pay nothing.
+    typed: std::sync::OnceLock<Option<(TypedValues, ValidityMask)>>,
+}
+
+impl Clone for ColumnVector {
+    fn clone(&self) -> Self {
+        let typed = std::sync::OnceLock::new();
+        if let Some(built) = self.typed.get() {
+            let _ = typed.set(built.clone());
+        }
+        Self {
+            data_type: self.data_type,
+            values: self.values.clone(),
+            typed,
+        }
+    }
 }
 
 impl PartialEq for ColumnVector {
@@ -171,25 +295,7 @@ impl ColumnVector {
     ///
     /// Returns [`BatchError::WrongValueType`] when a non-null value does not
     /// match the declared logical type.
-    #[allow(clippy::too_many_lines)]
     pub fn new(data_type: DataType, values: Vec<Value>) -> Result<Self, BatchError> {
-        let mut validity = Vec::with_capacity(values.len());
-        // One builder, chosen by the declared logical type's physical carrier
-        // — speculative multi-builder construction taxed every intermediate
-        // vector.
-        let storage = data_type.storage_type();
-        let mut int64 =
-            matches!(storage, DataType::Int64).then(|| Vec::with_capacity(values.len()));
-        let mut uint64 =
-            matches!(storage, DataType::UInt64).then(|| Vec::with_capacity(values.len()));
-        let mut float64 =
-            matches!(storage, DataType::Float64).then(|| Vec::with_capacity(values.len()));
-        let mut utf8 = matches!(storage, DataType::Utf8).then(StrColumn::default);
-        let decimal_scale = match data_type {
-            DataType::Decimal { scale, .. } => Some(scale),
-            _ => None,
-        };
-        let mut decimal = decimal_scale.map(|_| Vec::with_capacity(values.len()));
         for (row, value) in values.iter().enumerate() {
             if let Some(actual) = value.data_type()
                 && !data_type.accepts(actual)
@@ -200,103 +306,19 @@ impl ColumnVector {
                     actual,
                 });
             }
-            validity.push(!matches!(value, Value::Null));
-            match value {
-                Value::Null => {
-                    if let Some(packed) = int64.as_mut() {
-                        packed.push(0);
-                    }
-                    if let Some(packed) = uint64.as_mut() {
-                        packed.push(0);
-                    }
-                    if let Some(packed) = float64.as_mut() {
-                        packed.push(0.0);
-                    }
-                    if let Some(packed) = utf8.as_mut() {
-                        packed.push(&[]);
-                    }
-                    if let Some(packed) = decimal.as_mut() {
-                        packed.push(0);
-                    }
-                }
-                Value::Int64(v) => {
-                    if let Some(packed) = int64.as_mut() {
-                        packed.push(*v);
-                    }
-                    uint64 = None;
-                    float64 = None;
-                    utf8 = None;
-                    decimal = None;
-                }
-                Value::UInt64(v) => {
-                    if let Some(packed) = uint64.as_mut() {
-                        packed.push(*v);
-                    }
-                    int64 = None;
-                    float64 = None;
-                    utf8 = None;
-                    decimal = None;
-                }
-                Value::Float64(v) => {
-                    if let Some(packed) = float64.as_mut() {
-                        packed.push(v.get());
-                    }
-                    int64 = None;
-                    uint64 = None;
-                    utf8 = None;
-                    decimal = None;
-                }
-                Value::Utf8(text) => {
-                    if let Some(packed) = utf8.as_mut() {
-                        packed.push(text.as_bytes());
-                    }
-                    if let (Some(packed), Some(scale)) = (decimal.as_mut(), decimal_scale) {
-                        match parse_decimal_scaled(text, scale) {
-                            Some(scaled) => packed.push(scaled),
-                            None => decimal = None,
-                        }
-                    }
-                    int64 = None;
-                    uint64 = None;
-                    float64 = None;
-                }
-                Value::Boolean(_) | Value::Binary(_) => {
-                    int64 = None;
-                    uint64 = None;
-                    float64 = None;
-                    utf8 = None;
-                    decimal = None;
-                }
-            }
         }
-        let typed = if values.is_empty() {
-            None
-        } else if let (Some(packed), Some(scale)) = (decimal.take(), decimal_scale) {
-            // Decimal outranks the Utf8 carrier: kernels get scaled integers.
-            Some(TypedValues::Decimal128 {
-                values: packed,
-                scale,
-            })
-        } else if let Some(packed) = int64 {
-            Some(TypedValues::Int64(packed))
-        } else if let Some(packed) = uint64 {
-            Some(TypedValues::UInt64(packed))
-        } else if let Some(packed) = float64 {
-            Some(TypedValues::Float64(packed))
-        } else {
-            utf8.map(TypedValues::Utf8)
-        }
-        .map(|packed| (packed, ValidityMask::from_bools(&validity)));
         Ok(Self {
             data_type,
             values,
-            typed,
+            typed: std::sync::OnceLock::new(),
         })
     }
 
     /// The packed projection, when the vector is physically homogeneous.
+    /// Built on first use and cached; kernels that never ask never pay.
     pub(crate) fn typed(&self) -> Option<(&TypedValues, &ValidityMask)> {
         self.typed
+            .get_or_init(|| build_typed(self.data_type, &self.values))
             .as_ref()
             .map(|(packed, validity)| (packed, validity))
     }
@@ -335,7 +357,7 @@ impl ColumnVector {
     /// Estimates bytes retained by the vector and its owned scalar payloads.
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {
-        let typed_bytes = match &self.typed {
+        let typed_bytes = match self.typed.get().and_then(Option::as_ref) {
             None => 0,
             Some((TypedValues::Int64(packed), _)) => packed.capacity() * size_of::<i64>(),
             Some((TypedValues::UInt64(packed), _)) => packed.capacity() * size_of::<u64>(),
