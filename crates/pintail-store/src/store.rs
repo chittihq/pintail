@@ -377,7 +377,31 @@ impl ProjectedScan {
     }
 }
 
+/// One contiguous key-range slice of a scan, classified by how its rows
+/// become visible: directly (disjoint unique-key segments untouched by the
+/// memtable), through a bounded last-write-wins merge over an overlapping
+/// cluster, or from the memtable alone (a gap between clusters).
+enum ScanPart {
+    Direct {
+        segments: Vec<segment::SegmentMeta>,
+    },
+    Merge {
+        segments: Vec<segment::SegmentMeta>,
+        lo: PrimaryKey,
+        hi: PrimaryKey,
+    },
+    MemtableOnly {
+        lo: std::ops::Bound<PrimaryKey>,
+        hi: std::ops::Bound<PrimaryKey>,
+    },
+}
+
 /// Pull-based projected scan over immutable segments and WAL-backed rows.
+///
+/// The scanned key range is partitioned into [`ScanPart`]s at open time;
+/// merge cost is paid only inside clusters whose key ranges actually overlap
+/// (docs/decisions.md, "Merge-on-read uses granule-level sweep-line
+/// classification").
 pub struct ProjectedScanStream {
     snapshot: TableSnapshot,
     segments: Vec<segment::SegmentMeta>,
@@ -386,6 +410,10 @@ pub struct ProjectedScanStream {
     column_ids: Vec<u32>,
     next_segment: usize,
     pruned_segments: usize,
+    candidate_segments: usize,
+    reported_pruned: bool,
+    parts: std::collections::VecDeque<ScanPart>,
+    memtable_cursor: Option<(std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>)>,
     merge: Option<MergedProjectedStream>,
 }
 
@@ -394,6 +422,30 @@ struct MergedProjectedStream {
     heads: Vec<Option<segment::SegmentRowHeader>>,
     memtable_head: Option<StoredRow>,
     reported_segments: bool,
+    lo: PrimaryKey,
+    hi: PrimaryKey,
+}
+
+/// Whether `BTreeMap::range((lo, hi))` may be called without panicking and
+/// can yield rows: rejects inverted ranges and the empty equal-bound forms.
+fn bound_range_is_searchable(
+    lo: &std::ops::Bound<PrimaryKey>,
+    hi: &std::ops::Bound<PrimaryKey>,
+) -> bool {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    let lo_key = match lo {
+        Included(key) | Excluded(key) => key,
+        Unbounded => return true,
+    };
+    let hi_key = match hi {
+        Included(key) | Excluded(key) => key,
+        Unbounded => return true,
+    };
+    match lo_key.cmp(hi_key) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => matches!((lo, hi), (Included(_), Included(_))),
+    }
 }
 
 enum MergedWinnerSource {
@@ -527,14 +579,185 @@ impl ProjectedScanStream {
         &mut self,
         memory_limit: usize,
     ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
-        if self.merge.is_some() {
-            return self.next_merged_column_chunk(memory_limit);
+        loop {
+            if self.merge.is_some() {
+                if let Some(chunk) = self.next_merged_column_chunk(memory_limit)? {
+                    return Ok(Some(chunk));
+                }
+                self.merge = None;
+            } else if self.memtable_cursor.is_some() {
+                if let Some(chunk) = self.next_memtable_chunk(memory_limit)? {
+                    return Ok(Some(chunk));
+                }
+                self.memtable_cursor = None;
+            } else if let Some(segment) = self.segments.get(self.next_segment).cloned() {
+                self.next_segment += 1;
+                return self.decode_column_chunk(segment, memory_limit).map(Some);
+            }
+            if !self.advance_part()? {
+                return Ok(None);
+            }
         }
-        let Some(segment) = self.segments.get(self.next_segment).cloned() else {
+    }
+
+    /// Activates the next classified scan part, returning `false` at the end.
+    fn advance_part(&mut self) -> Result<bool, StoreError> {
+        let Some(part) = self.parts.pop_front() else {
+            return Ok(false);
+        };
+        self.merge = None;
+        self.memtable_cursor = None;
+        match part {
+            ScanPart::Direct { segments } => {
+                self.segments = segments;
+                self.next_segment = 0;
+            }
+            ScanPart::Merge { segments, lo, hi } => {
+                let mut streams = segments
+                    .iter()
+                    .map(|meta| {
+                        segment::SegmentRowStream::open_headers(
+                            &self.snapshot.directory,
+                            meta,
+                            &self.snapshot.schema,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let heads = streams
+                    .iter_mut()
+                    .map(segment::SegmentRowStream::next_header)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let memtable_head = self
+                    .snapshot
+                    .memtable
+                    .range(lo.clone()..=hi.clone())
+                    .next()
+                    .map(|(_, row)| row.clone());
+                self.segments = segments;
+                self.next_segment = self.segments.len();
+                self.merge = Some(MergedProjectedStream {
+                    streams,
+                    heads,
+                    memtable_head,
+                    reported_segments: false,
+                    lo,
+                    hi,
+                });
+            }
+            ScanPart::MemtableOnly { lo, hi } => {
+                self.segments = Vec::new();
+                self.next_segment = 0;
+                self.memtable_cursor = Some((lo, hi));
+            }
+        }
+        Ok(true)
+    }
+
+    /// Produces the next chunk of memtable-resident rows for a gap part.
+    fn next_memtable_chunk(
+        &mut self,
+        memory_limit: usize,
+    ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
+        const MAX_MEMTABLE_CHUNK_ROWS: usize = 8 * 1024;
+        let Some((lo, hi)) = self.memtable_cursor.clone() else {
             return Ok(None);
         };
-        self.next_segment += 1;
-        self.decode_column_chunk(segment, memory_limit).map(Some)
+        if !bound_range_is_searchable(&lo, &hi) {
+            self.memtable_cursor = None;
+            return Ok(None);
+        }
+        let projection = self
+            .column_ids
+            .iter()
+            .map(|id| {
+                self.snapshot
+                    .schema
+                    .columns()
+                    .iter()
+                    .position(|column| column.id() == *id)
+                    .ok_or_else(|| {
+                        StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let chunk_rows = if projection.is_empty() {
+            MAX_MEMTABLE_CHUNK_ROWS
+        } else {
+            memory_limit
+                .checked_div(
+                    projection
+                        .len()
+                        .saturating_mul(size_of::<pintail_types::Value>())
+                        .saturating_mul(2),
+                )
+                .unwrap_or(0)
+                .clamp(1, MAX_MEMTABLE_CHUNK_ROWS)
+        };
+        let mut columns = projection
+            .iter()
+            .map(|_| Vec::new())
+            .collect::<Vec<Vec<pintail_types::Value>>>();
+        let mut row_count = 0usize;
+        let mut last_key = None;
+        for (key, row) in self.snapshot.memtable.range((lo, hi.clone())) {
+            last_key = Some(key.clone());
+            if row.is_deleted() {
+                continue;
+            }
+            for (column, position) in columns.iter_mut().zip(&projection) {
+                column.push(row.values()[*position].clone());
+            }
+            row_count += 1;
+            if row_count >= chunk_rows {
+                break;
+            }
+        }
+        match last_key {
+            Some(key) => {
+                self.memtable_cursor = Some((std::ops::Bound::Excluded(key), hi));
+            }
+            None => self.memtable_cursor = None,
+        }
+        if row_count == 0 {
+            // A window that held only tombstones: continue into the next
+            // window, or finish the part when the range is drained.
+            if self.memtable_cursor.is_some() {
+                return self.next_memtable_chunk(memory_limit);
+            }
+            return Ok(None);
+        }
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                columns
+                    .capacity()
+                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+            )
+            .saturating_add(
+                columns
+                    .iter()
+                    .map(|values| {
+                        values
+                            .capacity()
+                            .saturating_mul(size_of::<pintail_types::Value>())
+                            .saturating_add(
+                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
+                            )
+                    })
+                    .sum(),
+            );
+        if retained_bytes > memory_limit {
+            return Err(StoreError::MemoryLimitExceeded {
+                used: 0,
+                requested: retained_bytes,
+                limit: memory_limit,
+            });
+        }
+        Ok(Some(ProjectedColumnChunk {
+            columns,
+            row_count,
+            stats: ScanStats::default(),
+            retained_bytes,
+        }))
     }
 
     /// Decodes several independently visible segments concurrently.
@@ -550,8 +773,14 @@ impl ProjectedScanStream {
         max_chunks: usize,
         memory_limit: usize,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
-        if self.merge.is_some() {
+        if self.merge.is_some() || self.memtable_cursor.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
+        }
+        if self.next_segment >= self.segments.len() {
+            if !self.advance_part()? {
+                return Ok(Vec::new());
+            }
+            return self.next_column_chunks(max_chunks, memory_limit);
         }
         let max_chunks = if memory_limit < 64 * 1024 * 1024 {
             1
@@ -610,6 +839,8 @@ impl ProjectedScanStream {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let merge = self.merge.as_mut().expect("checked merged scan");
+        let part_lo = merge.lo.clone();
+        let part_hi = merge.hi.clone();
         let chunk_rows = if projection.is_empty() {
             MAX_MERGED_CHUNK_ROWS
         } else {
@@ -683,13 +914,13 @@ impl ProjectedScanStream {
                     .memtable
                     .range((
                         std::ops::Bound::Excluded(minimum.clone()),
-                        std::ops::Bound::Included(self.end.clone()),
+                        std::ops::Bound::Included(part_hi.clone()),
                     ))
                     .next()
                     .map(|(_, row)| row.clone());
             }
             let winner = winner.expect("minimum key has a winning row");
-            if minimum < self.start || minimum > self.end || winner.1 {
+            if minimum < part_lo || minimum > part_hi || winner.1 {
                 continue;
             }
             winner_sources.push(winner.2);
@@ -698,6 +929,8 @@ impl ProjectedScanStream {
         if row_count == 0 {
             return Ok(None);
         }
+        let first_chunk = !std::mem::replace(&mut merge.reported_segments, true);
+        let report_pruned = first_chunk && !std::mem::replace(&mut self.reported_pruned, true);
         let mut winner_values = vec![None; row_count];
         let mut segment_rows = BTreeMap::<usize, Vec<(usize, usize)>>::new();
         for (winner_index, source) in winner_sources.into_iter().enumerate() {
@@ -778,13 +1011,12 @@ impl ProjectedScanStream {
                 limit: memory_limit,
             });
         }
-        let first_chunk = !std::mem::replace(&mut merge.reported_segments, true);
         Ok(Some(ProjectedColumnChunk {
             columns,
             row_count,
             stats: ScanStats {
                 segments_read: usize::from(first_chunk) * self.segments.len(),
-                segments_pruned: usize::from(first_chunk) * self.pruned_segments,
+                segments_pruned: usize::from(report_pruned) * self.pruned_segments,
                 blocks_decoded,
                 ..ScanStats::default()
             },
@@ -914,8 +1146,8 @@ impl ProjectedScanStream {
 
     /// Returns immutable segments that will be decoded.
     #[must_use]
-    pub fn segment_count(&self) -> usize {
-        self.segments.len()
+    pub const fn segment_count(&self) -> usize {
+        self.candidate_segments
     }
 
     /// Returns immutable segments excluded by key-range or bloom pruning.
@@ -2145,6 +2377,7 @@ impl TableSnapshot {
     ///
     /// Returns an error for a reversed range, duplicate or unknown columns,
     /// or a corrupt point-lookup bloom filter.
+    #[allow(clippy::too_many_lines)]
     pub fn scan_projected_range_stream(
         &self,
         start: &PrimaryKey,
@@ -2176,7 +2409,6 @@ impl TableSnapshot {
         }
         let mut segments = Vec::new();
         let mut pruned_segments = 0;
-        let mut independently_visible = self.memtable.is_empty();
         for meta in &self.manifest.segments {
             let overlaps = segment::overlaps_key_range(meta, start, end);
             let point_might_match = start != end
@@ -2184,56 +2416,104 @@ impl TableSnapshot {
             if !overlaps || !point_might_match {
                 pruned_segments += 1;
             } else {
-                independently_visible &= meta.unique_keys;
                 segments.push(meta.clone());
             }
         }
         segments.sort_by(|left, right| left.min_key.cmp(&right.min_key));
-        independently_visible &= !segments
-            .windows(2)
-            .any(|pair| pair[0].max_key >= pair[1].min_key);
         let candidate_rows = segments
             .iter()
             .map(|segment| segment.row_count)
             .sum::<u64>()
             .saturating_add(u64::try_from(self.memtable.len()).unwrap_or(u64::MAX));
-        if !independently_visible && candidate_rows < 64 * 1024 {
+
+        // Partition [start, end] into contiguous parts by a sweep over the
+        // sorted segment key ranges: clusters of overlapping segments merge
+        // only within their own bounds; everything between clusters is served
+        // directly or from the memtable alone (docs/decisions.md,
+        // "Merge-on-read uses granule-level sweep-line classification").
+        let memtable_has_rows = |lo: &std::ops::Bound<PrimaryKey>,
+                                 hi: &std::ops::Bound<PrimaryKey>| {
+            bound_range_is_searchable(lo, hi)
+                && self
+                    .memtable
+                    .range((lo.clone(), hi.clone()))
+                    .next()
+                    .is_some()
+        };
+        let mut parts = std::collections::VecDeque::new();
+        let mut needs_visibility_resolution = false;
+        let mut cursor = std::ops::Bound::Included(start.clone());
+        let mut index = 0;
+        while index < segments.len() {
+            let mut next = index + 1;
+            let mut cluster_max = segments[index].max_key.clone();
+            let mut all_unique = segments[index].unique_keys;
+            while next < segments.len() && segments[next].min_key <= cluster_max {
+                if segments[next].max_key > cluster_max {
+                    cluster_max = segments[next].max_key.clone();
+                }
+                all_unique &= segments[next].unique_keys;
+                next += 1;
+            }
+            let part_lo = segments[index].min_key.clone().max(start.clone());
+            let part_hi = cluster_max.min(end.clone());
+            let gap_hi = std::ops::Bound::Excluded(part_lo.clone());
+            if memtable_has_rows(&cursor, &gap_hi) {
+                parts.push_back(ScanPart::MemtableOnly {
+                    lo: cursor.clone(),
+                    hi: gap_hi,
+                });
+                needs_visibility_resolution = true;
+            }
+            let lo_bound = std::ops::Bound::Included(part_lo.clone());
+            let hi_bound = std::ops::Bound::Included(part_hi.clone());
+            let direct =
+                next - index == 1 && all_unique && !memtable_has_rows(&lo_bound, &hi_bound);
+            if direct {
+                // Coalesce runs of direct clusters so parallel prefetch keeps
+                // its full width across them.
+                if let Some(ScanPart::Direct { segments: previous }) = parts.back_mut() {
+                    previous.extend_from_slice(&segments[index..next]);
+                } else {
+                    parts.push_back(ScanPart::Direct {
+                        segments: segments[index..next].to_vec(),
+                    });
+                }
+            } else {
+                needs_visibility_resolution = true;
+                parts.push_back(ScanPart::Merge {
+                    segments: segments[index..next].to_vec(),
+                    lo: part_lo,
+                    hi: part_hi.clone(),
+                });
+            }
+            cursor = std::ops::Bound::Excluded(part_hi);
+            index = next;
+        }
+        let scan_end = std::ops::Bound::Included(end.clone());
+        if memtable_has_rows(&cursor, &scan_end) {
+            parts.push_back(ScanPart::MemtableOnly {
+                lo: cursor,
+                hi: scan_end,
+            });
+            needs_visibility_resolution = true;
+        }
+        if needs_visibility_resolution && candidate_rows < 64 * 1024 {
             return Ok(None);
         }
-        let merge = if independently_visible {
-            None
-        } else {
-            let mut streams = segments
-                .iter()
-                .map(|meta| {
-                    segment::SegmentRowStream::open_headers(&self.directory, meta, &self.schema)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let heads = streams
-                .iter_mut()
-                .map(segment::SegmentRowStream::next_header)
-                .collect::<Result<Vec<_>, _>>()?;
-            let memtable_head = self
-                .memtable
-                .range(start.clone()..=end.clone())
-                .next()
-                .map(|(_, row)| row.clone());
-            Some(MergedProjectedStream {
-                streams,
-                heads,
-                memtable_head,
-                reported_segments: false,
-            })
-        };
         Ok(Some(ProjectedScanStream {
             snapshot: self.clone(),
-            segments,
+            candidate_segments: segments.len(),
+            segments: Vec::new(),
             start: start.clone(),
             end: end.clone(),
             column_ids: column_ids.to_vec(),
             next_segment: 0,
             pruned_segments,
-            merge,
+            reported_pruned: false,
+            parts,
+            memtable_cursor: None,
+            merge: None,
         }))
     }
 
