@@ -1287,12 +1287,51 @@ pub(crate) fn read_sparse_index(
     parse_footer_body(&path, &footer, footer_offset, meta)
 }
 
+/// Identity of one successful footer verification: the file as it existed
+/// on disk (length + mtime) checked against one schema generation. Any
+/// on-disk change or schema evolution changes the key and re-verifies.
+type VerifiedKey = (PathBuf, u64, i128, u32, u64);
+
+fn verified_segments() -> &'static std::sync::Mutex<HashSet<VerifiedKey>> {
+    static VERIFIED: std::sync::OnceLock<std::sync::Mutex<HashSet<VerifiedKey>>> =
+        std::sync::OnceLock::new();
+    VERIFIED.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+}
+
+fn verified_key(path: &Path, meta: &SegmentMeta, schema: &TableSchema) -> Option<VerifiedKey> {
+    let stat = std::fs::metadata(path).ok()?;
+    let modified = stat.modified().ok()?;
+    let nanos = match modified.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => i128::try_from(duration.as_nanos()).ok()?,
+        Err(before_epoch) => -i128::try_from(before_epoch.duration().as_nanos()).ok()?,
+    };
+    Some((
+        path.to_path_buf(),
+        stat.len(),
+        nanos,
+        schema.version(),
+        meta.schema_fingerprint,
+    ))
+}
+
 pub(crate) fn verify(
     directory: &Path,
     meta: &SegmentMeta,
     schema: &TableSchema,
 ) -> Result<(), StoreError> {
     let path = directory.join(&meta.file_name);
+    // Segments are immutable once published: one successful verification per
+    // on-disk identity and schema generation covers every later read (block
+    // payloads still checksum individually at decode).
+    let key = verified_key(&path, meta, schema);
+    if let Some(key) = &key
+        && verified_segments()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(key)
+    {
+        return Ok(());
+    }
     let (footer, footer_offset, header) = read_verified_footer(&path)?;
     parse_footer_body(&path, &footer, footer_offset, meta)?;
     if &header[..MAGIC.len()] != MAGIC {
@@ -1319,6 +1358,17 @@ pub(crate) fn verify(
             expected: meta.schema_fingerprint,
             actual: segment_fingerprint,
         });
+    }
+    if let Some(key) = key {
+        let mut verified = verified_segments()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Unbounded growth guard: re-verification is harmless, so a rare
+        // full reset beats tracking recency.
+        if verified.len() >= 8192 {
+            verified.clear();
+        }
+        verified.insert(key);
     }
     Ok(())
 }
