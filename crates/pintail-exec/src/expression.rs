@@ -27,6 +27,7 @@ const fn mirror_comparison(op: BinaryOp) -> BinaryOp {
 fn typed_comparison_mask(
     typed: &TypedValues,
     validity: &ValidityMask,
+    logical_type: DataType,
     op: BinaryOp,
     literal: &pintail_types::Value,
 ) -> Option<SelectionMask> {
@@ -74,8 +75,38 @@ fn typed_comparison_mask(
         (TypedValues::Float64(values), Value::Float64(lit)) => {
             ordered(values, validity, op, lit.get())
         }
-        // Utf8 deliberately falls back: text comparison is collation-aware
-        // (utf8mb4 case-insensitive — see
+        // Temporal types ride the Utf8 carrier in canonical fixed-width form,
+        // where byte order IS chronological order and collation cannot apply
+        // (digits, dashes, colons only) — byte-wise kernels are exact.
+        (TypedValues::Utf8(column), Value::Utf8(text))
+            if matches!(
+                logical_type,
+                DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. }
+            ) =>
+        {
+            let needle = text.as_bytes();
+            let views = column.views();
+            let heap = column.heap();
+            let mut mask = SelectionMask::none(views.len());
+            for (row, view) in views.iter().enumerate() {
+                if validity.is_valid(row) {
+                    let keep = view.with_bytes(heap, |bytes| match op {
+                        BinaryOp::Equal => bytes == needle,
+                        BinaryOp::NotEqual => bytes != needle,
+                        BinaryOp::Less => bytes < needle,
+                        BinaryOp::LessOrEqual => bytes <= needle,
+                        BinaryOp::Greater => bytes > needle,
+                        _ => bytes >= needle,
+                    });
+                    if keep {
+                        mask.set(row, true).expect("row within mask bounds");
+                    }
+                }
+            }
+            Some(mask)
+        }
+        // General Utf8 deliberately falls back: text comparison is
+        // collation-aware (utf8mb4 case-insensitive — see
         // text_key_predicates_do_not_use_bytewise_storage_pruning), so a
         // byte-wise kernel would change semantics. The collation-aware string
         // fast path arrives with dictionary-code execution, where casefolding
@@ -255,7 +286,50 @@ impl CompiledExpr {
                 let Some((typed, validity)) = vector.typed() else {
                     return Ok(None);
                 };
-                Ok(typed_comparison_mask(typed, validity, op, literal))
+                Ok(typed_comparison_mask(
+                    typed,
+                    validity,
+                    vector.data_type(),
+                    op,
+                    literal,
+                ))
+            }
+            Self::Scalar {
+                function: ScalarFunction::Between { negated: false },
+                args,
+                ..
+            } if args.len() == 3 => {
+                let (Self::Column(column), Self::Literal(lower), Self::Literal(upper)) =
+                    (&args[0], &args[1], &args[2])
+                else {
+                    return Ok(None);
+                };
+                let Some(vector) = batch.column(*column) else {
+                    return Ok(None);
+                };
+                let Some((typed, validity)) = vector.typed() else {
+                    return Ok(None);
+                };
+                let (Some(mut mask), Some(other)) = (
+                    typed_comparison_mask(
+                        typed,
+                        validity,
+                        vector.data_type(),
+                        BinaryOp::GreaterOrEqual,
+                        lower,
+                    ),
+                    typed_comparison_mask(
+                        typed,
+                        validity,
+                        vector.data_type(),
+                        BinaryOp::LessOrEqual,
+                        upper,
+                    ),
+                ) else {
+                    return Ok(None);
+                };
+                mask.intersect(&other)?;
+                Ok(Some(mask))
             }
             _ => Ok(None),
         }
