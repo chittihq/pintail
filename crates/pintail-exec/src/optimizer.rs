@@ -792,7 +792,6 @@ fn referenced_tables(expr: &BoundExpr) -> BTreeSet<TableKey> {
 
 fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
     match &expr.kind {
-        BoundExprKind::Window(_) => {}
         BoundExprKind::Column(column) => {
             columns.insert(column_key(column));
         }
@@ -812,7 +811,8 @@ fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
         BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_)
-        | BoundExprKind::Aggregate(_) => {}
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_) => {}
     }
 }
 
