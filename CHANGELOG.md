@@ -26,6 +26,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Merge clusters refine to granule level: a base-plus-tail cluster splits into
+  direct row-ranges of the dominant unique-key segment plus one merge bounded
+  to the actual overlap, located through the segment footer's sparse index
+  (previously written but never read); no storage format change.
+- Low-cardinality string group-bys (one or two key columns) aggregate on
+  per-batch dictionary codes with array-indexed accumulators; integer-keyed
+  fused join aggregates probe a dense direct-address table when build keys
+  occupy a small range; top-K materialization skips rows that cannot beat the
+  current threshold before cloning them.
+- Decimals, dates, and datetimes parse once at column construction into
+  scaled/epoch integers consumed by filters, aggregates, and group hashing,
+  with conservative fallback to their text carriers on any non-canonical
+  value; typed projections build lazily so batches that never use them pay
+  nothing.
 - Scans partition the requested key range by actual segment overlap: disjoint
   unique-key clusters decode directly, only overlapping clusters pay the
   bounded last-write-wins merge, and memtable rows are served range-aware —
