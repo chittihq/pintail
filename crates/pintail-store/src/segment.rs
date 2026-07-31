@@ -19,7 +19,14 @@ use crate::{
 
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
-const FORMAT_VERSION: u8 = 1;
+const FORMAT_VERSION: u8 = 2;
+
+/// Segment versions this reader understands: v1 stores text carriers for
+/// every Utf8-storage column; v2 additionally stores fixed-width native
+/// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns.
+const fn format_version_supported(version: u8) -> bool {
+    matches!(version, 1 | 2)
+}
 const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
 const TOMBSTONE_COLUMN_ID: u32 = u32::MAX;
@@ -279,6 +286,37 @@ impl NativeUnits {
     }
 }
 
+/// Whether a stored column's wire type is valid for its schema type: the
+/// declared physical carrier always is; wire `Int64` additionally is for
+/// columns with a native-unit representation (PTSEG v2 stores units).
+fn wire_type_compatible(data_type: DataType, logical_type: LogicalType) -> bool {
+    LogicalType::from_data_type(data_type) == logical_type
+        || (logical_type == LogicalType::Int64 && NativeUnits::for_data_type(data_type).is_some())
+}
+
+/// Rewrites a native column's unit cells back into their canonical text
+/// carrier, so downstream consumers keep seeing v1-shaped values (task #10
+/// step A; step B will hand units through to the executor untouched).
+fn format_native_cells(
+    path: &Path,
+    units: NativeUnits,
+    cells: &mut [Cell],
+) -> Result<(), StoreError> {
+    for cell in cells.iter_mut() {
+        match cell {
+            Cell::Null => {}
+            Cell::Int64(value) => {
+                let text = units.format(*value).ok_or_else(|| {
+                    corrupt(path, 0, "native units outside the canonical text range")
+                })?;
+                *cell = Cell::Utf8(text);
+            }
+            _ => return Err(corrupt(path, 0, "native column holds a non-integer cell")),
+        }
+    }
+    Ok(())
+}
+
 /// Decides whether every value of one projected column can be stored as
 /// fixed-width units: `Some(units)` (with `None` per null slot) only when
 /// each non-null value passes the exact round-trip check.
@@ -359,6 +397,9 @@ struct ColumnSpec {
     id: u32,
     logical_type: LogicalType,
     source: ColumnSource,
+    /// `Some` when this column's rows all passed the exact round-trip probe
+    /// and will be stored as fixed-width units (wire type `Int64`).
+    native: Option<NativeUnits>,
 }
 
 pub(crate) fn schema_fingerprint(schema: &TableSchema) -> u64 {
@@ -417,6 +458,7 @@ fn key_mode_tag(key_mode: KeyMode) -> u8 {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn write(
     directory: &Path,
     id: u64,
@@ -443,7 +485,23 @@ pub(crate) fn write(
     let min_key = rows.first().expect("non-empty rows").key().clone();
     let max_key = rows.last().expect("non-empty rows").key().clone();
     let bloom = build_bloom(rows)?;
-    let specs = column_specs(schema);
+    let mut specs = column_specs(schema);
+    // PTSEG v2: a text-carried Decimal/Date32/DateTime64 column whose every
+    // value passes the exact round-trip probe is stored as fixed-width
+    // units under wire type Int64; one failing value keeps the column on
+    // the v1 text path.
+    for spec in &mut specs {
+        let ColumnSource::Value(index) = spec.source else {
+            continue;
+        };
+        let Some(units) = NativeUnits::for_data_type(schema.columns()[index].data_type()) else {
+            continue;
+        };
+        if probe_native_column(units, rows, index).is_some() {
+            spec.logical_type = LogicalType::Int64;
+            spec.native = Some(units);
+        }
+    }
     let file_name = format!("segment-{id:020}.ptseg");
     let path = directory.join(&file_name);
     let temporary = directory.join(format!(".{file_name}.tmp"));
@@ -545,11 +603,11 @@ pub(crate) fn read(
     if magic.as_slice() != MAGIC {
         return Err(corrupt(&path, 0, "invalid segment magic"));
     }
-    if decoder
-        .u8()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?
-        != FORMAT_VERSION
-    {
+    if !format_version_supported(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+    ) {
         return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
     }
     let schema_version = decoder
@@ -620,6 +678,9 @@ pub(crate) struct SegmentRowStream {
     path: PathBuf,
     columns: Vec<StreamColumn>,
     nullable_absent: Vec<usize>,
+    /// Per schema column: the native-unit mapping its type is eligible for,
+    /// used to rewrite v2 unit cells back into canonical text.
+    native_values: Vec<Option<NativeUnits>>,
     schema_column_count: usize,
     include_values: bool,
     remaining_rows: usize,
@@ -667,11 +728,11 @@ impl SegmentRowStream {
         if magic.as_slice() != MAGIC {
             return Err(corrupt(&path, 0, "invalid segment magic"));
         }
-        if layout
-            .u8()
-            .map_err(|reason| corrupt_here(&path, &layout, reason))?
-            != FORMAT_VERSION
-        {
+        if !format_version_supported(
+            layout
+                .u8()
+                .map_err(|reason| corrupt_here(&path, &layout, reason))?,
+        ) {
             return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
         }
         let schema_version = layout
@@ -792,8 +853,7 @@ impl SegmentRowStream {
                                     format!("duplicate user column id {id}"),
                                 ));
                             }
-                            let expected = LogicalType::from_data_type(column.data_type());
-                            if logical_type != expected {
+                            if !wire_type_compatible(column.data_type(), logical_type) {
                                 return Err(StoreError::IncompatibleSchema(format!(
                                     "column {} ({id}) changed physical type",
                                     column.name()
@@ -872,6 +932,11 @@ impl SegmentRowStream {
             path,
             columns,
             nullable_absent,
+            native_values: schema
+                .columns()
+                .iter()
+                .map(|column| NativeUnits::for_data_type(column.data_type()))
+                .collect(),
             schema_column_count: schema.columns().len(),
             include_values,
             remaining_rows,
@@ -949,7 +1014,15 @@ impl SegmentRowStream {
                 StreamColumnTarget::Key => keys = Some(cells),
                 StreamColumnTarget::Version => versions = Some(cells),
                 StreamColumnTarget::Tombstone => tombstones = Some(cells),
-                StreamColumnTarget::Value(index) => values[index] = Some(cells),
+                StreamColumnTarget::Value(index) => {
+                    let mut cells = cells;
+                    if column.logical_type == LogicalType::Int64
+                        && let Some(units) = self.native_values[index]
+                    {
+                        format_native_cells(&self.path, units, &mut cells)?;
+                    }
+                    values[index] = Some(cells);
+                }
             }
         }
         let block_rows =
@@ -1045,12 +1118,17 @@ fn read_file_segment_columns(
                 else {
                     continue;
                 };
-                let expected = LogicalType::from_data_type(column.data_type());
-                if logical_type != expected {
+                if !wire_type_compatible(column.data_type(), logical_type) {
                     return Err(StoreError::IncompatibleSchema(format!(
                         "column {} ({id}) changed physical type",
                         column.name()
                     )));
+                }
+                let mut column_cells = column_cells;
+                if logical_type == LogicalType::Int64
+                    && let Some(units) = NativeUnits::for_data_type(column.data_type())
+                {
+                    format_native_cells(path, units, &mut column_cells)?;
                 }
                 if values[index].replace(column_cells).is_some() {
                     return Err(corrupt_here(
@@ -1306,11 +1384,11 @@ pub(crate) fn read_row_headers_range(
     if magic.as_slice() != MAGIC {
         return Err(corrupt(&path, 0, "invalid segment magic"));
     }
-    if decoder
-        .u8()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?
-        != FORMAT_VERSION
-    {
+    if !format_version_supported(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
+    ) {
         return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
     }
     let segment_schema_version = decoder
@@ -1461,8 +1539,7 @@ pub(crate) fn read_row_headers_range(
         };
         let schema_index = schema.columns().iter().position(|column| column.id() == id);
         if let Some(schema_index) = schema_index
-            && LogicalType::from_data_type(schema.columns()[schema_index].data_type())
-                != logical_type
+            && !wire_type_compatible(schema.columns()[schema_index].data_type(), logical_type)
         {
             return Err(StoreError::IncompatibleSchema(format!(
                 "column {} ({id}) changed physical type",
@@ -1610,8 +1687,7 @@ pub(crate) fn read_projected_rows(
             as usize;
         let schema_index = schema.columns().iter().position(|column| column.id() == id);
         if let Some(schema_index) = schema_index
-            && LogicalType::from_data_type(schema.columns()[schema_index].data_type())
-                != logical_type
+            && !wire_type_compatible(schema.columns()[schema_index].data_type(), logical_type)
         {
             return Err(StoreError::IncompatibleSchema(format!(
                 "column {} ({id}) changed physical type",
@@ -1641,8 +1717,15 @@ pub(crate) fn read_projected_rows(
             let block_end = block_start
                 .checked_add(block.row_count)
                 .ok_or_else(|| corrupt_here(&path, &decoder, "column row count overflow"))?;
-            if let (Some(position), Some(cells)) = (projected_position, block.cells) {
+            if let (Some(position), Some(mut cells)) = (projected_position, block.cells) {
                 blocks_decoded += 1;
+                if logical_type == LogicalType::Int64
+                    && let Some(units) = schema_index.and_then(|index| {
+                        NativeUnits::for_data_type(schema.columns()[index].data_type())
+                    })
+                {
+                    format_native_cells(&path, units, &mut cells)?;
+                }
                 let cloned_value_bytes = row_indices
                     .iter()
                     .copied()
@@ -1709,11 +1792,11 @@ fn read_segment_columns_header(
     {
         return Err(corrupt(path, 0, "invalid segment magic"));
     }
-    if decoder
-        .u8()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?
-        != FORMAT_VERSION
-    {
+    if !format_version_supported(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?,
+    ) {
         return Err(corrupt(path, MAGIC.len(), "unsupported format version"));
     }
     let segment_schema_version = decoder
@@ -1786,10 +1869,39 @@ enum ColumnBuilder {
         offsets: Vec<usize>,
         validity: Vec<bool>,
     },
+    /// A v2 native-unit column materialized as text (step A): each Int64
+    /// cell formats into the arena through its canonical formatter.
+    NativeText {
+        units: NativeUnits,
+        heap: Vec<u8>,
+        offsets: Vec<usize>,
+        validity: Vec<bool>,
+    },
     Values(Vec<Value>),
 }
 
 impl ColumnBuilder {
+    /// Chooses the builder for one projected column: native-unit columns
+    /// build text by formatting units; everything else follows the wire
+    /// type.
+    fn new_for_column(
+        logical_type: LogicalType,
+        native: Option<NativeUnits>,
+        capacity: usize,
+    ) -> Self {
+        if let Some(units) = native {
+            let mut offsets = Vec::with_capacity(capacity.saturating_add(1));
+            offsets.push(0);
+            return Self::NativeText {
+                units,
+                heap: Vec::new(),
+                offsets,
+                validity: Vec::with_capacity(capacity),
+            };
+        }
+        Self::new(logical_type, capacity)
+    }
+
     fn new(logical_type: LogicalType, capacity: usize) -> Self {
         match logical_type {
             LogicalType::Int64 => Self::Int64 {
@@ -1860,12 +1972,31 @@ impl ColumnBuilder {
             (
                 Self::Utf8 {
                     offsets, validity, ..
+                }
+                | Self::NativeText {
+                    offsets, validity, ..
                 },
                 Cell::Null,
             ) => {
                 let end = *offsets.last().expect("offsets seeded with zero");
                 offsets.push(end);
                 validity.push(false);
+            }
+            (
+                Self::NativeText {
+                    units,
+                    heap,
+                    offsets,
+                    validity,
+                },
+                Cell::Int64(value),
+            ) => {
+                let text = units
+                    .format(value)
+                    .ok_or_else(|| "native units outside the canonical text range".to_owned())?;
+                heap.extend_from_slice(text.as_bytes());
+                offsets.push(heap.len());
+                validity.push(true);
             }
             (Self::Values(_), Cell::Key(_)) => {
                 return Err("primary-key cell in a user column block".to_owned());
@@ -1912,6 +2043,12 @@ impl ColumnBuilder {
                 heap,
                 offsets,
                 validity,
+            }
+            | Self::NativeText {
+                heap,
+                offsets,
+                validity,
+                ..
             } => heap
                 .len()
                 .saturating_add(offsets.len().saturating_mul(std::mem::size_of::<usize>()))
@@ -1932,6 +2069,12 @@ impl ColumnBuilder {
                 heap,
                 offsets,
                 validity,
+            }
+            | Self::NativeText {
+                heap,
+                offsets,
+                validity,
+                ..
             } => DecodedColumn::Utf8 {
                 heap,
                 offsets,
@@ -1984,8 +2127,7 @@ pub(crate) fn read_projected_columns(
             as usize;
         let schema_index = schema.columns().iter().position(|column| column.id() == id);
         if let Some(schema_index) = schema_index
-            && LogicalType::from_data_type(schema.columns()[schema_index].data_type())
-                != logical_type
+            && !wire_type_compatible(schema.columns()[schema_index].data_type(), logical_type)
         {
             return Err(StoreError::IncompatibleSchema(format!(
                 "column {} ({id}) changed physical type",
@@ -1998,7 +2140,14 @@ pub(crate) fn read_projected_columns(
             if std::mem::replace(&mut found[position], true) {
                 return Err(corrupt_here(&path, &decoder, "duplicate user column"));
             }
-            let builder = ColumnBuilder::new(logical_type, selected_rows);
+            let native = (logical_type == LogicalType::Int64)
+                .then(|| {
+                    schema_index.and_then(|index| {
+                        NativeUnits::for_data_type(schema.columns()[index].data_type())
+                    })
+                })
+                .flatten();
+            let builder = ColumnBuilder::new_for_column(logical_type, native, selected_rows);
             let builder_bytes = builder.heap_len_bytes();
             memory.reserve(builder_bytes)?;
             reserved_bytes = reserved_bytes.saturating_add(builder_bytes);
@@ -2126,16 +2275,19 @@ fn column_specs(schema: &TableSchema) -> Vec<ColumnSpec> {
             id: KEY_COLUMN_ID,
             logical_type: LogicalType::PrimaryKey,
             source: ColumnSource::Key,
+            native: None,
         },
         ColumnSpec {
             id: VERSION_COLUMN_ID,
             logical_type: LogicalType::UInt64,
             source: ColumnSource::Version,
+            native: None,
         },
         ColumnSpec {
             id: TOMBSTONE_COLUMN_ID,
             logical_type: LogicalType::Boolean,
             source: ColumnSource::Tombstone,
+            native: None,
         },
     ];
     specs.extend(
@@ -2147,6 +2299,7 @@ fn column_specs(schema: &TableSchema) -> Vec<ColumnSpec> {
                 id: column.id(),
                 logical_type: LogicalType::from_data_type(column.data_type()),
                 source: ColumnSource::Value(index),
+                native: None,
             }),
     );
     specs
@@ -3312,11 +3465,21 @@ fn cell_for(spec: &ColumnSpec, row: &StoredRow) -> Cell {
         ColumnSource::Tombstone => Cell::Boolean(row.is_deleted()),
         ColumnSource::Value(index) => match &row.values()[index] {
             Value::Null => Cell::Null,
+            Value::Utf8(value) => {
+                if let Some(units) = spec.native {
+                    // The probe already verified every value round-trips.
+                    let parsed = units
+                        .parse_exact(value)
+                        .expect("probed native column value round-trips");
+                    Cell::Int64(parsed)
+                } else {
+                    Cell::Utf8(value.clone())
+                }
+            }
             Value::Boolean(value) => Cell::Boolean(*value),
             Value::Int64(value) => Cell::Int64(*value),
             Value::UInt64(value) => Cell::UInt64(*value),
             Value::Float64(value) => Cell::Float64(value.to_bits()),
-            Value::Utf8(value) => Cell::Utf8(value.clone()),
             Value::Binary(value) => Cell::Binary(value.clone()),
         },
     }

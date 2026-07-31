@@ -10,6 +10,7 @@ mod suite {
     mod flush;
     mod ingest;
     mod key_modes;
+    mod native_units;
     mod partitioned_scan;
     mod reader;
     mod recovery;
