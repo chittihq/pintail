@@ -1,18 +1,23 @@
 # Pintail analytical benchmark results
 
-Measured 2026-07-30T19:32:58.706Z with 20,000,000 orders.
+Measured 2026-07-31T08:40:40.290Z with 20,000,000 orders.
 
-| Query | MySQL | Pintail | Speedup | ClickHouse reference |
-|---|---:|---:|---:|---:|
-| Q1: Full table count | 2,334 ms | 24 ms | 97.3× | 368 ms |
-| Q2: Filtered count | 1,679 ms | 1,495 ms | 1.1× | 751 ms |
-| Q3: Group by status | 68,947 ms | 2,972 ms | 23.2× | 543 ms |
-| Q4: Region × status breakdown | 23,273 ms | 3,036 ms | 7.7× | 594 ms |
-| Q5: Monthly revenue (2023) | 11,042 ms | 2,064 ms | 5.3× | 857 ms |
-| Q6: Top 10 spenders | 1,977,816 ms | 3,146 ms | 628.7× | 852 ms |
-| Q7: Regional analytics | 117,478 ms | 4,649 ms | 25.3× | 585 ms |
-| Q8: Join users + orders | 1,638,868 ms | 4,819 ms | 340.1× | 641 ms |
-| **Total** | **3,841,437 ms** | **22,205 ms** | **173.0×** | **5,191 ms** |
+All engines run on the docker host under identical limits (8 CPUs, 8 GB).
+Pintail/ClickHouse: median of 5 warm runs. MySQL: single cold run (baseline).
+CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing
+pintail's always-correct merge-on-read duty; the apples-to-apples reference.
 
-Release gate: PASS (required ≥50×).
+| Query | MySQL | Pintail | Speedup | CH MergeTree | CH RMT+FINAL | Exact |
+|---|---:|---:|---:|---:|---:|:--|
+| Q1: Full table count | 2,442 ms | 325 ms | 7.5× | 318 ms | 674 ms | yes |
+| Q2: Filtered count | 1,467 ms | 2,102 ms | 0.7× | 218 ms | 204 ms | yes |
+| Q3: Group by status | 67,183 ms | 5,992 ms | 11.2× | 247 ms | 237 ms | yes |
+| Q4: Region × status breakdown | 23,070 ms | 9,517 ms | 2.4× | 344 ms | 337 ms | yes |
+| Q5: Monthly revenue (2023) | 10,686 ms | 6,320 ms | 1.7× | 208 ms | 216 ms | yes |
+| Q6: Top 10 spenders | 1,938,080 ms | 9,077 ms | 213.5× | 276 ms | 293 ms | yes |
+| Q7: Regional analytics | 115,501 ms | 13,183 ms | 8.8× | 289 ms | 307 ms | yes |
+| Q8: Join users + orders | 1,611,999 ms | 9,005 ms | 179.0× | 624 ms | 634 ms | yes |
+| **Total** | **3,770,428 ms** | **55,521 ms** | **67.9×** | **2,524 ms** | **2,902 ms** | |
+
+Release gate: PASS (required ≥50× and exact results).
 
