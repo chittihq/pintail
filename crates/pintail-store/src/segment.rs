@@ -213,6 +213,92 @@ enum LogicalType {
     PrimaryKey = 6,
 }
 
+/// A fixed-width unit representation for a text-carried column, eligible
+/// only when every stored value round-trips text -> units -> identical text
+/// (PTSEG v2; docs/decisions.md "PTSEG v2 approved").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)] // constructed by the v2 writer (task #10 step A)
+pub(crate) enum NativeUnits {
+    /// Days since 1970-01-01 for `Date32` columns.
+    Date,
+    /// Microseconds since the epoch for `DateTime64` columns; the fractional
+    /// precision needed to regenerate canonical text.
+    DateTime { fsp: u8 },
+    /// Scaled integers for `Decimal` columns with precision <= 18 (fits i64).
+    Decimal { scale: u8 },
+}
+
+#[allow(dead_code)] // consumed by the v2 writer and reader (task #10 step A)
+impl NativeUnits {
+    /// The native representation a column's declared type could use, if any.
+    pub(crate) fn for_data_type(data_type: DataType) -> Option<Self> {
+        match data_type {
+            DataType::Date32 => Some(Self::Date),
+            DataType::DateTime64 { fsp } => Some(Self::DateTime { fsp }),
+            DataType::Decimal { precision, scale } if precision <= 18 => {
+                Some(Self::Decimal { scale })
+            }
+            _ => None,
+        }
+    }
+
+    /// Parses one canonical text value into units, returning `None` unless
+    /// the units regenerate the identical text (the round-trip guarantee the
+    /// v2 writer requires before storing units instead of text).
+    pub(crate) fn parse_exact(self, text: &str) -> Option<i64> {
+        match self {
+            Self::Date => {
+                let days = pintail_types::parse_date_days(text)?;
+                (pintail_types::format_date_days(days).as_deref() == Some(text)).then_some(days)
+            }
+            Self::DateTime { fsp } => {
+                let micros = pintail_types::parse_datetime_micros(text)?;
+                (pintail_types::format_datetime_micros(micros, fsp).as_deref() == Some(text))
+                    .then_some(micros)
+            }
+            Self::Decimal { scale } => {
+                let scaled = pintail_types::parse_decimal_scaled(text, scale)?;
+                let scaled = i64::try_from(scaled).ok()?;
+                (pintail_types::format_decimal_scaled(i128::from(scaled), scale) == text)
+                    .then_some(scaled)
+            }
+        }
+    }
+
+    /// Regenerates the canonical text for stored units. `None` indicates
+    /// corruption: the writer only stores units that round-trip.
+    pub(crate) fn format(self, units: i64) -> Option<String> {
+        match self {
+            Self::Date => pintail_types::format_date_days(units),
+            Self::DateTime { fsp } => pintail_types::format_datetime_micros(units, fsp),
+            Self::Decimal { scale } => Some(pintail_types::format_decimal_scaled(
+                i128::from(units),
+                scale,
+            )),
+        }
+    }
+}
+
+/// Decides whether every value of one projected column can be stored as
+/// fixed-width units: `Some(units)` (with `None` per null slot) only when
+/// each non-null value passes the exact round-trip check.
+#[allow(dead_code)] // consumed by the v2 writer (task #10 step A)
+pub(crate) fn probe_native_column(
+    units: NativeUnits,
+    rows: &[StoredRow],
+    value_index: usize,
+) -> Option<Vec<Option<i64>>> {
+    let mut parsed = Vec::with_capacity(rows.len());
+    for row in rows {
+        match &row.values()[value_index] {
+            Value::Null => parsed.push(None),
+            Value::Utf8(text) => parsed.push(Some(units.parse_exact(text)?)),
+            _ => return None,
+        }
+    }
+    Some(parsed)
+}
+
 #[derive(Clone, Copy)]
 enum Encoding {
     Plain = 0,
@@ -3409,4 +3495,100 @@ fn corrupt_here(
     reason: impl Into<String>,
 ) -> StoreError {
     corrupt(path, decoder.decode_position(), reason)
+}
+
+#[cfg(test)]
+mod native_units_tests {
+    use pintail_types::{DataType, Value};
+
+    use super::{NativeUnits, probe_native_column};
+
+    fn rows_of(values: Vec<Value>) -> Vec<pintail_types::StoredRow> {
+        values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let key = pintail_types::PrimaryKey::new(vec![pintail_types::KeyPart::Int64(
+                    i64::try_from(index).expect("small index"),
+                )])
+                .expect("test key");
+                pintail_types::StoredRow::new(key, vec![value], 1, false)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn eligible_types_map_to_native_units() {
+        assert_eq!(
+            NativeUnits::for_data_type(DataType::Date32),
+            Some(NativeUnits::Date)
+        );
+        assert_eq!(
+            NativeUnits::for_data_type(DataType::DateTime64 { fsp: 3 }),
+            Some(NativeUnits::DateTime { fsp: 3 })
+        );
+        assert_eq!(
+            NativeUnits::for_data_type(DataType::Decimal {
+                precision: 18,
+                scale: 2
+            }),
+            Some(NativeUnits::Decimal { scale: 2 })
+        );
+        // i64 cannot carry every precision-19 value: stays on text.
+        assert_eq!(
+            NativeUnits::for_data_type(DataType::Decimal {
+                precision: 19,
+                scale: 2
+            }),
+            None
+        );
+        assert_eq!(NativeUnits::for_data_type(DataType::Utf8), None);
+    }
+
+    #[test]
+    fn parse_exact_requires_identical_round_trips() {
+        let date = NativeUnits::Date;
+        assert_eq!(date.parse_exact("2024-02-29"), Some(19_782));
+        assert_eq!(date.format(19_782).as_deref(), Some("2024-02-29"));
+        assert_eq!(date.parse_exact("2023-02-29"), None);
+
+        let datetime = NativeUnits::DateTime { fsp: 3 };
+        let micros = datetime
+            .parse_exact("2023-06-15 12:34:56.123")
+            .expect("canonical datetime");
+        assert_eq!(
+            datetime.format(micros).as_deref(),
+            Some("2023-06-15 12:34:56.123")
+        );
+        // fsp-0 column cannot regenerate a fractional payload: rejected.
+        assert_eq!(
+            NativeUnits::DateTime { fsp: 0 }.parse_exact("2023-06-15 12:34:56.123"),
+            None
+        );
+
+        let decimal = NativeUnits::Decimal { scale: 2 };
+        assert_eq!(decimal.parse_exact("123.45"), Some(12_345));
+        assert_eq!(decimal.parse_exact("-0.05"), Some(-5));
+        // "123.4" parses but formats back as "123.40": not canonical input.
+        assert_eq!(decimal.parse_exact("123.4"), None);
+    }
+
+    #[test]
+    fn probe_accepts_nulls_and_rejects_mixed_columns() {
+        let decimal = NativeUnits::Decimal { scale: 2 };
+        let rows = rows_of(vec![
+            Value::Utf8("1.50".to_owned()),
+            Value::Null,
+            Value::Utf8("-2.25".to_owned()),
+        ]);
+        assert_eq!(
+            probe_native_column(decimal, &rows, 0),
+            Some(vec![Some(150), None, Some(-225)])
+        );
+        let rows = rows_of(vec![
+            Value::Utf8("1.50".to_owned()),
+            Value::Utf8("not-a-decimal".to_owned()),
+        ]);
+        assert_eq!(probe_native_column(decimal, &rows, 0), None);
+    }
 }
