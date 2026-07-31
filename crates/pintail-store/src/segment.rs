@@ -1661,7 +1661,11 @@ fn read_segment_columns_header(
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
     if block_rows == 0 {
-        return Err(corrupt_here(path, decoder, "segment block row target is zero"));
+        return Err(corrupt_here(
+            path,
+            decoder,
+            "segment block row target is zero",
+        ));
     }
     Ok(SegmentColumnsHeader {
         row_count,
@@ -1767,7 +1771,12 @@ impl ColumnBuilder {
                 offsets.push(heap.len());
                 validity.push(true);
             }
-            (Self::Utf8 { offsets, validity, .. }, Cell::Null) => {
+            (
+                Self::Utf8 {
+                    offsets, validity, ..
+                },
+                Cell::Null,
+            ) => {
                 let end = *offsets.last().expect("offsets seeded with zero");
                 offsets.push(end);
                 validity.push(false);
@@ -1852,8 +1861,7 @@ pub(crate) fn read_projected_columns(
         ));
     }
     let selected_rows = end_row - start_row;
-    let mut builders: Vec<Option<ColumnBuilder>> =
-        (0..projection.len()).map(|_| None).collect();
+    let mut builders: Vec<Option<ColumnBuilder>> = (0..projection.len()).map(|_| None).collect();
     let mut found = vec![false; projection.len()];
     let mut reserved_bytes = 0_usize;
     let mut blocks_decoded = 0_usize;

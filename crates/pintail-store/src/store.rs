@@ -1336,7 +1336,13 @@ impl ProjectedScanStream {
                     .capacity()
                     .saturating_mul(size_of::<DecodedColumn>()),
             )
-            .saturating_add(fetch.columns.iter().map(DecodedColumn::retained_bytes).sum());
+            .saturating_add(
+                fetch
+                    .columns
+                    .iter()
+                    .map(DecodedColumn::retained_bytes)
+                    .sum(),
+            );
         scan_budget.release(fetch.reserved_bytes);
         scan_budget.reserve(retained_bytes)?;
         Ok(ProjectedColumnChunk {
@@ -1392,7 +1398,13 @@ impl ProjectedScanStream {
                         .capacity()
                         .saturating_mul(size_of::<DecodedColumn>()),
                 )
-                .saturating_add(fetch.columns.iter().map(DecodedColumn::retained_bytes).sum());
+                .saturating_add(
+                    fetch
+                        .columns
+                        .iter()
+                        .map(DecodedColumn::retained_bytes)
+                        .sum(),
+                );
             scan_budget.release(fetch.reserved_bytes);
             scan_budget.reserve(retained_bytes)?;
             return Ok(ProjectedColumnChunk {
