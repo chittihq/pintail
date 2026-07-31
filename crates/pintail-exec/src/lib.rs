@@ -1,5 +1,6 @@
 //! Planner, optimizer, and vectorized executor for Pintail.
 
+pub mod array;
 mod batch;
 mod execution;
 mod explain;
