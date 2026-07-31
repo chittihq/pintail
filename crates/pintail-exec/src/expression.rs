@@ -7,7 +7,82 @@ use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
 use pintail_sql::{DatePart, IntervalUnit};
 use pintail_types::{DataType, Value};
 
-use crate::{ExecError, RecordBatch};
+use crate::array::ValidityMask;
+use crate::batch::TypedValues;
+use crate::{ExecError, RecordBatch, SelectionMask};
+
+const fn mirror_comparison(op: BinaryOp) -> BinaryOp {
+    match op {
+        BinaryOp::Less => BinaryOp::Greater,
+        BinaryOp::LessOrEqual => BinaryOp::GreaterOrEqual,
+        BinaryOp::Greater => BinaryOp::Less,
+        BinaryOp::GreaterOrEqual => BinaryOp::LessOrEqual,
+        other => other,
+    }
+}
+
+/// Builds a selection mask from a packed-value comparison. `None` when the
+/// literal's physical type doesn't match the column's packed type — mixed-type
+/// comparisons keep the row-at-a-time semantics of `evaluate_comparison`.
+fn typed_comparison_mask(
+    typed: &TypedValues,
+    validity: &ValidityMask,
+    op: BinaryOp,
+    literal: &pintail_types::Value,
+) -> Option<SelectionMask> {
+    fn fill<T: Copy>(
+        values: &[T],
+        validity: &ValidityMask,
+        keep: impl Fn(T) -> bool,
+    ) -> SelectionMask {
+        let mut mask = SelectionMask::none(values.len());
+        if validity.no_nulls() {
+            for (row, &value) in values.iter().enumerate() {
+                if keep(value) {
+                    mask.set(row, true).expect("row within mask bounds");
+                }
+            }
+        } else {
+            for (row, &value) in values.iter().enumerate() {
+                if validity.is_valid(row) && keep(value) {
+                    mask.set(row, true).expect("row within mask bounds");
+                }
+            }
+        }
+        mask
+    }
+    fn ordered<T: Copy + PartialOrd>(
+        values: &[T],
+        validity: &ValidityMask,
+        op: BinaryOp,
+        literal: T,
+    ) -> Option<SelectionMask> {
+        Some(match op {
+            BinaryOp::Equal => fill(values, validity, |v| v == literal),
+            BinaryOp::NotEqual => fill(values, validity, |v| v != literal),
+            BinaryOp::Less => fill(values, validity, |v| v < literal),
+            BinaryOp::LessOrEqual => fill(values, validity, |v| v <= literal),
+            BinaryOp::Greater => fill(values, validity, |v| v > literal),
+            BinaryOp::GreaterOrEqual => fill(values, validity, |v| v >= literal),
+            _ => return None,
+        })
+    }
+    use pintail_types::Value;
+    match (typed, literal) {
+        (TypedValues::Int64(values), Value::Int64(lit)) => ordered(values, validity, op, *lit),
+        (TypedValues::UInt64(values), Value::UInt64(lit)) => ordered(values, validity, op, *lit),
+        (TypedValues::Float64(values), Value::Float64(lit)) => {
+            ordered(values, validity, op, lit.get())
+        }
+        // Utf8 deliberately falls back: text comparison is collation-aware
+        // (utf8mb4 case-insensitive — see
+        // text_key_predicates_do_not_use_bytewise_storage_pruning), so a
+        // byte-wise kernel would change semantics. The collation-aware string
+        // fast path arrives with dictionary-code execution, where casefolding
+        // happens once per distinct value instead of per row.
+        _ => None,
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CompiledExpr {
@@ -128,6 +203,61 @@ impl CompiledExpr {
             Self::Column(index) => batch.column(*index)?.value(row),
             Self::Literal(value) => Some(value),
             _ => None,
+        }
+    }
+
+    /// Batch-level typed evaluation for `column <cmp> literal` predicates
+    /// (and AND conjunctions of them): one tight loop over packed values
+    /// instead of a per-row `Value` walk. Returns `None` when the shape or
+    /// physical types don't qualify — the caller falls back to row-at-a-time.
+    pub(crate) fn evaluate_filter_mask(
+        &self,
+        batch: &RecordBatch,
+    ) -> Result<Option<crate::SelectionMask>, ExecError> {
+        match self {
+            Self::Binary {
+                op: BinaryOp::And,
+                left,
+                right,
+                ..
+            } => {
+                let (Some(mut mask), Some(other)) = (
+                    left.evaluate_filter_mask(batch)?,
+                    right.evaluate_filter_mask(batch)?,
+                ) else {
+                    return Ok(None);
+                };
+                mask.intersect(&other)?;
+                Ok(Some(mask))
+            }
+            Self::Binary {
+                op:
+                    op @ (BinaryOp::Equal
+                    | BinaryOp::NotEqual
+                    | BinaryOp::Less
+                    | BinaryOp::LessOrEqual
+                    | BinaryOp::Greater
+                    | BinaryOp::GreaterOrEqual),
+                left,
+                right,
+                ..
+            } => {
+                let (column, literal, op) = match (left.as_ref(), right.as_ref()) {
+                    (Self::Column(index), Self::Literal(value)) => (*index, value, *op),
+                    (Self::Literal(value), Self::Column(index)) => {
+                        (*index, value, mirror_comparison(*op))
+                    }
+                    _ => return Ok(None),
+                };
+                let Some(vector) = batch.column(column) else {
+                    return Ok(None);
+                };
+                let Some((typed, validity)) = vector.typed() else {
+                    return Ok(None);
+                };
+                Ok(typed_comparison_mask(typed, validity, op, literal))
+            }
+            _ => Ok(None),
         }
     }
 

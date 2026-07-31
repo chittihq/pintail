@@ -987,6 +987,16 @@ impl PullOperator {
                 let Some(mut batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                // Typed batch kernel: comparison predicates over packed
+                // columns resolve in one pass; anything else falls back to
+                // the row-at-a-time path below.
+                if let Some(mask) = predicate.evaluate_filter_mask(&batch)? {
+                    batch.selection_mut().intersect(&mask)?;
+                    if batch.visible_row_count() > 0 {
+                        return Ok(Some(batch));
+                    }
+                    continue;
+                }
                 let batch_bytes = batch.estimated_bytes();
                 for row in 0..batch.row_count() {
                     if !batch.selection().is_selected(row) {

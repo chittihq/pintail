@@ -2,24 +2,53 @@ use std::{fmt, mem::size_of};
 
 use pintail_types::{DataType, Value};
 
+use crate::array::{StrColumn, ValidityMask};
+
 /// Target row count for pull-based executor batches.
 pub const DEFAULT_BATCH_ROWS: usize = 4_096;
 
+/// Packed physical values for homogeneous batches, built once at vector
+/// construction so kernels never re-match `Value` per row
+/// (docs/decisions.md, "Executor moves to typed packed arrays").
+#[derive(Clone, Debug)]
+pub(crate) enum TypedValues {
+    Int64(Vec<i64>),
+    UInt64(Vec<u64>),
+    Float64(Vec<f64>),
+    Utf8(StrColumn),
+}
+
 /// One typed, nullable, columnar value vector.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ColumnVector {
     data_type: DataType,
     values: Vec<Value>,
+    typed: Option<(TypedValues, ValidityMask)>,
 }
 
+impl PartialEq for ColumnVector {
+    fn eq(&self, other: &Self) -> bool {
+        // `typed` is a derived cache of `values`; logical equality ignores it.
+        self.data_type == other.data_type && self.values == other.values
+    }
+}
+
+impl Eq for ColumnVector {}
+
 impl ColumnVector {
-    /// Constructs and validates a column vector.
+    /// Constructs and validates a column vector, building the packed typed
+    /// projection in the same pass when the physical values are homogeneous.
     ///
     /// # Errors
     ///
     /// Returns [`BatchError::WrongValueType`] when a non-null value does not
     /// match the declared logical type.
     pub fn new(data_type: DataType, values: Vec<Value>) -> Result<Self, BatchError> {
+        let mut validity = Vec::with_capacity(values.len());
+        let mut int64 = Some(Vec::with_capacity(values.len()));
+        let mut uint64 = Some(Vec::with_capacity(values.len()));
+        let mut float64 = Some(Vec::with_capacity(values.len()));
+        let mut utf8 = Some(StrColumn::default());
         for (row, value) in values.iter().enumerate() {
             if let Some(actual) = value.data_type()
                 && !data_type.accepts(actual)
@@ -30,8 +59,86 @@ impl ColumnVector {
                     actual,
                 });
             }
+            validity.push(!matches!(value, Value::Null));
+            match value {
+                Value::Null => {
+                    if let Some(packed) = int64.as_mut() {
+                        packed.push(0);
+                    }
+                    if let Some(packed) = uint64.as_mut() {
+                        packed.push(0);
+                    }
+                    if let Some(packed) = float64.as_mut() {
+                        packed.push(0.0);
+                    }
+                    if let Some(packed) = utf8.as_mut() {
+                        packed.push(&[]);
+                    }
+                }
+                Value::Int64(v) => {
+                    if let Some(packed) = int64.as_mut() {
+                        packed.push(*v);
+                    }
+                    uint64 = None;
+                    float64 = None;
+                    utf8 = None;
+                }
+                Value::UInt64(v) => {
+                    if let Some(packed) = uint64.as_mut() {
+                        packed.push(*v);
+                    }
+                    int64 = None;
+                    float64 = None;
+                    utf8 = None;
+                }
+                Value::Float64(v) => {
+                    if let Some(packed) = float64.as_mut() {
+                        packed.push(v.get());
+                    }
+                    int64 = None;
+                    uint64 = None;
+                    utf8 = None;
+                }
+                Value::Utf8(text) => {
+                    if let Some(packed) = utf8.as_mut() {
+                        packed.push(text.as_bytes());
+                    }
+                    int64 = None;
+                    uint64 = None;
+                    float64 = None;
+                }
+                Value::Boolean(_) | Value::Binary(_) => {
+                    int64 = None;
+                    uint64 = None;
+                    float64 = None;
+                    utf8 = None;
+                }
+            }
         }
-        Ok(Self { data_type, values })
+        let typed = if values.is_empty() {
+            None
+        } else if let Some(packed) = int64 {
+            Some(TypedValues::Int64(packed))
+        } else if let Some(packed) = uint64 {
+            Some(TypedValues::UInt64(packed))
+        } else if let Some(packed) = float64 {
+            Some(TypedValues::Float64(packed))
+        } else {
+            utf8.map(TypedValues::Utf8)
+        }
+        .map(|packed| (packed, ValidityMask::from_bools(&validity)));
+        Ok(Self {
+            data_type,
+            values,
+            typed,
+        })
+    }
+
+    /// The packed projection, when the vector is physically homogeneous.
+    pub(crate) fn typed(&self) -> Option<(&TypedValues, &ValidityMask)> {
+        self.typed
+            .as_ref()
+            .map(|(packed, validity)| (packed, validity))
     }
 
     /// Returns the logical scalar type.
@@ -68,9 +175,17 @@ impl ColumnVector {
     /// Estimates bytes retained by the vector and its owned scalar payloads.
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {
+        let typed_bytes = match &self.typed {
+            None => 0,
+            Some((TypedValues::Int64(packed), _)) => packed.capacity() * size_of::<i64>(),
+            Some((TypedValues::UInt64(packed), _)) => packed.capacity() * size_of::<u64>(),
+            Some((TypedValues::Float64(packed), _)) => packed.capacity() * size_of::<f64>(),
+            Some((TypedValues::Utf8(packed), _)) => packed.len() * 16 + packed.heap().len(),
+        };
         size_of::<Self>()
             + self.values.capacity() * size_of::<Value>()
             + self.values.iter().map(Value::heap_bytes).sum::<usize>()
+            + typed_bytes
     }
 }
 
