@@ -2532,11 +2532,12 @@ fn joined_right_group_matches(
     })
 }
 
-/// Dictionary-code aggregation for one low-cardinality string group column
+/// Dictionary-code aggregation for low-cardinality string group keys
 /// (experiments/RESULTS.md e02: array-indexed accumulation, no hash table).
-/// Local dedup is byte-exact, mirroring the general path — collation
-/// unification still happens at the normalized-key merge. Falls back (`None`)
-/// whenever the shape doesn't qualify.
+/// Handles one or two Utf8 group columns via base-256 composite codes mapped
+/// to dense slots. Local dedup is byte-exact, mirroring the general path —
+/// collation unification still happens at the normalized-key merge. Falls
+/// back (`None`) whenever the shape doesn't qualify.
 #[allow(clippy::too_many_lines)]
 fn build_local_dictionary_groups(
     batch: &RecordBatch,
@@ -2548,15 +2549,20 @@ fn build_local_dictionary_groups(
         column: Option<usize>,
     }
     const MAX_CODES: usize = 256;
-    let [group_column] = group_columns else {
+    const MAX_SLOTS: usize = 4096;
+    if group_columns.is_empty() || group_columns.len() > 2 {
         return Ok(None);
-    };
-    let Some(key_vector) = batch.column(*group_column) else {
-        return Ok(None);
-    };
-    let Some((crate::batch::TypedValues::Utf8(keys), key_validity)) = key_vector.typed() else {
-        return Ok(None);
-    };
+    }
+    let mut key_columns = Vec::with_capacity(group_columns.len());
+    for column in group_columns {
+        let Some(vector) = batch.column(*column) else {
+            return Ok(None);
+        };
+        let Some((crate::batch::TypedValues::Utf8(keys), validity)) = vector.typed() else {
+            return Ok(None);
+        };
+        key_columns.push((vector, keys, validity));
+    }
     // Aggregate inputs: plain typed columns (numbers via the packed path) or
     // COUNT(*); anything else falls back to the general builder.
     let mut dict_aggregates = Vec::with_capacity(aggregates.len());
@@ -2596,39 +2602,61 @@ fn build_local_dictionary_groups(
         });
     }
 
-    // Pass 1: dictionary-encode the selected rows (code 0 reserved for NULL).
-    let views = keys.views();
-    let heap = keys.heap();
-    let mut dict_rows: Vec<Option<usize>> = vec![None]; // representative row per code
-    let mut rows_buffer = Vec::with_capacity(batch.visible_row_count());
-    let mut codes_buffer = Vec::with_capacity(batch.visible_row_count());
+    // Pass 1: per-column dictionary codes (0 = NULL), composed base-256 and
+    // mapped to dense slots through a sentinel table. The representative row
+    // of a slot exhibits every key column's original value.
+    let mut column_dicts: Vec<Vec<Option<usize>>> =
+        key_columns.iter().map(|_| vec![None]).collect();
+    let selected = batch.visible_row_count();
+    let mut rows_buffer = Vec::with_capacity(selected);
+    let mut codes_buffer = Vec::with_capacity(selected);
+    let composite_capacity = MAX_CODES.pow(u32::try_from(key_columns.len()).expect("<= 2 columns"));
+    let mut slot_table = vec![u16::MAX; composite_capacity];
+    let mut slot_rows: Vec<usize> = Vec::new();
     for row in batch.selection().selected_rows() {
-        let code = if key_validity.is_valid(row) {
-            let view = &views[row];
-            let found = dict_rows[1..].iter().position(|representative| {
-                representative.is_some_and(|existing| view.same_bytes(&views[existing], heap))
-            });
-            if let Some(index) = found {
-                index + 1
-            } else {
-                if dict_rows.len() > MAX_CODES {
-                    return Ok(None);
+        let mut composite = 0_usize;
+        for ((_, keys, validity), dict) in key_columns.iter().zip(column_dicts.iter_mut()) {
+            let views = keys.views();
+            let heap = keys.heap();
+            let code = if validity.is_valid(row) {
+                let view = &views[row];
+                let found = dict[1..].iter().position(|representative| {
+                    representative.is_some_and(|existing| view.same_bytes(&views[existing], heap))
+                });
+                if let Some(index) = found {
+                    index + 1
+                } else {
+                    if dict.len() > MAX_CODES - 1 {
+                        return Ok(None);
+                    }
+                    dict.push(Some(row));
+                    dict.len() - 1
                 }
-                dict_rows.push(Some(row));
-                dict_rows.len() - 1
+            } else {
+                if dict[0].is_none() {
+                    dict[0] = Some(row);
+                }
+                0
+            };
+            composite = composite * MAX_CODES + code;
+        }
+        let slot = if slot_table[composite] == u16::MAX {
+            if slot_rows.len() >= MAX_SLOTS {
+                return Ok(None);
             }
+            let slot = u16::try_from(slot_rows.len()).expect("bounded slots");
+            slot_table[composite] = slot;
+            slot_rows.push(row);
+            slot
         } else {
-            if dict_rows[0].is_none() {
-                dict_rows[0] = Some(row);
-            }
-            0
+            slot_table[composite]
         };
         rows_buffer.push(row);
-        codes_buffer.push(u16::try_from(code).expect("code fits u16"));
+        codes_buffer.push(slot);
     }
 
-    // Pass 2: per aggregate, one tight loop over (row, code).
-    let code_count = dict_rows.len();
+    // Pass 2: per aggregate, one tight loop over (row, slot).
+    let code_count = slot_rows.len();
     let mut states: Vec<Vec<AggregateState>> = (0..code_count)
         .map(|_| aggregates.iter().map(AggregateState::new).collect())
         .collect();
@@ -2702,24 +2730,31 @@ fn build_local_dictionary_groups(
         }
     }
 
-    // Finalize: original first-seen key values, normalized map keys — the
-    // same contract the general local builder produces.
+    // Finalize: original values from each slot's representative row,
+    // normalized map keys — the general local builder's exact contract.
     let mut groups = HashMap::with_capacity(code_count * 2);
-    for (code, representative) in dict_rows.iter().enumerate() {
-        // The NULL bucket's representative is set only when a NULL key row
-        // was actually seen; real codes always have one.
-        let Some(row) = representative else {
-            continue;
-        };
-        let value = key_vector
-            .value(*row)
+    for (slot, &row) in slot_rows.iter().enumerate() {
+        let mut values = Vec::with_capacity(key_columns.len());
+        for (vector, _, _) in &key_columns {
+            values.push(
+                vector
+                    .value(row)
+                    .cloned()
+                    .ok_or(ExecError::InvalidBatch("dictionary key row out of range"))?,
+            );
+        }
+        let key = values
+            .iter()
             .cloned()
-            .ok_or(ExecError::InvalidBatch("dictionary key row out of range"))?;
-        let group = AggregateGroup {
-            values: vec![value.clone()],
-            states: std::mem::take(&mut states[code]),
-        };
-        groups.insert(vec![normalized_collation_value(value)], group);
+            .map(normalized_collation_value)
+            .collect();
+        groups.insert(
+            key,
+            AggregateGroup {
+                values,
+                states: std::mem::take(&mut states[slot]),
+            },
+        );
     }
     Ok(Some(groups))
 }
