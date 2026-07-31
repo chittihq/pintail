@@ -638,6 +638,15 @@ async function cleanup() {
 async function main() {
   const info = await docker('info', '--format', '{{.Name}} {{.ServerVersion}} {{.OSType}}')
   log(`Docker: ${info.stdout}`)
+  // The docker image builds from the WORKING TREE: concurrent edits change
+  // what gets measured (or break the build mid-edit). Refuse dirty trees so
+  // every measurement is attributable to a commit.
+  const dirty = (await command(['git', 'status', '--porcelain'], { quiet: true })).stdout
+  if (dirty.trim() && process.env.PINTAIL_BENCHMARK_ALLOW_DIRTY !== '1') {
+    throw new Error(
+      'working tree is dirty — commit first so the benchmark measures an attributable state, or set PINTAIL_BENCHMARK_ALLOW_DIRTY=1',
+    )
+  }
   await docker('network', 'create', networkName)
   dockerCreated = true
   await docker(
