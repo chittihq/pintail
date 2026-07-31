@@ -7,8 +7,30 @@ row counts, and executes the same eight aggregate queries against all three
 engines.
 
 The release gate uses the sum of the eight measured query times and requires
-Pintail to be at least 50 times faster than the source MySQL. ClickHouse is
-reported as an aspirational reference and never affects the gate.
+Pintail to be at least 50 times faster than the source MySQL AND every query's
+result to match MySQL exactly (canonical multiset comparison — LIMIT queries
+carry deterministic tie-break keys so the comparison is well-posed).
+
+## Methodology (fairness rebuild, issue #3 step 0)
+
+- **All engines run on the Docker host under identical limits** (8 CPUs, 8 GB
+  each). Pintail runs as a container built from the working tree — which must
+  be clean, so every measurement is attributable to a commit
+  (`PINTAIL_BENCHMARK_ALLOW_DIRTY=1` overrides for local iteration;
+  `PINTAIL_BENCHMARK_LOCAL=1` restores the old local-process mode).
+- **Two ClickHouse references**: plain MergeTree (the raw-speed ceiling) and
+  ReplacingMergeTree read with `final = 1` — ClickHouse performing the same
+  always-correct merge-on-read duty Pintail performs, the apples-to-apples
+  target. Note: on static fully-merged data the two converge; the FINAL
+  distinction matters under a live update tail.
+- **Timing**: Pintail and both ClickHouse variants report median of 5 warm
+  runs (p95/min recorded in results.json); MySQL is a single cold run — it is
+  the baseline being escaped, and its full-scale queries run for minutes.
+- **Per-query EXPLAIN ANALYZE snapshots** land in results.json so segment and
+  block pruning behavior is inspectable per run.
+- **Host variance caveat**: the host may carry unrelated load; ClickHouse's
+  own totals swing between runs, so cross-run comparisons should use the
+  same-run pintail/ClickHouse ratio, not absolute times.
 
 ## Run
 

@@ -1402,18 +1402,19 @@ pub(crate) fn read_row_headers_range(
                 column_cells.extend(cells);
             }
         }
-        match system_column {
-            1 => {
-                if versions.replace(column_cells).is_some() {
-                    return Err(corrupt_here(&path, &decoder, "duplicate version column"));
-                }
-            }
-            2 => {
-                if tombstones.replace(column_cells).is_some() {
-                    return Err(corrupt_here(&path, &decoder, "duplicate tombstone column"));
-                }
-            }
-            _ => {}
+        let duplicate = match system_column {
+            1 => versions
+                .replace(column_cells)
+                .is_some()
+                .then_some("duplicate version column"),
+            2 => tombstones
+                .replace(column_cells)
+                .is_some()
+                .then_some("duplicate tombstone column"),
+            _ => None,
+        };
+        if let Some(message) = duplicate {
+            return Err(corrupt_here(&path, &decoder, message));
         }
     }
 

@@ -903,7 +903,7 @@ impl ProjectedScanStream {
                 .heads
                 .iter()
                 .filter_map(|row| row.as_ref().map(|row| &row.key))
-                .chain(merge.memtable_head.as_ref().map(StoredRow::key).into_iter())
+                .chain(merge.memtable_head.as_ref().map(StoredRow::key))
                 .min()
                 .cloned();
             let Some(minimum) = minimum else {
