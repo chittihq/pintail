@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
 import { Rng, Zipf, seedWorkload, sqlDatetime } from './workloads/commerce-production-v1/seed'
 import type { SeedProfile, SeedResult } from './workloads/commerce-production-v1/seed'
+import { loadDataset } from './workloads/commerce-production-v1/load'
 import { startMutations } from './workloads/commerce-production-v1/mutations'
 import {
   TABLES, compareFingerprints, mysqlFingerprints, normalizeRows, pintailFingerprints,
@@ -31,6 +32,8 @@ function arg(name: string, fallback: string): string {
 
 const workloadId = arg('workload', 'commerce-production-v1')
 const profileName = arg('profile', 'smoke') as keyof typeof manifest.profiles
+const datasetAlias = arg('dataset', '')
+const dsRepo = resolve(arg('ds-repo', join(import.meta.dir, '..', '..', 'pintail-ds')))
 const engines = arg('engines', 'mysql,pintail').split(',')
 const phaseFilter = arg('phases', '').split(',').filter(Boolean)
 const benchmarkDir = import.meta.dir
@@ -360,11 +363,26 @@ async function main() {
   }
 
   const { host, port } = await startMysql()
+  let seedResult: SeedResult
+  if (datasetAlias) {
+    seedResult = await loadDataset(mysqlConn!, {
+      workloadId,
+      alias: datasetAlias,
+      dsRepo,
+      cacheDir: join(benchmarkDir, '.dataset-cache', workloadId),
+      workloadDir,
+      mysqlName,
+      docker,
+      log,
+    })
+  } else {
+    await mysqlConn!.query('SET SESSION sql_log_bin=0')
+    await mysqlConn!.query('CREATE DATABASE production_db')
+    await mysqlConn!.query('USE production_db')
+    await mysqlConn!.query(readFileSync(join(workloadDir, 'schema.mysql.sql'), 'utf8'))
+    seedResult = await seedWorkload(mysqlConn!, profile, scale, manifest.seed, log)
+  }
   await mysqlConn!.query('SET SESSION sql_log_bin=0')
-  await mysqlConn!.query('CREATE DATABASE production_db')
-  await mysqlConn!.query('USE production_db')
-  await mysqlConn!.query(readFileSync(join(workloadDir, 'schema.mysql.sql'), 'utf8'))
-  const seedResult = await seedWorkload(mysqlConn!, profile, scale, manifest.seed, log)
   await mysqlConn!.query("CREATE USER IF NOT EXISTS 'benchmark'@'%' IDENTIFIED BY 'benchmarkpass'")
   await mysqlConn!.query(
     "GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'benchmark'@'%'",

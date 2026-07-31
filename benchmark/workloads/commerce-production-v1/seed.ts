@@ -236,6 +236,10 @@ class BatchWriter {
 
 // ---------- main seeder ----------
 
+/// Fixed time anchor: keeps generated data and query parameter substitution
+/// deterministic across seeding runs and dataset loads.
+export const SEED_ANCHOR = new Date('2026-07-01T00:00:00Z')
+
 export interface SeedResult {
   counts: SeedCounts
   childCounts: Record<string, number>
@@ -253,7 +257,7 @@ export async function seedWorkload(
 ): Promise<SeedResult> {
   const rng = new Rng(seedValue)
   const counts = scaledCounts(profile, scale)
-  const now = new Date('2026-07-01T00:00:00Z') // fixed anchor: deterministic seeds
+  const now = SEED_ANCHOR
   const time = new TimeSampler(profile.time, now)
   const esc = (v: string) => conn.escape(v)
   const dec = (v: number) => (Math.round(v * 10000) / 10000).toFixed(4)
