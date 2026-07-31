@@ -24,6 +24,9 @@ pub(crate) enum TypedValues {
     Decimal128 {
         values: Vec<i128>,
         scale: u8,
+        /// Canonical text carrier, retained so row values can materialize
+        /// lazily without re-formatting scaled integers.
+        text: StrColumn,
     },
     /// Temporal values parsed once from their canonical text carrier into
     /// comparable integers (days for `Date32`, microseconds for `DateTime64`).
@@ -117,6 +120,18 @@ pub(crate) const fn mix64(mut x: u64) -> u64 {
 }
 
 impl TypedValues {
+    /// Returns the number of packed rows.
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Int64(values) => values.len(),
+            Self::UInt64(values) => values.len(),
+            Self::Float64(values) => values.len(),
+            Self::Utf8(column) => column.len(),
+            Self::Decimal128 { values, .. } => values.len(),
+            Self::Temporal { units, .. } => units.len(),
+        }
+    }
+
     /// A cheap per-row hash for LOCAL group routing (never crosses batches —
     /// cross-batch merging uses normalized value keys, so any within-batch
     /// consistent function is correct). `None` when the row must fall back to
@@ -168,7 +183,7 @@ impl TypedValues {
                 Some(value as f64)
             }
             Self::Float64(values) => values.get(row).copied(),
-            Self::Decimal128 { values, scale } => {
+            Self::Decimal128 { values, scale, .. } => {
                 let value = *values.get(row)?;
                 #[allow(clippy::cast_precision_loss)]
                 Some(value as f64 / POW10[usize::from(*scale).min(18)])
@@ -345,10 +360,12 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
         }
     }
     let typed = if let (Some(packed), Some(scale)) = (decimal.take(), decimal_scale) {
-        // Decimal outranks the Utf8 carrier: kernels get scaled integers.
-        Some(TypedValues::Decimal128 {
+        // Decimal outranks the Utf8 carrier: kernels get scaled integers; the
+        // text views ride along for lazy row-value materialization.
+        utf8.take().map(|text| TypedValues::Decimal128 {
             values: packed,
             scale,
+            text,
         })
     } else if let Some(units) = temporal.take() {
         // temporal is only alive for Date32/DateTime64 columns whose every
@@ -368,10 +385,19 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
 }
 
 /// One typed, nullable, columnar value vector.
+///
+/// Exactly one of the two representations is populated at construction —
+/// row values ([`ColumnVector::new`]) or a packed typed projection
+/// ([`ColumnVector::from_typed`], the scan path) — and the other builds
+/// lazily on first use, so consumers that stay on one side never pay for
+/// the other.
 #[derive(Debug)]
 pub struct ColumnVector {
     data_type: DataType,
-    values: Vec<Value>,
+    len: usize,
+    /// Lazily-materialized row values: typed-born scan batches whose
+    /// consumers stay on packed kernels never allocate a single `Value`.
+    values: std::sync::OnceLock<Vec<Value>>,
     /// Lazily-built packed projection: batches whose kernels never touch it
     /// (projections, join intermediates, fallback-only filters) pay nothing.
     typed: std::sync::OnceLock<Option<(TypedValues, ValidityMask)>>,
@@ -379,13 +405,18 @@ pub struct ColumnVector {
 
 impl Clone for ColumnVector {
     fn clone(&self) -> Self {
+        let values = std::sync::OnceLock::new();
+        if let Some(built) = self.values.get() {
+            let _ = values.set(built.clone());
+        }
         let typed = std::sync::OnceLock::new();
         if let Some(built) = self.typed.get() {
             let _ = typed.set(built.clone());
         }
         Self {
             data_type: self.data_type,
-            values: self.values.clone(),
+            len: self.len,
+            values,
             typed,
         }
     }
@@ -393,16 +424,17 @@ impl Clone for ColumnVector {
 
 impl PartialEq for ColumnVector {
     fn eq(&self, other: &Self) -> bool {
-        // `typed` is a derived cache of `values`; logical equality ignores it.
-        self.data_type == other.data_type && self.values == other.values
+        // Representations are interchangeable; logical equality compares
+        // materialized row values (test-path only, materialization is fine).
+        self.data_type == other.data_type && self.values() == other.values()
     }
 }
 
 impl Eq for ColumnVector {}
 
 impl ColumnVector {
-    /// Constructs and validates a column vector, building the packed typed
-    /// projection in the same pass when the physical values are homogeneous.
+    /// Constructs and validates a column vector from row values; the packed
+    /// typed projection builds lazily on first kernel use.
     ///
     /// # Errors
     ///
@@ -420,18 +452,46 @@ impl ColumnVector {
                 });
             }
         }
+        let len = values.len();
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(values);
         Ok(Self {
             data_type,
-            values,
+            len,
+            values: cell,
             typed: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Constructs a column vector directly from a packed typed projection
+    /// (the scan path); row values materialize lazily on first use.
+    pub(crate) fn from_typed(
+        data_type: DataType,
+        typed: TypedValues,
+        validity: ValidityMask,
+    ) -> Self {
+        let len = typed.len();
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(Some((typed, validity)));
+        Self {
+            data_type,
+            len,
+            values: std::sync::OnceLock::new(),
+            typed: cell,
+        }
     }
 
     /// The packed projection, when the vector is physically homogeneous.
     /// Built on first use and cached; kernels that never ask never pay.
     pub(crate) fn typed(&self) -> Option<(&TypedValues, &ValidityMask)> {
         self.typed
-            .get_or_init(|| build_typed(self.data_type, &self.values))
+            .get_or_init(|| {
+                let values = self
+                    .values
+                    .get()
+                    .expect("a column vector holds row values or a typed projection");
+                build_typed(self.data_type, values)
+            })
             .as_ref()
             .map(|(packed, validity)| (packed, validity))
     }
@@ -443,28 +503,41 @@ impl ColumnVector {
     }
 
     /// Returns every physical row value, including rows masked from the
-    /// current selection.
+    /// current selection, materializing them from the packed projection on
+    /// first use.
+    ///
+    /// # Panics
+    ///
+    /// Panics if neither representation is populated, which construction
+    /// makes impossible.
     #[must_use]
     pub fn values(&self) -> &[Value] {
-        &self.values
+        self.values.get_or_init(|| {
+            let (typed, validity) = self
+                .typed
+                .get()
+                .and_then(Option::as_ref)
+                .expect("a column vector holds row values or a typed projection");
+            materialize_values(typed, validity)
+        })
     }
 
     /// Returns one physical row value.
     #[must_use]
     pub fn value(&self, row: usize) -> Option<&Value> {
-        self.values.get(row)
+        self.values().get(row)
     }
 
     /// Returns the number of physical rows.
     #[must_use]
-    pub fn len(&self) -> usize {
-        self.values.len()
+    pub const fn len(&self) -> usize {
+        self.len
     }
 
     /// Returns whether the vector has no physical rows.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// Estimates bytes retained by the vector and its owned scalar payloads.
@@ -476,18 +549,58 @@ impl ColumnVector {
             Some((TypedValues::UInt64(packed), _)) => packed.capacity() * size_of::<u64>(),
             Some((TypedValues::Float64(packed), _)) => packed.capacity() * size_of::<f64>(),
             Some((TypedValues::Utf8(packed), _)) => packed.len() * 16 + packed.heap().len(),
-            Some((TypedValues::Decimal128 { values: packed, .. }, _)) => {
-                packed.capacity() * size_of::<i128>()
-            }
+            Some((
+                TypedValues::Decimal128 {
+                    values: packed,
+                    text,
+                    ..
+                },
+                _,
+            )) => packed.capacity() * size_of::<i128>() + text.len() * 16 + text.heap().len(),
             Some((TypedValues::Temporal { units, text }, _)) => {
                 units.capacity() * size_of::<i64>() + text.len() * 16 + text.heap().len()
             }
         };
-        size_of::<Self>()
-            + self.values.capacity() * size_of::<Value>()
-            + self.values.iter().map(Value::heap_bytes).sum::<usize>()
-            + typed_bytes
+        let value_bytes = self.values.get().map_or(0, |values| {
+            values.capacity() * size_of::<Value>()
+                + values.iter().map(Value::heap_bytes).sum::<usize>()
+        });
+        size_of::<Self>() + value_bytes + typed_bytes
     }
+}
+
+/// Materializes row values from a packed projection: the reverse of
+/// [`build_typed`], used when a typed-born scan column meets a row-shaped
+/// consumer (projection output, sorts, merges).
+fn materialize_values(typed: &TypedValues, validity: &ValidityMask) -> Vec<Value> {
+    let len = typed.len();
+    let mut values = Vec::with_capacity(len);
+    for row in 0..len {
+        if !validity.is_valid(row) {
+            values.push(Value::Null);
+            continue;
+        }
+        values.push(match typed {
+            TypedValues::Int64(packed) => Value::Int64(packed[row]),
+            TypedValues::UInt64(packed) => Value::UInt64(packed[row]),
+            TypedValues::Float64(packed) => {
+                Value::Float64(pintail_types::Float64::new(packed[row]))
+            }
+            TypedValues::Utf8(column) => Value::Utf8(str_column_string(column, row)),
+            TypedValues::Decimal128 { text, .. } | TypedValues::Temporal { text, .. } => {
+                Value::Utf8(str_column_string(text, row))
+            }
+        });
+    }
+    values
+}
+
+/// One string view copied out as an owned `String`. Views were built from
+/// validated UTF-8, so the lossy fallback never fires.
+fn str_column_string(column: &StrColumn, row: usize) -> String {
+    column.views()[row].with_bytes(column.heap(), |bytes| {
+        String::from_utf8_lossy(bytes).into_owned()
+    })
 }
 
 /// Compact bit mask identifying visible physical rows in a batch.
@@ -930,7 +1043,7 @@ mod typed_projection_tests {
         )
         .expect("decimal vector");
         let (typed, validity) = vector.typed().expect("typed projection");
-        let TypedValues::Decimal128 { values, scale } = typed else {
+        let TypedValues::Decimal128 { values, scale, .. } = typed else {
             panic!("expected decimal projection, got {typed:?}");
         };
         assert_eq!(*scale, 4);

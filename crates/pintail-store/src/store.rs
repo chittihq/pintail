@@ -582,6 +582,63 @@ impl DecodedColumn {
         }
     }
 
+    /// Splits off the first `count` rows (clamped to the column length),
+    /// leaving the remainder in place. Used by executors slicing one decoded
+    /// chunk into fixed-size batches.
+    #[must_use]
+    pub fn take_prefix(&mut self, count: usize) -> Self {
+        let count = count.min(self.len());
+        match self {
+            Self::Values(values) => {
+                let rest = values.split_off(count);
+                Self::Values(std::mem::replace(values, rest))
+            }
+            Self::Int64 { values, validity } => {
+                let rest_values = values.split_off(count);
+                let rest_validity = validity.split_off(count);
+                Self::Int64 {
+                    values: std::mem::replace(values, rest_values),
+                    validity: std::mem::replace(validity, rest_validity),
+                }
+            }
+            Self::UInt64 { values, validity } => {
+                let rest_values = values.split_off(count);
+                let rest_validity = validity.split_off(count);
+                Self::UInt64 {
+                    values: std::mem::replace(values, rest_values),
+                    validity: std::mem::replace(validity, rest_validity),
+                }
+            }
+            Self::Float64 { bits, validity } => {
+                let rest_bits = bits.split_off(count);
+                let rest_validity = validity.split_off(count);
+                Self::Float64 {
+                    bits: std::mem::replace(bits, rest_bits),
+                    validity: std::mem::replace(validity, rest_validity),
+                }
+            }
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => {
+                let cut = offsets[count];
+                let rest_heap = heap.split_off(cut);
+                let rest_offsets = offsets[count..]
+                    .iter()
+                    .map(|offset| offset - cut)
+                    .collect::<Vec<_>>();
+                offsets.truncate(count + 1);
+                let rest_validity = validity.split_off(count);
+                Self::Utf8 {
+                    heap: std::mem::replace(heap, rest_heap),
+                    offsets: std::mem::replace(offsets, rest_offsets),
+                    validity: std::mem::replace(validity, rest_validity),
+                }
+            }
+        }
+    }
+
     /// Materializes one row's value, or `None` past the end.
     #[must_use]
     pub fn value_at(&self, row: usize) -> Option<pintail_types::Value> {

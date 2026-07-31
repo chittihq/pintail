@@ -6,12 +6,15 @@ use std::{
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction};
 use pintail_store::{
-    ProjectedColumnChunk, ProjectedRow, ProjectedScanStream, ScanStats, StoreError, TableSnapshot,
+    DecodedColumn, ProjectedColumnChunk, ProjectedRow, ProjectedScanStream, ScanStats, StoreError,
+    TableSnapshot,
 };
 use pintail_types::{KeyPart, PrimaryKey, Value};
 
 use crate::{
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
+    array::{StrColumn, ValidityMask},
+    batch::{TypedValues, parse_date_days, parse_datetime_micros, parse_decimal_scaled},
 };
 
 /// Storage scan provider backed by reader-pinned table snapshots.
@@ -577,7 +580,7 @@ fn predecessor(value: &KeyPart) -> Option<KeyPart> {
 
 struct SnapshotStream {
     rows: VecDeque<Vec<Value>>,
-    columns: Vec<Vec<Value>>,
+    columns: Vec<DecodedColumn>,
     column_rows: usize,
     prefetched: VecDeque<ProjectedColumnChunk>,
     stream: Option<ProjectedScanStream>,
@@ -621,10 +624,7 @@ impl BatchStream for SnapshotStream {
                 .pop_front()
                 .expect("non-empty prefetch batch");
             self.column_rows = chunk.row_count();
-            self.columns = chunk.into_columns();
-            for column in &mut self.columns {
-                column.reverse();
-            }
+            self.columns = chunk.into_decoded_columns();
         }
         if self.rows.is_empty() && self.column_rows == 0 {
             return Ok(None);
@@ -637,28 +637,34 @@ impl BatchStream for SnapshotStream {
         let row_count = buffered_rows
             .min(DEFAULT_BATCH_ROWS)
             .min(self.remaining.unwrap_or(usize::MAX));
-        let values_by_column = if self.column_rows > 0 {
-            let mut output = self
-                .types
-                .iter()
-                .map(|_| Vec::with_capacity(row_count))
-                .collect::<Vec<_>>();
+        let columns = if self.column_rows > 0 {
             if self.columns.len() != self.types.len() {
                 return Err(ExecError::InvalidBatch(
                     "stored column count differs from its snapshot schema",
                 ));
             }
-            for (source, output) in self.columns.iter_mut().zip(&mut output) {
-                for _ in 0..row_count {
-                    let value = source.pop().ok_or(ExecError::InvalidBatch(
-                        "stored column ended before its segment rows",
-                    ))?;
-                    self.retained_bytes = self.retained_bytes.saturating_sub(value.heap_bytes());
-                    output.push(value);
-                }
-            }
+            let before: usize = self.columns.iter().map(DecodedColumn::retained_bytes).sum();
+            let taken = self
+                .columns
+                .iter_mut()
+                .map(|column| column.take_prefix(row_count))
+                .collect::<Vec<_>>();
+            let after: usize = self.columns.iter().map(DecodedColumn::retained_bytes).sum();
+            self.retained_bytes = self
+                .retained_bytes
+                .saturating_sub(before.saturating_sub(after));
             self.column_rows = self.column_rows.saturating_sub(row_count);
-            output
+            if taken.iter().any(|column| column.len() != row_count) {
+                return Err(ExecError::InvalidBatch(
+                    "stored column ended before its segment rows",
+                ));
+            }
+            self.types
+                .iter()
+                .copied()
+                .zip(taken)
+                .map(|(data_type, column)| column_vector_from_decoded(data_type, column))
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             let mut output = self
                 .types
@@ -679,7 +685,14 @@ impl BatchStream for SnapshotStream {
                     output[position].push(value);
                 }
             }
-            output
+            self.types
+                .iter()
+                .copied()
+                .zip(output)
+                .map(|(data_type, values)| {
+                    ColumnVector::new(data_type, values).map_err(ExecError::from)
+                })
+                .collect::<Result<Vec<_>, _>>()?
         };
         if let Some(remaining) = &mut self.remaining {
             *remaining = remaining.saturating_sub(row_count);
@@ -723,15 +736,6 @@ impl BatchStream for SnapshotStream {
             self.columns.clear();
             self.columns.shrink_to_fit();
         }
-        let columns = self
-            .types
-            .iter()
-            .copied()
-            .zip(values_by_column)
-            .map(|(data_type, values)| {
-                ColumnVector::new(data_type, values).map_err(ExecError::from)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(Some(RecordBatch::new(row_count, columns)?))
     }
 
@@ -768,20 +772,141 @@ fn projected_value_payload_bytes(values: &[Value]) -> usize {
     std::mem::size_of_val(values).saturating_add(values.iter().map(Value::heap_bytes).sum())
 }
 
-fn projected_columns_retained_bytes(outer_capacity: usize, columns: &[Vec<Value>]) -> usize {
+fn projected_columns_retained_bytes(outer_capacity: usize, columns: &[DecodedColumn]) -> usize {
     outer_capacity
-        .saturating_mul(std::mem::size_of::<Vec<Value>>())
-        .saturating_add(
-            columns
-                .iter()
-                .map(|values| {
-                    values
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<Value>())
-                        .saturating_add(values.iter().map(Value::heap_bytes).sum())
-                })
-                .sum(),
-        )
+        .saturating_mul(std::mem::size_of::<DecodedColumn>())
+        .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum())
+}
+
+/// Adopts one store-decoded column as a typed executor vector, parsing
+/// text-carried decimals and temporals once from the arena; row values
+/// materialize lazily only if a row-shaped consumer asks. Falls back to
+/// row values when the packed shape does not match the declared type.
+fn column_vector_from_decoded(
+    data_type: pintail_types::DataType,
+    decoded: DecodedColumn,
+) -> Result<ColumnVector, ExecError> {
+    let storage = data_type.storage_type();
+    match decoded {
+        DecodedColumn::Values(values) => {
+            ColumnVector::new(data_type, values).map_err(ExecError::from)
+        }
+        DecodedColumn::Int64 { values, validity }
+            if matches!(storage, pintail_types::DataType::Int64) =>
+        {
+            Ok(ColumnVector::from_typed(
+                data_type,
+                TypedValues::Int64(values),
+                ValidityMask::from_bools(&validity),
+            ))
+        }
+        DecodedColumn::UInt64 { values, validity }
+            if matches!(storage, pintail_types::DataType::UInt64) =>
+        {
+            Ok(ColumnVector::from_typed(
+                data_type,
+                TypedValues::UInt64(values),
+                ValidityMask::from_bools(&validity),
+            ))
+        }
+        DecodedColumn::Float64 { bits, validity }
+            if matches!(storage, pintail_types::DataType::Float64) =>
+        {
+            Ok(ColumnVector::from_typed(
+                data_type,
+                TypedValues::Float64(bits.into_iter().map(f64::from_bits).collect()),
+                ValidityMask::from_bools(&validity),
+            ))
+        }
+        DecodedColumn::Utf8 {
+            heap,
+            offsets,
+            validity,
+        } if matches!(storage, pintail_types::DataType::Utf8) => {
+            Ok(typed_from_utf8_arena(data_type, &heap, &offsets, &validity))
+        }
+        decoded => ColumnVector::new(data_type, decoded.into_values()).map_err(ExecError::from),
+    }
+}
+
+/// Builds the typed projection for a Utf8-carried column straight from the
+/// decoded arena: plain strings become view columns; decimal and temporal
+/// carriers additionally parse once into packed integers, mirroring
+/// `build_typed`'s fallback to plain text if any non-null value fails.
+fn typed_from_utf8_arena(
+    data_type: pintail_types::DataType,
+    heap: &[u8],
+    offsets: &[usize],
+    validity: &[bool],
+) -> ColumnVector {
+    let mut text = StrColumn::default();
+    for row in 0..validity.len() {
+        text.push(&heap[offsets[row]..offsets[row + 1]]);
+    }
+    let mask = ValidityMask::from_bools(validity);
+    let typed = match data_type {
+        pintail_types::DataType::Decimal { scale, .. } => {
+            let mut packed = Vec::with_capacity(validity.len());
+            let mut homogeneous = true;
+            for (row, valid) in validity.iter().enumerate() {
+                if !valid {
+                    packed.push(0);
+                    continue;
+                }
+                let parsed = std::str::from_utf8(&heap[offsets[row]..offsets[row + 1]])
+                    .ok()
+                    .and_then(|value| parse_decimal_scaled(value, scale));
+                if let Some(scaled) = parsed {
+                    packed.push(scaled);
+                } else {
+                    homogeneous = false;
+                    break;
+                }
+            }
+            if homogeneous {
+                TypedValues::Decimal128 {
+                    values: packed,
+                    scale,
+                    text,
+                }
+            } else {
+                TypedValues::Utf8(text)
+            }
+        }
+        pintail_types::DataType::Date32 | pintail_types::DataType::DateTime64 { .. } => {
+            let datetime = matches!(data_type, pintail_types::DataType::DateTime64 { .. });
+            let mut units = Vec::with_capacity(validity.len());
+            let mut homogeneous = true;
+            for (row, valid) in validity.iter().enumerate() {
+                if !valid {
+                    units.push(0);
+                    continue;
+                }
+                let parsed = std::str::from_utf8(&heap[offsets[row]..offsets[row + 1]])
+                    .ok()
+                    .and_then(|value| {
+                        if datetime {
+                            parse_datetime_micros(value)
+                        } else {
+                            parse_date_days(value)
+                        }
+                    });
+                if let Some(value) = parsed {
+                    units.push(value);
+                } else {
+                    homogeneous = false;
+                    break;
+                }
+            }
+            if homogeneous {
+                TypedValues::Temporal { units, text }
+            } else {
+                TypedValues::Utf8(text)
+            }
+        }
+        _ => TypedValues::Utf8(text),
+    };
+    ColumnVector::from_typed(data_type, typed, mask)
 }
 
 fn prefetched_retained_bytes(chunks: &VecDeque<ProjectedColumnChunk>) -> usize {
