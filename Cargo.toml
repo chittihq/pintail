@@ -80,3 +80,12 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+# Dev builds skip full debug info: the target directory lives on a slow
+# external volume (see ~/.local/bin/cargo), and line tables keep backtraces
+# usable at roughly half the artifact size and link time.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
