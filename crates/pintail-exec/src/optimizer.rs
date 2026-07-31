@@ -106,6 +106,15 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(push_aggregates_through_identity_joins(*input)),
         },
+        LogicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => LogicalPlan::Window {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            windows,
+            outputs,
+        },
         LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
             input: Box::new(push_aggregates_through_identity_joins(*input)),
             keys,
@@ -213,6 +222,15 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(replace_metadata_counts(*input)),
         },
+        LogicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => LogicalPlan::Window {
+            input: Box::new(replace_metadata_counts(*input)),
+            windows,
+            outputs,
+        },
         LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
             input: Box::new(replace_metadata_counts(*input)),
             keys,
@@ -288,6 +306,15 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(fold_constants(*input)),
+        },
+        LogicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => LogicalPlan::Window {
+            input: Box::new(fold_constants(*input)),
+            windows,
+            outputs,
         },
         LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
             input: Box::new(fold_constants(*input)),
@@ -459,6 +486,15 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(push_predicates(*input)),
         },
+        LogicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => LogicalPlan::Window {
+            input: Box::new(push_predicates(*input)),
+            windows,
+            outputs,
+        },
         LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
             input: Box::new(push_predicates(*input)),
             keys,
@@ -568,7 +604,8 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
         LogicalPlan::Join { left, right, .. } => {
             contains_table(left, table) || contains_table(right, table)
         }
-        LogicalPlan::Filter { input, .. }
+        LogicalPlan::Window { input, .. }
+        | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
@@ -609,6 +646,15 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
             input: Box::new(reorder_cross_joins(*input)),
             predicate,
+        },
+        LogicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => LogicalPlan::Window {
+            input: Box::new(reorder_cross_joins(*input)),
+            windows,
+            outputs,
         },
         LogicalPlan::Aggregate {
             input,
@@ -673,6 +719,22 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             collect_expr_columns(predicate, required);
             collect_plan_columns(input, required);
         }
+        LogicalPlan::Window { input, windows, .. } => {
+            for window in windows {
+                if let pintail_sql::WindowFunction::Aggregate(aggregate) = &window.function
+                    && let Some(expr) = &aggregate.expr
+                {
+                    collect_expr_columns(expr, required);
+                }
+                for expr in &window.partition_by {
+                    collect_expr_columns(expr, required);
+                }
+                for key in &window.order_by {
+                    collect_expr_columns(&key.expr, required);
+                }
+            }
+            collect_plan_columns(input, required);
+        }
         LogicalPlan::Project { input, expressions } => {
             for expression in expressions {
                 collect_expr_columns(&expression.expr, required);
@@ -726,6 +788,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
         LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
+        | LogicalPlan::Window { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Sort { input, .. }
@@ -755,6 +818,7 @@ fn push_limits(plan: &mut LogicalPlan) {
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Window { input, .. }
         | LogicalPlan::Aggregate { input, .. } => push_limits(input),
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
     }
@@ -774,6 +838,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Join { .. }
         | LogicalPlan::Filter { .. }
         | LogicalPlan::Aggregate { .. }
+        | LogicalPlan::Window { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Derived { .. }

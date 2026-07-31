@@ -1,7 +1,9 @@
+use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
-    BoundAggregate, BoundColumn, BoundExpr, BoundFrom, BoundJoinKind, BoundLimit, BoundOrderKey,
-    BoundProjection, BoundQuery, BoundTable,
+    BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom, BoundJoinKind, BoundLimit,
+    BoundOrderKey, BoundProjection, BoundQuery, BoundTable, BoundWindow,
 };
+use pintail_types::DataType;
 
 /// A logical table scan with optimizer-controlled storage inputs.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,6 +83,17 @@ pub enum LogicalPlan {
         /// Deduplicated aggregate computations.
         aggregates: Vec<BoundAggregate>,
     },
+    /// Window computations appended as extra columns over partitioned,
+    /// ordered input rows.
+    Window {
+        /// Input relation.
+        input: Box<LogicalPlan>,
+        /// Window computations in output order.
+        windows: Vec<BoundWindow>,
+        /// Synthetic columns exposing the window results, appended after the
+        /// input's columns; the projection references them as plain columns.
+        outputs: Vec<BoundColumn>,
+    },
     /// Ordered client-visible expressions.
     Project {
         /// Input relation.
@@ -137,6 +150,7 @@ impl LogicalPlan {
             },
             Self::Derived { input, .. }
             | Self::Filter { input, .. }
+            | Self::Window { input, .. }
             | Self::Distinct { input }
             | Self::Project { input, .. }
             | Self::Aggregate { input, .. }
@@ -159,7 +173,7 @@ impl LogicalPlanner {
         let BoundQuery {
             from,
             tables,
-            projection,
+            mut projection,
             filter,
             group_by,
             aggregates,
@@ -170,9 +184,6 @@ impl LogicalPlanner {
             windows,
             limit,
         } = query;
-        // W2 (task #12) lowers windows into a Window plan node; until then
-        // the binder never produces them past its own validation.
-        debug_assert!(windows.is_empty(), "window lowering not wired yet");
 
         debug_assert_eq!(
             tables.len(),
@@ -198,6 +209,29 @@ impl LogicalPlanner {
             plan = LogicalPlan::Filter {
                 input: Box::new(plan),
                 predicate,
+            };
+        }
+        if !windows.is_empty() {
+            let outputs = windows
+                .iter()
+                .enumerate()
+                .map(|(index, window)| BoundColumn {
+                    database_id: DatabaseId::new(u64::MAX),
+                    table_id: TableId::new(u64::MAX),
+                    column_id: u32::try_from(index).unwrap_or(u32::MAX),
+                    relation_name: "<window>".to_owned(),
+                    name: format!("<window-{index}>"),
+                    data_type: window.data_type.unwrap_or(DataType::Utf8),
+                    nullable: window.nullable,
+                })
+                .collect::<Vec<_>>();
+            for item in &mut projection {
+                rewrite_window_references(&mut item.expr, &outputs);
+            }
+            plan = LogicalPlan::Window {
+                input: Box::new(plan),
+                windows,
+                outputs,
             };
         }
         plan = LogicalPlan::Project {
@@ -228,6 +262,36 @@ impl LogicalPlanner {
             };
         }
         plan
+    }
+}
+
+/// Replaces positional window references with the synthetic columns the
+/// Window node appends, so downstream compilation sees plain columns.
+fn rewrite_window_references(expr: &mut BoundExpr, outputs: &[BoundColumn]) {
+    if let BoundExprKind::Window(index) = expr.kind {
+        expr.kind = BoundExprKind::Column(outputs[index].clone());
+        return;
+    }
+    match &mut expr.kind {
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            rewrite_window_references(expr, outputs);
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            rewrite_window_references(left, outputs);
+            rewrite_window_references(right, outputs);
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                rewrite_window_references(argument, outputs);
+            }
+        }
+        BoundExprKind::InSubquery { expr, .. } => rewrite_window_references(expr, outputs),
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::ScalarSubquery(_) => {}
     }
 }
 

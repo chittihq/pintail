@@ -7,13 +7,14 @@ use sqlparser::ast::{
     Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident,
     JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
     SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableFactor,
-    UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    UnaryOperator, Value as SqlValue, WildcardAdditionalOptions, WindowType,
 };
 
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
-    DatePart, IntervalUnit, ScalarFunction, UnaryOp,
+    BoundWindow, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, UnaryOp,
+    WindowFunction,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -157,10 +158,12 @@ impl<'catalog> Binder<'catalog> {
             });
         }
         let mut aggregates = Vec::new();
+        let mut windows = Vec::new();
         let mut projection = bind_projection(
             &select.projection,
             &tables,
             Some(&mut aggregates),
+            Some(&mut windows),
             Some(&resolve_subquery),
         )?;
         let group_by = bind_group_by(
@@ -182,6 +185,17 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::ExpectedPredicate {
                 actual: predicate.data_type,
             });
+        }
+        if !windows.is_empty()
+            && (!group_by.is_empty()
+                || !aggregates.is_empty()
+                || select.having.is_some()
+                || select.distinct.is_some())
+        {
+            return Err(BindError::UnsupportedQueryClause(
+                "window functions cannot combine with GROUP BY, aggregates, HAVING, or DISTINCT"
+                    .to_owned(),
+            ));
         }
         if !group_by.is_empty() || !aggregates.is_empty() {
             for item in &mut projection {
@@ -213,7 +227,7 @@ impl<'catalog> Binder<'catalog> {
             distinct,
             order_by: Vec::new(),
             union_all: Vec::new(),
-            windows: Vec::new(),
+            windows,
             limit: None,
         })
     }
@@ -535,22 +549,34 @@ fn bind_projection(
     items: &[SelectItem],
     tables: &[BoundTable],
     mut aggregates: Option<&mut Vec<BoundAggregate>>,
+    mut windows: Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<Vec<BoundProjection>, BindError> {
     let mut projection = Vec::new();
     for item in items {
         match item {
             SelectItem::UnnamedExpr(expr) => {
-                let bound = bind_expr_inner(expr, tables, &mut aggregates, subqueries)?;
+                // Windows are supported as top-level projection items only;
+                // nested OVER keeps the expression binder's rejection.
+                let bound = if let Some(function) = top_level_window_call(expr) {
+                    bind_window_function(function, tables, &mut windows, subqueries)?
+                } else {
+                    bind_expr_inner(expr, tables, &mut aggregates, subqueries)?
+                };
                 projection.push(BoundProjection {
                     name: projection_name(expr),
                     expr: bound,
                 });
             }
             SelectItem::ExprWithAlias { expr, alias } => {
+                let bound = if let Some(function) = top_level_window_call(expr) {
+                    bind_window_function(function, tables, &mut windows, subqueries)?
+                } else {
+                    bind_expr_inner(expr, tables, &mut aggregates, subqueries)?
+                };
                 projection.push(BoundProjection {
                     name: alias.value.clone(),
-                    expr: bind_expr_inner(expr, tables, &mut aggregates, subqueries)?,
+                    expr: bound,
                 });
             }
             SelectItem::Wildcard(options) => {
@@ -1140,6 +1166,135 @@ fn bind_is_null(
         },
         data_type: Some(DataType::Boolean),
         nullable: false,
+    })
+}
+
+/// A top-level `function(...) OVER (...)` projection item.
+fn top_level_window_call(expr: &Expr) -> Option<&Function> {
+    match expr {
+        Expr::Function(function) if function.over.is_some() => Some(function),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn bind_window_function(
+    function: &Function,
+    tables: &[BoundTable],
+    windows: &mut Option<&mut Vec<BoundWindow>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    if function.uses_odbc_syntax
+        || !matches!(function.parameters, FunctionArguments::None)
+        || function.filter.is_some()
+        || function.null_treatment.is_some()
+        || !function.within_group.is_empty()
+    {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    let Some(WindowType::WindowSpec(spec)) = &function.over else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    if spec.window_name.is_some() || spec.window_frame.is_some() {
+        // v1 windows run MySQL's default frames only.
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    let name_parts = object_name_parts(&function.name)?;
+    let [name] = name_parts.as_slice() else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    let FunctionArguments::List(arguments) = &function.args else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    if arguments.duplicate_treatment.is_some() || !arguments.clauses.is_empty() {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    let upper = name.to_ascii_uppercase();
+    let ranking = match upper.as_str() {
+        "ROW_NUMBER" => Some(WindowFunction::RowNumber),
+        "RANK" => Some(WindowFunction::Rank),
+        "DENSE_RANK" => Some(WindowFunction::DenseRank),
+        _ => None,
+    };
+    let (window_function, data_type, nullable) = if let Some(window_function) = ranking {
+        if !arguments.args.is_empty() {
+            return Err(BindError::UnsupportedExpression(function.to_string()));
+        }
+        (window_function, Some(DataType::UInt64), false)
+    } else {
+        {
+            let aggregate_function = aggregate_function_name(function)
+                .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?;
+            if arguments.args.len() != 1 {
+                return Err(BindError::UnsupportedAggregate(function.to_string()));
+            }
+            let expr = match &arguments.args[0] {
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
+                    Some(bind_expr(expr, tables, subqueries)?)
+                }
+                FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
+                    if aggregate_function == AggregateFunction::Count =>
+                {
+                    None
+                }
+                _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
+            };
+            let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
+            (
+                WindowFunction::Aggregate(BoundAggregate {
+                    function: aggregate_function,
+                    expr,
+                    distinct: false,
+                    data_type,
+                    nullable,
+                }),
+                data_type,
+                nullable,
+            )
+        }
+    };
+    let partition_by = spec
+        .partition_by
+        .iter()
+        .map(|expr| bind_expr(expr, tables, subqueries))
+        .collect::<Result<Vec<_>, _>>()?;
+    let order_by = spec
+        .order_by
+        .iter()
+        .map(|order| {
+            if order.with_fill.is_some() {
+                return Err(BindError::InvalidOrderBy(order.to_string()));
+            }
+            let ascending = order.options.asc.unwrap_or(true);
+            Ok(BoundWindowOrderKey {
+                expr: bind_expr(&order.expr, tables, subqueries)?,
+                ascending,
+                nulls_first: order.options.nulls_first.unwrap_or(ascending),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let window = BoundWindow {
+        function: window_function,
+        partition_by,
+        order_by,
+        data_type,
+        nullable,
+    };
+    let window_list = windows
+        .as_deref_mut()
+        .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?;
+    let index = window_list
+        .iter()
+        .position(|existing| existing == &window)
+        .unwrap_or_else(|| {
+            let index = window_list.len();
+            window_list.push(window.clone());
+            index
+        });
+    Ok(BoundExpr {
+        kind: BoundExprKind::Window(index),
+        data_type,
+        nullable,
     })
 }
 

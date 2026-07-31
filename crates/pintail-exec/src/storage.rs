@@ -1768,4 +1768,180 @@ mod tests {
             false,
         )
     }
+
+    fn execute_rows(
+        sql: &str,
+        catalog: &CatalogSnapshot,
+        provider: &SnapshotScanProvider<'_>,
+    ) -> Vec<Vec<Value>> {
+        let statement = parse_statement(sql).expect("parse query");
+        let bound = Binder::new(catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind query");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical plan");
+        let mut execution =
+            Execution::start(physical, provider, 64 * 1024 * 1024).expect("start execution");
+        let mut rows = Vec::new();
+        while let Some(batch) = execution.next_batch().expect("pull batch") {
+            for row in batch.selection().selected_rows() {
+                rows.push(
+                    batch
+                        .columns()
+                        .iter()
+                        .map(|column| column.value(row).cloned().expect("selected value"))
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+        rows
+    }
+
+    fn window_fixture() -> (
+        tempfile::TempDir,
+        pintail_store::TableSnapshot,
+        CatalogSnapshot,
+    ) {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest(vec![
+                row(1, "a"),
+                row(2, "a"),
+                row(3, "b"),
+                row(4, "b"),
+                row(5, "b"),
+            ])
+            .expect("ingest");
+        let snapshot = table.snapshot();
+        let entry = TableEntry::new(
+            TableId::new(17),
+            "events",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(DatabaseId::new(15), "app", [entry]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        drop(table);
+        (directory, snapshot, catalog)
+    }
+
+    #[test]
+    fn window_row_number_partitions_and_orders() {
+        let (_directory, snapshot, catalog) = window_fixture();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
+                .expect("provider");
+        let rows = execute_rows(
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY name ORDER BY id) AS rn \
+             FROM events ORDER BY id",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec![Value::UInt64(1), Value::UInt64(1)],
+                vec![Value::UInt64(2), Value::UInt64(2)],
+                vec![Value::UInt64(3), Value::UInt64(1)],
+                vec![Value::UInt64(4), Value::UInt64(2)],
+                vec![Value::UInt64(5), Value::UInt64(3)],
+            ]
+        );
+    }
+
+    #[test]
+    fn window_rank_and_dense_rank_handle_peers() {
+        let (_directory, snapshot, catalog) = window_fixture();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
+                .expect("provider");
+        let rows = execute_rows(
+            "SELECT id, RANK() OVER (ORDER BY name) AS r, \
+             DENSE_RANK() OVER (ORDER BY name) AS d FROM events ORDER BY id",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec![Value::UInt64(1), Value::UInt64(1), Value::UInt64(1)],
+                vec![Value::UInt64(2), Value::UInt64(1), Value::UInt64(1)],
+                vec![Value::UInt64(3), Value::UInt64(3), Value::UInt64(2)],
+                vec![Value::UInt64(4), Value::UInt64(3), Value::UInt64(2)],
+                vec![Value::UInt64(5), Value::UInt64(3), Value::UInt64(2)],
+            ]
+        );
+    }
+
+    #[test]
+    fn window_aggregates_run_whole_partition_and_running_frames() {
+        let (_directory, snapshot, catalog) = window_fixture();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
+                .expect("provider");
+        // Whole-partition frame without ORDER BY.
+        let rows = execute_rows(
+            "SELECT id, SUM(id) OVER (PARTITION BY name) AS total \
+             FROM events ORDER BY id",
+            &catalog,
+            &provider,
+        );
+        let totals = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
+        assert_eq!(
+            totals,
+            vec![
+                Value::UInt64(3),
+                Value::UInt64(3),
+                Value::UInt64(12),
+                Value::UInt64(12),
+                Value::UInt64(12),
+            ]
+        );
+        // Running frame with ORDER BY includes the current row's peers.
+        let rows = execute_rows(
+            "SELECT id, SUM(id) OVER (ORDER BY name) AS running \
+             FROM events ORDER BY id",
+            &catalog,
+            &provider,
+        );
+        let running = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
+        assert_eq!(
+            running,
+            vec![
+                Value::UInt64(3),
+                Value::UInt64(3),
+                Value::UInt64(15),
+                Value::UInt64(15),
+                Value::UInt64(15),
+            ]
+        );
+        // COUNT(*) over a partition counts its rows.
+        let rows = execute_rows(
+            "SELECT id, COUNT(*) OVER (PARTITION BY name) AS n FROM events ORDER BY id",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(rows[0][1], Value::UInt64(2));
+        assert_eq!(rows[4][1], Value::UInt64(3));
+    }
+
+    #[test]
+    fn windows_reject_unsupported_combinations() {
+        let (_directory, _snapshot, catalog) = window_fixture();
+        for sql in [
+            "SELECT name, SUM(id), ROW_NUMBER() OVER (ORDER BY name) FROM events GROUP BY name",
+            "SELECT ROW_NUMBER() OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) FROM events",
+            "SELECT id + ROW_NUMBER() OVER (ORDER BY id) FROM events",
+        ] {
+            let statement = parse_statement(sql).expect("parse query");
+            assert!(
+                Binder::new(&catalog, Some("app")).bind(&statement).is_err(),
+                "{sql} must be rejected"
+            );
+        }
+    }
 }

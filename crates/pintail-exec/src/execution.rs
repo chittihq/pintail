@@ -11,7 +11,7 @@ const HASH_ENTRY_OVERHEAD: usize = 3 * size_of::<usize>();
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundJoinKind, BoundOrderKey, BoundProjection,
+    BoundJoinKind, BoundOrderKey, BoundProjection, BoundWindow, WindowFunction,
 };
 use pintail_types::{DataType, Value};
 use rayon::prelude::*;
@@ -118,6 +118,15 @@ pub enum PhysicalPlan {
         /// Maximum prefix retained before the downstream LIMIT.
         top_k: Option<usize>,
     },
+    /// Window computations appended as extra columns over sorted partitions.
+    Window {
+        /// Input operator.
+        input: Box<Self>,
+        /// Window computations in output order.
+        windows: Vec<BoundWindow>,
+        /// Synthetic output columns appended after the input's columns.
+        outputs: Vec<BoundColumn>,
+    },
     /// Skips and caps selected rows.
     Limit {
         /// Input operator.
@@ -146,6 +155,15 @@ impl PhysicalPlan {
             | Self::Distinct { input }
             | Self::Sort { input, .. }
             | Self::Limit { input, .. } => input.output_fields(),
+            Self::Window { input, outputs, .. } => {
+                let mut fields = input.output_fields();
+                fields.extend(outputs.iter().map(|column| OutputField {
+                    name: column.name.clone(),
+                    data_type: Some(column.data_type),
+                    nullable: column.nullable,
+                }));
+                fields
+            }
             Self::HashAggregate {
                 group_by,
                 aggregates,
@@ -221,6 +239,7 @@ impl PhysicalPlanner {
     ///
     /// Returns [`ExecError::UnsupportedOperator`] for logical operators whose
     /// physical implementation is not available yet.
+    #[allow(clippy::too_many_lines)]
     pub fn plan(logical: LogicalPlan) -> Result<PhysicalPlan, ExecError> {
         match logical {
             LogicalPlan::Empty => Ok(PhysicalPlan::Empty),
@@ -277,6 +296,15 @@ impl PhysicalPlanner {
             }),
             LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
                 input: Box::new(Self::plan(*input)?),
+            }),
+            LogicalPlan::Window {
+                input,
+                windows,
+                outputs,
+            } => Ok(PhysicalPlan::Window {
+                input: Box::new(Self::plan(*input)?),
+                windows,
+                outputs,
             }),
             LogicalPlan::Sort { input, keys } => Ok(PhysicalPlan::Sort {
                 input: Box::new(Self::plan(*input)?),
@@ -427,6 +455,7 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
         }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
+        | LogicalPlan::Window { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Sort { input, .. }
@@ -676,6 +705,22 @@ fn resolve_plan_subqueries(
         | PhysicalPlan::Limit { input, .. } => {
             resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
         }
+        PhysicalPlan::Window { input, windows, .. } => {
+            for window in windows {
+                if let WindowFunction::Aggregate(aggregate) = &mut window.function
+                    && let Some(expr) = &mut aggregate.expr
+                {
+                    resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+                }
+                for expr in &mut window.partition_by {
+                    resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+                }
+                for key in &mut window.order_by {
+                    resolve_expr_subqueries(&mut key.expr, provider, memory_limit, retained_bytes)?;
+                }
+            }
+            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+        }
         PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => {
             for input in inputs {
                 resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
@@ -915,6 +960,12 @@ enum PullOperator {
         keys: Vec<BoundOrderKey>,
         column_types: Vec<DataType>,
         top_k: Option<usize>,
+        state: Option<MaterializedRows>,
+    },
+    Window {
+        input: Box<Self>,
+        windows: Vec<CompiledWindow>,
+        column_types: Vec<DataType>,
         state: Option<MaterializedRows>,
     },
     Limit {
@@ -1169,6 +1220,21 @@ impl PullOperator {
                     return Ok(Some(batch));
                 }
             },
+            Self::Window {
+                input,
+                windows,
+                column_types,
+                state,
+            } => {
+                if state.is_none() {
+                    *state = Some(build_window(input, windows, memory)?);
+                }
+                next_materialized_batch(
+                    state.as_mut().expect("initialized above"),
+                    column_types,
+                    memory,
+                )
+            }
             Self::Sort {
                 input,
                 keys,
@@ -1427,6 +1493,32 @@ fn build_operator(
                 PullOperator::Distinct {
                     input: Box::new(input),
                     seen: HashSet::new(),
+                },
+                columns,
+            ))
+        }
+        PhysicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => {
+            let (input_op, mut columns) = build_operator(*input, provider, memory)?;
+            let compiled = windows
+                .iter()
+                .map(|window| CompiledWindow::compile(window, &columns))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut column_types = columns
+                .iter()
+                .map(|column| column.data_type)
+                .collect::<Vec<_>>();
+            column_types.extend(outputs.iter().map(|column| column.data_type));
+            columns.extend(outputs);
+            Ok((
+                PullOperator::Window {
+                    input: Box::new(input_op),
+                    windows: compiled,
+                    column_types,
+                    state: None,
                 },
                 columns,
             ))
@@ -1746,6 +1838,7 @@ struct AggregateGroup {
     states: Vec<AggregateState>,
 }
 
+#[derive(Clone)]
 struct AggregateState {
     value: AggregateValue,
     seen: Option<HashSet<Value>>,
@@ -1756,6 +1849,7 @@ struct AggregateState {
     extreme_number: Option<f64>,
 }
 
+#[derive(Clone)]
 enum AggregateValue {
     Count(u64),
     Sum(Option<Value>),
@@ -3526,6 +3620,255 @@ fn materialize(
         }
     }
     Ok(rows)
+}
+
+/// One window computation compiled against its input's column layout.
+struct CompiledWindow {
+    function: CompiledWindowFunction,
+    partition: Vec<CompiledExpr>,
+    /// Order keys with `(ascending, nulls_first)`.
+    order: Vec<(CompiledExpr, bool, bool)>,
+}
+
+enum CompiledWindowFunction {
+    RowNumber,
+    Rank,
+    DenseRank,
+    /// The aggregate plus its compiled argument; `COUNT(*)` compiles a
+    /// constant 1 so every row counts.
+    Aggregate(CompiledAggregate, CompiledExpr),
+}
+
+impl CompiledWindow {
+    fn compile(window: &BoundWindow, columns: &[BoundColumn]) -> Result<Self, ExecError> {
+        let function = match &window.function {
+            WindowFunction::RowNumber => CompiledWindowFunction::RowNumber,
+            WindowFunction::Rank => CompiledWindowFunction::Rank,
+            WindowFunction::DenseRank => CompiledWindowFunction::DenseRank,
+            WindowFunction::Aggregate(aggregate) => {
+                let argument = match &aggregate.expr {
+                    Some(expr) => CompiledExpr::compile(expr, columns)?,
+                    None => CompiledExpr::compile(
+                        &BoundExpr {
+                            kind: BoundExprKind::Literal(Value::Int64(1)),
+                            data_type: Some(DataType::Int64),
+                            nullable: false,
+                        },
+                        columns,
+                    )?,
+                };
+                CompiledWindowFunction::Aggregate(
+                    CompiledAggregate::compile(aggregate, columns)?,
+                    argument,
+                )
+            }
+        };
+        Ok(Self {
+            function,
+            partition: window
+                .partition_by
+                .iter()
+                .map(|expr| CompiledExpr::compile(expr, columns))
+                .collect::<Result<Vec<_>, _>>()?,
+            order: window
+                .order_by
+                .iter()
+                .map(|key| {
+                    Ok::<_, ExecError>((
+                        CompiledExpr::compile(&key.expr, columns)?,
+                        key.ascending,
+                        key.nulls_first,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+/// Materializes the input, computes every window over its partitions, and
+/// returns rows with the window results appended as trailing columns.
+fn build_window(
+    input: &mut PullOperator,
+    windows: &[CompiledWindow],
+    memory: &MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut keys: Vec<Vec<Vec<Value>>> = windows.iter().map(|_| Vec::new()).collect();
+    while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
+        for row in batch.selection().selected_rows() {
+            memory.ensure_transient(batch_bytes)?;
+            let values = batch
+                .columns()
+                .iter()
+                .map(|column| {
+                    column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+                        "window row is outside an input column",
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            memory.reserve(estimated_row_payload_bytes(&values))?;
+            for (index, window) in windows.iter().enumerate() {
+                let mut row_keys =
+                    Vec::with_capacity(window.partition.len() + window.order.len() + 1);
+                for expr in &window.partition {
+                    row_keys.push(expr.evaluate(&batch, row)?);
+                }
+                for (expr, _, _) in &window.order {
+                    row_keys.push(expr.evaluate(&batch, row)?);
+                }
+                if let CompiledWindowFunction::Aggregate(_, argument) = &window.function {
+                    row_keys.push(argument.evaluate(&batch, row)?);
+                }
+                memory.reserve(estimated_row_payload_bytes(&row_keys))?;
+                keys[index].push(row_keys);
+            }
+            rows.push(values);
+        }
+    }
+    let row_count = rows.len();
+    for (index, window) in windows.iter().enumerate() {
+        let result = compute_window_column(window, &keys[index], row_count, memory)?;
+        for (row, value) in rows.iter_mut().zip(&result) {
+            memory.reserve(value.heap_bytes().saturating_add(size_of::<Value>()))?;
+            row.push(value.clone());
+        }
+    }
+    Ok(MaterializedRows { rows, position: 0 })
+}
+
+/// Computes one window's value per row: sorts a permutation by
+/// (partition, order) keys, then walks each partition assigning ranks or
+/// aggregate frames (whole partition without ORDER BY; running frame
+/// including the current row's peers with it — `MySQL`'s default frames).
+#[allow(clippy::too_many_lines)]
+fn compute_window_column(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    row_count: usize,
+    memory: &MemoryTracker,
+) -> Result<Vec<Value>, ExecError> {
+    let partition_len = window.partition.len();
+    let order_key = |ascending: bool, nulls_first: bool| BoundOrderKey {
+        index: 0,
+        ascending,
+        nulls_first,
+    };
+    let compare_rows = |left: usize, right: usize| {
+        let left_keys = &keys[left];
+        let right_keys = &keys[right];
+        for position in 0..partition_len {
+            let ordering = compare_sort_values(
+                &left_keys[position],
+                &right_keys[position],
+                order_key(true, true),
+            );
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        for (position, (_, ascending, nulls_first)) in window.order.iter().enumerate() {
+            let ordering = compare_sort_values(
+                &left_keys[partition_len + position],
+                &right_keys[partition_len + position],
+                order_key(*ascending, *nulls_first),
+            );
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        Ordering::Equal
+    };
+    let same_partition = |left: usize, right: usize| {
+        (0..partition_len).all(|position| {
+            compare_sort_values(
+                &keys[left][position],
+                &keys[right][position],
+                order_key(true, true),
+            ) == Ordering::Equal
+        })
+    };
+    let same_peers = |left: usize, right: usize| {
+        window.order.iter().enumerate().all(|(position, key)| {
+            compare_sort_values(
+                &keys[left][partition_len + position],
+                &keys[right][partition_len + position],
+                order_key(key.1, key.2),
+            ) == Ordering::Equal
+        })
+    };
+
+    let mut order = (0..row_count).collect::<Vec<_>>();
+    memory.reserve(row_count.saturating_mul(size_of::<usize>()))?;
+    order.sort_by(|left, right| compare_rows(*left, *right));
+
+    let mut results = vec![Value::Null; row_count];
+    let mut start = 0;
+    while start < row_count {
+        let mut end = start + 1;
+        while end < row_count && same_partition(order[start], order[end]) {
+            end += 1;
+        }
+        let partition = &order[start..end];
+        match &window.function {
+            CompiledWindowFunction::RowNumber
+            | CompiledWindowFunction::Rank
+            | CompiledWindowFunction::DenseRank => {
+                let mut rank = 0_u64;
+                let mut dense = 0_u64;
+                for (position, row) in partition.iter().enumerate() {
+                    let number = u64::try_from(position + 1).unwrap_or(u64::MAX);
+                    if position == 0 || !same_peers(partition[position - 1], *row) {
+                        rank = number;
+                        dense += 1;
+                    }
+                    results[*row] = Value::UInt64(match window.function {
+                        CompiledWindowFunction::RowNumber => number,
+                        CompiledWindowFunction::Rank => rank,
+                        _ => dense,
+                    });
+                }
+            }
+            CompiledWindowFunction::Aggregate(aggregate, _) => {
+                let argument_position = partition_len + window.order.len();
+                if window.order.is_empty() {
+                    // Whole-partition frame.
+                    let mut state = AggregateState::new(aggregate);
+                    for row in partition {
+                        state.update(aggregate, &keys[*row][argument_position], memory)?;
+                    }
+                    let value = state.finish(memory)?;
+                    for row in partition {
+                        memory.reserve(value.heap_bytes())?;
+                        results[*row] = value.clone();
+                    }
+                } else {
+                    // Running frame including the current row's peers.
+                    let mut state = AggregateState::new(aggregate);
+                    let mut group_start = 0;
+                    while group_start < partition.len() {
+                        let mut group_end = group_start + 1;
+                        while group_end < partition.len()
+                            && same_peers(partition[group_start], partition[group_end])
+                        {
+                            group_end += 1;
+                        }
+                        for row in &partition[group_start..group_end] {
+                            state.update(aggregate, &keys[*row][argument_position], memory)?;
+                        }
+                        let value = state.clone().finish(memory)?;
+                        for row in &partition[group_start..group_end] {
+                            memory.reserve(value.heap_bytes())?;
+                            results[*row] = value.clone();
+                        }
+                        group_start = group_end;
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    Ok(results)
 }
 
 fn build_sort(

@@ -193,6 +193,10 @@ fn write_plan(
             writeln!(output, "Distinct")?;
             write_plan(input, depth + 1, output, provider)
         }
+        PhysicalPlan::Window { input, windows, .. } => {
+            writeln!(output, "Window functions={}", windows.len())?;
+            write_plan(input, depth + 1, output, provider)
+        }
         PhysicalPlan::Sort { input, keys, top_k } => {
             writeln!(output, "Sort keys={keys:?} top_k={top_k:?}")?;
             write_plan(input, depth + 1, output, provider)
