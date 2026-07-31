@@ -307,3 +307,78 @@ make the maintenance path exceed the memory behavior enforced by the release
 gate. The limit can remain an engine option in v1 because exposing it without
 a scheduler/debt model for deferred windows would imply an operational
 contract Pintail does not yet provide.
+
+## Decisions from the 2026-07-31 experiment lab (experiments/RESULTS.md)
+
+The following were settled empirically on both reference machines (Apple M2 Pro
+and the x86 docker host under pinned limits); see `experiments/RESULTS.md` for
+numbers and `docs/engine-research/` for the source research. Per the lab's
+rules, a technique is adopted only when it wins on both machines; sub-15%
+margins prefer the simpler implementation.
+
+### Executor moves to typed packed arrays
+
+The `Vec<Value>` executor is replaced by typed columnar arrays with
+Flat/Constant/Dictionary physical forms, selection vectors, validity masks
+carrying an all-valid fast path, and ~1024-row vectors. `Value` remains only at
+API, wire, and final-output boundaries. This completes the GOAL specification's
+X100 design rather than amending it; e01 measured fused typed kernels at
+memory bandwidth while every materialized intermediate cost 2-8x.
+
+### Decimals and dates execute natively
+
+DECIMAL becomes i128-scaled Decimal128 and dates become Date32/DateTime64 in
+execution, populated by scan-time conversion from the current text carriers.
+A PTSEG v2 with fixed-width encodings is the intended end state but is a
+format-version bump and **remains pending explicit owner approval**, as does
+any relaxation of `unsafe_code = "forbid"` for SIMD intrinsics (current policy:
+autovectorizable scalar kernels plus safe SIMD crates only).
+
+### Merge-on-read uses granule-level sweep-line classification
+
+Scans classify granule ranges against newer segments and the memtable using
+the sparse index; non-overlapping granules take the direct fast path, only
+overlapping granules pay a versioned merge, and fully-compacted segments skip
+classification via `unique_keys`. Measured 29-35x under the realistic CDC
+update pattern (recent-hot keys) and 8-11x under adversarial uniform updates
+(e05, e11). Composite merge keys pack into u128 integers when they fit;
+normalized memcmp byte keys are rejected for heap merges (e12: 17-61% slower
+on both machines).
+
+### Operator choices
+
+Low-cardinality aggregation runs on dictionary codes with direct-array
+accumulators and thread-local partials merged at finalize; radix two-phase
+aggregation is reserved for beyond ~10k groups (e02). Joins use dense
+direct-address tables when the build-key domain is dense (the common case for
+MySQL auto-increment PKs), hashbrown otherwise, always with build-side min/max
+join-filter pushdown into probe scans; semi-joins use dense bitmaps for dense
+domains and blocked Bloom filters otherwise (e04). Top-K uses cutoff-guarded
+per-thread heaps with the k-th value pushed into granule pruning (e03).
+Scan morsels are 64K rows; scans saturate memory bandwidth well below core
+count, so parallelism budget goes to aggregation and joins (e10).
+
+### Techniques measured and rejected
+
+Shared-atomic aggregation tables (ISA-inconsistent: 5x better than
+thread-local hashmaps on x86, 3x worse on Apple Silicon; never beat
+thread-local dense arrays). Hand-rolled FOR+bit-packed scanning (loses 2.2-6x
+to plain scans; only the FastLanes transposed layout can change this and is
+untested — e13). Length-classed string hash tables (tie with hashbrown).
+The simplified Umbra unchained join table (lost to hashbrown on all-hit inner
+probes on both machines; revisit only for miss-heavy workloads). Normalized
+memcmp keys in heap merges (see above).
+
+### String columns execute as 16-byte views
+
+German-string views (4-byte prefix, 12-byte inline, heap offset beyond) win
+every equality workload on both machines and halve Vec<String> memory (e07).
+The ordering-comparison kernel stays eligible for flat chars+offsets
+specialization, which won ordering on x86.
+
+### Clustering determines pruning value
+
+e09 showed zone maps and predicate caches deliver 10-18x on clustered layouts
+and exactly nothing on scattered ones. Optional clustering/ordering keys move
+from a v1.1 convenience into the performance-critical path; the
+condition-cache niche narrows to predicates zone maps cannot express (e14).
