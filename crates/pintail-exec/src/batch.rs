@@ -25,6 +25,72 @@ pub(crate) enum TypedValues {
         values: Vec<i128>,
         scale: u8,
     },
+    /// Temporal values parsed once from their canonical text carrier into
+    /// comparable integers (days for `Date32`, microseconds for `DateTime64`).
+    /// Views are retained so text-shaped consumers keep working; `number_at`
+    /// deliberately refuses temporals — `MySQL` numeric coercion of date text
+    /// is NOT the epoch integer.
+    Temporal {
+        units: Vec<i64>,
+        text: StrColumn,
+    },
+}
+
+/// Parses canonical `YYYY-MM-DD` into days since 1970-01-01 (proleptic
+/// Gregorian, Howard Hinnant's algorithm). `None` on any deviation.
+pub(crate) fn parse_date_days(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    let digit = |byte: u8| -> Option<i64> { byte.is_ascii_digit().then(|| i64::from(byte - b'0')) };
+    let year =
+        digit(bytes[0])? * 1000 + digit(bytes[1])? * 100 + digit(bytes[2])? * 10 + digit(bytes[3])?;
+    let month = digit(bytes[5])? * 10 + digit(bytes[6])?;
+    let day = digit(bytes[8])? * 10 + digit(bytes[9])?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let adjusted_year = if month <= 2 { year - 1 } else { year };
+    let era = adjusted_year.div_euclid(400);
+    let year_of_era = adjusted_year - era * 400;
+    let month_shifted = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_shifted + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
+}
+
+/// Parses canonical `YYYY-MM-DD HH:MM:SS[.ffffff]` into microseconds since
+/// the epoch. `None` on any deviation from the canonical shape.
+pub(crate) fn parse_datetime_micros(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    if bytes.len() < 19 || bytes[10] != b' ' || bytes[13] != b':' || bytes[16] != b':' {
+        return None;
+    }
+    let days = parse_date_days(&text[..10])?;
+    let digit = |byte: u8| -> Option<i64> { byte.is_ascii_digit().then(|| i64::from(byte - b'0')) };
+    let hour = digit(bytes[11])? * 10 + digit(bytes[12])?;
+    let minute = digit(bytes[14])? * 10 + digit(bytes[15])?;
+    let second = digit(bytes[17])? * 10 + digit(bytes[18])?;
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let mut micros = 0_i64;
+    let mut digits = 0_u32;
+    if bytes.len() > 19 {
+        if bytes[19] != b'.' || bytes.len() > 26 {
+            return None;
+        }
+        for &byte in &bytes[20..] {
+            micros = micros * 10 + digit(byte)?;
+            digits += 1;
+        }
+    }
+    for _ in digits..6 {
+        micros *= 10;
+    }
+    let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    seconds.checked_mul(1_000_000)?.checked_add(micros)
 }
 
 /// splitmix64 finalizer: cheap, well-distributed mixing for local group hashes.
@@ -60,6 +126,9 @@ impl TypedValues {
                 let high = u64::from_ne_bytes(bytes[8..].try_into().expect("8 bytes"));
                 mix64(low ^ 0x05) ^ mix64(high)
             }
+            Self::Temporal { units, .. } => {
+                mix64(u64::from_ne_bytes(units.get(row)?.to_ne_bytes()) ^ 0x06)
+            }
         })
     }
 
@@ -90,7 +159,7 @@ impl TypedValues {
                 #[allow(clippy::cast_precision_loss)]
                 Some(value as f64 / POW10[usize::from(*scale).min(18)])
             }
-            Self::Utf8(_) => None,
+            Self::Utf8(_) | Self::Temporal { .. } => None,
         }
     }
 }
@@ -166,6 +235,13 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
         _ => None,
     };
     let mut decimal = decimal_scale.map(|_| Vec::with_capacity(values.len()));
+    // true = microseconds (DateTime64), false = days (Date32)
+    let temporal_kind = match data_type {
+        DataType::Date32 => Some(false),
+        DataType::DateTime64 { .. } => Some(true),
+        _ => None,
+    };
+    let mut temporal = temporal_kind.map(|_| Vec::with_capacity(values.len()));
     for value in values {
         validity.push(!matches!(value, Value::Null));
         match value {
@@ -185,6 +261,9 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 if let Some(packed) = decimal.as_mut() {
                     packed.push(0);
                 }
+                if let Some(packed) = temporal.as_mut() {
+                    packed.push(0);
+                }
             }
             Value::Int64(v) => {
                 if let Some(packed) = int64.as_mut() {
@@ -194,6 +273,7 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 float64 = None;
                 utf8 = None;
                 decimal = None;
+                temporal = None;
             }
             Value::UInt64(v) => {
                 if let Some(packed) = uint64.as_mut() {
@@ -203,6 +283,7 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 float64 = None;
                 utf8 = None;
                 decimal = None;
+                temporal = None;
             }
             Value::Float64(v) => {
                 if let Some(packed) = float64.as_mut() {
@@ -212,6 +293,7 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 uint64 = None;
                 utf8 = None;
                 decimal = None;
+                temporal = None;
             }
             Value::Utf8(text) => {
                 if let Some(packed) = utf8.as_mut() {
@@ -221,6 +303,17 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                     match parse_decimal_scaled(text, scale) {
                         Some(scaled) => packed.push(scaled),
                         None => decimal = None,
+                    }
+                }
+                if let (Some(packed), Some(micros)) = (temporal.as_mut(), temporal_kind) {
+                    let parsed = if micros {
+                        parse_datetime_micros(text)
+                    } else {
+                        parse_date_days(text)
+                    };
+                    match parsed {
+                        Some(units) => packed.push(units),
+                        None => temporal = None,
                     }
                 }
                 int64 = None;
@@ -233,6 +326,7 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 float64 = None;
                 utf8 = None;
                 decimal = None;
+                temporal = None;
             }
         }
     }
@@ -242,6 +336,11 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
             values: packed,
             scale,
         })
+    } else if let Some(units) = temporal.take() {
+        // temporal is only alive for Date32/DateTime64 columns whose every
+        // non-null value parsed; the text views must exist alongside it.
+        utf8.take()
+            .map(|text| TypedValues::Temporal { units, text })
     } else if let Some(packed) = int64 {
         Some(TypedValues::Int64(packed))
     } else if let Some(packed) = uint64 {
@@ -365,6 +464,9 @@ impl ColumnVector {
             Some((TypedValues::Utf8(packed), _)) => packed.len() * 16 + packed.heap().len(),
             Some((TypedValues::Decimal128 { values: packed, .. }, _)) => {
                 packed.capacity() * size_of::<i128>()
+            }
+            Some((TypedValues::Temporal { units, text }, _)) => {
+                units.capacity() * size_of::<i64>() + text.len() * 16 + text.heap().len()
             }
         };
         size_of::<Self>()
@@ -849,5 +951,54 @@ mod typed_projection_tests {
         assert_eq!(parse_decimal_scaled(".", 2), None);
         assert_eq!(parse_decimal_scaled("-3", 0), Some(-3));
         assert_eq!(parse_decimal_scaled("1e5", 2), None);
+    }
+}
+
+#[cfg(test)]
+mod temporal_tests {
+    use super::*;
+
+    #[test]
+    fn date_parsing_matches_known_epochs() {
+        assert_eq!(parse_date_days("1970-01-01"), Some(0));
+        assert_eq!(parse_date_days("1969-12-31"), Some(-1));
+        assert_eq!(parse_date_days("2000-02-29"), Some(11_016));
+        assert_eq!(parse_date_days("2023-01-01"), Some(19_358));
+        assert_eq!(parse_date_days("2023-1-1"), None);
+        assert_eq!(parse_date_days("not-a-date"), None);
+    }
+
+    #[test]
+    fn datetime_parsing_and_fraction_padding() {
+        assert_eq!(parse_datetime_micros("1970-01-01 00:00:00"), Some(0));
+        assert_eq!(
+            parse_datetime_micros("1970-01-01 00:00:01.5"),
+            Some(1_500_000)
+        );
+        assert_eq!(
+            parse_datetime_micros("2023-01-01 00:00:00"),
+            Some(19_358_i64 * 86_400 * 1_000_000)
+        );
+        assert_eq!(parse_datetime_micros("2023-01-01T00:00:00"), None);
+    }
+
+    #[test]
+    fn date_columns_pack_to_temporal_units_with_views() {
+        let vector = ColumnVector::new(
+            DataType::Date32,
+            vec![
+                Value::Utf8("2023-01-01".into()),
+                Value::Null,
+                Value::Utf8("1970-01-01".into()),
+            ],
+        )
+        .expect("date vector");
+        let (typed, validity) = vector.typed().expect("typed projection");
+        let TypedValues::Temporal { units, text } = typed else {
+            panic!("expected temporal projection, got {typed:?}");
+        };
+        assert_eq!(units, &[19_358, 0, 0]);
+        assert_eq!(text.len(), 3);
+        assert!(!validity.is_valid(1));
     }
 }

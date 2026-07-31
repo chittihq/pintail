@@ -75,6 +75,23 @@ fn typed_comparison_mask(
         (TypedValues::Float64(values), Value::Float64(lit)) => {
             ordered(values, validity, op, lit.get())
         }
+        // Packed temporal units compare as integers when the literal is
+        // canonical AND (for DateTime64) carries exactly the column's fsp
+        // fraction digits — otherwise byte semantics could diverge from unit
+        // semantics, so anything else falls back to the row path.
+        (TypedValues::Temporal { units, .. }, Value::Utf8(text)) => {
+            let literal = match logical_type {
+                DataType::Date32 => crate::batch::parse_date_days(text),
+                DataType::DateTime64 { fsp } => {
+                    let expected_len = if fsp == 0 { 19 } else { 20 + usize::from(fsp) };
+                    (text.len() == expected_len)
+                        .then(|| crate::batch::parse_datetime_micros(text))
+                        .flatten()
+                }
+                _ => None,
+            }?;
+            ordered(units, validity, op, literal)
+        }
         // Temporal types ride the Utf8 carrier in canonical fixed-width form,
         // where byte order IS chronological order and collation cannot apply
         // (digits, dashes, colons only) — byte-wise kernels are exact.
