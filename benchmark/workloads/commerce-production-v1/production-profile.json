@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "source": "synthetic-defaults-v1",
+  "note": "Believable synthetic statistics. Replace with a sanitized capture from a real production replica using the same shape; no production values or PII belong here.",
+  "time": {
+    "historyDays": 1095,
+    "hotRecentDays": 30,
+    "hotRecentShare": 0.2,
+    "weekdayWeights": [0.9, 1.0, 1.0, 1.05, 1.1, 1.35, 1.25],
+    "hourWeights": [0.2, 0.1, 0.08, 0.07, 0.1, 0.2, 0.4, 0.7, 0.9, 1.0, 1.1, 1.2, 1.3, 1.2, 1.1, 1.0, 1.1, 1.3, 1.5, 1.6, 1.4, 1.0, 0.6, 0.35]
+  },
+  "tables": {
+    "tenants": { "rows": 1000 },
+    "customers": { "rows": 1000000 },
+    "customer_addresses": { "rows": 2000000 },
+    "categories": { "rows": 1000 },
+    "products": { "rows": 100000 },
+    "product_variants": { "rows": 250000 },
+    "warehouses": { "rows": 32 },
+    "inventory_balances": { "rows": 8000000 },
+    "orders": {
+      "rows": 20000000,
+      "dailyGrowth": 85000,
+      "distributions": {
+        "tenant_id": { "kind": "zipf", "parameter": 1.15 },
+        "customer_id": { "kind": "zipf", "parameter": 1.05 },
+        "order_status": { "pending": 0.03, "confirmed": 0.08, "completed": 0.82, "cancelled": 0.07 },
+        "payment_status": { "pending": 0.02, "authorized": 0.05, "paid": 0.88, "failed": 0.03, "refunded": 0.02 },
+        "fulfillment_status": { "unfulfilled": 0.06, "partial": 0.05, "fulfilled": 0.86, "returned": 0.03 },
+        "currency": { "INR": 0.55, "USD": 0.25, "EUR": 0.1, "GBP": 0.05, "AED": 0.05 },
+        "sales_channel": { "web": 0.48, "mobile": 0.34, "pos": 0.08, "api": 0.06, "marketplace": 0.04 },
+        "shipping_country": { "IN": 0.55, "US": 0.24, "DE": 0.07, "GB": 0.06, "AE": 0.05, "SG": 0.03 }
+      },
+      "nullRates": {
+        "promotion_code": 0.78,
+        "cancelled_at": 0.93,
+        "completed_at": 0.1,
+        "shipping_region": 0.12,
+        "metadata": 0.3,
+        "deleted_at": 0.998
+      }
+    },
+    "order_items": {
+      "rowsPerParent": { "kind": "longtail", "p1": 0.42, "p2": 0.27, "p3": 0.14, "p4": 0.08, "p5to8": 0.07, "p9to40": 0.02 }
+    },
+    "payments": {
+      "attemptsPerOrder": { "one": 0.87, "two": 0.1, "threePlus": 0.03 },
+      "distributions": {
+        "provider": { "stripe": 0.35, "razorpay": 0.3, "adyen": 0.15, "paypal": 0.12, "cod": 0.08 },
+        "failure_code": { "insufficient_funds": 0.34, "card_declined": 0.28, "3ds_failed": 0.16, "timeout": 0.12, "fraud_suspected": 0.1 }
+      }
+    },
+    "refunds": { "ordersWithRefundRate": 0.055, "partialShare": 0.4 },
+    "shipments": { "perFulfilledOrder": { "one": 0.86, "two": 0.11, "three": 0.03 } },
+    "order_events": { "eventsPerOrder": { "mean": 5.0, "min": 2, "max": 14 } }
+  },
+  "skew": {
+    "whaleCustomers": 200,
+    "whaleOrderMultiplier": 40,
+    "largestTenantsShare": { "top1": 0.12, "top10": 0.38, "top100": 0.74 }
+  },
+  "strings": {
+    "emojiNameRate": 0.03,
+    "utf8NameRate": 0.35,
+    "productNameLength": { "typical": 42, "max": 255 },
+    "metadataBytes": { "typical": 180, "max": 4096 }
+  },
+  "mutations": {
+    "updatesPerSecondAtFullScale": 400,
+    "insertShare": 0.55,
+    "updateShare": 0.4,
+    "deleteShare": 0.05,
+    "softDeleteShare": 0.8,
+    "multiRowTransactionShare": 0.35,
+    "burstFactor": 4,
+    "burstEverySeconds": 120,
+    "lateArrivalShare": 0.02
+  }
+}
