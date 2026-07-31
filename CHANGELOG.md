@@ -6,6 +6,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- An experiment lab (`experiments/`) benchmarks contested engine designs as
+  checksum-verified head-to-heads on both reference machines; verdicts and
+  three literature results that failed to replicate are recorded in
+  `experiments/RESULTS.md` and ratified as architecture decisions.
+- A production-shaped workload (`benchmark/workloads/commerce-production-v1`)
+  models multi-tenant commerce with Zipf skew, correlated statuses, lifecycle
+  mutations, and a cascade-delete negative control, with smoke/ci/full
+  profiles and phased execution including a mixed CDC read/write phase.
+- Versioned benchmark datasets live in the pintail-ds repository with sha256
+  manifests; runs load them via `--dataset` using server-side TSV bulk import
+  with deferred index creation, and a provenance check flags aliases the
+  current seeder can no longer reproduce.
+- Production benchmark CI tiers: per-merge ci-profile runs, a nightly with the
+  mixed CDC and kill-restart phases, and a full-profile release gate, all
+  gated on a repository variable for the benchmark host.
+
+### Changed
+
+- Scans partition the requested key range by actual segment overlap: disjoint
+  unique-key clusters decode directly, only overlapping clusters pay the
+  bounded last-write-wins merge, and memtable rows are served range-aware —
+  previously any WAL row or overlap forced every row through the k-way merge.
+- The release benchmark measures all engines on the same host under identical
+  CPU/memory limits, adds a ReplacingMergeTree-with-FINAL fair reference,
+  reports median-of-five warm runs, and fails on any result differing from
+  MySQL; the previous cross-host ClickHouse comparison is retired.
+- Column vectors build packed typed projections (integers, floats, string
+  views, scaled-i128 decimals parsed once from their text carrier) during
+  construction; comparison filters and SUM/AVG aggregates resolve from packed
+  values instead of walking or re-parsing per-row `Value`s, with row-at-a-time
+  semantics preserved as the fallback (text comparisons keep their
+  collation-aware path).
+
 ## [M9] - 2026-07-30
 
 ### Added
