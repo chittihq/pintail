@@ -1707,6 +1707,11 @@ struct AggregateGroup {
 struct AggregateState {
     value: AggregateValue,
     seen: Option<HashSet<Value>>,
+    /// f64 of the current Minimum/Maximum extreme when known (typed path).
+    /// Guides comparisons: strict f64 inequality between correctly-rounded
+    /// values transfers to the exact ordering (rounding is monotone), so only
+    /// f64 ties pay the full text/value comparison. Invalidated on merge.
+    extreme_number: Option<f64>,
 }
 
 enum AggregateValue {
@@ -1731,6 +1736,7 @@ impl AggregateState {
         Self {
             value,
             seen: aggregate.distinct.then(HashSet::new),
+            extreme_number: None,
         }
     }
 
@@ -1792,26 +1798,36 @@ impl AggregateState {
             }
             AggregateValue::Minimum(minimum) => {
                 let replace = match minimum.as_ref() {
-                    Some(current) => {
-                        compare_aggregate_values(value, current, aggregate.data_type)?
-                            == Ordering::Less
-                    }
+                    Some(current) => match (number, self.extreme_number) {
+                        (Some(candidate), Some(extreme)) if candidate < extreme => true,
+                        (Some(candidate), Some(extreme)) if candidate > extreme => false,
+                        _ => {
+                            compare_aggregate_values(value, current, aggregate.data_type)?
+                                == Ordering::Less
+                        }
+                    },
                     None => true,
                 };
                 if replace {
                     replace_retained_value(minimum, value.clone(), memory)?;
+                    self.extreme_number = number;
                 }
             }
             AggregateValue::Maximum(maximum) => {
                 let replace = match maximum.as_ref() {
-                    Some(current) => {
-                        compare_aggregate_values(value, current, aggregate.data_type)?
-                            == Ordering::Greater
-                    }
+                    Some(current) => match (number, self.extreme_number) {
+                        (Some(candidate), Some(extreme)) if candidate > extreme => true,
+                        (Some(candidate), Some(extreme)) if candidate < extreme => false,
+                        _ => {
+                            compare_aggregate_values(value, current, aggregate.data_type)?
+                                == Ordering::Greater
+                        }
+                    },
                     None => true,
                 };
                 if replace {
                     replace_retained_value(maximum, value.clone(), memory)?;
+                    self.extreme_number = number;
                 }
             }
             AggregateValue::GroupConcat(values) => {
@@ -1831,6 +1847,9 @@ impl AggregateState {
         mut other: Self,
         memory: &mut MemoryTracker,
     ) -> Result<(), ExecError> {
+        // Merging may replace the extreme through the Value path; the cached
+        // f64 guide is conservative-invalidated rather than tracked.
+        self.extreme_number = None;
         if aggregate.distinct {
             for value in other.seen.take().unwrap_or_default() {
                 self.update(aggregate, &value, memory)?;
@@ -2857,6 +2876,22 @@ fn update_aggregate_states(
             Some(expression) => {
                 if let Some(column) = expression.column_index() {
                     let value = direct_group_value(batch, row, column)?;
+                    let is_extreme = matches!(
+                        aggregate.function,
+                        AggregateFunction::Minimum | AggregateFunction::Maximum
+                    );
+                    // Min/Max take a typed number when available to guide
+                    // comparisons but never pay a text parse for it — the
+                    // fallback parse is reserved for float-accumulating
+                    // aggregates that need the number unconditionally.
+                    if is_extreme && !matches!(value, Value::Null) {
+                        let number = batch
+                            .column(column)
+                            .and_then(super::ColumnVector::typed)
+                            .and_then(|(typed, _)| typed.number_at(row));
+                        state.update_with_number(aggregate, value, number, memory)?;
+                        continue;
+                    }
                     let number = if aggregate_uses_float(aggregate) && !matches!(value, Value::Null)
                     {
                         if let Some((_, number)) = numeric_cache[..numeric_cache_len]
