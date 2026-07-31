@@ -16,6 +16,66 @@ pub(crate) enum TypedValues {
     UInt64(Vec<u64>),
     Float64(Vec<f64>),
     Utf8(StrColumn),
+    /// Scaled-integer decimals parsed once at vector construction from the
+    /// canonical text carrier (docs/decisions.md, "Decimals and dates execute
+    /// natively"). `values[i] = decimal * 10^scale`. The scale rides along
+    /// for the aggregation kernels that consume it next.
+    #[allow(dead_code)] // scale consumed by the upcoming typed SUM/AVG kernels
+    Decimal128 {
+        values: Vec<i128>,
+        scale: u8,
+    },
+}
+
+/// Parses canonical decimal text into a scaled i128. Conservative: returns
+/// `None` (falling back to text semantics) on any digit beyond `scale`,
+/// malformed byte, or overflow — never silently rounds.
+pub(crate) fn parse_decimal_scaled(text: &str, scale: u8) -> Option<i128> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let (negative, rest) = match bytes[0] {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let mut integer: i128 = 0;
+    let mut fraction: i128 = 0;
+    let mut fraction_digits: u8 = 0;
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+    for &byte in rest {
+        match byte {
+            b'0'..=b'9' => {
+                seen_digit = true;
+                let digit = i128::from(byte - b'0');
+                if seen_dot {
+                    if fraction_digits < scale {
+                        fraction = fraction.checked_mul(10)?.checked_add(digit)?;
+                        fraction_digits += 1;
+                    } else if digit != 0 {
+                        return None;
+                    }
+                } else {
+                    integer = integer.checked_mul(10)?.checked_add(digit)?;
+                }
+            }
+            b'.' if !seen_dot => seen_dot = true,
+            _ => return None,
+        }
+    }
+    if !seen_digit {
+        return None;
+    }
+    while fraction_digits < scale {
+        fraction = fraction.checked_mul(10)?;
+        fraction_digits += 1;
+    }
+    let magnitude = integer
+        .checked_mul(10_i128.checked_pow(u32::from(scale))?)?
+        .checked_add(fraction)?;
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 /// One typed, nullable, columnar value vector.
@@ -43,12 +103,18 @@ impl ColumnVector {
     ///
     /// Returns [`BatchError::WrongValueType`] when a non-null value does not
     /// match the declared logical type.
+    #[allow(clippy::too_many_lines)]
     pub fn new(data_type: DataType, values: Vec<Value>) -> Result<Self, BatchError> {
         let mut validity = Vec::with_capacity(values.len());
         let mut int64 = Some(Vec::with_capacity(values.len()));
         let mut uint64 = Some(Vec::with_capacity(values.len()));
         let mut float64 = Some(Vec::with_capacity(values.len()));
         let mut utf8 = Some(StrColumn::default());
+        let decimal_scale = match data_type {
+            DataType::Decimal { scale, .. } => Some(scale),
+            _ => None,
+        };
+        let mut decimal = decimal_scale.map(|_| Vec::with_capacity(values.len()));
         for (row, value) in values.iter().enumerate() {
             if let Some(actual) = value.data_type()
                 && !data_type.accepts(actual)
@@ -74,6 +140,9 @@ impl ColumnVector {
                     if let Some(packed) = utf8.as_mut() {
                         packed.push(&[]);
                     }
+                    if let Some(packed) = decimal.as_mut() {
+                        packed.push(0);
+                    }
                 }
                 Value::Int64(v) => {
                     if let Some(packed) = int64.as_mut() {
@@ -82,6 +151,7 @@ impl ColumnVector {
                     uint64 = None;
                     float64 = None;
                     utf8 = None;
+                    decimal = None;
                 }
                 Value::UInt64(v) => {
                     if let Some(packed) = uint64.as_mut() {
@@ -90,6 +160,7 @@ impl ColumnVector {
                     int64 = None;
                     float64 = None;
                     utf8 = None;
+                    decimal = None;
                 }
                 Value::Float64(v) => {
                     if let Some(packed) = float64.as_mut() {
@@ -98,10 +169,17 @@ impl ColumnVector {
                     int64 = None;
                     uint64 = None;
                     utf8 = None;
+                    decimal = None;
                 }
                 Value::Utf8(text) => {
                     if let Some(packed) = utf8.as_mut() {
                         packed.push(text.as_bytes());
+                    }
+                    if let (Some(packed), Some(scale)) = (decimal.as_mut(), decimal_scale) {
+                        match parse_decimal_scaled(text, scale) {
+                            Some(scaled) => packed.push(scaled),
+                            None => decimal = None,
+                        }
                     }
                     int64 = None;
                     uint64 = None;
@@ -112,11 +190,18 @@ impl ColumnVector {
                     uint64 = None;
                     float64 = None;
                     utf8 = None;
+                    decimal = None;
                 }
             }
         }
         let typed = if values.is_empty() {
             None
+        } else if let (Some(packed), Some(scale)) = (decimal.take(), decimal_scale) {
+            // Decimal outranks the Utf8 carrier: kernels get scaled integers.
+            Some(TypedValues::Decimal128 {
+                values: packed,
+                scale,
+            })
         } else if let Some(packed) = int64 {
             Some(TypedValues::Int64(packed))
         } else if let Some(packed) = uint64 {
@@ -181,6 +266,9 @@ impl ColumnVector {
             Some((TypedValues::UInt64(packed), _)) => packed.capacity() * size_of::<u64>(),
             Some((TypedValues::Float64(packed), _)) => packed.capacity() * size_of::<f64>(),
             Some((TypedValues::Utf8(packed), _)) => packed.len() * 16 + packed.heap().len(),
+            Some((TypedValues::Decimal128 { values: packed, .. }, _)) => {
+                packed.capacity() * size_of::<i128>()
+            }
         };
         size_of::<Self>()
             + self.values.capacity() * size_of::<Value>()
@@ -606,5 +694,63 @@ mod tests {
                 actual: 4
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod typed_projection_tests {
+    use super::*;
+
+    #[test]
+    fn decimal_columns_pack_to_scaled_i128() {
+        let vector = ColumnVector::new(
+            DataType::Decimal {
+                precision: 18,
+                scale: 4,
+            },
+            vec![
+                Value::Utf8("123.4500".into()),
+                Value::Null,
+                Value::Utf8("-0.0001".into()),
+                Value::Utf8("7".into()),
+            ],
+        )
+        .expect("decimal vector");
+        let (typed, validity) = vector.typed().expect("typed projection");
+        let TypedValues::Decimal128 { values, scale } = typed else {
+            panic!("expected decimal projection, got {typed:?}");
+        };
+        assert_eq!(*scale, 4);
+        assert_eq!(values, &[1_234_500, 0, -1, 70_000]);
+        assert!(!validity.is_valid(1));
+        assert_eq!(validity.count_valid(), 3);
+    }
+
+    #[test]
+    fn unparseable_decimal_text_falls_back_to_utf8_views() {
+        let vector = ColumnVector::new(
+            DataType::Decimal {
+                precision: 10,
+                scale: 2,
+            },
+            vec![
+                Value::Utf8("12.34".into()),
+                Value::Utf8("not-a-number".into()),
+            ],
+        )
+        .expect("vector");
+        let (typed, _) = vector.typed().expect("typed projection");
+        assert!(matches!(typed, TypedValues::Utf8(_)));
+    }
+
+    #[test]
+    fn parse_decimal_rejects_precision_loss_and_garbage() {
+        assert_eq!(parse_decimal_scaled("10.5", 2), Some(1050));
+        assert_eq!(parse_decimal_scaled("10.505", 2), None);
+        assert_eq!(parse_decimal_scaled("10.500", 2), Some(1050));
+        assert_eq!(parse_decimal_scaled("", 2), None);
+        assert_eq!(parse_decimal_scaled(".", 2), None);
+        assert_eq!(parse_decimal_scaled("-3", 0), Some(-3));
+        assert_eq!(parse_decimal_scaled("1e5", 2), None);
     }
 }
