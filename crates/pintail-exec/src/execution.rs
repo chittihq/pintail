@@ -2851,7 +2851,14 @@ fn update_aggregate_states(
                         {
                             Some(*number)
                         } else {
-                            let number = mysql_f64(value)?;
+                            // Packed projections resolve without per-row text
+                            // parsing; mysql_f64 remains the fallback carrier
+                            // path (docs/decisions.md, native decimal ADR).
+                            let number = batch
+                                .column(column)
+                                .and_then(super::ColumnVector::typed)
+                                .and_then(|(typed, _)| typed.number_at(row))
+                                .map_or_else(|| mysql_f64(value), Ok)?;
                             if numeric_cache_len < numeric_cache.len() {
                                 numeric_cache[numeric_cache_len] = Some((column, number));
                                 numeric_cache_len += 1;

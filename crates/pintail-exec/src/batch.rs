@@ -27,6 +27,39 @@ pub(crate) enum TypedValues {
     },
 }
 
+impl TypedValues {
+    /// The row's numeric value for float-accumulating aggregates, straight
+    /// from packed storage. Matches `mysql_f64` semantics bit-for-bit inside
+    /// f64's exact integer range: dividing an exactly-represented scaled
+    /// integer by an exact power of ten is correctly rounded, the same result
+    /// text parsing produces.
+    pub(crate) fn number_at(&self, row: usize) -> Option<f64> {
+        const POW10: [f64; 19] = [
+            1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+            1e16, 1e17, 1e18,
+        ];
+        match self {
+            Self::Int64(values) => {
+                let value = *values.get(row)?;
+                #[allow(clippy::cast_precision_loss)]
+                Some(value as f64)
+            }
+            Self::UInt64(values) => {
+                let value = *values.get(row)?;
+                #[allow(clippy::cast_precision_loss)]
+                Some(value as f64)
+            }
+            Self::Float64(values) => values.get(row).copied(),
+            Self::Decimal128 { values, scale } => {
+                let value = *values.get(row)?;
+                #[allow(clippy::cast_precision_loss)]
+                Some(value as f64 / POW10[usize::from(*scale).min(18)])
+            }
+            Self::Utf8(_) => None,
+        }
+    }
+}
+
 /// Parses canonical decimal text into a scaled i128. Conservative: returns
 /// `None` (falling back to text semantics) on any digit beyond `scale`,
 /// malformed byte, or overflow — never silently rounds.
