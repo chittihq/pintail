@@ -1456,6 +1456,9 @@ fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> 
     Ok(())
 }
 
+/// Dense direct-address join table: (minimum key, per-offset build buckets).
+type DenseJoinTable<'a> = (i128, Vec<Option<&'a Vec<Vec<Value>>>>);
+
 struct HashJoinState {
     build: HashMap<JoinHashKey, Vec<Vec<Value>>>,
     batch: Option<RecordBatch>,
@@ -2295,9 +2298,53 @@ fn build_fused_inner_join_aggregate(
         .iter()
         .map(|column| column - left_width)
         .collect::<Vec<_>>();
+    const MAX_DENSE_SPAN: i128 = 1 << 22;
     let build_start = memory.used();
     let join = build_hash_join_state(right, right_key, *key_mode, memory)?;
     let build_reserved = memory.used().saturating_sub(build_start);
+    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
+    // Integer-mode build keys occupying a small dense range trade the
+    // per-probe evaluate+hash for one bounds-checked index lookup. MySQL
+    // auto-increment keys make this the common case, not the exception.
+    let dense: Option<DenseJoinTable<'_>> =
+        if matches!(key_mode, JoinKeyMode::Integer) && !join.build.is_empty() {
+            let mut min = i128::MAX;
+            let mut max = i128::MIN;
+            let mut integers = true;
+            for key in join.build.keys() {
+                match key {
+                    JoinHashKey::NegativeInteger(value) => {
+                        min = min.min(i128::from(*value));
+                        max = max.max(i128::from(*value));
+                    }
+                    JoinHashKey::NonNegativeInteger(value) => {
+                        min = min.min(i128::from(*value));
+                        max = max.max(i128::from(*value));
+                    }
+                    _ => {
+                        integers = false;
+                        break;
+                    }
+                }
+            }
+            if integers && max - min < MAX_DENSE_SPAN {
+                let span = usize::try_from(max - min).expect("bounded span") + 1;
+                let mut table: Vec<Option<&Vec<Vec<Value>>>> = vec![None; span];
+                for (key, bucket) in &join.build {
+                    let value = match key {
+                        JoinHashKey::NegativeInteger(value) => i128::from(*value),
+                        JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
+                        _ => unreachable!("verified integer keys"),
+                    };
+                    table[usize::try_from(value - min).expect("within span")] = Some(bucket);
+                }
+                Some((min, table))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     loop {
         let mut batches = Vec::with_capacity(8);
@@ -2340,6 +2387,7 @@ fn build_fused_inner_join_aggregate(
                     &right_group_columns,
                     aggregates,
                     &join.build,
+                    dense.as_ref(),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -2385,12 +2433,13 @@ fn build_fused_inner_join_aggregate(
         memory.release(local_upper.saturating_add(batch_reserved));
     }
 
+    drop(dense);
     drop(join);
     memory.release(build_reserved);
     Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_local_fused_join_groups(
     batch: &RecordBatch,
     left_key: &CompiledExpr,
@@ -2399,16 +2448,54 @@ fn build_local_fused_join_groups(
     right_group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
+    dense: Option<&DenseJoinTable<'_>>,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut memory = MemoryTracker::new(usize::MAX);
+    // Probe through the dense table when the left key is a packed integer
+    // column; Integer key mode guarantees those physical variants, and NULL
+    // rows skip exactly as normalized_join_key's None does.
+    let left_typed = dense.and_then(|_| {
+        left_key
+            .column_index()
+            .and_then(|column| batch.column(column))
+            .and_then(ColumnVector::typed)
+            .filter(|(typed, _)| {
+                matches!(
+                    typed,
+                    crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
+                )
+            })
+    });
     for row in batch.selection().selected_rows() {
-        let Some(key) = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? else {
-            continue;
-        };
-        let Some(matches) = build.get(&key) else {
-            continue;
+        let matches = if let (Some((min, table)), Some((typed, validity))) = (dense, left_typed) {
+            if !validity.is_valid(row) {
+                continue;
+            }
+            let candidate = match typed {
+                crate::batch::TypedValues::Int64(values) => i128::from(values[row]),
+                crate::batch::TypedValues::UInt64(values) => i128::from(values[row]),
+                _ => unreachable!("filtered to integer projections"),
+            };
+            let Some(offset) = candidate
+                .checked_sub(*min)
+                .and_then(|delta| usize::try_from(delta).ok())
+            else {
+                continue;
+            };
+            match table.get(offset) {
+                Some(Some(bucket)) => *bucket,
+                _ => continue,
+            }
+        } else {
+            let Some(key) = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? else {
+                continue;
+            };
+            let Some(matches) = build.get(&key) else {
+                continue;
+            };
+            matches
         };
         for right_values in matches {
             let raw_hash = joined_right_group_hash(right_values, right_group_columns)?;
