@@ -3159,7 +3159,7 @@ fn build_sort(
 ) -> Result<MaterializedRows, ExecError> {
     let compare = |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys);
     let mut rows = if let Some(top_k) = top_k {
-        materialize_top_k(input, top_k, compare, memory)?
+        materialize_top_k(input, top_k, keys, compare, memory)?
     } else {
         materialize(input, memory)?
     };
@@ -3170,6 +3170,7 @@ fn build_sort(
 fn materialize_top_k(
     input: &mut PullOperator,
     top_k: usize,
+    keys: &[BoundOrderKey],
     compare: impl Copy + FnMut(&Vec<Value>, &Vec<Value>) -> Ordering,
     memory: &mut MemoryTracker,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
@@ -3177,6 +3178,13 @@ fn materialize_top_k(
         return Ok(Vec::new());
     }
     let mut rows = Vec::new();
+    // Threshold prefilter (experiments/RESULTS.md e03): once k rows are
+    // retained, their current worst acts as a cutoff — rows comparing
+    // STRICTLY worse on the sort keys can never enter the top k and are
+    // skipped before any column values are cloned. Rows tying the threshold
+    // are kept, so the candidate set stays a superset and selection
+    // semantics are unchanged.
+    let mut threshold: Option<Vec<Value>> = None;
     while let Some(batch) = input.next_batch(memory)? {
         let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
@@ -3185,6 +3193,24 @@ fn materialize_top_k(
         )?;
         reserve_vec_elements(&mut rows, additional_rows, 0, memory)?;
         for row in batch.selection().selected_rows() {
+            if let Some(threshold_row) = &threshold {
+                let mut ordering = Ordering::Equal;
+                for key in keys {
+                    let candidate = batch
+                        .column(key.index)
+                        .and_then(|column| column.value(row))
+                        .unwrap_or(&Value::Null);
+                    let retained = threshold_row.get(key.index).unwrap_or(&Value::Null);
+                    let key_ordering = compare_sort_values(candidate, retained, *key);
+                    if key_ordering != Ordering::Equal {
+                        ordering = key_ordering;
+                        break;
+                    }
+                }
+                if ordering == Ordering::Greater {
+                    continue;
+                }
+            }
             let row_bytes =
                 estimated_batch_row_bytes(&batch, row)?.saturating_sub(size_of::<Vec<Value>>());
             memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
@@ -3216,6 +3242,11 @@ fn materialize_top_k(
                         .saturating_mul(size_of::<Vec<Value>>()),
                 ),
             );
+            let mut compare = compare;
+            threshold = rows
+                .iter()
+                .max_by(|left, right| compare(left, right))
+                .cloned();
         }
     }
     Ok(rows)
