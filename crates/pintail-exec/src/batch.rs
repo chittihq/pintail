@@ -48,7 +48,20 @@ pub(crate) fn parse_date_days(text: &str) -> Option<i64> {
         digit(bytes[0])? * 1000 + digit(bytes[1])? * 100 + digit(bytes[2])? * 10 + digit(bytes[3])?;
     let month = digit(bytes[5])? * 10 + digit(bytes[6])?;
     let day = digit(bytes[8])? * 10 + digit(bytes[9])?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if !(1..=12).contains(&month) || day < 1 {
+        return None;
+    }
+    // Reject impossible calendar dates: the day-count arithmetic below would
+    // otherwise normalize 2023-02-31 onto the same epoch day as 2023-03-03,
+    // letting an invalid literal match a valid stored date.
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if day > month_days {
         return None;
     }
     let adjusted_year = if month <= 2 { year - 1 } else { year };
@@ -78,7 +91,8 @@ pub(crate) fn parse_datetime_micros(text: &str) -> Option<i64> {
     let mut micros = 0_i64;
     let mut digits = 0_u32;
     if bytes.len() > 19 {
-        if bytes[19] != b'.' || bytes.len() > 26 {
+        // A trailing dot with no fractional digits is not canonical.
+        if bytes[19] != b'.' || bytes.len() == 20 || bytes.len() > 26 {
             return None;
         }
         for &byte in &bytes[20..] {
@@ -966,6 +980,22 @@ mod temporal_tests {
         assert_eq!(parse_date_days("2023-01-01"), Some(19_358));
         assert_eq!(parse_date_days("2023-1-1"), None);
         assert_eq!(parse_date_days("not-a-date"), None);
+    }
+
+    #[test]
+    fn impossible_calendar_dates_are_rejected() {
+        assert_eq!(parse_date_days("2023-02-29"), None);
+        assert_eq!(parse_date_days("2023-02-30"), None);
+        assert_eq!(parse_date_days("2023-02-31"), None);
+        assert_eq!(parse_date_days("2024-02-29"), Some(19_782)); // leap year
+        assert_eq!(parse_date_days("1900-02-29"), None); // century, not leap
+        assert_eq!(parse_date_days("2000-02-29"), Some(11_016)); // 400-year leap
+        assert_eq!(parse_date_days("2023-04-31"), None);
+        assert_eq!(parse_date_days("2023-06-31"), None);
+        assert_eq!(parse_date_days("2023-00-10"), None);
+        assert_eq!(parse_date_days("2023-05-00"), None);
+        assert_eq!(parse_datetime_micros("2023-02-31 00:00:00"), None);
+        assert_eq!(parse_datetime_micros("2023-01-01 00:00:00."), None);
     }
 
     #[test]
