@@ -2088,16 +2088,42 @@ pub(crate) fn read_projected_columns(
     end_row: usize,
     memory: &ScanMemoryBudget<'_>,
 ) -> Result<ProjectedColumnFetch, StoreError> {
+    read_projected_column_ranges(
+        directory,
+        meta,
+        schema,
+        projection,
+        std::slice::from_ref(&(start_row..end_row)),
+        memory,
+    )
+}
+
+/// Decodes several disjoint ascending row ranges of every projected column
+/// into packed columnar storage, skipping blocks wholly outside every range
+/// (the storage primitive behind filter-first late materialization).
+#[allow(clippy::too_many_lines)]
+pub(crate) fn read_projected_column_ranges(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    projection: &[usize],
+    ranges: &[std::ops::Range<usize>],
+    memory: &ScanMemoryBudget<'_>,
+) -> Result<ProjectedColumnFetch, StoreError> {
     let path = directory.join(&meta.file_name);
     verify(directory, meta, schema)?;
     let mut decoder = FileDecoder::open(&path)?;
     let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
-    if start_row > end_row || end_row > header.row_count {
-        return Err(StoreError::FormatLimit(
-            "projected row range exceeds segment row count".into(),
-        ));
+    let mut previous_end = 0_usize;
+    for range in ranges {
+        if range.start > range.end || range.end > header.row_count || range.start < previous_end {
+            return Err(StoreError::FormatLimit(
+                "projected row ranges must be ascending, disjoint, and in bounds".into(),
+            ));
+        }
+        previous_end = range.end;
     }
-    let selected_rows = end_row - start_row;
+    let selected_rows = ranges.iter().map(std::ops::Range::len).sum::<usize>();
     let mut builders: Vec<Option<ColumnBuilder>> = (0..projection.len()).map(|_| None).collect();
     let mut found = vec![false; projection.len()];
     let mut reserved_bytes = 0_usize;
@@ -2147,8 +2173,25 @@ pub(crate) fn read_projected_columns(
         let mut block_start = 0_usize;
         for _ in 0..block_count {
             let block_limit = block_start.saturating_add(header.block_rows);
-            let selected =
-                projected_position.is_some() && block_start < end_row && block_limit > start_row;
+            let selected = projected_position.is_some()
+                && ranges
+                    .iter()
+                    .any(|range| block_start < range.end && block_limit > range.start);
+            // Block-relative intersections of the requested ranges, clamped
+            // to the target block span (the last block may be shorter; row
+            // loops clamp naturally).
+            let block_ranges = || {
+                ranges
+                    .iter()
+                    .filter(|range| block_start < range.end && block_limit > range.start)
+                    .map(|range| {
+                        (
+                            range.start.saturating_sub(block_start),
+                            range.end.saturating_sub(block_start),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
             let block = if let (Some(position), true, LogicalType::Utf8) =
                 (projected_position, selected, logical_type)
             {
@@ -2164,8 +2207,7 @@ pub(crate) fn read_projected_columns(
                     memory,
                     Utf8Sink {
                         builder,
-                        lo: start_row.saturating_sub(block_start),
-                        hi: end_row.saturating_sub(block_start),
+                        ranges: RangeCursor::new(block_ranges()),
                     },
                 )?;
                 blocks_decoded += 1;
@@ -2187,22 +2229,32 @@ pub(crate) fn read_projected_columns(
                 .ok_or_else(|| corrupt_here(&path, &decoder, "column row count overflow"))?;
             if let (Some(position), Some(cells)) = (projected_position, block.cells) {
                 blocks_decoded += 1;
-                let lo = start_row.max(block_start) - block_start;
-                let hi = end_row.min(block_end).saturating_sub(block_start);
-                if lo < hi {
-                    let builder = builders[position]
-                        .as_mut()
-                        .expect("builder exists for a projected column");
-                    let before = builder.heap_len_bytes();
-                    for cell in cells.into_iter().skip(lo).take(hi - lo) {
+                let builder = builders[position]
+                    .as_mut()
+                    .expect("builder exists for a projected column");
+                let before = builder.heap_len_bytes();
+                let block_rows = block_end - block_start;
+                let mut cells = cells.into_iter();
+                let mut consumed = 0_usize;
+                for (lo, hi) in block_ranges() {
+                    let lo = lo.min(block_rows);
+                    let hi = hi.min(block_rows);
+                    if lo >= hi {
+                        continue;
+                    }
+                    for _ in consumed..lo {
+                        cells.next();
+                    }
+                    for cell in cells.by_ref().take(hi - lo) {
                         builder
                             .push(cell)
                             .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
                     }
-                    let appended = builder.heap_len_bytes().saturating_sub(before);
-                    memory.reserve(appended)?;
-                    reserved_bytes = reserved_bytes.saturating_add(appended);
+                    consumed = hi;
                 }
+                let appended = builder.heap_len_bytes().saturating_sub(before);
+                memory.reserve(appended)?;
+                reserved_bytes = reserved_bytes.saturating_add(appended);
             }
             block_start = block_end;
         }
@@ -2479,8 +2531,27 @@ struct BlockRead {
 /// allocates no per-cell `String`.
 struct Utf8Sink<'a> {
     builder: &'a mut ColumnBuilder,
-    lo: usize,
-    hi: usize,
+    ranges: RangeCursor,
+}
+
+/// Ascending membership test over sorted, disjoint block-relative row
+/// ranges; rows must be queried in ascending order.
+struct RangeCursor {
+    ranges: Vec<(usize, usize)>,
+    index: usize,
+}
+
+impl RangeCursor {
+    fn new(ranges: Vec<(usize, usize)>) -> Self {
+        Self { ranges, index: 0 }
+    }
+
+    fn contains(&mut self, row: usize) -> bool {
+        while self.index < self.ranges.len() && self.ranges[self.index].1 <= row {
+            self.index += 1;
+        }
+        self.index < self.ranges.len() && self.ranges[self.index].0 <= row
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2766,6 +2837,7 @@ where
 /// Decodes one string block payload straight into a column builder's arena.
 /// Values are UTF-8-validated once per distinct payload (per cell for Plain,
 /// per entry for `Dictionary`, per run for `RunLength`) — never cloned per row.
+#[allow(clippy::too_many_lines)]
 fn decode_utf8_payload_into(
     bytes: &[u8],
     encoding: Encoding,
@@ -2774,7 +2846,10 @@ fn decode_utf8_payload_into(
     null_bitmap: &[u8],
     sink: Utf8Sink<'_>,
 ) -> Result<(), String> {
-    let Utf8Sink { builder, lo, hi } = sink;
+    let Utf8Sink {
+        builder,
+        mut ranges,
+    } = sink;
     let mut decoder = Decoder::new(bytes);
     let is_null = |row: usize| null_bitmap[row / 8] & (1 << (row % 8)) != 0;
     let validate = |value: &[u8]| {
@@ -2786,7 +2861,7 @@ fn decode_utf8_payload_into(
     match encoding {
         Encoding::Plain => {
             for row in 0..row_count {
-                let in_range = row >= lo && row < hi;
+                let in_range = ranges.contains(row);
                 if is_null(row) {
                     if in_range {
                         builder.push(Cell::Null)?;
@@ -2810,7 +2885,7 @@ fn decode_utf8_payload_into(
                 entries.push(entry);
             }
             for row in 0..row_count {
-                let in_range = row >= lo && row < hi;
+                let in_range = ranges.contains(row);
                 if is_null(row) {
                     if in_range {
                         builder.push(Cell::Null)?;
@@ -2833,7 +2908,7 @@ fn decode_utf8_payload_into(
             let mut run_remaining = 0_usize;
             let mut run_value: &[u8] = &[];
             for row in 0..row_count {
-                let in_range = row >= lo && row < hi;
+                let in_range = ranges.contains(row);
                 if is_null(row) {
                     if in_range {
                         builder.push(Cell::Null)?;
@@ -3649,6 +3724,120 @@ fn corrupt_here(
     reason: impl Into<String>,
 ) -> StoreError {
     corrupt(path, decoder.decode_position(), reason)
+}
+
+#[cfg(test)]
+mod range_read_tests {
+    use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
+
+    use super::{Compression, ScanMemoryBudget, read_projected_column_ranges, write};
+
+    #[test]
+    fn multi_range_reads_match_concatenated_single_ranges() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "label", DataType::Utf8, true),
+                Column::new(
+                    3,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    true,
+                ),
+            ],
+        )
+        .expect("schema");
+        let rows = (0..100_u64)
+            .map(|id| {
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                    vec![
+                        Value::UInt64(id),
+                        if id % 7 == 0 {
+                            Value::Null
+                        } else {
+                            Value::Utf8(format!("label-{id}"))
+                        },
+                        Value::Utf8(format!("{id}.25")),
+                    ],
+                    1,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        // Small blocks so ranges straddle block boundaries.
+        let meta = write(
+            directory.path(),
+            1,
+            &schema,
+            &rows,
+            16,
+            Compression::Lz4,
+            true,
+        )
+        .expect("write segment");
+
+        let budget_cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&budget_cell, usize::MAX);
+        let projection = [0_usize, 1, 2];
+        let ranges = [3..9_usize, 15..17, 16 + 16..80, 99..100];
+        let multi = read_projected_column_ranges(
+            directory.path(),
+            &meta,
+            &schema,
+            &projection,
+            &ranges,
+            &budget,
+        )
+        .expect("multi-range read");
+        let mut expected: Vec<Vec<Value>> = vec![Vec::new(); projection.len()];
+        for range in &ranges {
+            let single = read_projected_column_ranges(
+                directory.path(),
+                &meta,
+                &schema,
+                &projection,
+                std::slice::from_ref(range),
+                &budget,
+            )
+            .expect("single-range read");
+            for (column, values) in expected.iter_mut().zip(single.columns) {
+                column.extend(values.into_values());
+            }
+        }
+        let actual = multi
+            .columns
+            .into_iter()
+            .map(super::super::store::DecodedColumn::into_values)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "multi-range equals concatenated singles");
+        assert_eq!(
+            actual[0].len(),
+            ranges
+                .iter()
+                .map(std::iter::ExactSizeIterator::len)
+                .sum::<usize>()
+        );
+
+        let backwards = [10..20_usize, 5..8];
+        assert!(
+            read_projected_column_ranges(
+                directory.path(),
+                &meta,
+                &schema,
+                &projection,
+                &backwards,
+                &budget,
+            )
+            .is_err(),
+            "unsorted ranges are rejected"
+        );
+    }
 }
 
 #[cfg(test)]
