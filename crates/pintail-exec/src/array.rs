@@ -190,6 +190,10 @@ impl StrView {
     }
 
     /// Equality against a needle prepared once per batch.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a long-string heap offset exceeds the platform pointer width.
     #[must_use]
     pub fn eq_bytes(&self, needle: &StrView, needle_bytes: &[u8], heap: &[u8]) -> bool {
         if self.len != needle.len || self.prefix != needle.prefix {
@@ -207,6 +211,10 @@ impl StrView {
 impl StrView {
     /// Runs `f` over the string's bytes without allocating, copying at most
     /// 12 inline bytes to the stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a long-string heap offset exceeds the platform pointer width.
     pub fn with_bytes<R>(&self, heap: &[u8], f: impl FnOnce(&[u8]) -> R) -> R {
         let len = self.len as usize;
         if len <= INLINE_LEN {
