@@ -2661,6 +2661,7 @@ fn merge_finished_value(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_hash_aggregate(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
@@ -4263,11 +4264,64 @@ fn build_streaming_two_pass_aggregate(
     )
     .then(StringIntern::default);
 
+    let parallel_keys = matches!(
+        keys,
+        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. }
+    );
+    let mut window: Vec<RecordBatch> = Vec::new();
+    let mut window_reserved = 0_usize;
+    let mut window_rows = 0_usize;
     let mut batch = Some(first);
     loop {
         let Some(current) = batch.take() else {
             break;
         };
+        if parallel_keys {
+            let rows = current.visible_row_count();
+            let need = rows
+                .saturating_mul(scatter_row_bytes)
+                .saturating_add(current.estimated_bytes());
+            if let Err(error) = memory.reserve(need) {
+                drain_two_pass_window(
+                    &mut window,
+                    keys,
+                    lanes,
+                    aggregates,
+                    partitions,
+                    &mut maps,
+                    memory,
+                    &mut group_reserved,
+                    &mut window_reserved,
+                )?;
+                window_rows = 0;
+                flushes += 1;
+                if memory.reserve(need).is_err() {
+                    return Err(error);
+                }
+            }
+            window_reserved = window_reserved.saturating_add(need);
+            window_rows += rows;
+            window.push(current);
+            if window_rows.saturating_mul(scatter_row_bytes) >= flush_bytes
+                || (scan_floor > 0 && memory.remaining() < scan_floor)
+            {
+                drain_two_pass_window(
+                    &mut window,
+                    keys,
+                    lanes,
+                    aggregates,
+                    partitions,
+                    &mut maps,
+                    memory,
+                    &mut group_reserved,
+                    &mut window_reserved,
+                )?;
+                window_rows = 0;
+                flushes += 1;
+            }
+            batch = input.next_batch(memory)?;
+            continue;
+        }
         let rows = current.visible_row_count();
         let bytes = rows.saturating_mul(scatter_row_bytes);
         if let Err(error) = memory.reserve(bytes) {
@@ -4336,6 +4390,17 @@ fn build_streaming_two_pass_aggregate(
         }
         batch = input.next_batch(memory)?;
     }
+    drain_two_pass_window(
+        &mut window,
+        keys,
+        lanes,
+        aggregates,
+        partitions,
+        &mut maps,
+        memory,
+        &mut group_reserved,
+        &mut window_reserved,
+    )?;
     two_pass_flush(
         &mut buckets,
         &mut maps,
@@ -4738,8 +4803,75 @@ impl StringIntern {
 
 /// Pass 2: fold every partition\'s scattered rows into its typed group
 /// map, in parallel, then clear the buckets (keeping capacity).
+/// Scatters a bounded window of batches in parallel (one bucket set per
+/// batch — no cross-worker sharing) and folds every set in one pass-2
+/// flush. Only int-keyed sources scatter in parallel: string sources
+/// share the intern table and stay on the serial path.
+#[allow(clippy::too_many_arguments)]
+fn drain_two_pass_window(
+    window: &mut Vec<RecordBatch>,
+    keys: TwoPassKeySource,
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    partitions: usize,
+    maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
+    memory: &MemoryTracker,
+    group_reserved: &mut usize,
+    window_reserved: &mut usize,
+) -> Result<(), ExecError> {
+    if window.is_empty() {
+        return Ok(());
+    }
+    let mut sets = window
+        .par_iter()
+        .map(|batch| -> Result<Vec<TwoPassBucket>, ExecError> {
+            let mut buckets: Vec<TwoPassBucket> =
+                (0..partitions).map(|_| TwoPassBucket::default()).collect();
+            match keys {
+                TwoPassKeySource::Int { column, .. } => {
+                    two_pass_scatter_batch(batch, column, lanes, partitions, &mut buckets)?;
+                }
+                TwoPassKeySource::DateParts { parts } => {
+                    two_pass_scatter_date_parts(batch, parts, lanes, partitions, &mut buckets)?;
+                }
+                TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. } => {
+                    unreachable!("string keys stay on the serial scatter path")
+                }
+            }
+            Ok(buckets)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    window.clear();
+    let outcome = two_pass_flush_sets(&mut sets, maps, lanes, aggregates, memory, group_reserved);
+    memory.release(*window_reserved);
+    *window_reserved = 0;
+    outcome
+}
+
 fn two_pass_flush(
     buckets: &mut [TwoPassBucket],
+    maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    group_reserved: &mut usize,
+) -> Result<(), ExecError> {
+    let set: Vec<TwoPassBucket> = buckets.iter_mut().map(std::mem::take).collect();
+    let mut sets = [set];
+    let outcome = two_pass_flush_sets(&mut sets, maps, lanes, aggregates, memory, group_reserved);
+    let [set] = sets;
+    for (destination, bucket) in buckets.iter_mut().zip(set) {
+        *destination = bucket;
+    }
+    outcome
+}
+
+/// Pass 2 over several scatter outputs at once (one per parallel scatter
+/// worker): each partition folds its bucket from EVERY set, so parallel
+/// pass 1 needs no cross-worker merging (e13's shape, bounded windows).
+#[allow(clippy::too_many_lines)]
+fn two_pass_flush_sets(
+    sets: &mut [Vec<TwoPassBucket>],
     maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
@@ -4750,101 +4882,110 @@ fn two_pass_flush(
     let per_group_bytes = size_of::<(u64, bool)>()
         .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
         .saturating_add(32);
+    let sets_ref: &[Vec<TwoPassBucket>] = sets;
     let added = maps
         .par_iter_mut()
-        .zip(buckets.par_iter_mut())
-        .map(|(map, bucket)| -> Result<usize, ExecError> {
+        .enumerate()
+        .map(|(partition, map)| -> Result<usize, ExecError> {
             let before = map.len();
-            for (row, (key, mask)) in bucket.keys.iter().zip(&bucket.masks).enumerate() {
-                let key_null = mask & (1 << 7) != 0;
-                let states = map
-                    .entry((*key, key_null))
-                    .or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
-                for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
-                    if mask & (1 << lane_index) != 0 {
-                        continue;
-                    }
-                    let bits = bucket.lanes[row * lane_count + lane_index];
-                    match lane {
-                        TwoPassLane::CountStar => {
-                            states[lane_index].update(aggregate, &Value::UInt64(1), memory)?;
+            for set in sets_ref {
+                let bucket = &set[partition];
+                for (row, (key, mask)) in bucket.keys.iter().zip(&bucket.masks).enumerate() {
+                    let key_null = mask & (1 << 7) != 0;
+                    let states = map
+                        .entry((*key, key_null))
+                        .or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+                    for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate()
+                    {
+                        if mask & (1 << lane_index) != 0 {
+                            continue;
                         }
-                        TwoPassLane::DecimalUnits {
-                            scale,
-                            float_output,
-                            ..
-                        } => {
-                            let units = i64::from_ne_bytes(bits.to_ne_bytes());
-                            states[lane_index].update_decimal_sum_units(
-                                i128::from(units),
-                                *scale,
-                                *float_output,
-                            )?;
-                        }
-                        TwoPassLane::ExtremeDecimal { scale, .. } => {
-                            let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
-                            states[lane_index].update_extreme_units(
-                                aggregate,
-                                units,
-                                || Some(pintail_types::format_decimal_scaled(units, *scale)),
-                                memory,
-                            )?;
-                        }
-                        TwoPassLane::Distinct { data_type, .. } => {
-                            let key = if *data_type == DataType::Int64 {
-                                i128::from(i64::from_ne_bytes(bits.to_ne_bytes()))
-                            } else {
-                                i128::from(bits)
-                            };
-                            states[lane_index].update_distinct_count_int(key, memory)?;
-                        }
-                        TwoPassLane::Float { .. } => {
-                            let number = f64::from_bits(bits);
-                            states[lane_index].update_with_number(
-                                aggregate,
-                                &Value::float64(number),
-                                Some(number),
-                                memory,
-                            )?;
-                        }
-                        TwoPassLane::Int { data_type, .. } => {
-                            let value = two_pass_key_value(bits, false, *data_type);
-                            // number=None keeps integer sums on the
-                            // exact integer branch, as sequential does.
-                            states[lane_index]
-                                .update_with_number(aggregate, &value, None, memory)?;
-                        }
-                        TwoPassLane::Exact { data_type, .. } => {
-                            let value = two_pass_key_value(bits, false, *data_type);
-                            let number = match &value {
-                                Value::Int64(v) =>
-                                {
-                                    #[allow(clippy::cast_precision_loss)]
-                                    Some(*v as f64)
-                                }
-                                Value::UInt64(v) =>
-                                {
-                                    #[allow(clippy::cast_precision_loss)]
-                                    Some(*v as f64)
-                                }
-                                Value::Float64(v) => Some(v.get()),
-                                _ => None,
-                            };
-                            states[lane_index]
-                                .update_with_number(aggregate, &value, number, memory)?;
+                        let bits = bucket.lanes[row * lane_count + lane_index];
+                        match lane {
+                            TwoPassLane::CountStar => {
+                                states[lane_index].update(aggregate, &Value::UInt64(1), memory)?;
+                            }
+                            TwoPassLane::DecimalUnits {
+                                scale,
+                                float_output,
+                                ..
+                            } => {
+                                let units = i64::from_ne_bytes(bits.to_ne_bytes());
+                                states[lane_index].update_decimal_sum_units(
+                                    i128::from(units),
+                                    *scale,
+                                    *float_output,
+                                )?;
+                            }
+                            TwoPassLane::ExtremeDecimal { scale, .. } => {
+                                let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
+                                states[lane_index].update_extreme_units(
+                                    aggregate,
+                                    units,
+                                    || Some(pintail_types::format_decimal_scaled(units, *scale)),
+                                    memory,
+                                )?;
+                            }
+                            TwoPassLane::Distinct { data_type, .. } => {
+                                let key = if *data_type == DataType::Int64 {
+                                    i128::from(i64::from_ne_bytes(bits.to_ne_bytes()))
+                                } else {
+                                    i128::from(bits)
+                                };
+                                states[lane_index].update_distinct_count_int(key, memory)?;
+                            }
+                            TwoPassLane::Float { .. } => {
+                                let number = f64::from_bits(bits);
+                                states[lane_index].update_with_number(
+                                    aggregate,
+                                    &Value::float64(number),
+                                    Some(number),
+                                    memory,
+                                )?;
+                            }
+                            TwoPassLane::Int { data_type, .. } => {
+                                let value = two_pass_key_value(bits, false, *data_type);
+                                // number=None keeps integer sums on the
+                                // exact integer branch, as sequential does.
+                                states[lane_index]
+                                    .update_with_number(aggregate, &value, None, memory)?;
+                            }
+                            TwoPassLane::Exact { data_type, .. } => {
+                                let value = two_pass_key_value(bits, false, *data_type);
+                                let number = match &value {
+                                    Value::Int64(v) =>
+                                    {
+                                        #[allow(clippy::cast_precision_loss)]
+                                        Some(*v as f64)
+                                    }
+                                    Value::UInt64(v) =>
+                                    {
+                                        #[allow(clippy::cast_precision_loss)]
+                                        Some(*v as f64)
+                                    }
+                                    Value::Float64(v) => Some(v.get()),
+                                    _ => None,
+                                };
+                                states[lane_index]
+                                    .update_with_number(aggregate, &value, number, memory)?;
+                            }
                         }
                     }
                 }
             }
-            bucket.keys.clear();
-            bucket.masks.clear();
-            bucket.lanes.clear();
             let new_groups = map.len().saturating_sub(before);
             let bytes = new_groups.saturating_mul(per_group_bytes);
             memory.reserve(bytes)?;
             Ok(bytes)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    for set in sets.iter_mut() {
+        for bucket in set.iter_mut() {
+            bucket.keys.clear();
+            bucket.masks.clear();
+            bucket.lanes.clear();
+        }
+    }
     *group_reserved = group_reserved.saturating_add(added.into_iter().sum());
     Ok(())
 }
