@@ -894,7 +894,10 @@ fn build_prewhere_spec(scan: &Scan, snapshot: &TableSnapshot) -> Option<Prewhere
         || !predicate_ids
             .iter()
             .all(|id| scan.projected_column_ids.contains(id))
+        || predicate_ids.len() >= scan.projected_column_ids.len()
     {
+        // Nothing beyond the predicate columns to skip: two-phase decode
+        // could only add work.
         return None;
     }
     let mut layout = Vec::with_capacity(predicate_ids.len());
@@ -1007,7 +1010,12 @@ fn prewhere_ranges(
     if ranges.is_empty() {
         return Ok(Some(Vec::new()));
     }
-    if ranges.len() == 1 && ranges[0] == (0..row_count) {
+    // Two-phase decode reads the predicate columns twice, so it only pays
+    // off when it skips real bytes. Scattered survivors coalesce into
+    // near-full coverage (Q5's uniform date filter regressed 2x this way);
+    // above 90% coverage, plain decode wins.
+    let selected: usize = ranges.iter().map(std::iter::ExactSizeIterator::len).sum();
+    if selected.saturating_mul(10) >= row_count.saturating_mul(9) {
         return Ok(None);
     }
     Ok(Some(ranges))
