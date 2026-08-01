@@ -150,11 +150,27 @@ async function buildPintail(): Promise<string> {
 async function startPintail(): Promise<void> {
   const port = 18099
   pintailUrl = `http://127.0.0.1:${port}`
+  // The wire endpoint has no disable switch; an ephemeral loopback bind
+  // keeps it out of the way.
   pintailProcess = Bun.spawn(
-    [pintailBinary, '--data-dir', pintailDataDir, '--http-port', String(port), '--no-wire'],
-    { cwd: repository, stdout: 'pipe', stderr: 'pipe' },
+    [
+      pintailBinary,
+      '--data-dir',
+      pintailDataDir,
+      '--http-bind',
+      `127.0.0.1:${port}`,
+      '--wire-bind',
+      '127.0.0.1:0',
+    ],
+    // Inherit rather than pipe: unread pipes hide every runtime error and
+    // eventually fill and block the server's logging. This way pintail's
+    // tracing lands in the runner's own output.
+    { cwd: repository, stdout: 'inherit', stderr: 'inherit' },
   )
   for (let attempt = 0; attempt < 240; attempt += 1) {
+    if (pintailProcess.exitCode !== null) {
+      throw new Error(`pintail exited during startup (exit ${pintailProcess.exitCode})`)
+    }
     try {
       const response = await fetch(`${pintailUrl}/health`)
       if (response.ok) return
@@ -183,6 +199,10 @@ async function setupPintail(mysqlHost: string, mysqlPort: number): Promise<void>
     },
   })
   pintailDb = database.id
+  // The control plane refuses to snapshot an unprobed database (the probe
+  // discovers tables and capabilities); the dashboard wizard does this
+  // implicitly, API callers must do it explicitly.
+  await api(`/api/databases/${pintailDb}/probe`)
   const accepted = await api<{ run_id: string }>(`/api/databases/${pintailDb}/snapshot`, {
     method: 'POST', body: { force: false },
   })
