@@ -199,8 +199,8 @@ async function freePort(): Promise<number> {
   })
 }
 
-async function waitForMysql(host: string, port: number) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+async function waitForMysql(host: string, port: number, attempts = 120) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const connection = await mysql.createConnection({
         host,
@@ -825,7 +825,9 @@ async function main() {
     // Snapshot the freshly seeded datadir for later runs: stop mysqld for a
     // consistent copy, capture its volume, and bring it back.
     log(`caching seeded datadir as volume ${seedVolumeName}`)
-    await docker('stop', mysqlName)
+    // A freshly seeded InnoDB needs minutes to flush on shutdown; the
+    // default 10s grace would SIGKILL it and taint the cached datadir.
+    await docker('stop', '--timeout', '600', mysqlName)
     await docker('volume', 'create', seedVolumeName)
     await docker(
       'run',
@@ -840,7 +842,8 @@ async function main() {
       'cp -a /var/lib/mysql/. /to/',
     )
     await docker('start', mysqlName)
-    mysqlConnection = await waitForMysql(host, mysqlPort)
+    // Restart after a heavy seed can replay redo for a while.
+    mysqlConnection = await waitForMysql(host, mysqlPort, 1200)
   }
   await importClickhouse(clickhouseUrl)
 
