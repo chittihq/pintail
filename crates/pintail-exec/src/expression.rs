@@ -495,10 +495,21 @@ impl CompiledExpr {
             } => {
                 if let ScalarFunction::DatePart(part) = function
                     && let [argument] = args.as_slice()
-                    && let Some(value) = argument.direct_value(batch, row)
-                    && let Some(value) = evaluate_direct_date_part(value, *part)
                 {
-                    return value;
+                    // Packed temporal units first: extracting from i64
+                    // units never touches the column's lazy text (the
+                    // 2026-08-02 phase-0 profile put ~half of Q5 in
+                    // formatting 20M dates only to reparse them here).
+                    if let Self::Column(index) = argument
+                        && let Some(value) = evaluate_units_date_part(batch, *index, row, *part)
+                    {
+                        return value;
+                    }
+                    if let Some(value) = argument.direct_value(batch, row)
+                        && let Some(value) = evaluate_direct_date_part(value, *part)
+                    {
+                        return value;
+                    }
                 }
                 evaluate_scalar(*function, args, *data_type, batch, row)
             }
@@ -678,6 +689,61 @@ fn scalar_string_upper_bound(value: &Value) -> usize {
         Value::Utf8(value) => value.len(),
         Value::Binary(value) => value.len(),
     }
+}
+
+/// Date-part extraction straight from packed temporal units. Returns
+/// `None` when the column does not carry units (the caller falls back to
+/// the text paths).
+fn evaluate_units_date_part(
+    batch: &RecordBatch,
+    column: usize,
+    row: usize,
+    part: DatePart,
+) -> Option<Result<Value, ExecError>> {
+    use crate::batch::TypedValues;
+    let vector = batch.column(column)?;
+    let (typed, validity) = vector.typed()?;
+    let TypedValues::Temporal { units, .. } = typed else {
+        return None;
+    };
+    if !validity.is_valid(row) {
+        return Some(Ok(Value::Null));
+    }
+    let unit = *units.get(row)?;
+    let (days, second_of_day) = match vector.data_type() {
+        DataType::Date32 => (unit, None),
+        DataType::DateTime64 { .. } => {
+            const MICROS_PER_DAY: i64 = 86_400_000_000;
+            (
+                unit.div_euclid(MICROS_PER_DAY),
+                Some(unit.rem_euclid(MICROS_PER_DAY) / 1_000_000),
+            )
+        }
+        _ => return None,
+    };
+    let value = match part {
+        DatePart::Year | DatePart::Month | DatePart::Day => {
+            let (year, month, day) = pintail_types::civil_from_days(days);
+            match part {
+                DatePart::Year => u64::try_from(year).unwrap_or(0),
+                DatePart::Month => u64::try_from(month).unwrap_or(0),
+                DatePart::Day => u64::try_from(day).unwrap_or(0),
+                _ => unreachable!(),
+            }
+        }
+        DatePart::Hour | DatePart::Minute | DatePart::Second => {
+            // MySQL's HOUR/MINUTE/SECOND of a plain DATE are 0.
+            let second_of_day = second_of_day.unwrap_or(0);
+            let value = match part {
+                DatePart::Hour => second_of_day / 3600,
+                DatePart::Minute => second_of_day / 60 % 60,
+                DatePart::Second => second_of_day % 60,
+                _ => unreachable!(),
+            };
+            u64::try_from(value).unwrap_or(0)
+        }
+    };
+    Some(Ok(Value::UInt64(value)))
 }
 
 fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Value, ExecError>> {

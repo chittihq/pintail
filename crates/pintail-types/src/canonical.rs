@@ -201,8 +201,10 @@ pub fn format_decimal_scaled(value: i128, scale: u8) -> String {
 }
 
 /// Hinnant's `civil_from_days`: the inverse of the day-count arithmetic in
-/// [`parse_date_days`].
-const fn civil_from_days(days: i64) -> (i64, i64, i64) {
+/// [`parse_date_days`]. Public so the executor can extract date parts from
+/// packed units without a text round-trip.
+#[must_use]
+pub const fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let shifted = days + 719_468;
     let era = shifted.div_euclid(146_097);
     let day_of_era = shifted.rem_euclid(146_097);
