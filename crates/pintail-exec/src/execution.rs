@@ -1905,8 +1905,31 @@ struct AggregateGroup {
 /// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); the
 /// first non-integer key migrates the set to normalized Values.
 enum DistinctSeen {
-    Ints(HashSet<i128>),
+    Ints(HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>),
     Values(HashSet<Value>),
+}
+
+/// splitmix-style hasher for raw integer distinct keys: `SipHash` cost is
+/// pure overhead here — the keys are column data in a per-query set, not
+/// a persistent attacker-fed table.
+#[derive(Default)]
+struct IntKeyHasher(u64);
+
+impl std::hash::Hasher for IntKeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        unreachable!("integer distinct keys hash through write_i128");
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn write_i128(&mut self, value: i128) {
+        let low = value as u64;
+        let high = (value >> 64) as u64;
+        self.0 = crate::batch::mix64(low ^ high.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    }
 }
 
 fn int_distinct_key(value: &Value) -> Option<i128> {
@@ -2044,7 +2067,7 @@ impl AggregateState {
             value,
             seen: aggregate
                 .distinct
-                .then(|| DistinctSeen::Ints(HashSet::new())),
+                .then(|| DistinctSeen::Ints(HashSet::default())),
             extreme_number: None,
             extreme_units: None,
         }
@@ -4955,8 +4978,8 @@ where
     Ok(actual)
 }
 
-fn reserve_hash_set_entries<T>(
-    values: &mut HashSet<T>,
+fn reserve_hash_set_entries<T, S>(
+    values: &mut HashSet<T, S>,
     additional: usize,
     entry_bytes: usize,
     transient_bytes: usize,
@@ -4964,6 +4987,7 @@ fn reserve_hash_set_entries<T>(
 ) -> Result<usize, ExecError>
 where
     T: Eq + Hash,
+    S: std::hash::BuildHasher,
 {
     let required = values.len().saturating_add(additional);
     if required <= values.capacity() {
