@@ -847,6 +847,9 @@ async function main() {
     mysqlPort = await publishedPort(mysqlName, 3306)
     mysqlConnection = await waitForMysql(host, mysqlPort, 1200)
   }
+  // Neither the restored-volume connection nor the post-snapshot reconnect
+  // has a default schema; the seed path only gets one via USE in seed.sql.
+  await mysqlConnection.query('USE benchmark_db')
   await importClickhouse(clickhouseUrl)
 
   let pintailUrl: string
