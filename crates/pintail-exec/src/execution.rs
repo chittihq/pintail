@@ -2330,10 +2330,31 @@ fn build_buffered_hash_aggregate(
             position: 0,
         });
     };
-    // Single int-typed group columns previously diverted to the serial
-    // build_direct_column_aggregate; per experiments/RESULTS.md e02,
-    // thread-local partial groups + merge win at both low and high
-    // cardinality, so they stay on the buffered parallel path below.
+    if let Some([column]) = direct_columns
+        && first_batch.column(*column).is_some_and(|values| {
+            matches!(
+                values.data_type().storage_type(),
+                DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
+            )
+        })
+    {
+        // Single int-typed group columns take the sequential direct path:
+        // its scalar index avoids the per-row Vec<Value> keys and the
+        // per-round global merges that the buffered parallel path pays.
+        // Routing them through the parallel path regressed Q6 (2M groups
+        // over 20M rows) from seconds to minutes — e02's parallel win used
+        // dense arrays at low cardinality and does not transfer to sparse
+        // high-cardinality keys. Parallel high-cardinality aggregation
+        // needs a partitioned design and its own experiment first.
+        return build_direct_column_aggregate(
+            input,
+            Some(first_batch),
+            direct_columns.expect("matched direct columns"),
+            aggregates,
+            memory,
+        );
+    }
+
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     let mut first_batch = Some(first_batch);
     loop {
