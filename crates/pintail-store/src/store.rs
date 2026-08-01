@@ -2872,6 +2872,32 @@ impl TableSnapshot {
             .then(|| (self.directory.as_path(), self.manifest.generation))
     }
 
+    /// The segment-resident identity plus the memtable rows, when every
+    /// memtable row is a pure insert above the segment key space (no
+    /// tombstones, no updates of segment rows). The delta-maintained
+    /// aggregate memo merges these rows onto the generation-keyed result;
+    /// any overlap or delete makes the merge unsound and returns `None`.
+    #[must_use]
+    pub fn insert_only_delta(&self) -> Option<(&std::path::Path, u64, Vec<&StoredRow>)> {
+        if self.memtable.is_empty() {
+            return None;
+        }
+        let max_segment_key = self
+            .manifest
+            .segments
+            .iter()
+            .map(|meta| &meta.max_key)
+            .max();
+        let mut rows = Vec::with_capacity(self.memtable.len());
+        for row in self.memtable.values() {
+            if row.is_deleted() || max_segment_key.is_some_and(|max| row.key() <= max) {
+                return None;
+            }
+            rows.push(row);
+        }
+        Some((self.directory.as_path(), self.manifest.generation, rows))
+    }
+
     /// Opens a reader-only snapshot without claiming the table writer lock.
     ///
     /// The reader pins one durable manifest and merges complete WAL records

@@ -528,6 +528,46 @@ pub trait BatchStream: Send {
     fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, Vec<u32>)> {
         None
     }
+
+    /// The insert-only memtable delta over the segment-resident identity,
+    /// when the memo can merge it (bare full-table scan, pure inserts
+    /// above the segment key space, bounded row count). Default: none.
+    #[must_use]
+    fn insert_only_delta(&self) -> Option<InsertOnlyDelta> {
+        None
+    }
+}
+
+/// Projected memtable rows riding above a generation-keyed aggregate memo
+/// entry: aggregating these few rows and merging finished values onto the
+/// memoized result keeps answers exact DURING ingest (issue #6 WS3).
+#[derive(Clone)]
+pub struct InsertOnlyDelta {
+    pub(crate) directory: std::path::PathBuf,
+    pub(crate) generation: u64,
+    pub(crate) projection: Vec<u32>,
+    pub(crate) types: Vec<DataType>,
+    pub(crate) rows: Vec<Vec<Value>>,
+}
+
+/// One-batch stream feeding the delta rows through the normal aggregate
+/// machinery.
+struct OneShotStream {
+    batch: Option<RecordBatch>,
+}
+
+impl BatchStream for OneShotStream {
+    fn next_batch(&mut self, _available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        Ok(self.batch.take())
+    }
+
+    fn retained_bytes(&self) -> usize {
+        0
+    }
+
+    fn next_batch_memory_upper_bound(&self) -> usize {
+        0
+    }
 }
 
 /// Opens storage scans for physical execution.
@@ -2546,6 +2586,81 @@ fn settled_signature(
 }
 
 #[allow(clippy::too_many_lines)]
+/// Merges finished aggregate values of a memoized result with a freshly
+/// aggregated insert-only delta, group by group. Only called for shapes
+/// whose finished values merge exactly (COUNT/int-float SUM/MIN/MAX).
+fn merge_finished_aggregate_rows(
+    mut base: Vec<Vec<Value>>,
+    delta: Vec<Vec<Value>>,
+    group_len: usize,
+    aggregates: &[CompiledAggregate],
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    let mut index = HashMap::<Vec<Value>, usize>::new();
+    for (position, row) in base.iter().enumerate() {
+        let key = row[..group_len]
+            .iter()
+            .cloned()
+            .map(normalized_collation_value)
+            .collect::<Vec<_>>();
+        index.insert(key, position);
+    }
+    for row in delta {
+        let key = row[..group_len]
+            .iter()
+            .cloned()
+            .map(normalized_collation_value)
+            .collect::<Vec<_>>();
+        if let Some(position) = index.get(&key) {
+            for (offset, aggregate) in aggregates.iter().enumerate() {
+                let column = group_len + offset;
+                let current = std::mem::replace(&mut base[*position][column], Value::Null);
+                base[*position][column] = merge_finished_value(aggregate, current, &row[column])?;
+            }
+        } else {
+            index.insert(key, base.len());
+            base.push(row);
+        }
+    }
+    Ok(base)
+}
+
+fn merge_finished_value(
+    aggregate: &CompiledAggregate,
+    current: Value,
+    delta: &Value,
+) -> Result<Value, ExecError> {
+    if matches!(delta, Value::Null) {
+        return Ok(current);
+    }
+    if matches!(current, Value::Null) {
+        return Ok(delta.clone());
+    }
+    match aggregate.function {
+        AggregateFunction::Count => {
+            add_aggregate_value(Some(current), delta, Some(DataType::UInt64))
+        }
+        AggregateFunction::Sum => add_aggregate_value(Some(current), delta, aggregate.data_type),
+        AggregateFunction::Minimum => Ok(
+            if compare_aggregate_values(delta, &current, aggregate.data_type)? == Ordering::Less {
+                delta.clone()
+            } else {
+                current
+            },
+        ),
+        AggregateFunction::Maximum => Ok(
+            if compare_aggregate_values(delta, &current, aggregate.data_type)? == Ordering::Greater
+            {
+                delta.clone()
+            } else {
+                current
+            },
+        ),
+        AggregateFunction::Average | AggregateFunction::GroupConcat => Err(
+            ExecError::InvalidPhysicalPlan("unmergeable aggregate reached the delta merge"),
+        ),
+    }
+}
+
 fn build_hash_aggregate(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
@@ -2583,6 +2698,66 @@ fn build_hash_aggregate(
             .sum();
         memory.reserve(payload)?;
         return Ok(MaterializedRows { rows, position: 0 });
+    }
+    if memo_key.is_none()
+        && let PullOperator::Scan { stream, .. } = &*input
+        && let Some(delta) = stream.insert_only_delta()
+        && let Some(signature) = settled_signature(group_by, aggregates)
+        && aggregates.iter().all(|aggregate| {
+            !aggregate.distinct
+                && match aggregate.function {
+                    AggregateFunction::Count
+                    | AggregateFunction::Minimum
+                    | AggregateFunction::Maximum => true,
+                    AggregateFunction::Sum => matches!(
+                        aggregate.data_type,
+                        Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
+                    ),
+                    AggregateFunction::Average | AggregateFunction::GroupConcat => false,
+                }
+        })
+    {
+        let key = (
+            delta.directory.clone(),
+            delta.generation,
+            format!("p{:?};{signature}", delta.projection),
+        );
+        let base = SETTLED_AGGREGATE_MEMO
+            .lock()
+            .expect("settled memo lock")
+            .get(&key)
+            .cloned();
+        if let Some(base) = base {
+            let row_count = delta.rows.len();
+            let columns = (0..delta.types.len())
+                .map(|column| {
+                    ColumnVector::new(
+                        delta.types[column],
+                        delta.rows.iter().map(|row| row[column].clone()).collect(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| ExecError::InvalidBatch("delta rows do not match the scan types"))?;
+            let batch = RecordBatch::new(row_count, columns)
+                .map_err(|_| ExecError::InvalidBatch("delta rows do not form a batch"))?;
+            let mut one_shot = PullOperator::Scan {
+                stream: Box::new(OneShotStream { batch: Some(batch) }),
+                expected_types: delta.types.clone(),
+            };
+            let delta_rows =
+                build_hash_aggregate_scan(&mut one_shot, group_by, aggregates, memory)?;
+            let merged =
+                merge_finished_aggregate_rows(base, delta_rows.rows, group_by.len(), aggregates)?;
+            let payload: usize = merged
+                .iter()
+                .map(|row| estimated_row_payload_bytes(row))
+                .sum();
+            memory.reserve(payload)?;
+            return Ok(MaterializedRows {
+                rows: merged,
+                position: 0,
+            });
+        }
     }
     let result = build_hash_aggregate_scan(input, group_by, aggregates, memory)?;
     if let Some(key) = memo_key

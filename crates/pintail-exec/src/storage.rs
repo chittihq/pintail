@@ -232,6 +232,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 retained_bytes: stream_overhead,
                 remaining: None,
                 settled: None,
+                delta: None,
             }));
         };
         let unique_keys = self.unique_visibility.get(&key);
@@ -260,6 +261,30 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 [key_id] => scan.projected_column_ids.iter().position(|id| id == key_id),
                 _ => None,
             };
+            // Bounded so merging never costs more than it saves.
+            #[allow(clippy::items_after_statements)]
+            const DELTA_ROW_CAP: usize = 4096;
+            let delta = (scan.predicates.is_empty() && scan.limit.is_none())
+                .then(|| snapshot.insert_only_delta())
+                .flatten()
+                .filter(|(_, _, rows)| rows.len() <= DELTA_ROW_CAP)
+                .map(
+                    |(directory, generation, rows)| crate::execution::InsertOnlyDelta {
+                        directory: directory.to_path_buf(),
+                        generation,
+                        projection: scan.projected_column_ids.clone(),
+                        types: types.clone(),
+                        rows: rows
+                            .iter()
+                            .map(|row| {
+                                output_positions
+                                    .iter()
+                                    .map(|position| row.values()[*position].clone())
+                                    .collect()
+                            })
+                            .collect(),
+                    },
+                );
             return Ok(Box::new(SnapshotStream {
                 rows: VecDeque::new(),
                 columns: Vec::new(),
@@ -288,6 +313,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                             scan.projected_column_ids.clone(),
                         )
                     }),
+                delta,
             }));
         }
         let projected = snapshot
@@ -355,6 +381,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             retained_bytes,
             remaining: None,
             settled: None,
+            delta: None,
         }))
     }
 }
@@ -636,11 +663,18 @@ struct SnapshotStream {
     /// this stream is a bare full-table scan over a settled snapshot (empty
     /// memtable, no predicates, no limit) — the settled aggregate memo key.
     settled: Option<(std::path::PathBuf, u64, Vec<u32>)>,
+    /// Insert-only memtable rows above the segment identity, when the memo
+    /// can merge them (bare scan, bounded delta).
+    delta: Option<crate::execution::InsertOnlyDelta>,
 }
 
 impl BatchStream for SnapshotStream {
     fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, Vec<u32>)> {
         self.settled.clone()
+    }
+
+    fn insert_only_delta(&self) -> Option<crate::execution::InsertOnlyDelta> {
+        self.delta.clone()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2676,11 +2710,19 @@ mod tests {
             .bulk_ingest_snapshot((1001..=1010).map(|key| row(key, "v")).collect())
             .expect("second segment");
         assert_eq!(count(&table, &catalog), Value::UInt64(1010));
-        // Memtable rows make the snapshot unsettled: no memo read OR write,
-        // and the fresh scan sees the new row immediately.
+        // Insert-only memtable rows above the segment key space: the memo
+        // result merges with the delta (COUNT is finished-mergeable), so
+        // answers stay exact DURING ingest.
         table.ingest_cdc(vec![row(1011, "v")]).expect("cdc ingest");
         assert_eq!(count(&table, &catalog), Value::UInt64(1011));
         table.ingest_cdc(vec![row(1012, "v")]).expect("cdc ingest");
+        assert_eq!(count(&table, &catalog), Value::UInt64(1012));
+        // An update of an EXISTING key overlaps the segment key space: the
+        // delta merge must refuse and the full scan stays exact (the row
+        // count is unchanged — key 5 is replaced, not added).
+        table
+            .ingest_cdc(vec![row(5, "updated")])
+            .expect("cdc update");
         assert_eq!(count(&table, &catalog), Value::UInt64(1012));
     }
 

@@ -855,6 +855,15 @@ function publishResults(results: QueryResult[]) {
 }
 
 async function cleanup() {
+  // Engine logs outlive failures: a crashed pintail container's last lines
+  // are the only evidence once cleanup removes it (run #10, socket-closed).
+  try {
+    const logs = await docker('logs', '--tail', '200', pintailName)
+    const merged = [logs.stdout, logs.stderr].filter(Boolean).join('\n')
+    if (merged.trim()) log(`pintail container tail:\n${merged}`)
+  } catch {
+    // Container never started or already gone.
+  }
   if (mysqlConnection) {
     await mysqlConnection.end().catch(() => undefined)
     mysqlConnection = undefined
