@@ -3650,12 +3650,27 @@ fn unpack(decoder: &mut Decoder<'_>, value_count: usize) -> Result<Vec<u64>, Str
         ));
     }
     let mut values = vec![0_u64; value_count];
+    if width == 0 {
+        return Ok(values);
+    }
+    // LSB-first bitstream: value v's bits live at positions v*width.. in
+    // little-endian byte order. A 16-byte window covers the worst case of
+    // 64 bits starting at bit offset 7 within a byte.
+    let width = usize::from(width);
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1_u64 << width) - 1
+    };
     for (value_index, value) in values.iter_mut().enumerate() {
-        for bit in 0..width {
-            let position = value_index * usize::from(width) + usize::from(bit);
-            if bytes[position / 8] & (1 << (position % 8)) != 0 {
-                *value |= 1_u64 << bit;
-            }
+        let bit = value_index * width;
+        let byte = bit / 8;
+        let mut window = [0_u8; 16];
+        let available = (bytes.len() - byte).min(16);
+        window[..available].copy_from_slice(&bytes[byte..byte + available]);
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            *value = (u128::from_le_bytes(window) >> (bit % 8)) as u64 & mask;
         }
     }
     Ok(values)

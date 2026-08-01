@@ -18,6 +18,9 @@ members = [
     "e14-typed-kernels",
     "e15-value-tax",
     "e16-distinct",
+    "e17-morsel-fusion",
+    "e18-block-stats",
+    "e19-compressed-exec",
 ]
 
 [workspace.dependencies]

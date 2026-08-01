@@ -165,6 +165,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "e17-morsel-fusion"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "lz4_flex",
+ "rayon",
+]
+
+[[package]]
+name = "e18-block-stats"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "rayon",
+]
+
+[[package]]
+name = "e19-compressed-exec"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "rayon",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

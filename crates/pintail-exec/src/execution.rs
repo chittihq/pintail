@@ -3173,10 +3173,9 @@ fn build_direct_column_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
-    // Large single-int-column inputs take the two-pass partitioned path
-    // (e13: 4.2-8.9x); small inputs and ineligible aggregate shapes fall
-    // through to the sequential scalar-index loop below.
-    const TWO_PASS_MIN_ROWS: usize = 262_144;
+    // Single-int-column inputs with eligible lanes take the streaming
+    // two-pass partitioned path (e13: 4.2-8.9x); ineligible aggregate
+    // shapes fall through to the sequential scalar-index loop below.
     let mut pending = std::collections::VecDeque::new();
     if let Some(batch) = first_batch.take() {
         pending.push_back(batch);
@@ -3202,72 +3201,23 @@ fn build_direct_column_aggregate(
         let lanes = int_typed
             .then(|| two_pass_lanes(aggregates, &head))
             .flatten();
-        if let (Some(lanes), Some(group_type)) = (lanes, group_type) {
-            // Buffering the whole input is what makes the scatter pass
-            // possible; when the memory budget cannot hold it, hand what
-            // was buffered to the sequential loop instead of failing.
-            let mut batches = vec![head];
-            let mut buffered_rows = batches[0].visible_row_count();
-            let mut buffered_bytes = 0_usize;
-            let mut overflowed = match memory.reserve(batches[0].estimated_bytes()) {
-                Ok(()) => {
-                    buffered_bytes = batches[0].estimated_bytes();
-                    false
-                }
-                Err(ExecError::MemoryLimitExceeded { .. }) => true,
-                Err(error) => return Err(error),
-            };
-            // Cap buffering at 40% of the query budget: the scatter pass
-            // costs about as much as the buffered input again, and the scan
-            // checks its transient upper bound (and adopts batches) against
-            // what remains, so starving it stops the stream mid-query.
-            let buffer_cap = memory.limit() / 5 * 2;
-            let scan_floor = input.scan_transient_floor().saturating_mul(2);
-            while !overflowed {
-                if memory.used() > buffer_cap || (scan_floor > 0 && memory.remaining() < scan_floor)
-                {
-                    overflowed = true;
-                    break;
-                }
-                let Some(batch) = input.next_batch(memory)? else {
-                    break;
-                };
-                let bytes = batch.estimated_bytes();
-                match memory.reserve(bytes) {
-                    Ok(()) => {
-                        buffered_bytes = buffered_bytes.saturating_add(bytes);
-                        buffered_rows += batch.visible_row_count();
-                        batches.push(batch);
-                    }
-                    Err(ExecError::MemoryLimitExceeded { .. }) => {
-                        batches.push(batch);
-                        overflowed = true;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            if !overflowed && buffered_rows >= TWO_PASS_MIN_ROWS {
-                match build_two_pass_direct_aggregate(
-                    &batches, column, group_type, &lanes, aggregates, memory,
-                ) {
-                    Ok(rows) => {
-                        drop(batches);
-                        memory.release(buffered_bytes);
-                        return Ok(rows);
-                    }
-                    // The scatter buckets did not fit either: the batches
-                    // are still intact, so the sequential loop can finish.
-                    Err(ExecError::MemoryLimitExceeded { .. }) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            // Too small to pay the scatter (or it did not fit in memory):
-            // run the sequential loop over the buffered batches.
-            pending.extend(batches);
-            memory.release(buffered_bytes);
-        } else {
-            pending.push_front(head);
+        if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+            eprintln!(
+                "[agg] direct path: int_typed={int_typed} lanes={:?} group_type={group_type:?}",
+                lanes.as_ref().map(std::vec::Vec::len)
+            );
         }
+        if let (Some(lanes), Some(group_type)) = (lanes, group_type) {
+            // Streaming scatter (phase-0 profile, 2026-08-02): retaining
+            // RecordBatches cost ~118 bytes/row and forced the sequential
+            // Value-hashmap fallback on real 20M-row inputs. Scattering
+            // (key bits, lane bits) as batches arrive costs the exact
+            // 8*(1+lanes)+1 bytes/row and never falls back.
+            return build_streaming_two_pass_aggregate(
+                input, head, column, group_type, &lanes, aggregates, memory,
+            );
+        }
+        pending.push_front(head);
     }
     let mut groups = Vec::<AggregateGroup>::new();
     let mut scalar_index = HashMap::<Value, usize>::new();
@@ -3491,15 +3441,17 @@ fn two_pass_key_value(bits: u64, null: bool, data_type: DataType) -> Value {
     }
 }
 
-/// Two-pass partitioned aggregation for one int-typed group column
-/// (experiments/RESULTS.md e13: 4.2-8.9x over the sequential map at
-/// 200k-8M groups; the thread-local-merge shape loses everywhere). Pass 1
-/// scatters (key bits, lane values) into per-worker partition buckets in
-/// parallel; pass 2 aggregates each partition with zero cross-thread
-/// sharing.
+/// Streaming two-pass partitioned aggregation for one int-typed group
+/// column (experiments/RESULTS.md e13/e15 and the 2026-08-02 phase-0
+/// profile). Pass 1 scatters (key bits, lane bits) into partition buckets
+/// as batches arrive — no `RecordBatch` is retained. Pass 2 folds buckets
+/// into per-partition typed hashmaps in parallel whenever the scatter
+/// window fills, so memory is bounded by the group states plus one flush
+/// window regardless of input size.
 #[allow(clippy::too_many_lines)]
-fn build_two_pass_direct_aggregate(
-    batches: &[RecordBatch],
+fn build_streaming_two_pass_aggregate(
+    input: &mut PullOperator,
+    first: RecordBatch,
     group_column: usize,
     group_type: DataType,
     lanes: &[TwoPassLane],
@@ -3508,187 +3460,271 @@ fn build_two_pass_direct_aggregate(
 ) -> Result<MaterializedRows, ExecError> {
     let partitions = std::thread::available_parallelism().map_or(8, usize::from);
     let lane_count = lanes.len();
-    let scatter_bytes = batches
-        .iter()
-        .map(RecordBatch::visible_row_count)
-        .sum::<usize>()
-        .saturating_mul(size_of::<u64>() * (1 + lane_count) + 1);
-    memory.reserve(scatter_bytes)?;
-    // Everything reserved below must be handed back on failure: the caller
-    // falls back to the sequential loop on MemoryLimitExceeded, and a leaked
-    // reservation would strangle that path's budget.
-    let release_on_error = |error: ExecError| {
-        memory.release(scatter_bytes);
-        error
-    };
+    let scatter_row_bytes = size_of::<u64>() * (1 + lane_count) + 1;
+    // Flush the scatter window at a quarter of the budget (bounded to
+    // 1-64 MB) so the scan always keeps its transient headroom.
+    let flush_bytes = (memory.limit() / 4).clamp(1 << 20, 64 << 20);
+    let scan_floor = input.scan_transient_floor().saturating_mul(2);
+    let mut buckets: Vec<TwoPassBucket> =
+        (0..partitions).map(|_| TwoPassBucket::default()).collect();
+    let mut maps: Vec<HashMap<(u64, bool), Vec<AggregateState>>> =
+        (0..partitions).map(|_| HashMap::new()).collect();
+    let mut bucket_reserved = 0_usize;
+    let mut group_reserved = 0_usize;
+    let mut flushes = 0_u32;
 
-    // Pass 1: parallel scatter.
-    let scattered = batches
-        .par_iter()
-        .map(|batch| -> Result<Vec<TwoPassBucket>, ExecError> {
-            let mut buckets: Vec<TwoPassBucket> =
-                (0..partitions).map(|_| TwoPassBucket::default()).collect();
-            let group_values = batch.column(group_column).ok_or(ExecError::InvalidBatch(
-                "grouping column is outside the input batch",
-            ))?;
-            for row in batch.selection().selected_rows() {
-                let value = group_values.value(row).ok_or(ExecError::InvalidBatch(
-                    "grouping row is outside the input batch",
-                ))?;
-                let (key_bits, key_null) = two_pass_key_bits(value)
-                    .ok_or(ExecError::InvalidBatch("two-pass key is not scalar"))?;
-                let mut mask = u8::from(key_null) << 7;
-                let bucket = &mut buckets[usize::try_from(
-                    crate::batch::mix64(key_bits ^ u64::from(key_null)) % partitions as u64,
-                )
-                .expect("partition index fits usize")];
-                let lane_base = bucket.lanes.len();
-                bucket.lanes.resize(lane_base + lane_count, 0);
-                for (lane_index, lane) in lanes.iter().enumerate() {
-                    match lane {
-                        TwoPassLane::CountStar => {}
-                        TwoPassLane::Float { column } => {
-                            let number = batch
-                                .column(*column)
-                                .and_then(|column| {
-                                    let (typed, validity) = column.typed()?;
-                                    validity
-                                        .is_valid(row)
-                                        .then(|| typed.number_at(row))
-                                        .flatten()
-                                })
-                                .or_else(|| {
-                                    batch.column(*column).and_then(|column| {
-                                        match column.value(row) {
-                                            Some(Value::Null) | None => None,
-                                            Some(value) => mysql_f64(value).ok(),
-                                        }
-                                    })
-                                });
-                            match number {
-                                Some(number) => {
-                                    bucket.lanes[lane_base + lane_index] = number.to_bits();
-                                }
-                                None => mask |= 1 << lane_index,
-                            }
-                        }
-                        TwoPassLane::Int { column, .. } | TwoPassLane::Exact { column, .. } => {
-                            match batch.column(*column).and_then(|column| column.value(row)) {
-                                Some(Value::Int64(value)) => {
-                                    bucket.lanes[lane_base + lane_index] =
-                                        u64::from_ne_bytes(value.to_ne_bytes());
-                                }
-                                Some(Value::UInt64(value)) => {
-                                    bucket.lanes[lane_base + lane_index] = *value;
-                                }
-                                Some(Value::Float64(value)) => {
-                                    bucket.lanes[lane_base + lane_index] = value.get().to_bits();
-                                }
-                                Some(Value::Boolean(value)) => {
-                                    bucket.lanes[lane_base + lane_index] = u64::from(*value);
-                                }
-                                _ => mask |= 1 << lane_index,
-                            }
-                        }
-                    }
-                }
-                bucket.keys.push(key_bits);
-                bucket.masks.push(mask);
+    let mut batch = Some(first);
+    loop {
+        let Some(current) = batch.take() else {
+            break;
+        };
+        let rows = current.visible_row_count();
+        let bytes = rows.saturating_mul(scatter_row_bytes);
+        if let Err(error) = memory.reserve(bytes) {
+            // Free the scatter window and retry once; a second failure
+            // means the group states themselves exceed the budget.
+            two_pass_flush(
+                &mut buckets,
+                &mut maps,
+                lanes,
+                aggregates,
+                memory,
+                &mut group_reserved,
+            )?;
+            memory.release(bucket_reserved);
+            bucket_reserved = 0;
+            flushes += 1;
+            match memory.reserve(bytes) {
+                Ok(()) => {}
+                Err(_) => return Err(error),
             }
-            Ok(buckets)
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(release_on_error)?;
+        }
+        bucket_reserved = bucket_reserved.saturating_add(bytes);
+        two_pass_scatter_batch(&current, group_column, lanes, partitions, &mut buckets)?;
+        drop(current);
+        if bucket_reserved >= flush_bytes || (scan_floor > 0 && memory.remaining() < scan_floor) {
+            two_pass_flush(
+                &mut buckets,
+                &mut maps,
+                lanes,
+                aggregates,
+                memory,
+                &mut group_reserved,
+            )?;
+            memory.release(bucket_reserved);
+            bucket_reserved = 0;
+            flushes += 1;
+        }
+        batch = input.next_batch(memory)?;
+    }
+    two_pass_flush(
+        &mut buckets,
+        &mut maps,
+        lanes,
+        aggregates,
+        memory,
+        &mut group_reserved,
+    )?;
+    memory.release(bucket_reserved);
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        let groups: usize = maps.iter().map(HashMap::len).sum();
+        eprintln!(
+            "[agg] streaming two-pass: {groups} groups, {} flushes",
+            flushes + 1
+        );
+    }
 
-    // Pass 2: each partition aggregates alone.
-    let group_rows = (0..partitions)
+    // Finalize each partition in parallel; ORDER BY above owns ordering.
+    let finalized = maps
         .into_par_iter()
-        .map(|partition| -> Result<Vec<Vec<Value>>, ExecError> {
-            let mut groups: HashMap<(u64, bool), Vec<AggregateState>> = HashMap::new();
-            for worker in &scattered {
-                let bucket = &worker[partition];
-                for (row, (key, mask)) in bucket.keys.iter().zip(&bucket.masks).enumerate() {
-                    let key_null = mask & (1 << 7) != 0;
-                    let states = groups
-                        .entry((*key, key_null))
-                        .or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
-                    for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate()
-                    {
-                        if mask & (1 << lane_index) != 0 {
-                            continue;
-                        }
-                        let bits = bucket.lanes[row * lane_count + lane_index];
-                        match lane {
-                            TwoPassLane::CountStar => {
-                                states[lane_index].update(aggregate, &Value::UInt64(1), memory)?;
-                            }
-                            TwoPassLane::Float { .. } => {
-                                let number = f64::from_bits(bits);
-                                states[lane_index].update_with_number(
-                                    aggregate,
-                                    &Value::float64(number),
-                                    Some(number),
-                                    memory,
-                                )?;
-                            }
-                            TwoPassLane::Int { data_type, .. } => {
-                                let value = two_pass_key_value(bits, false, *data_type);
-                                // number=None keeps integer sums on the
-                                // exact integer branch, as sequential does.
-                                states[lane_index]
-                                    .update_with_number(aggregate, &value, None, memory)?;
-                            }
-                            TwoPassLane::Exact { data_type, .. } => {
-                                let value = two_pass_key_value(bits, false, *data_type);
-                                let number = match &value {
-                                    Value::Int64(v) =>
-                                    {
-                                        #[allow(clippy::cast_precision_loss)]
-                                        Some(*v as f64)
-                                    }
-                                    Value::UInt64(v) =>
-                                    {
-                                        #[allow(clippy::cast_precision_loss)]
-                                        Some(*v as f64)
-                                    }
-                                    Value::Float64(v) => Some(v.get()),
-                                    _ => None,
-                                };
-                                states[lane_index]
-                                    .update_with_number(aggregate, &value, number, memory)?;
-                            }
-                        }
-                    }
-                }
-            }
-            let mut rows = Vec::with_capacity(groups.len());
-            for ((bits, null), states) in groups {
-                let mut row = vec![two_pass_key_value(bits, null, group_type)];
+        .map(|map| -> Result<(Vec<Vec<Value>>, usize), ExecError> {
+            let mut rows = Vec::with_capacity(map.len());
+            let mut payload = 0_usize;
+            for ((bits, null), states) in map {
+                let mut row = Vec::with_capacity(1 + states.len());
+                row.push(two_pass_key_value(bits, null, group_type));
                 for state in states {
                     row.push(state.finish(memory)?);
                 }
+                let bytes = estimated_row_payload_bytes(&row);
+                memory.reserve(bytes)?;
+                payload = payload.saturating_add(bytes);
                 rows.push(row);
             }
-            Ok(rows)
+            Ok((rows, payload))
         })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(release_on_error)?;
-    memory.release(scatter_bytes);
-
+        .collect::<Result<Vec<_>, _>>();
+    memory.release(group_reserved);
+    let finalized = finalized?;
     let mut rows = Vec::new();
-    let mut payload_reserved = 0_usize;
-    for partition_rows in group_rows {
-        for row in partition_rows {
-            let bytes = estimated_row_payload_bytes(&row);
-            if let Err(error) = memory.reserve(bytes) {
-                memory.release(payload_reserved);
-                return Err(error);
-            }
-            payload_reserved = payload_reserved.saturating_add(bytes);
-            rows.push(row);
-        }
+    for (partition_rows, _) in finalized {
+        rows.extend(partition_rows);
     }
     Ok(MaterializedRows { rows, position: 0 })
+}
+
+/// Pass 1 for one batch: extract (key bits, lane bits, null mask) per
+/// selected row into the partition buckets. Reservation is the caller\'s.
+fn two_pass_scatter_batch(
+    batch: &RecordBatch,
+    group_column: usize,
+    lanes: &[TwoPassLane],
+    partitions: usize,
+    buckets: &mut [TwoPassBucket],
+) -> Result<(), ExecError> {
+    let lane_count = lanes.len();
+    let group_values = batch.column(group_column).ok_or(ExecError::InvalidBatch(
+        "grouping column is outside the input batch",
+    ))?;
+    for row in batch.selection().selected_rows() {
+        let value = group_values.value(row).ok_or(ExecError::InvalidBatch(
+            "grouping row is outside the input batch",
+        ))?;
+        let (key_bits, key_null) = two_pass_key_bits(value)
+            .ok_or(ExecError::InvalidBatch("two-pass key is not scalar"))?;
+        let mut mask = u8::from(key_null) << 7;
+        let bucket = &mut buckets[usize::try_from(
+            crate::batch::mix64(key_bits ^ u64::from(key_null)) % partitions as u64,
+        )
+        .expect("partition index fits usize")];
+        let lane_base = bucket.lanes.len();
+        bucket.lanes.resize(lane_base + lane_count, 0);
+        for (lane_index, lane) in lanes.iter().enumerate() {
+            match lane {
+                TwoPassLane::CountStar => {}
+                TwoPassLane::Float { column } => {
+                    let number = batch
+                        .column(*column)
+                        .and_then(|column| {
+                            let (typed, validity) = column.typed()?;
+                            validity
+                                .is_valid(row)
+                                .then(|| typed.number_at(row))
+                                .flatten()
+                        })
+                        .or_else(|| {
+                            batch
+                                .column(*column)
+                                .and_then(|column| match column.value(row) {
+                                    Some(Value::Null) | None => None,
+                                    Some(value) => mysql_f64(value).ok(),
+                                })
+                        });
+                    match number {
+                        Some(number) => {
+                            bucket.lanes[lane_base + lane_index] = number.to_bits();
+                        }
+                        None => mask |= 1 << lane_index,
+                    }
+                }
+                TwoPassLane::Int { column, .. } | TwoPassLane::Exact { column, .. } => {
+                    match batch.column(*column).and_then(|column| column.value(row)) {
+                        Some(Value::Int64(value)) => {
+                            bucket.lanes[lane_base + lane_index] =
+                                u64::from_ne_bytes(value.to_ne_bytes());
+                        }
+                        Some(Value::UInt64(value)) => {
+                            bucket.lanes[lane_base + lane_index] = *value;
+                        }
+                        Some(Value::Float64(value)) => {
+                            bucket.lanes[lane_base + lane_index] = value.get().to_bits();
+                        }
+                        Some(Value::Boolean(value)) => {
+                            bucket.lanes[lane_base + lane_index] = u64::from(*value);
+                        }
+                        _ => mask |= 1 << lane_index,
+                    }
+                }
+            }
+        }
+        bucket.keys.push(key_bits);
+        bucket.masks.push(mask);
+    }
+    Ok(())
+}
+
+/// Pass 2: fold every partition\'s scattered rows into its typed group
+/// map, in parallel, then clear the buckets (keeping capacity).
+fn two_pass_flush(
+    buckets: &mut [TwoPassBucket],
+    maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    group_reserved: &mut usize,
+) -> Result<(), ExecError> {
+    let lane_count = lanes.len();
+    let per_group_bytes = size_of::<(u64, bool)>()
+        .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+        .saturating_add(32);
+    let added = maps
+        .par_iter_mut()
+        .zip(buckets.par_iter_mut())
+        .map(|(map, bucket)| -> Result<usize, ExecError> {
+            let before = map.len();
+            for (row, (key, mask)) in bucket.keys.iter().zip(&bucket.masks).enumerate() {
+                let key_null = mask & (1 << 7) != 0;
+                let states = map
+                    .entry((*key, key_null))
+                    .or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+                for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
+                    if mask & (1 << lane_index) != 0 {
+                        continue;
+                    }
+                    let bits = bucket.lanes[row * lane_count + lane_index];
+                    match lane {
+                        TwoPassLane::CountStar => {
+                            states[lane_index].update(aggregate, &Value::UInt64(1), memory)?;
+                        }
+                        TwoPassLane::Float { .. } => {
+                            let number = f64::from_bits(bits);
+                            states[lane_index].update_with_number(
+                                aggregate,
+                                &Value::float64(number),
+                                Some(number),
+                                memory,
+                            )?;
+                        }
+                        TwoPassLane::Int { data_type, .. } => {
+                            let value = two_pass_key_value(bits, false, *data_type);
+                            // number=None keeps integer sums on the
+                            // exact integer branch, as sequential does.
+                            states[lane_index]
+                                .update_with_number(aggregate, &value, None, memory)?;
+                        }
+                        TwoPassLane::Exact { data_type, .. } => {
+                            let value = two_pass_key_value(bits, false, *data_type);
+                            let number = match &value {
+                                Value::Int64(v) =>
+                                {
+                                    #[allow(clippy::cast_precision_loss)]
+                                    Some(*v as f64)
+                                }
+                                Value::UInt64(v) =>
+                                {
+                                    #[allow(clippy::cast_precision_loss)]
+                                    Some(*v as f64)
+                                }
+                                Value::Float64(v) => Some(v.get()),
+                                _ => None,
+                            };
+                            states[lane_index]
+                                .update_with_number(aggregate, &value, number, memory)?;
+                        }
+                    }
+                }
+            }
+            bucket.keys.clear();
+            bucket.masks.clear();
+            bucket.lanes.clear();
+            let new_groups = map.len().saturating_sub(before);
+            let bytes = new_groups.saturating_mul(per_group_bytes);
+            memory.reserve(bytes)?;
+            Ok(bytes)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    *group_reserved = group_reserved.saturating_add(added.into_iter().sum());
+    Ok(())
 }
 
 fn direct_group_value(batch: &RecordBatch, row: usize, column: usize) -> Result<&Value, ExecError> {
