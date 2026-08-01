@@ -220,6 +220,16 @@ impl TypedValues {
     /// f64's exact integer range: dividing an exactly-represented scaled
     /// integer by an exact power of ten is correctly rounded, the same result
     /// text parsing produces.
+    /// One row's plain integer key (int-typed vectors only), for typed
+    /// DISTINCT sets.
+    pub(crate) fn int_key_at(&self, row: usize) -> Option<i128> {
+        match self {
+            Self::Int64(values) => values.get(row).copied().map(i128::from),
+            Self::UInt64(values) => values.get(row).copied().map(i128::from),
+            _ => None,
+        }
+    }
+
     /// One row's scaled/packed integer units, when this vector carries them.
     pub(crate) fn units_at(&self, row: usize) -> Option<i128> {
         match self {

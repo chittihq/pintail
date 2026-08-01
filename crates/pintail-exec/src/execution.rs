@@ -1901,9 +1901,104 @@ struct AggregateGroup {
 }
 
 #[derive(Clone)]
+/// DISTINCT key set. Integer-keyed values dedup through a plain i128 set
+/// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); the
+/// first non-integer key migrates the set to normalized Values.
+enum DistinctSeen {
+    Ints(HashSet<i128>),
+    Values(HashSet<Value>),
+}
+
+fn int_distinct_key(value: &Value) -> Option<i128> {
+    match value {
+        Value::Int64(value) => Some(i128::from(*value)),
+        Value::UInt64(value) => Some(i128::from(*value)),
+        _ => None,
+    }
+}
+
+fn int_key_value(key: i128) -> Value {
+    i64::try_from(key).map_or_else(
+        |_| Value::UInt64(u64::try_from(key).expect("distinct int keys fit u64")),
+        Value::Int64,
+    )
+}
+
+impl DistinctSeen {
+    /// Returns whether the key is new. `false` means the caller must skip
+    /// the aggregate update (already counted).
+    fn insert_value(&mut self, value: &Value, memory: &MemoryTracker) -> Result<bool, ExecError> {
+        if let Some(key) = int_distinct_key(value) {
+            return self.insert_int(key, memory);
+        }
+        if let Self::Ints(_) = self {
+            self.migrate_to_values(memory)?;
+        }
+        let Self::Values(set) = self else {
+            unreachable!()
+        };
+        let key = normalized_hash_key(value.clone()).unwrap_or(Value::Null);
+        reserve_hash_set_entries(
+            set,
+            1,
+            size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD),
+            0,
+            memory,
+        )?;
+        if set.contains(&key) {
+            return Ok(false);
+        }
+        memory.reserve(key.heap_bytes())?;
+        set.insert(key);
+        Ok(true)
+    }
+
+    fn insert_int(&mut self, key: i128, memory: &MemoryTracker) -> Result<bool, ExecError> {
+        match self {
+            Self::Ints(set) => {
+                reserve_hash_set_entries(
+                    set,
+                    1,
+                    size_of::<i128>().saturating_add(HASH_ENTRY_OVERHEAD),
+                    0,
+                    memory,
+                )?;
+                Ok(set.insert(key))
+            }
+            Self::Values(_) => self.insert_value(&int_key_value(key), memory),
+        }
+    }
+
+    fn migrate_to_values(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        if let Self::Ints(ints) = self {
+            let ints = std::mem::take(ints);
+            let mut set = HashSet::with_capacity(ints.len());
+            memory.reserve(
+                ints.len()
+                    .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
+            )?;
+            for key in ints {
+                if let Some(key) = normalized_hash_key(int_key_value(key)) {
+                    set.insert(key);
+                }
+            }
+            *self = Self::Values(set);
+        }
+        Ok(())
+    }
+
+    fn drain_values(self) -> Vec<Value> {
+        match self {
+            Self::Ints(set) => set.into_iter().map(int_key_value).collect(),
+            Self::Values(set) => set.into_iter().collect(),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct AggregateState {
     value: AggregateValue,
-    seen: Option<HashSet<Value>>,
+    seen: Option<DistinctSeen>,
     /// f64 of the current Minimum/Maximum extreme when known (typed path).
     /// Guides comparisons: strict f64 inequality between correctly-rounded
     /// values transfers to the exact ordering (rounding is monotone), so only
@@ -1947,7 +2042,9 @@ impl AggregateState {
         };
         Self {
             value,
-            seen: aggregate.distinct.then(HashSet::new),
+            seen: aggregate
+                .distinct
+                .then(|| DistinctSeen::Ints(HashSet::new())),
             extreme_number: None,
             extreme_units: None,
         }
@@ -1972,20 +2069,10 @@ impl AggregateState {
         if matches!(value, Value::Null) {
             return Ok(());
         }
-        if let Some(seen) = &mut self.seen {
-            let key = normalized_hash_key(value.clone()).unwrap_or(Value::Null);
-            reserve_hash_set_entries(
-                seen,
-                1,
-                size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD),
-                0,
-                memory,
-            )?;
-            if seen.contains(&key) {
-                return Ok(());
-            }
-            memory.reserve(key.heap_bytes())?;
-            seen.insert(key);
+        if let Some(seen) = &mut self.seen
+            && !seen.insert_value(value, memory)?
+        {
+            return Ok(());
         }
         match &mut self.value {
             AggregateValue::Count(count) => {
@@ -2079,8 +2166,10 @@ impl AggregateState {
         // f64 guide is conservative-invalidated rather than tracked.
         self.extreme_number = None;
         if aggregate.distinct {
-            for value in other.seen.take().unwrap_or_default() {
-                self.update(aggregate, &value, memory)?;
+            if let Some(seen) = other.seen.take() {
+                for value in seen.drain_values() {
+                    self.update(aggregate, &value, memory)?;
+                }
             }
             return Ok(());
         }
@@ -2193,6 +2282,32 @@ impl AggregateState {
             }
             _ => Err(ExecError::InvalidPhysicalPlan(
                 "decimal unit sum applied to an incompatible aggregate state",
+            )),
+        }
+    }
+
+    /// COUNT(DISTINCT) on a raw integer key: dedup in the i128 set and
+    /// bump the count only for new keys — no Value cell is built.
+    fn update_distinct_count_int(
+        &mut self,
+        key: i128,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let Some(seen) = &mut self.seen else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "distinct update on a non-distinct aggregate state",
+            ));
+        };
+        if !seen.insert_int(key, memory)? {
+            return Ok(());
+        }
+        match &mut self.value {
+            AggregateValue::Count(count) => {
+                *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+                Ok(())
+            }
+            _ => Err(ExecError::InvalidPhysicalPlan(
+                "distinct int count applied to a non-count aggregate",
             )),
         }
     }
@@ -3972,54 +4087,64 @@ fn update_aggregate_states(
                     // never touches the column's Value cells or lazy text
                     // (2026-08-02 phase-0 profile: whole-column text
                     // forcing dominated the string-keyed paths).
-                    if !aggregate.distinct
-                        && let Some((typed, validity)) =
-                            batch.column(column).and_then(super::ColumnVector::typed)
+                    if let Some((typed, validity)) =
+                        batch.column(column).and_then(super::ColumnVector::typed)
                     {
                         if !validity.is_valid(row) {
                             continue; // NULL joins no aggregate
                         }
-                        match aggregate.function {
-                            AggregateFunction::Count => {
-                                state.update_with_number(
-                                    aggregate,
-                                    &Value::Boolean(true),
-                                    None,
-                                    memory,
-                                )?;
+                        if aggregate.distinct {
+                            // COUNT(DISTINCT int_col): dedup on the raw
+                            // integer, no Value cell (e16).
+                            if matches!(aggregate.function, AggregateFunction::Count)
+                                && let Some(key) = typed.int_key_at(row)
+                            {
+                                state.update_distinct_count_int(key, memory)?;
                                 continue;
                             }
-                            AggregateFunction::Sum if !aggregate_uses_float(aggregate) => {
-                                if let (Some(units), Some(scale)) =
-                                    (typed.units_at(row), typed.decimal_scale())
-                                {
-                                    state.update_decimal_sum_units(units, scale)?;
-                                    continue;
-                                }
-                            }
-                            AggregateFunction::Sum | AggregateFunction::Average => {
-                                if let Some(number) = typed.number_at(row) {
+                        } else {
+                            match aggregate.function {
+                                AggregateFunction::Count => {
                                     state.update_with_number(
                                         aggregate,
                                         &Value::Boolean(true),
-                                        Some(number),
+                                        None,
                                         memory,
                                     )?;
                                     continue;
                                 }
-                            }
-                            AggregateFunction::Minimum | AggregateFunction::Maximum => {
-                                if let Some(units) = typed.units_at(row) {
-                                    state.update_extreme_units(
-                                        aggregate,
-                                        units,
-                                        || typed.format_unit(row),
-                                        memory,
-                                    )?;
-                                    continue;
+                                AggregateFunction::Sum if !aggregate_uses_float(aggregate) => {
+                                    if let (Some(units), Some(scale)) =
+                                        (typed.units_at(row), typed.decimal_scale())
+                                    {
+                                        state.update_decimal_sum_units(units, scale)?;
+                                        continue;
+                                    }
                                 }
+                                AggregateFunction::Sum | AggregateFunction::Average => {
+                                    if let Some(number) = typed.number_at(row) {
+                                        state.update_with_number(
+                                            aggregate,
+                                            &Value::Boolean(true),
+                                            Some(number),
+                                            memory,
+                                        )?;
+                                        continue;
+                                    }
+                                }
+                                AggregateFunction::Minimum | AggregateFunction::Maximum => {
+                                    if let Some(units) = typed.units_at(row) {
+                                        state.update_extreme_units(
+                                            aggregate,
+                                            units,
+                                            || typed.format_unit(row),
+                                            memory,
+                                        )?;
+                                        continue;
+                                    }
+                                }
+                                AggregateFunction::GroupConcat => {}
                             }
-                            AggregateFunction::GroupConcat => {}
                         }
                     }
                     let value = direct_group_value(batch, row, column)?;
