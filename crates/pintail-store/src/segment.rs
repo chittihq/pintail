@@ -2136,6 +2136,30 @@ impl ColumnBuilder {
         }
     }
 
+    /// Typed append for integer-wire decode: the same conversions as
+    /// `integer_from_i128` without building a `Cell`.
+    fn push_integer(&mut self, value: i128) -> Result<(), String> {
+        match self {
+            Self::Int64 { values, validity }
+            | Self::NativeUnits {
+                values, validity, ..
+            } => {
+                values
+                    .push(i64::try_from(value).map_err(|_| "bit-packed signed integer overflow")?);
+                validity.push(true);
+                Ok(())
+            }
+            Self::UInt64 { values, validity } => {
+                values.push(
+                    u64::try_from(value).map_err(|_| "bit-packed unsigned integer overflow")?,
+                );
+                validity.push(true);
+                Ok(())
+            }
+            _ => Err("integer decode into a non-integer column".to_owned()),
+        }
+    }
+
     fn push_code(&mut self, code: u32) -> Result<(), String> {
         match self {
             Self::DictUtf8 {
@@ -2414,7 +2438,49 @@ pub(crate) fn read_projected_column_ranges(
                     })
                     .collect::<Vec<_>>()
             };
-            let block = if let (Some(position), true, LogicalType::Utf8) =
+            let int_eligible = matches!(logical_type, LogicalType::Int64 | LogicalType::UInt64)
+                && projected_position.is_some_and(|position| {
+                    matches!(
+                        builders[position],
+                        Some(
+                            ColumnBuilder::Int64 { .. }
+                                | ColumnBuilder::UInt64 { .. }
+                                | ColumnBuilder::NativeUnits { .. }
+                        )
+                    )
+                });
+            let block = if let (Some(position), true, true) =
+                (projected_position, selected, int_eligible)
+            {
+                // Integer-wire blocks decode straight into the typed
+                // builder; non-bit-packed encodings fall back to cells
+                // below (issue #6 WS2 — the ranged read built a Vec<Cell>
+                // per selected block for every filtered scan).
+                let builder = builders[position]
+                    .as_mut()
+                    .expect("builder exists for a projected column");
+                let before = builder.heap_len_bytes();
+                let block = read_file_block_int_into(
+                    &path,
+                    &mut decoder,
+                    logical_type,
+                    memory,
+                    IntSink {
+                        builder,
+                        ranges: RangeCursor::new(block_ranges()),
+                    },
+                )?;
+                if block.cells.is_none() {
+                    blocks_decoded += 1;
+                }
+                let builder = builders[position]
+                    .as_ref()
+                    .expect("builder exists for a projected column");
+                let appended = builder.heap_len_bytes().saturating_sub(before);
+                memory.reserve(appended)?;
+                reserved_bytes = reserved_bytes.saturating_add(appended);
+                block
+            } else if let (Some(position), true, LogicalType::Utf8) =
                 (projected_position, selected, logical_type)
             {
                 // String blocks decode straight into the column arena — no
@@ -2756,6 +2822,63 @@ struct Utf8Sink<'a> {
     ranges: RangeCursor,
 }
 
+/// A columnar destination for one integer-wire block: selected rows append
+/// straight into the builder's typed vector — no `Vec<Cell>` is built (the
+/// prewhere ranged read materialized one per block, issue #6 WS2).
+struct IntSink<'a> {
+    builder: &'a mut ColumnBuilder,
+    ranges: RangeCursor,
+}
+
+/// Bit-packed integer payload straight into an int-typed builder. Returns
+/// `false` (sink untouched) for encodings this fast path does not cover —
+/// the caller falls back to the generic cell decode.
+fn decode_int_payload_into(
+    bytes: &[u8],
+    logical_type: LogicalType,
+    encoding: Encoding,
+    row_count: usize,
+    non_null_count: usize,
+    null_bitmap: &[u8],
+    sink: IntSink<'_>,
+) -> Result<bool, String> {
+    if !matches!(encoding, Encoding::BitPacked) {
+        return Ok(false);
+    }
+    let IntSink {
+        builder,
+        mut ranges,
+    } = sink;
+    let mut decoder = Decoder::new(bytes);
+    let base = decode_integer_base(&mut decoder, logical_type)?;
+    let normalized = unpack(&mut decoder, non_null_count)?;
+    decoder.finish()?;
+    let is_null = |row: usize| null_bitmap[row / 8] & (1 << (row % 8)) != 0;
+    let mut next = 0_usize;
+    for row in 0..row_count {
+        if is_null(row) {
+            if ranges.contains(row) {
+                builder.push(Cell::Null)?;
+            }
+            continue;
+        }
+        let normalized = *normalized
+            .get(next)
+            .ok_or("encoding produced too few values")?;
+        next += 1;
+        if ranges.contains(row) {
+            let value = base
+                .checked_add(i128::from(normalized))
+                .ok_or_else(|| "bit-packed integer overflow".to_owned())?;
+            builder.push_integer(value)?;
+        }
+    }
+    if next != non_null_count {
+        return Err("encoding produced too few values".to_owned());
+    }
+    Ok(true)
+}
+
 /// Ascending membership test over sorted, disjoint block-relative row
 /// ranges; rows must be queried in ascending order.
 struct RangeCursor {
@@ -2794,7 +2917,7 @@ fn read_block_if<F>(
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
 {
-    read_block_if_with_budget(path, decoder, logical_type, None, should_decode, None)
+    read_block_if_with_budget(path, decoder, logical_type, None, should_decode, None, None)
 }
 
 fn read_block_if_bounded<F>(
@@ -2813,6 +2936,7 @@ where
         logical_type,
         Some(memory),
         should_decode,
+        None,
         None,
     )
 }
@@ -2897,6 +3021,51 @@ fn read_file_block_utf8_into(
         Some(memory),
         |_, _| Ok(true),
         Some(sink),
+        None,
+    )
+}
+
+/// Reads one integer-wire block straight into a typed column builder when
+/// the encoding allows (bit-packed); other encodings return cells for the
+/// caller's generic loop.
+fn read_file_block_int_into(
+    path: &Path,
+    decoder: &mut FileDecoder,
+    logical_type: LogicalType,
+    memory: &ScanMemoryBudget<'_>,
+    sink: IntSink<'_>,
+) -> Result<BlockRead, StoreError> {
+    let block_offset = decoder.decode_position();
+    let payload_length = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    let encoded_length = payload_length.saturating_add(12);
+    let _encoded_memory = memory.reserve_temporary(encoded_length)?;
+    let mut encoded = Vec::with_capacity(encoded_length);
+    encoded.extend_from_slice(
+        &u32::try_from(payload_length)
+            .map_err(|_| StoreError::FormatLimit("block payload exceeds u32::MAX".into()))?
+            .to_le_bytes(),
+    );
+    encoded.resize(payload_length.saturating_add(4), 0);
+    decoder
+        .read_exact(&mut encoded[4..])
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    encoded.extend_from_slice(
+        &decoder
+            .u64()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?
+            .to_le_bytes(),
+    );
+    let mut block_decoder = Decoder::with_base_offset(&encoded, block_offset);
+    read_block_if_with_budget(
+        path,
+        &mut block_decoder,
+        logical_type,
+        Some(memory),
+        |_, _| Ok(true),
+        None,
+        Some(sink),
     )
 }
 
@@ -2908,6 +3077,7 @@ fn read_block_if_with_budget<F>(
     memory: Option<&ScanMemoryBudget<'_>>,
     should_decode: F,
     utf8_sink: Option<Utf8Sink<'_>>,
+    int_sink: Option<IntSink<'_>>,
 ) -> Result<BlockRead, StoreError>
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
@@ -3011,6 +3181,24 @@ where
             sink,
         )
         .map_err(|reason| corrupt(path, compressed_offset, reason))?;
+        return Ok(BlockRead {
+            row_count,
+            cells: None,
+            reserved_bytes: 0,
+        });
+    }
+    if let Some(sink) = int_sink
+        && decode_int_payload_into(
+            &uncompressed,
+            logical_type,
+            encoding,
+            row_count,
+            non_null_count,
+            null_bitmap,
+            sink,
+        )
+        .map_err(|reason| corrupt(path, compressed_offset, reason))?
+    {
         return Ok(BlockRead {
             row_count,
             cells: None,
