@@ -166,7 +166,10 @@ pub fn format_datetime_micros(micros: i64, fsp: u8) -> Option<String> {
     let text = format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}");
     if fsp > 0 {
         let fraction = sub_micros / 10_i64.pow(6 - u32::from(fsp));
-        return Some(format!("{text}.{fraction:0width$}", width = usize::from(fsp)));
+        return Some(format!(
+            "{text}.{fraction:0width$}",
+            width = usize::from(fsp)
+        ));
     }
     if sub_micros != 0 {
         // Sub-second payload in a zero-precision column cannot round-trip.
