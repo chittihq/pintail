@@ -3747,6 +3747,8 @@ fn build_direct_column_aggregate(
                         TwoPassLane::Int { .. } => "int",
                         TwoPassLane::Exact { .. } => "exact",
                         TwoPassLane::DecimalUnits { .. } => "decimal-units",
+                        TwoPassLane::Distinct { .. } => "distinct",
+                        TwoPassLane::ExtremeDecimal { .. } => "extreme-decimal",
                     })
                     .collect::<Vec<_>>()
             });
@@ -3908,6 +3910,13 @@ enum TwoPassLane {
         scale: u8,
         float_output: bool,
     },
+    /// COUNT(DISTINCT `int_col)`: raw key bits ride the lane and pass 2
+    /// dedups through the typed i128 set (e16 — this was the shape that
+    /// kept Q7 off every typed path).
+    Distinct { column: usize, data_type: DataType },
+    /// MIN/MAX over a decimal column: i64 scaled units ride the lane;
+    /// pass 2 compares units and formats only on replacement.
+    ExtremeDecimal { column: usize, scale: u8 },
 }
 
 /// Whether every aggregate fits a scatter lane, and which kind. `None`
@@ -3924,7 +3933,19 @@ fn two_pass_lanes(
         .iter()
         .map(|aggregate| {
             if aggregate.distinct {
-                return None;
+                // COUNT(DISTINCT int_col) rides its own lane; any other
+                // distinct shape keeps the query off the two-pass path.
+                if aggregate.function != AggregateFunction::Count {
+                    return None;
+                }
+                let column = aggregate.expr.as_ref()?.column_index()?;
+                let storage = batch.column(column)?.data_type().storage_type();
+                return matches!(storage, DataType::Int64 | DataType::UInt64).then_some(
+                    TwoPassLane::Distinct {
+                        column,
+                        data_type: storage,
+                    },
+                );
             }
             let Some(expr) = &aggregate.expr else {
                 return matches!(aggregate.function, AggregateFunction::Count)
@@ -3956,14 +3977,19 @@ fn two_pass_lanes(
                         },
                     }
                 }
-                AggregateFunction::Minimum | AggregateFunction::Maximum => matches!(
-                    storage,
-                    DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Boolean
-                )
-                .then_some(TwoPassLane::Exact {
-                    column,
-                    data_type: storage,
-                }),
+                AggregateFunction::Minimum | AggregateFunction::Maximum => {
+                    if let DataType::Decimal { scale, .. } = batch.column(column)?.data_type() {
+                        return Some(TwoPassLane::ExtremeDecimal { column, scale });
+                    }
+                    matches!(
+                        storage,
+                        DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Boolean
+                    )
+                    .then_some(TwoPassLane::Exact {
+                        column,
+                        data_type: storage,
+                    })
+                }
                 AggregateFunction::GroupConcat => None,
             }
         })
@@ -4461,7 +4487,8 @@ fn scatter_two_pass_row(
                         None => mask |= 1 << lane_index,
                     }
                 }
-                TwoPassLane::DecimalUnits { column, .. } => {
+                TwoPassLane::DecimalUnits { column, .. }
+                | TwoPassLane::ExtremeDecimal { column, .. } => {
                     let units = batch.column(*column).and_then(|column| {
                         let (typed, validity) = column.typed()?;
                         validity
@@ -4477,7 +4504,9 @@ fn scatter_two_pass_row(
                         None => mask |= 1 << lane_index,
                     }
                 }
-                TwoPassLane::Int { column, .. } | TwoPassLane::Exact { column, .. } => {
+                TwoPassLane::Int { column, .. }
+                | TwoPassLane::Exact { column, .. }
+                | TwoPassLane::Distinct { column, .. } => {
                     match batch.column(*column).and_then(|column| column.value(row)) {
                         Some(Value::Int64(value)) => {
                             bucket.lanes[lane_base + lane_index] =
@@ -4576,6 +4605,23 @@ fn two_pass_flush(
                                 *scale,
                                 *float_output,
                             )?;
+                        }
+                        TwoPassLane::ExtremeDecimal { scale, .. } => {
+                            let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
+                            states[lane_index].update_extreme_units(
+                                aggregate,
+                                units,
+                                || Some(pintail_types::format_decimal_scaled(units, *scale)),
+                                memory,
+                            )?;
+                        }
+                        TwoPassLane::Distinct { data_type, .. } => {
+                            let key = if *data_type == DataType::Int64 {
+                                i128::from(i64::from_ne_bytes(bits.to_ne_bytes()))
+                            } else {
+                                i128::from(bits)
+                            };
+                            states[lane_index].update_distinct_count_int(key, memory)?;
                         }
                         TwoPassLane::Float { .. } => {
                             let number = f64::from_bits(bits);
