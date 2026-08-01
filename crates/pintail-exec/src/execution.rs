@@ -992,6 +992,17 @@ impl PullOperator {
         }
     }
 
+    /// Transient headroom the underlying scan needs to pull one more batch.
+    /// Operators that buffer their whole input (the two-pass aggregate) must
+    /// keep at least this much budget free or the scan itself stops pulling.
+    fn scan_transient_floor(&self) -> usize {
+        match self {
+            Self::Scan { stream, .. } => stream.next_batch_memory_upper_bound(),
+            Self::Filter { input, .. } => input.scan_transient_floor(),
+            _ => 0,
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, memory: &MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
         match self {
@@ -3192,27 +3203,66 @@ fn build_direct_column_aggregate(
             .then(|| two_pass_lanes(aggregates, &head))
             .flatten();
         if let (Some(lanes), Some(group_type)) = (lanes, group_type) {
+            // Buffering the whole input is what makes the scatter pass
+            // possible; when the memory budget cannot hold it, hand what
+            // was buffered to the sequential loop instead of failing.
             let mut batches = vec![head];
             let mut buffered_rows = batches[0].visible_row_count();
-            let mut buffered_bytes = batches[0].estimated_bytes();
-            memory.reserve(buffered_bytes)?;
-            while let Some(batch) = input.next_batch(memory)? {
+            let mut buffered_bytes = 0_usize;
+            let mut overflowed = match memory.reserve(batches[0].estimated_bytes()) {
+                Ok(()) => {
+                    buffered_bytes = batches[0].estimated_bytes();
+                    false
+                }
+                Err(ExecError::MemoryLimitExceeded { .. }) => true,
+                Err(error) => return Err(error),
+            };
+            // Cap buffering at 40% of the query budget: the scatter pass
+            // costs about as much as the buffered input again, and the scan
+            // checks its transient upper bound (and adopts batches) against
+            // what remains, so starving it stops the stream mid-query.
+            let buffer_cap = memory.limit() / 5 * 2;
+            let scan_floor = input.scan_transient_floor().saturating_mul(2);
+            while !overflowed {
+                if memory.used() > buffer_cap || (scan_floor > 0 && memory.remaining() < scan_floor)
+                {
+                    overflowed = true;
+                    break;
+                }
+                let Some(batch) = input.next_batch(memory)? else {
+                    break;
+                };
                 let bytes = batch.estimated_bytes();
-                memory.reserve(bytes)?;
-                buffered_bytes = buffered_bytes.saturating_add(bytes);
-                buffered_rows += batch.visible_row_count();
-                batches.push(batch);
+                match memory.reserve(bytes) {
+                    Ok(()) => {
+                        buffered_bytes = buffered_bytes.saturating_add(bytes);
+                        buffered_rows += batch.visible_row_count();
+                        batches.push(batch);
+                    }
+                    Err(ExecError::MemoryLimitExceeded { .. }) => {
+                        batches.push(batch);
+                        overflowed = true;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
-            if buffered_rows >= TWO_PASS_MIN_ROWS {
-                let rows = build_two_pass_direct_aggregate(
+            if !overflowed && buffered_rows >= TWO_PASS_MIN_ROWS {
+                match build_two_pass_direct_aggregate(
                     &batches, column, group_type, &lanes, aggregates, memory,
-                )?;
-                drop(batches);
-                memory.release(buffered_bytes);
-                return Ok(rows);
+                ) {
+                    Ok(rows) => {
+                        drop(batches);
+                        memory.release(buffered_bytes);
+                        return Ok(rows);
+                    }
+                    // The scatter buckets did not fit either: the batches
+                    // are still intact, so the sequential loop can finish.
+                    Err(ExecError::MemoryLimitExceeded { .. }) => {}
+                    Err(error) => return Err(error),
+                }
             }
-            // Too small to pay the scatter: run the sequential loop over
-            // the buffered batches.
+            // Too small to pay the scatter (or it did not fit in memory):
+            // run the sequential loop over the buffered batches.
             pending.extend(batches);
             memory.release(buffered_bytes);
         } else {
@@ -3464,6 +3514,13 @@ fn build_two_pass_direct_aggregate(
         .sum::<usize>()
         .saturating_mul(size_of::<u64>() * (1 + lane_count) + 1);
     memory.reserve(scatter_bytes)?;
+    // Everything reserved below must be handed back on failure: the caller
+    // falls back to the sequential loop on MemoryLimitExceeded, and a leaked
+    // reservation would strangle that path's budget.
+    let release_on_error = |error: ExecError| {
+        memory.release(scatter_bytes);
+        error
+    };
 
     // Pass 1: parallel scatter.
     let scattered = batches
@@ -3540,7 +3597,8 @@ fn build_two_pass_direct_aggregate(
             }
             Ok(buckets)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(release_on_error)?;
 
     // Pass 2: each partition aggregates alone.
     let group_rows = (0..partitions)
@@ -3613,13 +3671,20 @@ fn build_two_pass_direct_aggregate(
             }
             Ok(rows)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(release_on_error)?;
     memory.release(scatter_bytes);
 
     let mut rows = Vec::new();
+    let mut payload_reserved = 0_usize;
     for partition_rows in group_rows {
         for row in partition_rows {
-            memory.reserve(estimated_row_payload_bytes(&row))?;
+            let bytes = estimated_row_payload_bytes(&row);
+            if let Err(error) = memory.reserve(bytes) {
+                memory.release(payload_reserved);
+                return Err(error);
+            }
+            payload_reserved = payload_reserved.saturating_add(bytes);
             rows.push(row);
         }
     }

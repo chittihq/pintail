@@ -868,7 +868,7 @@ async function main() {
       '0:8080',
       ...engineLimits,
       '--env',
-      `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${256 * 1024 * 1024}`,
+      `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
       'pintail-benchmark:latest',
     )
     const pintailPort = await publishedPort(pintailName, 8080)
@@ -893,7 +893,7 @@ async function main() {
         cwd: repository,
         env: {
           ...process.env,
-          PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(256 * 1024 * 1024),
+          PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(4 * 1024 * 1024 * 1024),
         },
         stdout: 'inherit',
         stderr: 'inherit',

@@ -2145,6 +2145,15 @@ mod tests {
         catalog: &CatalogSnapshot,
         provider: &SnapshotScanProvider<'_>,
     ) -> Vec<Vec<Value>> {
+        execute_rows_limited(sql, catalog, provider, 512 * 1024 * 1024)
+    }
+
+    fn execute_rows_limited(
+        sql: &str,
+        catalog: &CatalogSnapshot,
+        provider: &SnapshotScanProvider<'_>,
+        memory_limit: usize,
+    ) -> Vec<Vec<Value>> {
         let statement = parse_statement(sql).expect("parse query");
         let bound = Binder::new(catalog, Some("app"))
             .bind(&statement)
@@ -2152,7 +2161,7 @@ mod tests {
         let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
             .expect("physical plan");
         let mut execution =
-            Execution::start(physical, provider, 512 * 1024 * 1024).expect("start execution");
+            Execution::start(physical, provider, memory_limit).expect("start execution");
         let mut rows = Vec::new();
         while let Some(batch) = execution.next_batch().expect("pull batch") {
             for row in batch.selection().selected_rows() {
@@ -2523,6 +2532,87 @@ mod tests {
         );
         if let Some(first) = total.first() {
             assert_eq!(first[0], Value::UInt64(300_000), "distinct group count");
+        }
+    }
+
+    #[test]
+    fn two_pass_aggregate_falls_back_to_sequential_when_memory_is_tight() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "bucket", DataType::Int64, false),
+            ],
+        )
+        .expect("schema");
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        // Above the two-pass row threshold, but with a memory limit the
+        // scatter buffers cannot fit (the scatter alone needs ~7.5MB for
+        // 300k rows and two lanes). The query must degrade to the
+        // sequential loop and still return exact results. Small segments
+        // keep the scan's own transient footprint well under the limit.
+        for chunk in 0_u64..12 {
+            let start = chunk * 25_000 + 1;
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 25_000)
+                        .map(|key| {
+                            StoredRow::new(
+                                PrimaryKey::new(vec![KeyPart::UInt64(key)]).expect("key"),
+                                vec![
+                                    Value::UInt64(key),
+                                    Value::Int64(i64::try_from(key % 1000).expect("bucket")),
+                                ],
+                                key,
+                                false,
+                            )
+                        })
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(21);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(300_000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let rows = execute_rows_limited(
+            "SELECT bucket, COUNT(*) AS c, SUM(bucket) AS s, SUM(id) AS ids \
+             FROM events GROUP BY bucket ORDER BY bucket LIMIT 5",
+            &catalog,
+            &provider,
+            12 * 1024 * 1024,
+        );
+        assert_eq!(rows.len(), 5);
+        for (offset, row) in rows.iter().enumerate() {
+            let bucket = i64::try_from(offset).expect("bucket");
+            assert_eq!(row[0], Value::Int64(bucket), "group key");
+            assert_eq!(row[1], Value::UInt64(300), "count");
+            assert_eq!(
+                row[2],
+                Value::Int64(bucket * 300),
+                "integer sums stay exact"
+            );
+            // Bucket b holds ids {b, 1000+b, ..., 299000+b}, except bucket 0
+            // whose members start at 1000 because ids begin at 1.
+            let id_sum = if bucket == 0 {
+                45_150_000
+            } else {
+                44_850_000 + 300 * u64::try_from(bucket).expect("bucket")
+            };
+            assert_eq!(row[3], Value::UInt64(id_sum), "id sums stay exact");
         }
     }
 
