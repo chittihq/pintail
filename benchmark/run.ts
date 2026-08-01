@@ -805,7 +805,7 @@ async function main() {
     'clickhouse/clickhouse-server:25.8',
   )
   const host = await dockerHost()
-  const mysqlPort = await publishedPort(mysqlName, 3306)
+  let mysqlPort = await publishedPort(mysqlName, 3306)
   const clickhousePort = await publishedPort(clickhouseName, 8123)
   const clickhouseUrl = `http://${host}:${clickhousePort}`
   mysqlConnection = await waitForMysql(host, mysqlPort)
@@ -842,7 +842,9 @@ async function main() {
       'cp -a /var/lib/mysql/. /to/',
     )
     await docker('start', mysqlName)
-    // Restart after a heavy seed can replay redo for a while.
+    // The ephemeral published port changes across restarts; re-resolve it.
+    // Restart after a heavy seed can also replay redo for a while.
+    mysqlPort = await publishedPort(mysqlName, 3306)
     mysqlConnection = await waitForMysql(host, mysqlPort, 1200)
   }
   await importClickhouse(clickhouseUrl)
