@@ -456,6 +456,56 @@ impl CompiledExpr {
         }
     }
 
+    /// A stable textual identity for this expression, or `None` when it
+    /// could evaluate differently on identical data (volatile functions).
+    /// Column identity is projection-relative; the settled aggregate memo
+    /// combines this with the scan's projected column ids.
+    pub(crate) fn deterministic_signature(&self) -> Option<String> {
+        match self {
+            Self::Column(index) => Some(format!("c{index}")),
+            Self::Literal(value) => Some(format!("l{value:?}")),
+            Self::Unary {
+                op,
+                expr,
+                data_type,
+            } => Some(format!(
+                "u{op:?}({}){data_type:?}",
+                expr.deterministic_signature()?
+            )),
+            Self::Binary {
+                op,
+                left,
+                right,
+                data_type,
+            } => Some(format!(
+                "b{op:?}({},{}){data_type:?}",
+                left.deterministic_signature()?,
+                right.deterministic_signature()?
+            )),
+            Self::IsNull { expr, negated } => {
+                Some(format!("n{negated}({})", expr.deterministic_signature()?))
+            }
+            Self::Scalar {
+                function,
+                args,
+                data_type,
+            } => {
+                if matches!(
+                    function,
+                    ScalarFunction::Now | ScalarFunction::UnixTimestamp
+                ) {
+                    return None;
+                }
+                let mut inner = String::new();
+                for arg in args {
+                    inner.push_str(&arg.deterministic_signature()?);
+                    inner.push(',');
+                }
+                Some(format!("s{function:?}({inner}){data_type:?}"))
+            }
+        }
+    }
+
     pub(crate) fn evaluate(&self, batch: &RecordBatch, row: usize) -> Result<Value, ExecError> {
         match self {
             Self::Column(index) => batch

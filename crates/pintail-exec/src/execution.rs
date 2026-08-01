@@ -518,6 +518,15 @@ pub trait BatchStream: Send {
     /// `position` lies within `[min, max]`. Best-effort: streams that cannot
     /// prune (already started, non-key column, type mismatch) ignore it.
     fn restrict_key_position_range(&mut self, _position: usize, _min: &Value, _max: &Value) {}
+
+    /// `(table directory, manifest generation, projected column ids)` when
+    /// this stream is a bare full-table scan over a settled snapshot — the
+    /// exactness-preserving identity for the settled aggregate memo.
+    /// Default: not settled.
+    #[must_use]
+    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, Vec<u32>)> {
+        None
+    }
 }
 
 /// Opens storage scans for physical execution.
@@ -2473,7 +2482,100 @@ fn replace_retained_value(
 }
 
 #[allow(clippy::too_many_lines)]
+/// Settled aggregate memo (e18's product lever, exactness-first form):
+/// bare full-table aggregates over a settled snapshot are pure functions
+/// of `(table, manifest generation, plan signature)`. The memo stores the
+/// engine's own exact result and is unreachable the moment any ingest
+/// makes the snapshot unsettled, so served rows are provably fresh —
+/// unlike TTL query caches. Persistent per-block SMAs remain follow-up.
+type SettledMemoKey = (std::path::PathBuf, u64, String);
+type SettledMemo = std::sync::Mutex<HashMap<SettledMemoKey, Vec<Vec<Value>>>>;
+static SETTLED_AGGREGATE_MEMO: std::sync::LazyLock<SettledMemo> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+const SETTLED_MEMO_MAX_ENTRIES: usize = 32;
+const SETTLED_MEMO_MAX_ROWS: usize = 1 << 17;
+
+/// Deterministic plan signature, or `None` when any expression could
+/// evaluate differently on identical data (volatile functions).
+fn settled_signature(
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+) -> Option<String> {
+    use std::fmt::Write;
+    let mut signature = String::new();
+    for expr in group_by {
+        write!(signature, "g:{};", expr.deterministic_signature()?).ok()?;
+    }
+    for aggregate in aggregates {
+        let expr = match &aggregate.expr {
+            Some(expr) => expr.deterministic_signature()?,
+            None => "*".to_owned(),
+        };
+        write!(
+            signature,
+            "a:{:?}:{}:{};",
+            aggregate.function, aggregate.distinct, expr
+        )
+        .ok()?;
+    }
+    Some(signature)
+}
+
+#[allow(clippy::too_many_lines)]
 fn build_hash_aggregate(
+    input: &mut PullOperator,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    let memo_key = if let PullOperator::Scan { stream, .. } = &*input {
+        stream
+            .settled_identity()
+            .and_then(|(directory, generation, projection)| {
+                settled_signature(group_by, aggregates).map(|signature| {
+                    (
+                        directory,
+                        generation,
+                        format!("p{projection:?};{signature}"),
+                    )
+                })
+            })
+    } else {
+        None
+    };
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        eprintln!("[agg] memo key: {memo_key:?}");
+    }
+    if let Some(key) = &memo_key
+        && let Some(rows) = SETTLED_AGGREGATE_MEMO
+            .lock()
+            .expect("settled memo lock")
+            .get(key)
+            .cloned()
+    {
+        let payload: usize = rows
+            .iter()
+            .map(|row| estimated_row_payload_bytes(row))
+            .sum();
+        memory.reserve(payload)?;
+        return Ok(MaterializedRows { rows, position: 0 });
+    }
+    let result = build_hash_aggregate_scan(input, group_by, aggregates, memory)?;
+    if let Some(key) = memo_key
+        && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
+    {
+        let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
+        if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(key, result.rows.clone());
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_hash_aggregate_scan(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],

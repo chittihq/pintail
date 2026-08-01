@@ -231,6 +231,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 types,
                 retained_bytes: stream_overhead,
                 remaining: None,
+                settled: None,
             }));
         };
         let unique_keys = self.unique_visibility.get(&key);
@@ -277,6 +278,16 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     .then_some(scan.limit)
                     .flatten()
                     .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                settled: (scan.predicates.is_empty() && scan.limit.is_none())
+                    .then(|| snapshot.settled_identity())
+                    .flatten()
+                    .map(|(directory, generation)| {
+                        (
+                            directory.to_path_buf(),
+                            generation,
+                            scan.projected_column_ids.clone(),
+                        )
+                    }),
             }));
         }
         let projected = snapshot
@@ -343,6 +354,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             types,
             retained_bytes,
             remaining: None,
+            settled: None,
         }))
     }
 }
@@ -620,9 +632,17 @@ struct SnapshotStream {
     types: Vec<pintail_types::DataType>,
     retained_bytes: usize,
     remaining: Option<usize>,
+    /// `(table directory, manifest generation, projected column ids)` when
+    /// this stream is a bare full-table scan over a settled snapshot (empty
+    /// memtable, no predicates, no limit) — the settled aggregate memo key.
+    settled: Option<(std::path::PathBuf, u64, Vec<u32>)>,
 }
 
 impl BatchStream for SnapshotStream {
+    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, Vec<u32>)> {
+        self.settled.clone()
+    }
+
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
         self.started = true;
@@ -2614,6 +2634,54 @@ mod tests {
             };
             assert_eq!(row[3], Value::UInt64(id_sum), "id sums stay exact");
         }
+    }
+
+    #[test]
+    fn settled_aggregate_memo_serves_exact_rows_and_invalidates_on_ingest() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .bulk_ingest_snapshot((1..=1000).map(|key| row(key, "v")).collect())
+            .expect("seed segment");
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(23);
+        let make_catalog = || {
+            let entry = TableEntry::new(
+                table_id,
+                "events",
+                schema.clone(),
+                TableStatistics::with_row_count(1000),
+            )
+            .expect("table entry");
+            let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+            CatalogSnapshot::new([database]).expect("catalog")
+        };
+        let catalog = make_catalog();
+        let count = |table: &TableStore, catalog: &CatalogSnapshot| {
+            let snapshot = table.snapshot();
+            let provider =
+                SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+            // COUNT(column), not COUNT(*): the optimizer answers COUNT(*)
+            // from catalog statistics before any scan (or memo) is built.
+            execute_rows("SELECT COUNT(name) FROM events", catalog, &provider)[0][0].clone()
+        };
+        // First run computes; the second must serve the memo (same value).
+        assert_eq!(count(&table, &catalog), Value::UInt64(1000));
+        assert_eq!(count(&table, &catalog), Value::UInt64(1000));
+        // A new segment bumps the manifest generation: stale memo entries
+        // become unreachable and the fresh count is exact.
+        table
+            .bulk_ingest_snapshot((1001..=1010).map(|key| row(key, "v")).collect())
+            .expect("second segment");
+        assert_eq!(count(&table, &catalog), Value::UInt64(1010));
+        // Memtable rows make the snapshot unsettled: no memo read OR write,
+        // and the fresh scan sees the new row immediately.
+        table.ingest_cdc(vec![row(1011, "v")]).expect("cdc ingest");
+        assert_eq!(count(&table, &catalog), Value::UInt64(1011));
+        table.ingest_cdc(vec![row(1012, "v")]).expect("cdc ingest");
+        assert_eq!(count(&table, &catalog), Value::UInt64(1012));
     }
 
     #[test]

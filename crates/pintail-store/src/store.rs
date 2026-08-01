@@ -2860,6 +2860,18 @@ impl BackupSegment {
 }
 
 impl TableSnapshot {
+    /// The snapshot's data identity when every visible row is
+    /// segment-resident: `(table directory, manifest generation)` with an
+    /// empty memtable. Two snapshots with the same identity see byte-for-
+    /// byte identical data, so exactness-preserving caches (the settled
+    /// aggregate memo) key on it; any ingest or flush changes it.
+    #[must_use]
+    pub fn settled_identity(&self) -> Option<(&std::path::Path, u64)> {
+        self.memtable
+            .is_empty()
+            .then(|| (self.directory.as_path(), self.manifest.generation))
+    }
+
     /// Opens a reader-only snapshot without claiming the table writer lock.
     ///
     /// The reader pins one durable manifest and merges complete WAL records

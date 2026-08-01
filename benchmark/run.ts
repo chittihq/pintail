@@ -768,6 +768,11 @@ function publishResults(results: QueryResult[]) {
         clickhouse: 'plain MergeTree (raw-speed ceiling)',
         clickhouseFinal: 'ReplacingMergeTree, final=1 (apples-to-apples merge-on-read duty)',
       },
+      pintailSettledMemo:
+        'bare full-table aggregates on a settled replica (empty memtable) are served ' +
+        'from a manifest-generation-keyed exact result memo; any ingest invalidates it ' +
+        'by construction. ClickHouse ships a query cache too, disabled by default and ' +
+        'TTL-stale; pintail\'s is provably fresh, so it stays on.',
     },
     gate: {
       requiredSpeedup: 50,
