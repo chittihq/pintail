@@ -10,6 +10,7 @@ use pintail_store::{
     TableSnapshot,
 };
 use pintail_types::{KeyPart, PrimaryKey, Value};
+use rayon::prelude::*;
 
 use crate::{
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
@@ -221,6 +222,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
+                ready: VecDeque::new(),
                 prefetched: VecDeque::new(),
                 stream: None,
                 prewhere: None,
@@ -261,6 +263,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
+                ready: VecDeque::new(),
                 prefetched: VecDeque::new(),
                 stream: Some(stream),
                 prewhere: build_prewhere_spec(scan, snapshot),
@@ -331,6 +334,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             rows: rows.into(),
             columns: Vec::new(),
             column_rows: 0,
+            ready: VecDeque::new(),
             prefetched: VecDeque::new(),
             stream: None,
             prewhere: None,
@@ -601,6 +605,8 @@ struct PrewhereSpec {
 
 struct SnapshotStream {
     rows: VecDeque<Vec<Value>>,
+    /// Batches adopted ahead of time in the worker pool (no-LIMIT scans).
+    ready: VecDeque<RecordBatch>,
     columns: Vec<DecodedColumn>,
     column_rows: usize,
     prewhere: Option<PrewhereSpec>,
@@ -622,6 +628,7 @@ impl BatchStream for SnapshotStream {
         self.started = true;
         while self.rows.is_empty()
             && self.column_rows == 0
+            && self.ready.is_empty()
             && self.remaining != Some(0)
             && let Some(stream) = &mut self.stream
         {
@@ -659,12 +666,40 @@ impl BatchStream for SnapshotStream {
                     self.prefetched.push_back(chunk);
                 }
             }
+            if self.remaining.is_none() {
+                // No LIMIT: adopt every prefetched chunk into ready batches
+                // on the worker pool — slicing and typed adoption (decimal
+                // and temporal parsing included) run in parallel per chunk
+                // instead of serially on this thread.
+                let chunks = std::mem::take(&mut self.prefetched);
+                let mut released = 0_usize;
+                let adopted = chunks
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .into_par_iter()
+                    .map(|chunk| adopt_chunk(chunk, &self.types))
+                    .collect::<Result<Vec<_>, ExecError>>()?;
+                for (batches, chunk_bytes) in adopted {
+                    released = released.saturating_add(chunk_bytes);
+                    for batch in batches {
+                        self.retained_bytes =
+                            self.retained_bytes.saturating_add(batch.estimated_bytes());
+                        self.ready.push_back(batch);
+                    }
+                }
+                self.retained_bytes = self.retained_bytes.saturating_sub(released);
+                break;
+            }
             let chunk = self
                 .prefetched
                 .pop_front()
                 .expect("non-empty prefetch batch");
             self.column_rows = chunk.row_count();
             self.columns = chunk.into_decoded_columns();
+        }
+        if let Some(batch) = self.ready.pop_front() {
+            self.retained_bytes = self.retained_bytes.saturating_sub(batch.estimated_bytes());
+            return Ok(Some(batch));
         }
         if self.rows.is_empty() && self.column_rows == 0 {
             return Ok(None);
@@ -1019,6 +1054,47 @@ fn prewhere_ranges(
         return Ok(None);
     }
     Ok(Some(ranges))
+}
+
+/// Converts one decoded chunk into ready record batches: slices of
+/// `DEFAULT_BATCH_ROWS`, each column adopted into its typed executor form.
+/// Returns the batches plus the chunk's retained-byte figure to release.
+fn adopt_chunk(
+    chunk: ProjectedColumnChunk,
+    types: &[pintail_types::DataType],
+) -> Result<(Vec<RecordBatch>, usize), ExecError> {
+    let chunk_bytes = chunk
+        .retained_bytes()
+        .saturating_sub(std::mem::size_of::<ProjectedColumnChunk>());
+    let mut row_count = chunk.row_count();
+    let mut columns = chunk.into_decoded_columns();
+    if columns.len() != types.len() {
+        return Err(ExecError::InvalidBatch(
+            "stored column count differs from its snapshot schema",
+        ));
+    }
+    let mut batches = Vec::with_capacity(row_count.div_ceil(DEFAULT_BATCH_ROWS));
+    while row_count > 0 {
+        let take = row_count.min(DEFAULT_BATCH_ROWS);
+        let taken = columns
+            .iter_mut()
+            .map(|column| column.take_prefix(take))
+            .collect::<Vec<_>>();
+        if taken.iter().any(|column| column.len() != take) {
+            return Err(ExecError::InvalidBatch(
+                "stored column ended before its segment rows",
+            ));
+        }
+        let vectors = types
+            .iter()
+            .copied()
+            .zip(taken)
+            .map(|(data_type, column)| column_vector_from_decoded(data_type, column))
+            .collect::<Result<Vec<_>, _>>()?;
+        batches.push(RecordBatch::new(take, vectors)?);
+        row_count -= take;
+    }
+    Ok((batches, chunk_bytes))
 }
 
 /// Adopts one store-decoded column as a typed executor vector, parsing
