@@ -163,12 +163,12 @@ pub fn format_datetime_micros(micros: i64, fsp: u8) -> Option<String> {
     let hour = day_seconds / 3_600;
     let minute = day_seconds % 3_600 / 60;
     let second = day_seconds % 60;
-    let mut text = format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}");
+    let text = format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}");
     if fsp > 0 {
         let fraction = sub_micros / 10_i64.pow(6 - u32::from(fsp));
-        text.push('.');
-        text.push_str(&format!("{fraction:0width$}", width = usize::from(fsp)));
-    } else if sub_micros != 0 {
+        return Some(format!("{text}.{fraction:0width$}", width = usize::from(fsp)));
+    }
+    if sub_micros != 0 {
         // Sub-second payload in a zero-precision column cannot round-trip.
         return None;
     }
