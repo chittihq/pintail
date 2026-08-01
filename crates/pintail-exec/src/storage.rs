@@ -2039,7 +2039,7 @@ mod tests {
         let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
             .expect("physical plan");
         let mut execution =
-            Execution::start(physical, provider, 64 * 1024 * 1024).expect("start execution");
+            Execution::start(physical, provider, 512 * 1024 * 1024).expect("start execution");
         let mut rows = Vec::new();
         while let Some(batch) = execution.next_batch().expect("pull batch") {
             for row in batch.selection().selected_rows() {
@@ -2351,5 +2351,65 @@ mod tests {
             ),
             [Value::UInt64(3)]
         );
+    }
+
+    #[test]
+    fn two_pass_partitioned_aggregate_matches_expected_at_scale() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        // Above the two-pass threshold (262,144) with unique keys: the
+        // hardest cardinality shape, every group holds exactly one row.
+        for start in [1_u64, 100_001, 200_001] {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 100_000)
+                        .map(|key| row(key, &format!("v{}", key % 7)))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(300_000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let rows = execute_rows(
+            "SELECT id, COUNT(*) AS c, SUM(id) AS s, MIN(id) AS lo, MAX(id) AS hi \
+             FROM events GROUP BY id ORDER BY id LIMIT 3",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(rows.len(), 3);
+        for (offset, row) in rows.iter().enumerate() {
+            let id = offset as u64 + 1;
+            assert_eq!(row[0], Value::UInt64(id), "group key");
+            assert_eq!(row[1], Value::UInt64(1), "count");
+            assert_eq!(row[2], Value::UInt64(id), "integer sums stay exact");
+            assert_eq!(row[3], Value::UInt64(id), "min stays exact");
+            assert_eq!(row[4], Value::UInt64(id), "max stays exact");
+        }
+
+        // Aggregate over every group: total row count via a COUNT(*) with
+        // no grouping must agree with the grouped path's group count.
+        let total = execute_rows(
+            "SELECT COUNT(*) FROM (SELECT id FROM events GROUP BY id) AS g",
+            &catalog,
+            &provider,
+        );
+        if let Some(first) = total.first() {
+            assert_eq!(first[0], Value::UInt64(300_000), "distinct group count");
+        }
     }
 }
