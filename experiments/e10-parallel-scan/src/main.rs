@@ -13,7 +13,10 @@ fn main() {
 
     let mut baseline = 0.0;
     for threads in [1usize, 2, 4, 8, 10] {
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
         for morsel in [4_096usize, 65_536, 1 << 20] {
             let name = format!("threads={threads:>2} morsel={morsel:>8}");
             let result = pool.install(|| {

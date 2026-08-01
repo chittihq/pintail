@@ -58,7 +58,10 @@ fn main() {
         tail_pks.dedup();
         tail_pks.truncate(u);
         let tail = Segment {
-            amt: tail_pks.iter().map(|&pk| base_amt[pk as usize] + 1_000).collect(),
+            amt: tail_pks
+                .iter()
+                .map(|&pk| base_amt[pk as usize] + 1_000)
+                .collect(),
             ver: vec![1u8; tail_pks.len()],
             pk: tail_pks,
         };
@@ -71,13 +74,16 @@ fn main() {
 
         let mut rs = vec![];
 
-        rs.push(bench("REF: fully compacted scan (unique_keys floor)", || {
-            let mut s = 0i64;
-            for &v in &compacted {
-                s += v;
-            }
-            s as u64
-        }));
+        rs.push(bench(
+            "REF: fully compacted scan (unique_keys floor)",
+            || {
+                let mut s = 0i64;
+                for &v in &compacted {
+                    s += v;
+                }
+                s as u64
+            },
+        ));
 
         rs.push(bench("A: naive 9-way heap merge (always-FINAL)", || {
             let mut segs: Vec<&Segment> = base.iter().collect();
@@ -99,7 +105,12 @@ fn main() {
                 }
                 let next = idx + 1;
                 if next < segs[si].pk.len() {
-                    heap.push(Reverse((segs[si].pk[next], 255 - segs[si].ver[next], si, next)));
+                    heap.push(Reverse((
+                        segs[si].pk[next],
+                        255 - segs[si].ver[next],
+                        si,
+                        next,
+                    )));
                 }
             }
             s as u64
@@ -131,18 +142,21 @@ fn main() {
             s as u64
         }));
 
-        rs.push(bench("C: scan + patch corrections (dense-pk endgame)", || {
-            let mut s = 0i64;
-            for seg in &base {
-                for &v in &seg.amt {
-                    s += v;
+        rs.push(bench(
+            "C: scan + patch corrections (dense-pk endgame)",
+            || {
+                let mut s = 0i64;
+                for seg in &base {
+                    for &v in &seg.amt {
+                        s += v;
+                    }
                 }
-            }
-            for (i, &pk) in tail.pk.iter().enumerate() {
-                s += tail.amt[i] - base_amt[pk as usize];
-            }
-            s as u64
-        }));
+                for (i, &pk) in tail.pk.iter().enumerate() {
+                    s += tail.amt[i] - base_amt[pk as usize];
+                }
+                s as u64
+            },
+        ));
 
         check_consistency(&rs);
     }

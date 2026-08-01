@@ -1,0 +1,9 @@
+[package]
+name = "e16-distinct"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+hashbrown = { workspace = true }
+rayon = { workspace = true }

@@ -16,6 +16,8 @@ members = [
     "e12-normalized-keys",
     "e13-partitioned-agg",
     "e14-typed-kernels",
+    "e15-value-tax",
+    "e16-distinct",
 ]
 
 [workspace.dependencies]

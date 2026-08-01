@@ -18,7 +18,9 @@ struct Layout {
 }
 
 fn run(label: &str, layout: &Layout, hot_tenants: &[u16]) {
-    println!("\n== layout: {label} — SUM(amount) WHERE tenant_id = T, {QUERIES} dashboard queries ==");
+    println!(
+        "\n== layout: {label} — SUM(amount) WHERE tenant_id = T, {QUERIES} dashboard queries =="
+    );
     let granules = layout.tenant.len().div_ceil(GRANULE);
 
     // zone maps (min/max tenant per granule)
@@ -110,22 +112,41 @@ fn main() {
     println!("e09-predicate-cache  N = {N_ORDERS}, granule = {GRANULE}, tenants = {N_TENANTS}");
     let mut rng = Lcg::new(42);
     let zipf = Zipfish::new(N_TENANTS, 1.15);
-    let tenants_scattered: Vec<u16> = (0..N_ORDERS).map(|_| zipf.sample(&mut rng) as u16).collect();
-    let amount: Vec<i64> = (0..N_ORDERS).map(|_| 100 + rng.below(999_900) as i64).collect();
+    let tenants_scattered: Vec<u16> = (0..N_ORDERS)
+        .map(|_| zipf.sample(&mut rng) as u16)
+        .collect();
+    let amount: Vec<i64> = (0..N_ORDERS)
+        .map(|_| 100 + rng.below(999_900) as i64)
+        .collect();
 
     let mut order: Vec<u32> = (0..N_ORDERS as u32).collect();
     order.sort_by_key(|&i| tenants_scattered[i as usize]);
-    let tenants_clustered: Vec<u16> = order.iter().map(|&i| tenants_scattered[i as usize]).collect();
+    let tenants_clustered: Vec<u16> = order
+        .iter()
+        .map(|&i| tenants_scattered[i as usize])
+        .collect();
     let amount_clustered: Vec<i64> = order.iter().map(|&i| amount[i as usize]).collect();
 
     // hot dashboard tenants: zipf-biased picks
     let mut qrng = Lcg::new(7);
-    let hot: Vec<u16> = (0..QUERIES).map(|_| zipf.sample(&mut qrng) as u16).collect();
+    let hot: Vec<u16> = (0..QUERIES)
+        .map(|_| zipf.sample(&mut qrng) as u16)
+        .collect();
 
-    run("scattered (insert order)", &Layout { tenant: tenants_scattered, amount }, &hot);
+    run(
+        "scattered (insert order)",
+        &Layout {
+            tenant: tenants_scattered,
+            amount,
+        },
+        &hot,
+    );
     run(
         "clustered (sorted by tenant)",
-        &Layout { tenant: tenants_clustered, amount: amount_clustered },
+        &Layout {
+            tenant: tenants_clustered,
+            amount: amount_clustered,
+        },
         &hot,
     );
 }

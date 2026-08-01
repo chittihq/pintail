@@ -64,39 +64,42 @@ fn group_by_status(o: &Orders) {
         ck
     }));
 
-    rs.push(bench("parallel: thread-local arrays + merge (rayon)", || {
-        let merged = status
-            .par_chunks(CHUNK)
-            .zip(amount.par_chunks(CHUNK))
-            .fold(
-                || [(0i64, 0u64); 256],
-                |mut acc, (ss, vv)| {
-                    for (&s, &v) in ss.iter().zip(vv) {
-                        let a = &mut acc[s as usize];
-                        a.0 += v;
-                        a.1 += 1;
-                    }
-                    acc
-                },
-            )
-            .reduce(
-                || [(0i64, 0u64); 256],
-                |mut a, b| {
-                    for (x, y) in a.iter_mut().zip(b.iter()) {
-                        x.0 += y.0;
-                        x.1 += y.1;
-                    }
-                    a
-                },
-            );
-        let mut ck = 0u64;
-        for (k, (s, c)) in merged.iter().enumerate() {
-            if *c > 0 {
-                ck = ck.wrapping_add(ck_entry(k as u64, *s, *c));
+    rs.push(bench(
+        "parallel: thread-local arrays + merge (rayon)",
+        || {
+            let merged = status
+                .par_chunks(CHUNK)
+                .zip(amount.par_chunks(CHUNK))
+                .fold(
+                    || [(0i64, 0u64); 256],
+                    |mut acc, (ss, vv)| {
+                        for (&s, &v) in ss.iter().zip(vv) {
+                            let a = &mut acc[s as usize];
+                            a.0 += v;
+                            a.1 += 1;
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || [(0i64, 0u64); 256],
+                    |mut a, b| {
+                        for (x, y) in a.iter_mut().zip(b.iter()) {
+                            x.0 += y.0;
+                            x.1 += y.1;
+                        }
+                        a
+                    },
+                );
+            let mut ck = 0u64;
+            for (k, (s, c)) in merged.iter().enumerate() {
+                if *c > 0 {
+                    ck = ck.wrapping_add(ck_entry(k as u64, *s, *c));
+                }
             }
-        }
-        ck
-    }));
+            ck
+        },
+    ));
 
     check_consistency(&rs);
 }

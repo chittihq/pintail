@@ -13,7 +13,9 @@ const K: usize = 100;
 const CHUNK: usize = 1 << 20;
 
 fn ck_top(top: &[i64]) -> u64 {
-    top.iter().map(|&v| v as u64).fold(0u64, |a, b| a.wrapping_add(b))
+    top.iter()
+        .map(|&v| v as u64)
+        .fold(0u64, |a, b| a.wrapping_add(b))
 }
 
 #[inline]

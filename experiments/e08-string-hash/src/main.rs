@@ -23,9 +23,9 @@ fn main() {
     // dictionary of 10k distinct keys with realistic length mix
     let dictionary: Vec<String> = (0..10_000)
         .map(|i| match i % 4 {
-            0 => format!("k{}", i),                                   // 2-6 bytes
-            1 => format!("channel_{:04}", i),                         // 12 bytes
-            2 => format!("sku-{:08}-{:04}", i, i % 97),               // 17 bytes
+            0 => format!("k{}", i),                                        // 2-6 bytes
+            1 => format!("channel_{:04}", i),                              // 12 bytes
+            2 => format!("sku-{:08}-{:04}", i, i % 97),                    // 17 bytes
             _ => format!("customer-cohort-{:06}-region-{:02}", i, i % 32), // 32 bytes
         })
         .collect();
@@ -67,12 +67,16 @@ fn main() {
                     let mut k = [0u8; 8];
                     k[..s.len()].copy_from_slice(s);
                     // length folded into the key so "a" != "a\0"-like collisions
-                    *short.entry(u64::from_le_bytes(k) ^ ((s.len() as u64) << 56)).or_insert(0) += 1;
+                    *short
+                        .entry(u64::from_le_bytes(k) ^ ((s.len() as u64) << 56))
+                        .or_insert(0) += 1;
                 }
                 9..=16 => {
                     let mut k = [0u8; 16];
                     k[..s.len()].copy_from_slice(s);
-                    *medium.entry(u128::from_le_bytes(k) ^ ((s.len() as u128) << 120)).or_insert(0) += 1;
+                    *medium
+                        .entry(u128::from_le_bytes(k) ^ ((s.len() as u128) << 120))
+                        .or_insert(0) += 1;
                 }
                 _ => *long.entry(s).or_insert(0) += 1,
             }

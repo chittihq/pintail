@@ -34,7 +34,10 @@ fn normalize(row: &Row) -> [u8; 20] {
 
 #[inline]
 fn pack(row: &Row) -> (u128, u64) {
-    (((row.tenant as u128) << 64) | (((row.ts as u64) ^ (1u64 << 63)) as u128), row.id)
+    (
+        ((row.tenant as u128) << 64) | (((row.ts as u64) ^ (1u64 << 63)) as u128),
+        row.id,
+    )
 }
 
 fn main() {
@@ -60,11 +63,15 @@ fn main() {
     // precompute normalized/packed forms (segment-write-time work in pintail)
     let mut encode_ms = 0.0;
     let started = std::time::Instant::now();
-    let normalized: Vec<Vec<[u8; 20]>> =
-        runs.iter().map(|run| run.iter().map(normalize).collect()).collect();
+    let normalized: Vec<Vec<[u8; 20]>> = runs
+        .iter()
+        .map(|run| run.iter().map(normalize).collect())
+        .collect();
     encode_ms += started.elapsed().as_secs_f64() * 1e3;
-    let packed: Vec<Vec<(u128, u64)>> =
-        runs.iter().map(|run| run.iter().map(pack).collect()).collect();
+    let packed: Vec<Vec<(u128, u64)>> = runs
+        .iter()
+        .map(|run| run.iter().map(pack).collect())
+        .collect();
     println!("normalized-key encode cost (one-time, at write): {encode_ms:.1} ms for 20M rows");
 
     // checksum = order-sensitive fold over merged ids
@@ -95,7 +102,9 @@ fn main() {
         }
         let mut ck = 0u64;
         while let Some(Reverse((key, s, i))) = heap.pop() {
-            ck = ck.wrapping_mul(31).wrapping_add(u64::from_be_bytes(key[12..20].try_into().unwrap()));
+            ck = ck
+                .wrapping_mul(31)
+                .wrapping_add(u64::from_be_bytes(key[12..20].try_into().unwrap()));
             let next = i + 1;
             if next < normalized[s].len() {
                 heap.push(Reverse((normalized[s][next], s, next)));

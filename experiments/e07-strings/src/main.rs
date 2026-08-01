@@ -41,7 +41,11 @@ impl GColumn {
             self.heap.extend_from_slice(s);
             tail = offset.to_le_bytes();
         }
-        self.views.push(GView { len: s.len() as u32, prefix, tail })
+        self.views.push(GView {
+            len: s.len() as u32,
+            prefix,
+            tail,
+        })
     }
 
     #[inline]
@@ -71,7 +75,10 @@ impl GColumn {
 }
 
 fn make_view(s: &[u8]) -> GView {
-    let mut column = GColumn { views: Vec::new(), heap: Vec::new() };
+    let mut column = GColumn {
+        views: Vec::new(),
+        heap: Vec::new(),
+    };
     column.push(s);
     column.views[0]
 }
@@ -84,7 +91,10 @@ fn main() {
     let mut chars: Vec<u8> = Vec::new();
     let mut offsets: Vec<u32> = Vec::with_capacity(N_ORDERS + 1);
     offsets.push(0);
-    let mut gcol = GColumn { views: Vec::with_capacity(N_ORDERS), heap: Vec::new() };
+    let mut gcol = GColumn {
+        views: Vec::with_capacity(N_ORDERS),
+        heap: Vec::new(),
+    };
 
     for _ in 0..N_ORDERS {
         let roll = rng.below(100);
@@ -109,7 +119,10 @@ fn main() {
         (gcol.views.len() * 16 + gcol.heap.len()) as f64 / 1e6,
     );
 
-    for (label, needle) in [("short (inline path)", "shipped"), ("long (heap path)", "user42@example7.com")] {
+    for (label, needle) in [
+        ("short (inline path)", "shipped"),
+        ("long (heap path)", "user42@example7.com"),
+    ] {
         println!("\n== COUNT WHERE s = \"{needle}\"  [{label}] ==");
         let needle_bytes = needle.as_bytes();
         let needle_view = make_view(needle_bytes);

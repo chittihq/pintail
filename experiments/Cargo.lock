@@ -147,6 +147,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "e15-value-tax"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "hashbrown",
+ "rayon",
+]
+
+[[package]]
+name = "e16-distinct"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "hashbrown",
+ "rayon",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

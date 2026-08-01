@@ -108,8 +108,7 @@ fn two_pass_partitioned(keys: &[u64], values: &[i64], partitions: usize) -> u64 
         .par_chunks(CHUNK)
         .zip(values.par_chunks(CHUNK))
         .map(|(keys, values)| {
-            let mut buckets: Vec<Vec<(u64, i64)>> =
-                (0..partitions).map(|_| Vec::new()).collect();
+            let mut buckets: Vec<Vec<(u64, i64)>> = (0..partitions).map(|_| Vec::new()).collect();
             for (key, value) in keys.iter().zip(values) {
                 buckets[(mix64(*key) as usize) % partitions].push((*key, *value));
             }
@@ -135,10 +134,7 @@ fn two_pass_partitioned(keys: &[u64], values: &[i64], partitions: usize) -> u64 
 
 fn main() {
     let threads = std::thread::available_parallelism().map_or(8, usize::from);
-    println!(
-        "e13: {} rows, {} threads, chunk {}",
-        ROWS, threads, CHUNK
-    );
+    println!("e13: {} rows, {} threads, chunk {}", ROWS, threads, CHUNK);
     for cardinality in [200_000u64, 2_000_000, 8_000_000] {
         println!("== cardinality {cardinality} ==");
         let (keys, values) = dataset(cardinality);

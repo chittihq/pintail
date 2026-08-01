@@ -52,7 +52,12 @@ impl Unchained {
             vals[slot] = v;
             tags[b] |= 1 << ((h >> (64 - BBITS - 4)) & 15);
         }
-        Self { offsets, keys, vals, tags }
+        Self {
+            offsets,
+            keys,
+            vals,
+            tags,
+        }
     }
 
     #[inline]
@@ -115,13 +120,18 @@ fn main() {
     println!("e04-join  users = {N_USERS}, orders = {N_ORDERS}");
     let o = gen_orders(N_ORDERS, 42);
     let mut r = Lcg::new(7);
-    let region_by_user: Vec<u8> = (0..N_USERS).map(|_| r.below(N_REGIONS as u64) as u8).collect();
+    let region_by_user: Vec<u8> = (0..N_USERS)
+        .map(|_| r.below(N_REGIONS as u64) as u8)
+        .collect();
     let user_ids: Vec<u32> = (0..N_USERS).collect();
 
     println!("\n== build cost (200k users) ==");
     bench("build hashbrown HashMap<u32,u8>", || {
-        let m: HashMap<u32, u8> =
-            user_ids.iter().copied().zip(region_by_user.iter().copied()).collect();
+        let m: HashMap<u32, u8> = user_ids
+            .iter()
+            .copied()
+            .zip(region_by_user.iter().copied())
+            .collect();
         m.len() as u64
     });
     bench("build unchained (counts+prefix+fill+tags)", || {
@@ -133,8 +143,11 @@ fn main() {
         d.len() as u64
     });
 
-    let map: HashMap<u32, u8> =
-        user_ids.iter().copied().zip(region_by_user.iter().copied()).collect();
+    let map: HashMap<u32, u8> = user_ids
+        .iter()
+        .copied()
+        .zip(region_by_user.iter().copied())
+        .collect();
     let unchained = Unchained::build(&user_ids, &region_by_user);
 
     println!("\n== inner join + GROUP BY region: SUM(amount), COUNT (20M probes, all hit) ==");
@@ -172,7 +185,9 @@ fn main() {
     check_consistency(&rs);
 
     println!("\n== semi-join: SUM/COUNT of orders whose user is in region 3 (~12.5% of users) ==");
-    let sel_users: Vec<u32> = (0..N_USERS).filter(|&u| region_by_user[u as usize] == 3).collect();
+    let sel_users: Vec<u32> = (0..N_USERS)
+        .filter(|&u| region_by_user[u as usize] == 3)
+        .collect();
     println!("   build side: {} users", sel_users.len());
     let set: HashSet<u32> = sel_users.iter().copied().collect();
     let mut bitmap = vec![0u64; (N_USERS as usize).div_ceil(64)];

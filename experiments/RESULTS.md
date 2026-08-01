@@ -266,3 +266,52 @@ filter+convert+aggregate in ~30 ms — 7× under ClickHouse's end-to-end
 composite int keys (40 ms) is within 1.35× of the dense ceiling and needs
 no cardinality bound; adopt that, keep dense arrays as a follow-up
 specialization if profiling justifies it.
+
+## e15 — The Value-enum middle layer's tax (Q6 shape)
+
+20M rows, 2M sparse u64 keys, SUM+COUNT, two-pass P=10 everywhere except
+the sequential model, 10 threads local (M2). Value modeled with the
+engine's real variant set (32-byte cells).
+
+| variant | median ms |
+|---|---:|
+| typed contiguous arrays → two-pass | **52.4** |
+| typed 64k batches → two-pass | 93.3 |
+| Value column batches → two-pass (engine today) | 539.5 |
+| Value rows → transpose → two-pass (CDC adopt shape) | 1,229.0 |
+| Value batches → sequential hashmap (pre-two-pass path) | 1,170.1 |
+
+**Verdicts:** (1) Enum cells cost 10× over typed arrays on the identical
+kernel — building 1.28 GB of 32-byte Value cells for 320 MB of data is
+the tax, and its run-to-run variance (226–540 ms) is allocator churn.
+The row-major path costs 23×. (2) The engine's Q6 (11,679 ms at 63becb4)
+is still ~21× slower than even the Value-batch model, so the Value layer
+is necessary but not sufficient to explain it: decode, merge-on-read
+visibility, per-group AggregateState indirection and tracker traffic sit
+on top. Typed columns end-to-end removes the whole stack between segment
+and kernel, not one slice of it. (3) Chunked batches per se are fine
+(1.8× from copies, fixable with borrowing) — batching is not the enemy,
+materializing enums per cell is.
+
+## e16 — Grouped COUNT(DISTINCT) representation (Q7 lane)
+
+20M rows, 8 regions, 200k user space, COUNT(DISTINCT user)+SUM per
+region, 10 threads local (M2).
+
+| variant | median ms |
+|---|---:|
+| HashSet<Value> per group (engine today) | 388.7 |
+| HashSet<u32> per group | 148.5 |
+| dense bitmap per group (200 KB total) | 21.1 |
+| parallel per-worker bitmaps + OR-merge | **6.5** |
+| parallel user-partitioned bitmaps | 37.4 |
+
+**Verdicts:** (1) Dense bitmaps win grouped distinct-count exactly as
+they won e04's semi-join membership: 18× sequential, 60× with per-worker
+bitmaps OR-merged (bitmap OR is embarrassingly mergeable — the same
+property that made e13's thread-local hashmap merge LOSE makes bitmap
+merge win). (2) User-partitioned scanning loses: P full scans of the
+region/user columns dwarf the merge it avoids. (3) Adoption rule: int
+keys with a bounded dense domain (user ids against table row counts) →
+per-worker bitmaps + OR-merge; otherwise typed HashSet (still 2.6× over
+Value sets). The engine knows key bounds from table statistics.

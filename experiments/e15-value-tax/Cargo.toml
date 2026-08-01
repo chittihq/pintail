@@ -1,0 +1,9 @@
+[package]
+name = "e15-value-tax"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+hashbrown = { workspace = true }
+rayon = { workspace = true }

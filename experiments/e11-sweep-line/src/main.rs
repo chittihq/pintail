@@ -24,8 +24,7 @@ struct Run {
 }
 
 fn sorted_updates(rng: &mut Lcg, count: usize, lo: u64, hi: u64, ver: u8, base_amt: &[i64]) -> Run {
-    let mut pks: Vec<u64> = (0..count * 2).map(|_| lo + rng.below(hi - lo)).collect()
-    ;
+    let mut pks: Vec<u64> = (0..count * 2).map(|_| lo + rng.below(hi - lo)).collect();
     pks.sort_unstable();
     pks.dedup();
     pks.truncate(count);
@@ -52,7 +51,12 @@ fn merge_all(runs: &[&Run]) -> i64 {
         }
         let next = idx + 1;
         if next < runs[si].pk.len() {
-            heap.push(Reverse((runs[si].pk[next], 255 - runs[si].ver[next], si, next)));
+            heap.push(Reverse((
+                runs[si].pk[next],
+                255 - runs[si].ver[next],
+                si,
+                next,
+            )));
         }
     }
     sum
@@ -61,8 +65,7 @@ fn merge_all(runs: &[&Run]) -> i64 {
 /// 3-source merge over one granule range: base slice + tail slice + mem slice.
 /// mem (ver 2) beats tail (ver 1) beats base (ver 0).
 fn merge_granule(base: (&[u64], &[i64]), tail: (&[u64], &[i64]), mem: (&[u64], &[i64])) -> i64 {
-    let (mut i, mut j, mut k) = (0usize, 0usize, 0usize)
-    ;
+    let (mut i, mut j, mut k) = (0usize, 0usize, 0usize);
     let mut sum = 0i64;
     let mut last = u64::MAX;
     loop {
@@ -106,11 +109,17 @@ fn slice_range<'a>(run: &'a Run, lo: u64, hi: u64) -> (&'a [u64], &'a [i64]) {
 }
 
 fn scenario(label: &str, tail: &Run, mem: &Run, base: &[Run]) {
-    println!("\n== updates: {label} ({} tail + {} memtable rows) ==", tail.pk.len(), mem.pk.len());
+    println!(
+        "\n== updates: {label} ({} tail + {} memtable rows) ==",
+        tail.pk.len(),
+        mem.pk.len()
+    );
     let mut rs = vec![];
 
     let all: Vec<&Run> = base.iter().chain([tail, mem]).collect();
-    rs.push(bench("A: full 10-way heap merge (naive FINAL)", || merge_all(&all) as u64));
+    rs.push(bench("A: full 10-way heap merge (naive FINAL)", || {
+        merge_all(&all) as u64
+    }));
 
     rs.push(bench("B: granule-classified merge", || {
         let mut sum = 0i64;
@@ -175,7 +184,12 @@ fn main() {
     let hot_lo = (N as f64 * 0.95) as u64;
     let tail_hot = sorted_updates(&mut rng, TAIL_U, hot_lo, N as u64, 1, &base_amt);
     let mem_hot = sorted_updates(&mut rng, MEM_U, hot_lo, N as u64, 2, &base_amt);
-    scenario("clustered in newest 5% of keyspace", &tail_hot, &mem_hot, &base);
+    scenario(
+        "clustered in newest 5% of keyspace",
+        &tail_hot,
+        &mem_hot,
+        &base,
+    );
 
     // scattered: uniform updates (adversarial for classification)
     let tail_uniform = sorted_updates(&mut rng, TAIL_U, 0, N as u64, 1, &base_amt);
