@@ -1,0 +1,9 @@
+[package]
+name = "e13-partitioned-agg"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+hashbrown = { workspace = true }
+rayon = { workspace = true }

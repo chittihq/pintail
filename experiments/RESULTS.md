@@ -214,3 +214,24 @@ fit; keep typed tuples otherwise; offset-value coding remains untested (future).
    costs 2–8×. The executor design should treat materialization as the exception.
 4. These are microbenchmarks of isolated primitives on hot data; end-to-end engine wins
    must be re-proven in `benchmark/` after adoption (issue #3 gates unchanged).
+
+## e13 — High-cardinality parallel aggregation (post-Q6-regression)
+
+20M rows, sparse u64 keys, SUM+COUNT per group, 10 threads local (M2);
+remote validation pending (host reserved for benchmark runs).
+
+| median ms | sequential map | thread-local + merge | partitioned shards | two-pass partitioned |
+|---|---:|---:|---:|---:|
+| 200k groups | 99.1 | 177.2 | 96.3 | **23.7** |
+| 2M groups | 421.7 | 684.5 | 169.5 | **47.3** |
+| 8M groups | 833.5 | 1163.7 | 386.3 | **122.0** |
+
+**Verdicts:** (1) thread-local hashmaps + merge lose to plain sequential at
+every cardinality tested — the Q6 production regression (9.1s → 78.8s,
+commit e5ba3ca) was structural, not incidental; the per-round global merge
+dominates. (2) Two-pass partitioned aggregation — pass 1 scatters (key,
+value) into P per-worker partition buckets, pass 2 aggregates each
+partition with zero cross-thread sharing — wins at every cardinality,
+4.2–8.9× over sequential. This is the adopted design for parallel
+high-cardinality aggregation (task #25); the sequential direct path stays
+for small inputs where scatter overhead dominates.

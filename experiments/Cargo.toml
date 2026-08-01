@@ -14,6 +14,7 @@ members = [
     "e10-parallel-scan",
     "e11-sweep-line",
     "e12-normalized-keys",
+    "e13-partitioned-agg",
 ]
 
 [workspace.dependencies]
