@@ -2625,7 +2625,8 @@ fn build_buffered_hash_aggregate(
             matches!(
                 values.data_type().storage_type(),
                 DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
-            )
+            ) || (values.data_type() == DataType::Utf8
+                && two_pass_lanes(aggregates, &first_batch).is_some())
         })
     {
         // Single int-typed group columns take the sequential direct path:
@@ -3494,6 +3495,19 @@ fn build_direct_column_aggregate(
                 lanes.as_ref().map(std::vec::Vec::len)
             );
         }
+        let dict_keyed = !int_typed
+            && group_type == Some(DataType::Utf8)
+            && head
+                .column(column)
+                .and_then(ColumnVector::typed)
+                .is_some_and(|(typed, _)| matches!(typed, crate::batch::TypedValues::Utf8(_)));
+        let lanes = if lanes.is_some() {
+            lanes
+        } else {
+            dict_keyed
+                .then(|| two_pass_lanes(aggregates, &head))
+                .flatten()
+        };
         if let (Some(lanes), Some(group_type)) = (lanes, group_type) {
             // Streaming scatter (phase-0 profile, 2026-08-02): retaining
             // RecordBatches cost ~118 bytes/row and forced the sequential
@@ -3501,7 +3515,7 @@ fn build_direct_column_aggregate(
             // (key bits, lane bits) as batches arrive costs the exact
             // 8*(1+lanes)+1 bytes/row and never falls back.
             return build_streaming_two_pass_aggregate(
-                input, head, column, group_type, &lanes, aggregates, memory,
+                input, head, column, group_type, &lanes, aggregates, memory, dict_keyed,
             );
         }
         pending.push_front(head);
@@ -3736,6 +3750,7 @@ fn two_pass_key_value(bits: u64, null: bool, data_type: DataType) -> Value {
 /// window fills, so memory is bounded by the group states plus one flush
 /// window regardless of input size.
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn build_streaming_two_pass_aggregate(
     input: &mut PullOperator,
     first: RecordBatch,
@@ -3744,6 +3759,7 @@ fn build_streaming_two_pass_aggregate(
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    string_keyed: bool,
 ) -> Result<MaterializedRows, ExecError> {
     let partitions = std::thread::available_parallelism().map_or(8, usize::from);
     let lane_count = lanes.len();
@@ -3759,6 +3775,7 @@ fn build_streaming_two_pass_aggregate(
     let mut bucket_reserved = 0_usize;
     let mut group_reserved = 0_usize;
     let mut flushes = 0_u32;
+    let mut intern = string_keyed.then(StringIntern::default);
 
     let mut batch = Some(first);
     loop {
@@ -3787,7 +3804,20 @@ fn build_streaming_two_pass_aggregate(
             }
         }
         bucket_reserved = bucket_reserved.saturating_add(bytes);
-        two_pass_scatter_batch(&current, group_column, lanes, partitions, &mut buckets)?;
+        match &mut intern {
+            Some(intern) => two_pass_scatter_strings(
+                &current,
+                group_column,
+                lanes,
+                partitions,
+                &mut buckets,
+                intern,
+                memory,
+            )?,
+            None => {
+                two_pass_scatter_batch(&current, group_column, lanes, partitions, &mut buckets)?;
+            }
+        }
         drop(current);
         if bucket_reserved >= flush_bytes || (scan_floor > 0 && memory.remaining() < scan_floor) {
             two_pass_flush(
@@ -3829,7 +3859,13 @@ fn build_streaming_two_pass_aggregate(
             let mut payload = 0_usize;
             for ((bits, null), states) in map {
                 let mut row = Vec::with_capacity(1 + states.len());
-                row.push(two_pass_key_value(bits, null, group_type));
+                row.push(match &intern {
+                    _ if null => Value::Null,
+                    Some(intern) => Value::Utf8(
+                        intern.values[usize::try_from(bits).expect("intern id fits usize")].clone(),
+                    ),
+                    None => two_pass_key_value(bits, null, group_type),
+                });
                 for state in states {
                     row.push(state.finish(memory)?);
                 }
@@ -3859,7 +3895,6 @@ fn two_pass_scatter_batch(
     partitions: usize,
     buckets: &mut [TwoPassBucket],
 ) -> Result<(), ExecError> {
-    let lane_count = lanes.len();
     let group_values = batch.column(group_column).ok_or(ExecError::InvalidBatch(
         "grouping column is outside the input batch",
     ))?;
@@ -3869,6 +3904,72 @@ fn two_pass_scatter_batch(
         ))?;
         let (key_bits, key_null) = two_pass_key_bits(value)
             .ok_or(ExecError::InvalidBatch("two-pass key is not scalar"))?;
+        scatter_two_pass_row(batch, row, key_bits, key_null, lanes, partitions, buckets);
+    }
+    Ok(())
+}
+
+/// String-keyed scatter: group keys are interned string ids — dictionary
+/// codes translate per batch (one intern per distinct entry), degraded
+/// plain-text chunks intern per row. No Value cell is ever built.
+fn two_pass_scatter_strings(
+    batch: &RecordBatch,
+    group_column: usize,
+    lanes: &[TwoPassLane],
+    partitions: usize,
+    buckets: &mut [TwoPassBucket],
+    intern: &mut StringIntern,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let vector = batch.column(group_column).ok_or(ExecError::InvalidBatch(
+        "grouping column is outside the input batch",
+    ))?;
+    let Some((crate::batch::TypedValues::Utf8(strings), validity)) = vector.typed() else {
+        return Err(ExecError::InvalidBatch(
+            "string two-pass key column lost its typed projection",
+        ));
+    };
+    if let Some((codes, dict_values)) = strings.dictionary() {
+        let translation = dict_values
+            .iter()
+            .map(|value| intern.intern(value.as_bytes(), memory))
+            .collect::<Result<Vec<_>, _>>()?;
+        for row in batch.selection().selected_rows() {
+            let key_null = !validity.is_valid(row);
+            let key_bits = if key_null {
+                0
+            } else {
+                translation[usize::try_from(codes[row]).expect("dict code fits usize")]
+            };
+            scatter_two_pass_row(batch, row, key_bits, key_null, lanes, partitions, buckets);
+        }
+    } else {
+        let (views, heap) = (strings.views(), strings.heap());
+        for row in batch.selection().selected_rows() {
+            let key_null = !validity.is_valid(row);
+            let key_bits = if key_null {
+                0
+            } else {
+                views[row].with_bytes(heap, |bytes| intern.intern(bytes, memory))?
+            };
+            scatter_two_pass_row(batch, row, key_bits, key_null, lanes, partitions, buckets);
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn scatter_two_pass_row(
+    batch: &RecordBatch,
+    row: usize,
+    key_bits: u64,
+    key_null: bool,
+    lanes: &[TwoPassLane],
+    partitions: usize,
+    buckets: &mut [TwoPassBucket],
+) {
+    let lane_count = lanes.len();
+    {
         let mut mask = u8::from(key_null) << 7;
         let bucket = &mut buckets[usize::try_from(
             crate::batch::mix64(key_bits ^ u64::from(key_null)) % partitions as u64,
@@ -3927,7 +4028,36 @@ fn two_pass_scatter_batch(
         bucket.keys.push(key_bits);
         bucket.masks.push(mask);
     }
-    Ok(())
+}
+
+/// Global string-key intern table for string-keyed two-pass grouping:
+/// dictionary code spaces are per chunk, so keys unify through this table.
+#[derive(Default)]
+struct StringIntern {
+    index: HashMap<Vec<u8>, u64>,
+    values: Vec<String>,
+}
+
+impl StringIntern {
+    fn intern(&mut self, bytes: &[u8], memory: &MemoryTracker) -> Result<u64, ExecError> {
+        if let Some(id) = self.index.get(bytes) {
+            return Ok(*id);
+        }
+        let id = u64::try_from(self.values.len()).expect("intern ids fit u64");
+        memory.reserve(
+            bytes
+                .len()
+                .saturating_mul(2)
+                .saturating_add(HASH_ENTRY_OVERHEAD)
+                .saturating_add(size_of::<String>() + size_of::<u64>()),
+        )?;
+        self.index.insert(bytes.to_vec(), id);
+        self.values.push(
+            String::from_utf8(bytes.to_vec())
+                .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?,
+        );
+        Ok(id)
+    }
 }
 
 /// Pass 2: fold every partition\'s scattered rows into its typed group

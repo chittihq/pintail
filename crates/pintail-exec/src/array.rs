@@ -270,6 +270,15 @@ impl StrView {
 pub struct StrColumn {
     views: Vec<StrView>,
     heap: Vec<u8>,
+    /// Dictionary provenance when built from coded blocks: per-row codes
+    /// plus the (small) distinct values, so group-by can key on integers.
+    dict: Option<StrDictionary>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct StrDictionary {
+    codes: Vec<u32>,
+    values: Vec<String>,
 }
 
 impl StrColumn {
@@ -306,6 +315,15 @@ impl StrColumn {
     /// Builds a column from dictionary codes: one template view per distinct
     /// entry, then one 16-byte view copy per row — no per-row string bytes.
     /// Null rows receive an empty view; callers carry validity separately.
+    /// Dictionary provenance: per-row codes and the distinct values, when
+    /// this column came from coded blocks.
+    #[must_use]
+    pub fn dictionary(&self) -> Option<(&[u32], &[String])> {
+        self.dict
+            .as_ref()
+            .map(|dict| (dict.codes.as_slice(), dict.values.as_slice()))
+    }
+
     #[must_use]
     pub fn from_dictionary(
         dict_heap: &[u8],
@@ -313,7 +331,16 @@ impl StrColumn {
         codes: &[u32],
         validity: &[bool],
     ) -> Self {
-        let mut column = Self::default();
+        let mut column = Self {
+            dict: Some(StrDictionary {
+                codes: codes.to_vec(),
+                values: dict_offsets
+                    .windows(2)
+                    .map(|pair| String::from_utf8_lossy(&dict_heap[pair[0]..pair[1]]).into_owned())
+                    .collect(),
+            }),
+            ..Self::default()
+        };
         let templates = dict_offsets
             .windows(2)
             .map(|pair| StrView::new(&dict_heap[pair[0]..pair[1]], &mut column.heap))
