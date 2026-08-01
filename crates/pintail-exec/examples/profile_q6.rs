@@ -117,6 +117,10 @@ fn user_row(id: u64) -> StoredRow {
 
 fn query_sql(name: &str) -> &'static str {
     match name {
+        "q4" => {
+            "SELECT region, status, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total \
+             FROM orders GROUP BY region, status ORDER BY region, status"
+        }
         "q3" => {
             "SELECT status, COUNT(*) AS cnt, ROUND(AVG(total_amount), 2) AS avg_amt \
              FROM orders GROUP BY status ORDER BY cnt DESC"

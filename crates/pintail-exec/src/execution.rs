@@ -2620,15 +2620,27 @@ fn build_buffered_hash_aggregate(
             position: 0,
         });
     };
-    if let Some([column]) = direct_columns
-        && first_batch.column(*column).is_some_and(|values| {
+    let utf8_column = |column: &usize| {
+        first_batch
+            .column(*column)
+            .is_some_and(|values| values.data_type() == DataType::Utf8)
+    };
+    let direct_eligible = match direct_columns {
+        Some([column]) => first_batch.column(*column).is_some_and(|values| {
             matches!(
                 values.data_type().storage_type(),
                 DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
             ) || (values.data_type() == DataType::Utf8
                 && two_pass_lanes(aggregates, &first_batch).is_some())
-        })
-    {
+        }),
+        Some([first, second]) => {
+            utf8_column(first)
+                && utf8_column(second)
+                && two_pass_lanes(aggregates, &first_batch).is_some()
+        }
+        _ => false,
+    };
+    if direct_eligible {
         // Single int-typed group columns take the sequential direct path:
         // its scalar index avoids the per-row Vec<Value> keys and the
         // per-round global merges that the buffered parallel path pays.
@@ -3468,7 +3480,7 @@ fn build_direct_column_aggregate(
     if let Some(batch) = first_batch.take() {
         pending.push_back(batch);
     }
-    if let [column] = *group_columns {
+    if matches!(*group_columns, [_] | [_, _]) {
         let head = match pending.pop_front() {
             Some(batch) => Some(batch),
             None => input.next_batch(memory)?,
@@ -3479,43 +3491,51 @@ fn build_direct_column_aggregate(
                 position: 0,
             });
         };
-        let group_type = head.column(column).map(ColumnVector::data_type);
-        let int_typed = group_type.is_some_and(|data_type| {
-            matches!(
-                data_type.storage_type(),
-                DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
-            )
-        });
-        let lanes = int_typed
-            .then(|| two_pass_lanes(aggregates, &head))
-            .flatten();
+        let typed_text = |column: usize| {
+            head.column(column).map(ColumnVector::data_type) == Some(DataType::Utf8)
+                && head
+                    .column(column)
+                    .and_then(ColumnVector::typed)
+                    .is_some_and(|(typed, _)| matches!(typed, crate::batch::TypedValues::Utf8(_)))
+        };
+        let keys = match *group_columns {
+            [column] => {
+                let group_type = head.column(column).map(ColumnVector::data_type);
+                let int_typed = group_type.is_some_and(|data_type| {
+                    matches!(
+                        data_type.storage_type(),
+                        DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64
+                    )
+                });
+                if int_typed {
+                    group_type.map(|group_type| TwoPassKeySource::Int { column, group_type })
+                } else if typed_text(column) {
+                    Some(TwoPassKeySource::Text { column })
+                } else {
+                    None
+                }
+            }
+            [first, second] if typed_text(first) && typed_text(second) => {
+                Some(TwoPassKeySource::TextPair { first, second })
+            }
+            _ => None,
+        };
+        let lanes = keys.and_then(|_| two_pass_lanes(aggregates, &head));
         if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
             eprintln!(
-                "[agg] direct path: int_typed={int_typed} lanes={:?} group_type={group_type:?}",
+                "[agg] direct path: keys={} lanes={:?}",
+                keys.is_some(),
                 lanes.as_ref().map(std::vec::Vec::len)
             );
         }
-        let dict_keyed = !int_typed
-            && group_type == Some(DataType::Utf8)
-            && head
-                .column(column)
-                .and_then(ColumnVector::typed)
-                .is_some_and(|(typed, _)| matches!(typed, crate::batch::TypedValues::Utf8(_)));
-        let lanes = if lanes.is_some() {
-            lanes
-        } else {
-            dict_keyed
-                .then(|| two_pass_lanes(aggregates, &head))
-                .flatten()
-        };
-        if let (Some(lanes), Some(group_type)) = (lanes, group_type) {
+        if let (Some(keys), Some(lanes)) = (keys, lanes) {
             // Streaming scatter (phase-0 profile, 2026-08-02): retaining
             // RecordBatches cost ~118 bytes/row and forced the sequential
             // Value-hashmap fallback on real 20M-row inputs. Scattering
             // (key bits, lane bits) as batches arrive costs the exact
             // 8*(1+lanes)+1 bytes/row and never falls back.
             return build_streaming_two_pass_aggregate(
-                input, head, column, group_type, &lanes, aggregates, memory, dict_keyed,
+                input, head, keys, &lanes, aggregates, memory,
             );
         }
         pending.push_front(head);
@@ -3742,6 +3762,20 @@ fn two_pass_key_value(bits: u64, null: bool, data_type: DataType) -> Value {
     }
 }
 
+/// How the streaming two-pass extracts group-key bits per row.
+#[derive(Clone, Copy)]
+enum TwoPassKeySource {
+    /// One int-typed column: key bits are the value's bit pattern.
+    Int { column: usize, group_type: DataType },
+    /// One string column: key bits are interned string ids (bit 7 of the
+    /// mask carries NULL, matching the int scheme).
+    Text { column: usize },
+    /// Two string columns: `(id_a + 1) << 32 | (id_b + 1)`, with 0 as the
+    /// per-column NULL sentinel so `(NULL, x)`, `(x, NULL)` and
+    /// `(NULL, NULL)` stay distinct groups.
+    TextPair { first: usize, second: usize },
+}
+
 /// Streaming two-pass partitioned aggregation for one int-typed group
 /// column (experiments/RESULTS.md e13/e15 and the 2026-08-02 phase-0
 /// profile). Pass 1 scatters (key bits, lane bits) into partition buckets
@@ -3750,16 +3784,13 @@ fn two_pass_key_value(bits: u64, null: bool, data_type: DataType) -> Value {
 /// window fills, so memory is bounded by the group states plus one flush
 /// window regardless of input size.
 #[allow(clippy::too_many_lines)]
-#[allow(clippy::too_many_arguments)]
 fn build_streaming_two_pass_aggregate(
     input: &mut PullOperator,
     first: RecordBatch,
-    group_column: usize,
-    group_type: DataType,
+    keys: TwoPassKeySource,
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
-    string_keyed: bool,
 ) -> Result<MaterializedRows, ExecError> {
     let partitions = std::thread::available_parallelism().map_or(8, usize::from);
     let lane_count = lanes.len();
@@ -3775,7 +3806,11 @@ fn build_streaming_two_pass_aggregate(
     let mut bucket_reserved = 0_usize;
     let mut group_reserved = 0_usize;
     let mut flushes = 0_u32;
-    let mut intern = string_keyed.then(StringIntern::default);
+    let mut intern = matches!(
+        keys,
+        TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. }
+    )
+    .then(StringIntern::default);
 
     let mut batch = Some(first);
     loop {
@@ -3804,19 +3839,32 @@ fn build_streaming_two_pass_aggregate(
             }
         }
         bucket_reserved = bucket_reserved.saturating_add(bytes);
-        match &mut intern {
-            Some(intern) => two_pass_scatter_strings(
+        match (keys, &mut intern) {
+            (TwoPassKeySource::Text { column }, Some(intern)) => two_pass_scatter_strings(
                 &current,
-                group_column,
+                column,
                 lanes,
                 partitions,
                 &mut buckets,
                 intern,
                 memory,
             )?,
-            None => {
-                two_pass_scatter_batch(&current, group_column, lanes, partitions, &mut buckets)?;
+            (TwoPassKeySource::TextPair { first, second }, Some(intern)) => {
+                two_pass_scatter_string_pair(
+                    &current,
+                    first,
+                    second,
+                    lanes,
+                    partitions,
+                    &mut buckets,
+                    intern,
+                    memory,
+                )?;
             }
+            (TwoPassKeySource::Int { column, .. }, _) => {
+                two_pass_scatter_batch(&current, column, lanes, partitions, &mut buckets)?;
+            }
+            _ => unreachable!("intern presence follows the key source"),
         }
         drop(current);
         if bucket_reserved >= flush_bytes || (scan_floor > 0 && memory.remaining() < scan_floor) {
@@ -3855,17 +3903,36 @@ fn build_streaming_two_pass_aggregate(
     let finalized = maps
         .into_par_iter()
         .map(|map| -> Result<(Vec<Vec<Value>>, usize), ExecError> {
+            let interned = |id: u64| {
+                Value::Utf8(
+                    intern
+                        .as_ref()
+                        .expect("text keys carry an intern table")
+                        .values[usize::try_from(id).expect("intern id fits usize")]
+                    .clone(),
+                )
+            };
             let mut rows = Vec::with_capacity(map.len());
             let mut payload = 0_usize;
             for ((bits, null), states) in map {
-                let mut row = Vec::with_capacity(1 + states.len());
-                row.push(match &intern {
-                    _ if null => Value::Null,
-                    Some(intern) => Value::Utf8(
-                        intern.values[usize::try_from(bits).expect("intern id fits usize")].clone(),
-                    ),
-                    None => two_pass_key_value(bits, null, group_type),
-                });
+                let mut row = Vec::with_capacity(2 + states.len());
+                match keys {
+                    TwoPassKeySource::Int { group_type, .. } => {
+                        row.push(two_pass_key_value(bits, null, group_type));
+                    }
+                    TwoPassKeySource::Text { .. } => {
+                        row.push(if null { Value::Null } else { interned(bits) });
+                    }
+                    TwoPassKeySource::TextPair { .. } => {
+                        for id in [bits >> 32, bits & 0xFFFF_FFFF] {
+                            row.push(if id == 0 {
+                                Value::Null
+                            } else {
+                                interned(id - 1)
+                            });
+                        }
+                    }
+                }
                 for state in states {
                     row.push(state.finish(memory)?);
                 }
@@ -3954,6 +4021,100 @@ fn two_pass_scatter_strings(
             };
             scatter_two_pass_row(batch, row, key_bits, key_null, lanes, partitions, buckets);
         }
+    }
+    Ok(())
+}
+
+/// One string column's per-batch key extractor: dictionary translation
+/// when codes survive, per-row view interning otherwise.
+enum StringKeyReader<'a> {
+    Dict {
+        codes: &'a [u32],
+        translation: Vec<u64>,
+    },
+    Plain {
+        views: &'a [crate::array::StrView],
+        heap: &'a [u8],
+    },
+}
+
+impl StringKeyReader<'_> {
+    fn read(
+        &self,
+        row: usize,
+        intern: &mut StringIntern,
+        memory: &MemoryTracker,
+    ) -> Result<u64, ExecError> {
+        match self {
+            Self::Dict { codes, translation } => {
+                Ok(translation[usize::try_from(codes[row]).expect("dict code fits usize")])
+            }
+            Self::Plain { views, heap } => {
+                views[row].with_bytes(heap, |bytes| intern.intern(bytes, memory))
+            }
+        }
+    }
+}
+
+fn string_key_reader<'a>(
+    batch: &'a RecordBatch,
+    column: usize,
+    intern: &mut StringIntern,
+    memory: &MemoryTracker,
+) -> Result<(StringKeyReader<'a>, &'a crate::array::ValidityMask), ExecError> {
+    let vector = batch.column(column).ok_or(ExecError::InvalidBatch(
+        "grouping column is outside the input batch",
+    ))?;
+    let Some((crate::batch::TypedValues::Utf8(strings), validity)) = vector.typed() else {
+        return Err(ExecError::InvalidBatch(
+            "string two-pass key column lost its typed projection",
+        ));
+    };
+    let reader = if let Some((codes, dict_values)) = strings.dictionary() {
+        StringKeyReader::Dict {
+            codes,
+            translation: dict_values
+                .iter()
+                .map(|value| intern.intern(value.as_bytes(), memory))
+                .collect::<Result<Vec<_>, _>>()?,
+        }
+    } else {
+        StringKeyReader::Plain {
+            views: strings.views(),
+            heap: strings.heap(),
+        }
+    };
+    Ok((reader, validity))
+}
+
+/// Two string group columns: ids pack as `(a+1) << 32 | (b+1)` with 0 as
+/// the per-column NULL sentinel (mask bit 7 stays clear).
+#[allow(clippy::too_many_arguments)]
+fn two_pass_scatter_string_pair(
+    batch: &RecordBatch,
+    first: usize,
+    second: usize,
+    lanes: &[TwoPassLane],
+    partitions: usize,
+    buckets: &mut [TwoPassBucket],
+    intern: &mut StringIntern,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let (first_reader, first_validity) = string_key_reader(batch, first, intern, memory)?;
+    let (second_reader, second_validity) = string_key_reader(batch, second, intern, memory)?;
+    for row in batch.selection().selected_rows() {
+        let first_id = if first_validity.is_valid(row) {
+            first_reader.read(row, intern, memory)? + 1
+        } else {
+            0
+        };
+        let second_id = if second_validity.is_valid(row) {
+            second_reader.read(row, intern, memory)? + 1
+        } else {
+            0
+        };
+        let key_bits = (first_id << 32) | second_id;
+        scatter_two_pass_row(batch, row, key_bits, false, lanes, partitions, buckets);
     }
     Ok(())
 }
