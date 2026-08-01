@@ -117,6 +117,7 @@ const clickhouseHeaders = {
 const dataDir = mkdtempSync(join(tmpdir(), 'pintail-m9-benchmark-'))
 let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
 let mysqlConnection: mysql.Connection | undefined
+let mysqlEndpoint: { host: string; port: number } | undefined
 let dockerCreated = false
 
 function log(message: string) {
@@ -210,6 +211,11 @@ async function waitForMysql(host: string, port: number, attempts = 120) {
         multipleStatements: true,
         supportBigNumbers: true,
         bigNumberStrings: true,
+        // Cold analytic queries keep the TCP session silent for minutes
+        // while the server computes; keepalives stop idle timeouts on the
+        // path to a remote docker host from dropping the connection.
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 10_000,
       })
       await connection.query('SELECT 1')
       return connection
@@ -451,6 +457,30 @@ async function verifyCounts(
   log(`all engines expose ${orderRows.toLocaleString()} orders`)
 }
 
+// The MySQL side of a cold query can run for many minutes (Q6 exceeds 13)
+// with zero traffic on the wire, long enough for an idle timeout between
+// this machine and a remote docker host to kill the session. The failure
+// only surfaces on the next command, so reconnect once and re-run it.
+async function mysqlColdQuery(sql: string): Promise<unknown[][]> {
+  const run = async () => {
+    const [rows] = await mysqlConnection!.query<mysql.RowDataPacket[]>({
+      sql,
+      rowsAsArray: true,
+    })
+    return rows as unknown as unknown[][]
+  }
+  try {
+    return await run()
+  } catch (error) {
+    if (!mysqlEndpoint) throw error
+    log(`MySQL connection dropped (${error}); reconnecting and retrying`)
+    mysqlConnection?.destroy()
+    mysqlConnection = await waitForMysql(mysqlEndpoint.host, mysqlEndpoint.port, 240)
+    await mysqlConnection.query('USE benchmark_db')
+    return run()
+  }
+}
+
 async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; ms: number }> {
   const started = performance.now()
   const value = await operation()
@@ -534,6 +564,17 @@ async function runQueries(
   }
   const baseline = loadMysqlBaseline()
   const freshBaseline: MysqlBaseline['queries'] = {}
+  const saveBaseline = async () => {
+    const record: MysqlBaseline = {
+      fingerprint: benchmarkFingerprint,
+      host: dockerHostName,
+      measuredAt: new Date().toISOString(),
+      gitCommit: (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout,
+      queries: { ...(baseline?.queries ?? {}), ...freshBaseline },
+    }
+    writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`)
+    log(`  MySQL baseline cached to ${baselinePath}`)
+  }
   for (const query of benchmarkQueries) {
     log(query.name)
     let mysqlMs: number
@@ -545,12 +586,13 @@ async function runQueries(
       baselineProvenance = baseline?.measuredAt
       log(`  MySQL baseline reused from ${baseline?.measuredAt} (${cached.ms} ms cold)`)
     } else {
-      const mysqlRun = await timed(() =>
-        connection.query<mysql.RowDataPacket[]>({ sql: query.sql, rowsAsArray: true }),
-      )
+      const mysqlRun = await timed(() => mysqlColdQuery(query.sql))
       mysqlMs = mysqlRun.ms
-      mysqlCanonical = canonicalRows(mysqlRun.value[0] as unknown as unknown[][])
+      mysqlCanonical = canonicalRows(mysqlRun.value)
       freshBaseline[query.name] = { ms: mysqlMs, canonical: mysqlCanonical }
+      // Cold MySQL timings cost minutes each; persist after every query so
+      // a crash later in the run never throws measured work away.
+      await saveBaseline()
     }
     const pintailRun = await measured(
       () =>
@@ -613,17 +655,6 @@ async function runQueries(
         `ClickHouse ${clickhouseRun.timing.medianMs} ms | ` +
         `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ${speedup.toFixed(1)}×`,
     )
-  }
-  if (Object.keys(freshBaseline).length > 0) {
-    const record: MysqlBaseline = {
-      fingerprint: benchmarkFingerprint,
-      host: dockerHostName,
-      measuredAt: new Date().toISOString(),
-      gitCommit: (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout,
-      queries: { ...(baseline?.queries ?? {}), ...freshBaseline },
-    }
-    writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`)
-    log(`MySQL baseline cached to ${baselinePath}`)
   }
   return results
 }
@@ -847,6 +878,7 @@ async function main() {
     mysqlPort = await publishedPort(mysqlName, 3306)
     mysqlConnection = await waitForMysql(host, mysqlPort, 1200)
   }
+  mysqlEndpoint = { host, port: mysqlPort }
   // Neither the restored-volume connection nor the post-snapshot reconnect
   // has a default schema; the seed path only gets one via USE in seed.sql.
   await mysqlConnection.query('USE benchmark_db')
