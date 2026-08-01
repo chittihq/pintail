@@ -1,4 +1,9 @@
+# Pinned exactly (not "stable") so local clippy/rustfmt and CI agree:
+# a floating channel let local 1.94 pass while CI's 1.97 failed on lints
+# the older toolchain did not know. Bump this and .github/workflows/ci.yml
+# together. MSRV (the oldest supported compiler) is rust-version in
+# Cargo.toml and is a separate, lower bound.
 [toolchain]
-channel = "stable"
+channel = "1.97.0"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
