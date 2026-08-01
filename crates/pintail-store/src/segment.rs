@@ -2165,6 +2165,11 @@ impl ColumnBuilder {
     /// Converts an accumulated dictionary builder back to the arena shape,
     /// for chunks whose blocks mix encodings.
     fn degrade_dictionary(&mut self) {
+        if std::env::var_os("PINTAIL_DECODE_DEBUG").is_some()
+            && matches!(self, Self::DictUtf8 { .. })
+        {
+            eprintln!("[decode] dictionary degraded");
+        }
         if let Self::DictUtf8 {
             dict_heap,
             dict_offsets,
