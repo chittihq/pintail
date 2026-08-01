@@ -1101,6 +1101,7 @@ fn adopt_chunk(
 /// text-carried decimals and temporals once from the arena; row values
 /// materialize lazily only if a row-shaped consumer asks. Falls back to
 /// row values when the packed shape does not match the declared type.
+#[allow(clippy::too_many_lines)]
 fn column_vector_from_decoded(
     data_type: pintail_types::DataType,
     decoded: DecodedColumn,
@@ -1142,6 +1143,42 @@ fn column_vector_from_decoded(
             offsets,
             validity,
         } if matches!(storage, pintail_types::DataType::Utf8) => {
+            Ok(typed_from_utf8_arena(data_type, &heap, &offsets, &validity))
+        }
+        DecodedColumn::DictionaryUtf8 {
+            dict_heap,
+            dict_offsets,
+            codes,
+            validity,
+        } if matches!(storage, pintail_types::DataType::Utf8) => {
+            let mask = ValidityMask::from_bools(&validity);
+            if matches!(
+                data_type,
+                pintail_types::DataType::Utf8 | pintail_types::DataType::Json
+            ) {
+                // Straight to view templates: one 16-byte view per row,
+                // dictionary bytes as the only heap.
+                let column =
+                    StrColumn::from_dictionary(&dict_heap, &dict_offsets, &codes, &validity);
+                return Ok(ColumnVector::from_typed(
+                    data_type,
+                    TypedValues::Utf8(column),
+                    mask,
+                ));
+            }
+            // Text-carried decimals/temporals under dictionary encoding are
+            // rare (high-cardinality columns don't dictionary-encode);
+            // materialize the arena and take the parsing path.
+            let mut heap = Vec::new();
+            let mut offsets = Vec::with_capacity(codes.len() + 1);
+            offsets.push(0);
+            for (code, valid) in codes.iter().zip(&validity) {
+                if *valid {
+                    let code = *code as usize;
+                    heap.extend_from_slice(&dict_heap[dict_offsets[code]..dict_offsets[code + 1]]);
+                }
+                offsets.push(heap.len());
+            }
             Ok(typed_from_utf8_arena(data_type, &heap, &offsets, &validity))
         }
         DecodedColumn::NativeUnits {
@@ -2487,5 +2524,80 @@ mod tests {
         if let Some(first) = total.first() {
             assert_eq!(first[0], Value::UInt64(300_000), "distinct group count");
         }
+    }
+
+    #[test]
+    fn dictionary_coded_columns_aggregate_and_filter_exactly() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        // Three distinct labels over 6,000 rows: dictionary-encoded on disk
+        // (distinct * 10 < rows). One label exceeds the 12-byte inline view
+        // limit so template views exercise the shared heap.
+        let label = |key: u64| match key % 3 {
+            0 => "alpha",
+            1 => "beta",
+            _ => "a-label-well-past-inline",
+        };
+        for start in [1_u64, 3001] {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 3000)
+                        .map(|key| row(key, label(key)))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(6000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let rows = execute_rows(
+            "SELECT name, COUNT(*) AS c FROM events GROUP BY name ORDER BY name",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec![
+                    Value::Utf8("a-label-well-past-inline".into()),
+                    Value::UInt64(2000)
+                ],
+                vec![Value::Utf8("alpha".into()), Value::UInt64(2000)],
+                vec![Value::Utf8("beta".into()), Value::UInt64(2000)],
+            ]
+        );
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT COUNT(*) FROM events WHERE name = 'a-label-well-past-inline'",
+                &catalog,
+                &provider,
+                64 * 1024 * 1024,
+            ),
+            [Value::UInt64(2000)]
+        );
+        // Row-shaped output through the dictionary path.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT name FROM events WHERE id = 2",
+                &catalog,
+                &provider,
+                64 * 1024 * 1024,
+            ),
+            [Value::Utf8("a-label-well-past-inline".into())]
+        );
     }
 }

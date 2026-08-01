@@ -303,6 +303,36 @@ impl StrColumn {
         &self.heap
     }
 
+    /// Builds a column from dictionary codes: one template view per distinct
+    /// entry, then one 16-byte view copy per row — no per-row string bytes.
+    /// Null rows receive an empty view; callers carry validity separately.
+    #[must_use]
+    pub fn from_dictionary(
+        dict_heap: &[u8],
+        dict_offsets: &[usize],
+        codes: &[u32],
+        validity: &[bool],
+    ) -> Self {
+        let mut column = Self::default();
+        let templates = dict_offsets
+            .windows(2)
+            .map(|pair| StrView::new(&dict_heap[pair[0]..pair[1]], &mut column.heap))
+            .collect::<Vec<_>>();
+        let empty = StrView::new(&[], &mut column.heap);
+        column.views = codes
+            .iter()
+            .zip(validity)
+            .map(|(code, valid)| {
+                if *valid {
+                    templates[*code as usize]
+                } else {
+                    empty
+                }
+            })
+            .collect();
+        column
+    }
+
     /// Prepares a comparison needle sharing no storage with the column.
     #[must_use]
     pub fn needle(bytes: &[u8]) -> (StrView, Vec<u8>) {

@@ -540,6 +540,20 @@ pub enum DecodedColumn {
         /// Per-row null mask (`true` = non-null).
         validity: Vec<bool>,
     },
+    /// Dictionary-coded UTF-8: `codes[i]` indexes the (small) distinct-entry
+    /// arena; null rows hold code 0 with `validity` false. Produced when a
+    /// column's blocks arrive dictionary-encoded, so 20M rows of a 5-value
+    /// column ship as 20M u32s plus a few entry bytes.
+    DictionaryUtf8 {
+        /// Distinct entry bytes.
+        dict_heap: Vec<u8>,
+        /// `entries + 1` boundaries into `dict_heap`.
+        dict_offsets: Vec<usize>,
+        /// One entry index per row.
+        codes: Vec<u32>,
+        /// Per-row null mask (`true` = non-null).
+        validity: Vec<bool>,
+    },
     /// UTF-8 bytes in one arena; row `i` spans `heap[offsets[i]..offsets[i+1]]`
     /// and null rows span zero bytes.
     Utf8 {
@@ -562,6 +576,7 @@ impl DecodedColumn {
             | Self::UInt64 { validity, .. }
             | Self::Float64 { validity, .. }
             | Self::NativeUnits { validity, .. }
+            | Self::DictionaryUtf8 { validity, .. }
             | Self::Utf8 { validity, .. } => validity.len(),
         }
     }
@@ -602,6 +617,16 @@ impl DecodedColumn {
             } => heap
                 .capacity()
                 .saturating_add(offsets.capacity().saturating_mul(size_of::<usize>()))
+                .saturating_add(validity.capacity()),
+            Self::DictionaryUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => dict_heap
+                .capacity()
+                .saturating_add(dict_offsets.capacity().saturating_mul(size_of::<usize>()))
+                .saturating_add(codes.capacity().saturating_mul(size_of::<u32>()))
                 .saturating_add(validity.capacity()),
         }
     }
@@ -651,6 +676,21 @@ impl DecodedColumn {
                 let rest_validity = validity.split_off(count);
                 Self::Float64 {
                     bits: std::mem::replace(bits, rest_bits),
+                    validity: std::mem::replace(validity, rest_validity),
+                }
+            }
+            Self::DictionaryUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => {
+                let rest_codes = codes.split_off(count);
+                let rest_validity = validity.split_off(count);
+                Self::DictionaryUtf8 {
+                    dict_heap: dict_heap.clone(),
+                    dict_offsets: dict_offsets.clone(),
+                    codes: std::mem::replace(codes, rest_codes),
                     validity: std::mem::replace(validity, rest_validity),
                 }
             }
@@ -721,6 +761,23 @@ impl DecodedColumn {
                     let text = units
                         .format(values[row])
                         .expect("stored native units round-trip");
+                    pintail_types::Value::Utf8(text)
+                } else {
+                    pintail_types::Value::Null
+                }
+            }
+            Self::DictionaryUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => {
+                if validity[row] {
+                    let code = codes[row] as usize;
+                    let bytes = dict_heap[dict_offsets[code]..dict_offsets[code + 1]].to_vec();
+                    let text = String::from_utf8(bytes).unwrap_or_else(|error| {
+                        String::from_utf8_lossy(error.as_bytes()).into_owned()
+                    });
                     pintail_types::Value::Utf8(text)
                 } else {
                     pintail_types::Value::Null
@@ -801,6 +858,27 @@ impl DecodedColumn {
                         pintail_types::Value::Utf8(
                             units.format(value).expect("stored native units round-trip"),
                         )
+                    } else {
+                        pintail_types::Value::Null
+                    }
+                })
+                .collect(),
+            Self::DictionaryUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => codes
+                .iter()
+                .zip(validity)
+                .map(|(code, valid)| {
+                    if valid {
+                        let code = *code as usize;
+                        let bytes = dict_heap[dict_offsets[code]..dict_offsets[code + 1]].to_vec();
+                        let text = String::from_utf8(bytes).unwrap_or_else(|error| {
+                            String::from_utf8_lossy(error.as_bytes()).into_owned()
+                        });
+                        pintail_types::Value::Utf8(text)
                     } else {
                         pintail_types::Value::Null
                     }

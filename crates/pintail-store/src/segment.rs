@@ -1920,6 +1920,15 @@ enum ColumnBuilder {
         offsets: Vec<usize>,
         validity: Vec<bool>,
     },
+    /// Dictionary-coded UTF-8: block dictionaries remap into one chunk
+    /// dictionary and rows accumulate as u32 codes. Degrades to the arena
+    /// shape if a non-dictionary block interrupts.
+    DictUtf8 {
+        dict_heap: Vec<u8>,
+        dict_offsets: Vec<usize>,
+        codes: Vec<u32>,
+        validity: Vec<bool>,
+    },
     /// A v2 native-unit column: unit cells accumulate packed and flow to
     /// the executor untouched (step B); text regenerates only where a
     /// consumer asks.
@@ -2039,6 +2048,10 @@ impl ColumnBuilder {
                 offsets.push(end);
                 validity.push(false);
             }
+            (this @ Self::DictUtf8 { .. }, cell @ (Cell::Utf8(_) | Cell::Null)) => {
+                this.degrade_dictionary();
+                return this.push(cell);
+            }
             (Self::Values(_), Cell::Key(_)) => {
                 return Err("primary-key cell in a user column block".to_owned());
             }
@@ -2046,6 +2059,110 @@ impl ColumnBuilder {
             _ => return Err("block cell type differs from its column type".to_owned()),
         }
         Ok(())
+    }
+
+    /// Registers one block's dictionary, upgrading an empty arena builder
+    /// to dictionary mode. Returns per-block-entry translations into the
+    /// chunk dictionary, or `None` when this builder cannot take codes
+    /// (arena rows already accumulated, or a non-Utf8 shape).
+    fn begin_dictionary_block(&mut self, entries: &[&[u8]]) -> Option<Vec<u32>> {
+        if let Self::Utf8 {
+            heap,
+            offsets,
+            validity,
+        } = self
+        {
+            if !validity.is_empty() || !heap.is_empty() {
+                return None;
+            }
+            let capacity = validity.capacity();
+            let _ = (heap, offsets);
+            *self = Self::DictUtf8 {
+                dict_heap: Vec::new(),
+                dict_offsets: vec![0],
+                codes: Vec::with_capacity(capacity),
+                validity: Vec::with_capacity(capacity),
+            };
+        }
+        let Self::DictUtf8 {
+            dict_heap,
+            dict_offsets,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let translation = entries
+            .iter()
+            .map(|entry| {
+                let existing = (0..dict_offsets.len() - 1).find(|index| {
+                    &dict_heap[dict_offsets[*index]..dict_offsets[index + 1]] == *entry
+                });
+                match existing {
+                    Some(index) => u32::try_from(index).expect("chunk dictionary fits u32"),
+                    None => {
+                        dict_heap.extend_from_slice(entry);
+                        dict_offsets.push(dict_heap.len());
+                        u32::try_from(dict_offsets.len() - 2).expect("chunk dictionary fits u32")
+                    }
+                }
+            })
+            .collect();
+        Some(translation)
+    }
+
+    fn push_code(&mut self, code: u32) -> Result<(), String> {
+        match self {
+            Self::DictUtf8 {
+                codes, validity, ..
+            } => {
+                codes.push(code);
+                validity.push(true);
+                Ok(())
+            }
+            _ => Err("dictionary code in a non-dictionary column".to_owned()),
+        }
+    }
+
+    fn push_null_code(&mut self) -> Result<(), String> {
+        match self {
+            Self::DictUtf8 {
+                codes, validity, ..
+            } => {
+                codes.push(0);
+                validity.push(false);
+                Ok(())
+            }
+            _ => Err("dictionary code in a non-dictionary column".to_owned()),
+        }
+    }
+
+    /// Converts an accumulated dictionary builder back to the arena shape,
+    /// for chunks whose blocks mix encodings.
+    fn degrade_dictionary(&mut self) {
+        if let Self::DictUtf8 {
+            dict_heap,
+            dict_offsets,
+            codes,
+            validity,
+        } = self
+        {
+            let mut heap = Vec::new();
+            let mut offsets = Vec::with_capacity(codes.len() + 1);
+            offsets.push(0);
+            for (code, valid) in codes.iter().zip(validity.iter()) {
+                if *valid {
+                    let code = *code as usize;
+                    heap.extend_from_slice(&dict_heap[dict_offsets[code]..dict_offsets[code + 1]]);
+                }
+                offsets.push(heap.len());
+            }
+            *self = Self::Utf8 {
+                heap,
+                offsets,
+                validity: std::mem::take(validity),
+            };
+        }
     }
 
     /// Appends one pre-validated UTF-8 value without an intermediate `Cell`.
@@ -2074,6 +2191,20 @@ impl ColumnBuilder {
             } => values
                 .len()
                 .saturating_mul(std::mem::size_of::<i64>())
+                .saturating_add(validity.len()),
+            Self::DictUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => dict_heap
+                .len()
+                .saturating_add(
+                    dict_offsets
+                        .len()
+                        .saturating_mul(std::mem::size_of::<usize>()),
+                )
+                .saturating_add(codes.len().saturating_mul(std::mem::size_of::<u32>()))
                 .saturating_add(validity.len()),
             Self::UInt64 { values, validity } => values
                 .len()
@@ -2119,6 +2250,17 @@ impl ColumnBuilder {
             } => DecodedColumn::NativeUnits {
                 units,
                 values,
+                validity,
+            },
+            Self::DictUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => DecodedColumn::DictionaryUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
                 validity,
             },
             Self::Values(values) => DecodedColumn::Values(values),
@@ -2910,6 +3052,7 @@ fn decode_utf8_payload_into(
     let mut produced = 0_usize;
     match encoding {
         Encoding::Plain => {
+            builder.degrade_dictionary();
             for row in 0..row_count {
                 let in_range = ranges.contains(row);
                 if is_null(row) {
@@ -2934,25 +3077,35 @@ fn decode_utf8_payload_into(
                 validate(entry)?;
                 entries.push(entry);
             }
+            // Code fast path: rows land as u32 codes into the chunk
+            // dictionary; a 5-value column never materializes its strings.
+            let translation = builder.begin_dictionary_block(&entries);
             for row in 0..row_count {
                 let in_range = ranges.contains(row);
                 if is_null(row) {
                     if in_range {
-                        builder.push(Cell::Null)?;
+                        match &translation {
+                            Some(_) => builder.push_null_code()?,
+                            None => builder.push(Cell::Null)?,
+                        }
                     }
                     continue;
                 }
                 let index = decoder.u32()? as usize;
-                let value = *entries
-                    .get(index)
-                    .ok_or_else(|| format!("dictionary index {index} is out of bounds"))?;
+                if index >= entries.len() {
+                    return Err(format!("dictionary index {index} is out of bounds"));
+                }
                 produced += 1;
                 if in_range {
-                    builder.push_utf8(value)?;
+                    match &translation {
+                        Some(translation) => builder.push_code(translation[index])?,
+                        None => builder.push_utf8(entries[index])?,
+                    }
                 }
             }
         }
         Encoding::RunLength => {
+            builder.degrade_dictionary();
             let run_count = decoder.u32()? as usize;
             let mut runs_read = 0_usize;
             let mut run_remaining = 0_usize;
