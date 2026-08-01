@@ -1956,6 +1956,100 @@ impl TableStore {
         self.ingest_at_sequence_with_append_policy(sequence, rows, AppendKeyPolicy::Generate)
     }
 
+    /// Validates and durably orders one polling-scan batch, dropping rows
+    /// whose latest visible version already holds identical content before
+    /// they reach the WAL (GOAL.md §5.1 no-op suppression). Polling re-reads
+    /// the same rows every cycle; without suppression each cycle re-ingests
+    /// unchanged data as new versions and storage balloons between
+    /// compactions. Steady-state polling storage must match CDC's.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when validation, the point lookups, encoding, or
+    /// WAL I/O fails.
+    pub fn ingest_scan(&mut self, rows: Vec<StoredRow>) -> Result<IngestOutcome, StoreError> {
+        if self.schema.key_mode() == KeyMode::AppendRowId {
+            // Generated keys never collide with stored rows, so there is
+            // nothing to suppress against.
+            return self.ingest(rows);
+        }
+        let mut kept = Vec::with_capacity(rows.len());
+        for row in rows {
+            if !self.scan_row_is_noop(&row)? {
+                kept.push(row);
+            }
+        }
+        self.ingest(kept)
+    }
+
+    /// Whether a scan row's content matches its key's latest visible
+    /// version: same deletion state and identical values. Non-matching and
+    /// unknown keys must be ingested.
+    fn scan_row_is_noop(&self, row: &StoredRow) -> Result<bool, StoreError> {
+        // The memtable always holds the newest version of a key when it
+        // holds the key at all.
+        if let Some(current) = self.memtable.snapshot().get(row.key()) {
+            return Ok(current.is_deleted() == row.is_deleted() && current.values() == row.values());
+        }
+        let scan_memory = AtomicUsize::new(0);
+        let budget = segment::ScanMemoryBudget::new(&scan_memory, usize::MAX);
+        let mut best: Option<(u64, bool, usize, usize)> = None;
+        for (segment_index, meta) in self.manifest.segments.iter().enumerate() {
+            if row.key() < &meta.min_key || row.key() > &meta.max_key {
+                continue;
+            }
+            if !segment::might_contain_key(&self.directory, meta, &self.schema, row.key())? {
+                continue;
+            }
+            let headers = segment::read_row_headers_range(
+                &self.directory,
+                meta,
+                &self.schema,
+                row.key(),
+                row.key(),
+                &budget,
+            )?;
+            for header in headers.rows {
+                if best
+                    .as_ref()
+                    .is_none_or(|(version, ..)| header.version >= *version)
+                {
+                    best = Some((
+                        header.version,
+                        header.deleted,
+                        segment_index,
+                        header.physical_index,
+                    ));
+                }
+            }
+        }
+        let Some((_, deleted, segment_index, row_index)) = best else {
+            return Ok(false);
+        };
+        if deleted != row.is_deleted() {
+            return Ok(false);
+        }
+        if deleted {
+            // Both sides are tombstones: re-ingesting one is a no-op.
+            return Ok(true);
+        }
+        let projection = (0..self.schema.columns().len()).collect::<Vec<_>>();
+        let fetch = segment::read_projected_rows(
+            &self.directory,
+            &self.manifest.segments[segment_index],
+            &self.schema,
+            &projection,
+            &[row_index],
+            &budget,
+        )?;
+        Ok(fetch.columns.len() == row.values().len()
+            && fetch
+                .columns
+                .iter()
+                .zip(row.values())
+                .all(|(column, value)| column.first() == Some(value)))
+    }
+
     /// Validates and durably orders one CDC batch.
     ///
     /// In append-row-ID mode, the caller-provided unsigned key is preserved so

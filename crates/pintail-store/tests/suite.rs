@@ -14,6 +14,7 @@ mod suite {
     mod key_modes;
     mod native_units;
     mod partitioned_scan;
+    mod polling_noop;
     mod reader;
     mod recovery;
     mod schema_evolution;

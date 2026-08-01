@@ -378,7 +378,7 @@ async fn reconcile_cdc_target(
         .collect::<Vec<_>>();
     let tombstone_count = tombstones.len();
     mutations.extend(tombstones);
-    target.store.ingest(mutations)?;
+    target.store.ingest_scan(mutations)?;
     if ingested > 0 || tombstone_count > 0 {
         target.store.checkpoint()?;
     }
@@ -771,7 +771,7 @@ async fn sync_cursor_rows(
             mutations.push(decoded);
         }
     }
-    target.store.ingest(mutations)?;
+    target.store.ingest_scan(mutations)?;
     Ok((ingested, tombstones))
 }
 
@@ -859,7 +859,7 @@ async fn sync_checksum_table(
             }
         }
     }
-    target.store.ingest(mutations)?;
+    target.store.ingest_scan(mutations)?;
     let reconcile = redumped > 0 || reconcile_requested;
     if reconcile {
         tombstones +=
@@ -937,7 +937,7 @@ async fn sync_append_table(
     }
     target.store.reset_for_resnapshot()?;
     let count = source_rows.len();
-    target.store.ingest(source_rows)?;
+    target.store.ingest_scan(source_rows)?;
     Ok(count)
 }
 
