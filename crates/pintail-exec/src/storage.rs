@@ -14,7 +14,7 @@ use pintail_types::{KeyPart, PrimaryKey, Value};
 use crate::{
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
     array::{StrColumn, ValidityMask},
-    batch::{TypedValues, parse_date_days, parse_datetime_micros, parse_decimal_scaled},
+    batch::{LazyText, TypedValues, parse_date_days, parse_datetime_micros, parse_decimal_scaled},
 };
 
 /// Storage scan provider backed by reader-pinned table snapshots.
@@ -1074,39 +1074,51 @@ fn column_vector_from_decoded(
             validity,
         } if matches!(storage, pintail_types::DataType::Utf8) => {
             // PTSEG v2 unit columns: the packed integers ARE the typed
-            // representation — no text parse. Text views are formatted once
-            // for the consumers that still need them (output, group keys).
-            let mut text = StrColumn::default();
-            for (row, valid) in validity.iter().enumerate() {
-                if *valid {
-                    let value = units
-                        .format(values[row])
-                        .expect("stored native units round-trip");
-                    text.push(value.as_bytes());
-                } else {
-                    text.push(&[]);
-                }
-            }
-            let mask = ValidityMask::from_bools(&validity);
+            // representation — no text parse, and no text formatting either:
+            // the carrier regenerates lazily only if a text-shaped consumer
+            // (output, group keys) ever asks.
             let typed = match (units, data_type) {
                 (
                     pintail_store::NativeUnits::Decimal { scale },
                     pintail_types::DataType::Decimal { .. },
-                ) => TypedValues::Decimal128 {
-                    values: values.into_iter().map(i128::from).collect(),
+                ) => Some(TypedValues::Decimal128 {
+                    values: values.iter().copied().map(i128::from).collect(),
                     scale,
-                    text,
-                },
+                    text: LazyText::decimal(scale),
+                }),
+                (pintail_store::NativeUnits::Date, pintail_types::DataType::Date32) => {
+                    Some(TypedValues::Temporal {
+                        units: values.clone(),
+                        text: LazyText::date(),
+                    })
+                }
                 (
-                    pintail_store::NativeUnits::Date | pintail_store::NativeUnits::DateTime { .. },
-                    pintail_types::DataType::Date32 | pintail_types::DataType::DateTime64 { .. },
-                ) => TypedValues::Temporal {
-                    units: values,
-                    text,
-                },
-                _ => TypedValues::Utf8(text),
+                    pintail_store::NativeUnits::DateTime { fsp },
+                    pintail_types::DataType::DateTime64 { .. },
+                ) => Some(TypedValues::Temporal {
+                    units: values.clone(),
+                    text: LazyText::datetime(fsp),
+                }),
+                _ => None,
             };
-            Ok(ColumnVector::from_typed(data_type, typed, mask))
+            match typed {
+                Some(typed) => {
+                    let mask = ValidityMask::from_bools(&validity);
+                    Ok(ColumnVector::from_typed(data_type, typed, mask))
+                }
+                // Unit kind and schema type disagree (defensive): fall back
+                // to row values.
+                None => ColumnVector::new(
+                    data_type,
+                    DecodedColumn::NativeUnits {
+                        units,
+                        values,
+                        validity,
+                    }
+                    .into_values(),
+                )
+                .map_err(ExecError::from),
+            }
         }
         decoded => ColumnVector::new(data_type, decoded.into_values()).map_err(ExecError::from),
     }
@@ -1150,7 +1162,7 @@ fn typed_from_utf8_arena(
                 TypedValues::Decimal128 {
                     values: packed,
                     scale,
-                    text,
+                    text: LazyText::ready(text),
                 }
             } else {
                 TypedValues::Utf8(text)
@@ -1182,7 +1194,10 @@ fn typed_from_utf8_arena(
                 }
             }
             if homogeneous {
-                TypedValues::Temporal { units, text }
+                TypedValues::Temporal {
+                    units,
+                    text: LazyText::ready(text),
+                }
             } else {
                 TypedValues::Utf8(text)
             }

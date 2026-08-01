@@ -7,6 +7,105 @@ use crate::array::{StrColumn, ValidityMask};
 /// Target row count for pull-based executor batches.
 pub const DEFAULT_BATCH_ROWS: usize = 4_096;
 
+/// The text carrier for a packed column, regenerated from the packed units
+/// only when a text-shaped consumer first asks. Scan-born native-unit
+/// columns whose consumers stay numeric (aggregates, comparisons) never
+/// format a single string.
+#[derive(Debug)]
+pub(crate) struct LazyText {
+    kind: TextKind,
+    cell: std::sync::OnceLock<StrColumn>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TextKind {
+    /// Pre-built at construction (value-born columns keep original text).
+    Ready,
+    Decimal {
+        scale: u8,
+    },
+    Date,
+    DateTime {
+        fsp: u8,
+    },
+}
+
+impl Clone for LazyText {
+    fn clone(&self) -> Self {
+        let cell = std::sync::OnceLock::new();
+        if let Some(built) = self.cell.get() {
+            let _ = cell.set(built.clone());
+        }
+        Self {
+            kind: self.kind,
+            cell,
+        }
+    }
+}
+
+impl LazyText {
+    pub(crate) fn ready(text: StrColumn) -> Self {
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(text);
+        Self {
+            kind: TextKind::Ready,
+            cell,
+        }
+    }
+
+    pub(crate) const fn decimal(scale: u8) -> Self {
+        Self {
+            kind: TextKind::Decimal { scale },
+            cell: std::sync::OnceLock::new(),
+        }
+    }
+
+    pub(crate) const fn date() -> Self {
+        Self {
+            kind: TextKind::Date,
+            cell: std::sync::OnceLock::new(),
+        }
+    }
+
+    pub(crate) const fn datetime(fsp: u8) -> Self {
+        Self {
+            kind: TextKind::DateTime { fsp },
+            cell: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The built text, if any consumer has forced it yet.
+    fn built(&self) -> Option<&StrColumn> {
+        self.cell.get()
+    }
+
+    /// Builds (once) and returns the text for `units`-backed rows; null rows
+    /// hold empty views. `Ready` carriers were set at construction.
+    fn force(&self, units: &[i64], validity: &ValidityMask) -> &StrColumn {
+        self.cell.get_or_init(|| {
+            let mut column = StrColumn::default();
+            for (row, unit) in units.iter().enumerate() {
+                if !validity.is_valid(row) {
+                    column.push(&[]);
+                    continue;
+                }
+                let text = match self.kind {
+                    TextKind::Ready => unreachable!("ready text is set at construction"),
+                    TextKind::Decimal { scale } => {
+                        pintail_types::format_decimal_scaled(i128::from(*unit), scale)
+                    }
+                    TextKind::Date => pintail_types::format_date_days(*unit)
+                        .expect("stored date units round-trip"),
+                    TextKind::DateTime { fsp } => pintail_types::format_datetime_micros(*unit, fsp)
+                        .expect("stored datetime units round-trip"),
+                };
+                column.push(text.as_bytes());
+            }
+            column
+        })
+    }
+}
+
 /// Packed physical values for homogeneous batches, built once at vector
 /// construction so kernels never re-match `Value` per row
 /// (docs/decisions.md, "Executor moves to typed packed arrays").
@@ -24,9 +123,8 @@ pub(crate) enum TypedValues {
     Decimal128 {
         values: Vec<i128>,
         scale: u8,
-        /// Canonical text carrier, retained so row values can materialize
-        /// lazily without re-formatting scaled integers.
-        text: StrColumn,
+        /// Canonical text carrier, regenerated on demand.
+        text: LazyText,
     },
     /// Temporal values parsed once from their canonical text carrier into
     /// comparable integers (days for `Date32`, microseconds for `DateTime64`).
@@ -35,7 +133,7 @@ pub(crate) enum TypedValues {
     /// is NOT the epoch integer.
     Temporal {
         units: Vec<i64>,
-        text: StrColumn,
+        text: LazyText,
     },
 }
 
@@ -51,6 +149,31 @@ pub(crate) const fn mix64(mut x: u64) -> u64 {
 }
 
 impl TypedValues {
+    /// The column's text views, built on first use for native-unit columns.
+    /// `None` for shapes with no text form.
+    pub(crate) fn text_column(&self, validity: &ValidityMask) -> Option<&StrColumn> {
+        match self {
+            Self::Utf8(column) => Some(column),
+            Self::Temporal { units, text } => Some(text.force(units, validity)),
+            Self::Decimal128 { values, text, .. } => Some(text.cell.get_or_init(|| {
+                let mut column = StrColumn::default();
+                let TextKind::Decimal { scale } = text.kind else {
+                    unreachable!("decimal carriers regenerate with a scale")
+                };
+                for (row, value) in values.iter().enumerate() {
+                    if validity.is_valid(row) {
+                        let formatted = pintail_types::format_decimal_scaled(*value, scale);
+                        column.push(formatted.as_bytes());
+                    } else {
+                        column.push(&[]);
+                    }
+                }
+                column
+            })),
+            Self::Int64(_) | Self::UInt64(_) | Self::Float64(_) => None,
+        }
+    }
+
     /// Returns the number of packed rows.
     pub(crate) fn len(&self) -> usize {
         match self {
@@ -245,13 +368,15 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
         utf8.take().map(|text| TypedValues::Decimal128 {
             values: packed,
             scale,
-            text,
+            text: LazyText::ready(text),
         })
     } else if let Some(units) = temporal.take() {
         // temporal is only alive for Date32/DateTime64 columns whose every
         // non-null value parsed; the text views must exist alongside it.
-        utf8.take()
-            .map(|text| TypedValues::Temporal { units, text })
+        utf8.take().map(|text| TypedValues::Temporal {
+            units,
+            text: LazyText::ready(text),
+        })
     } else if let Some(packed) = int64 {
         Some(TypedValues::Int64(packed))
     } else if let Some(packed) = uint64 {
@@ -436,9 +561,17 @@ impl ColumnVector {
                     ..
                 },
                 _,
-            )) => packed.capacity() * size_of::<i128>() + text.len() * 16 + text.heap().len(),
+            )) => {
+                packed.capacity() * size_of::<i128>()
+                    + text
+                        .built()
+                        .map_or(0, |text| text.len() * 16 + text.heap().len())
+            }
             Some((TypedValues::Temporal { units, text }, _)) => {
-                units.capacity() * size_of::<i64>() + text.len() * 16 + text.heap().len()
+                units.capacity() * size_of::<i64>()
+                    + text
+                        .built()
+                        .map_or(0, |text| text.len() * 16 + text.heap().len())
             }
         };
         let value_bytes = self.values.get().map_or(0, |values| {
@@ -467,8 +600,13 @@ fn materialize_values(typed: &TypedValues, validity: &ValidityMask) -> Vec<Value
                 Value::Float64(pintail_types::Float64::new(packed[row]))
             }
             TypedValues::Utf8(column) => Value::Utf8(str_column_string(column, row)),
-            TypedValues::Decimal128 { text, .. } | TypedValues::Temporal { text, .. } => {
-                Value::Utf8(str_column_string(text, row))
+            TypedValues::Decimal128 { .. } | TypedValues::Temporal { .. } => {
+                Value::Utf8(str_column_string(
+                    typed
+                        .text_column(validity)
+                        .expect("decimal and temporal columns carry text"),
+                    row,
+                ))
             }
         });
     }
@@ -1021,6 +1159,7 @@ mod temporal_tests {
             panic!("expected temporal projection, got {typed:?}");
         };
         assert_eq!(units, &[19_358, 0, 0]);
+        let text = text.built().expect("value-born text is ready");
         assert_eq!(text.len(), 3);
         assert!(!validity.is_valid(1));
     }
