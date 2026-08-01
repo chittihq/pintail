@@ -11,7 +11,8 @@ const HASH_ENTRY_OVERHEAD: usize = 3 * size_of::<usize>();
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundJoinKind, BoundOrderKey, BoundProjection, BoundWindow, WindowFunction,
+    BoundJoinKind, BoundOrderKey, BoundProjection, BoundWindow, DatePart, ScalarFunction,
+    WindowFunction,
 };
 use pintail_types::{DataType, Value};
 use rayon::prelude::*;
@@ -2745,6 +2746,46 @@ fn build_hash_aggregate_scan(
 }
 
 #[allow(clippy::too_many_lines)]
+/// One or two `DATEPART(column)` group expressions over packed temporal
+/// columns, when every part is bounded enough for 20-bit packing.
+fn date_part_key_source(
+    group_by: &[CompiledExpr],
+    batch: &RecordBatch,
+) -> Option<TwoPassKeySource> {
+    let part_of = |expr: &CompiledExpr| -> Option<(DatePart, usize)> {
+        let CompiledExpr::Scalar {
+            function: ScalarFunction::DatePart(part),
+            args,
+            ..
+        } = expr
+        else {
+            return None;
+        };
+        let [CompiledExpr::Column(column)] = args.as_slice() else {
+            return None;
+        };
+        let vector = batch.column(*column)?;
+        if !matches!(
+            vector.data_type(),
+            DataType::Date32 | DataType::DateTime64 { .. }
+        ) {
+            return None;
+        }
+        let (typed, _) = vector.typed()?;
+        matches!(typed, crate::batch::TypedValues::Temporal { .. }).then_some((*part, *column))
+    };
+    match group_by {
+        [only] => Some(TwoPassKeySource::DateParts {
+            parts: [Some(part_of(only)?), None],
+        }),
+        [first, second] => Some(TwoPassKeySource::DateParts {
+            parts: [Some(part_of(first)?), Some(part_of(second)?)],
+        }),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn build_buffered_hash_aggregate(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
@@ -2758,6 +2799,21 @@ fn build_buffered_hash_aggregate(
             position: 0,
         });
     };
+    // GROUP BY over date-part expressions (the Q5 shape): bounded int
+    // domains ride the streaming two-pass without Value keys.
+    if direct_columns.is_none()
+        && let Some(keys) = date_part_key_source(group_by, &first_batch)
+        && let Some(lanes) = two_pass_lanes(aggregates, &first_batch)
+    {
+        return build_streaming_two_pass_aggregate(
+            input,
+            first_batch,
+            keys,
+            &lanes,
+            aggregates,
+            memory,
+        );
+    }
     let utf8_column = |column: &usize| {
         first_batch
             .column(*column)
@@ -3939,6 +3995,13 @@ enum TwoPassKeySource {
     /// per-column NULL sentinel so `(NULL, x)`, `(x, NULL)` and
     /// `(NULL, NULL)` stay distinct groups.
     TextPair { first: usize, second: usize },
+    /// Up to two DATE-PART expressions over temporal columns (the Q5
+    /// shape, GROUP BY YEAR(d), MONTH(d)): each part value is bounded
+    /// (year < 10^4, others < 60), so `(v + 1)` packs into 20 bits per
+    /// part with 0 as the per-part NULL sentinel.
+    DateParts {
+        parts: [Option<(DatePart, usize)>; 2],
+    },
 }
 
 /// Streaming two-pass partitioned aggregation for one int-typed group
@@ -4029,6 +4092,9 @@ fn build_streaming_two_pass_aggregate(
             (TwoPassKeySource::Int { column, .. }, _) => {
                 two_pass_scatter_batch(&current, column, lanes, partitions, &mut buckets)?;
             }
+            (TwoPassKeySource::DateParts { parts }, _) => {
+                two_pass_scatter_date_parts(&current, parts, lanes, partitions, &mut buckets)?;
+            }
             _ => unreachable!("intern presence follows the key source"),
         }
         drop(current);
@@ -4094,6 +4160,18 @@ fn build_streaming_two_pass_aggregate(
                                 Value::Null
                             } else {
                                 interned(id - 1)
+                            });
+                        }
+                    }
+                    TwoPassKeySource::DateParts { parts } => {
+                        let count = parts.iter().flatten().count();
+                        for index in 0..count {
+                            let shift = 20 * (count - 1 - index);
+                            let id = (bits >> shift) & 0xF_FFFF;
+                            row.push(if id == 0 {
+                                Value::Null
+                            } else {
+                                Value::UInt64(id - 1)
                             });
                         }
                     }
@@ -4279,6 +4357,36 @@ fn two_pass_scatter_string_pair(
             0
         };
         let key_bits = (first_id << 32) | second_id;
+        scatter_two_pass_row(batch, row, key_bits, false, lanes, partitions, buckets);
+    }
+    Ok(())
+}
+
+/// Up to two bounded date-part expressions as the group key: values come
+/// straight from packed temporal units (no Value cells, no text).
+fn two_pass_scatter_date_parts(
+    batch: &RecordBatch,
+    parts: [Option<(DatePart, usize)>; 2],
+    lanes: &[TwoPassLane],
+    partitions: usize,
+    buckets: &mut [TwoPassBucket],
+) -> Result<(), ExecError> {
+    for row in batch.selection().selected_rows() {
+        let mut key_bits = 0_u64;
+        for (part, column) in parts.iter().flatten() {
+            let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
+                Some(Ok(Value::UInt64(value))) => value + 1,
+                Some(Ok(Value::Null)) => 0,
+                Some(Err(error)) => return Err(error),
+                _ => {
+                    return Err(ExecError::InvalidBatch(
+                        "date-part group key column lost its packed units",
+                    ));
+                }
+            };
+            debug_assert!(id < 1 << 20, "date part value fits 20 bits");
+            key_bits = (key_bits << 20) | id;
+        }
         scatter_two_pass_row(batch, row, key_bits, false, lanes, partitions, buckets);
     }
     Ok(())

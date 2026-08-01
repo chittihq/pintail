@@ -764,7 +764,7 @@ fn scalar_string_upper_bound(value: &Value) -> usize {
 /// Date-part extraction straight from packed temporal units. Returns
 /// `None` when the column does not carry units (the caller falls back to
 /// the text paths).
-fn evaluate_units_date_part(
+pub(crate) fn evaluate_units_date_part(
     batch: &RecordBatch,
     column: usize,
     row: usize,
