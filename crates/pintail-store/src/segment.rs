@@ -2110,8 +2110,11 @@ impl ColumnBuilder {
         Some(translation)
     }
 
-    /// Bulk code append for the no-null full-range decode fast path.
-    fn push_codes_bulk(&mut self, raw: &[u8]) -> Result<(), String> {
+    /// Bulk code append for the no-null full-range decode fast path:
+    /// block codes translate to chunk codes through `translation` (the
+    /// container's snapshot-written segments rarely carry the identity
+    /// mapping, so the translated form is the one that matters).
+    fn push_codes_bulk(&mut self, raw: &[u8], translation: &[u32]) -> Result<(), String> {
         match self {
             Self::DictUtf8 {
                 codes, validity, ..
@@ -2119,7 +2122,12 @@ impl ColumnBuilder {
                 codes.reserve(raw.len() / 4);
                 validity.reserve(raw.len() / 4);
                 for chunk in raw.chunks_exact(4) {
-                    codes.push(u32::from_le_bytes(chunk.try_into().expect("4-byte code")));
+                    let block_code =
+                        u32::from_le_bytes(chunk.try_into().expect("4-byte code")) as usize;
+                    let chunk_code = *translation
+                        .get(block_code)
+                        .ok_or("dictionary index is out of bounds")?;
+                    codes.push(chunk_code);
                     validity.push(true);
                 }
                 Ok(())
@@ -3106,27 +3114,15 @@ fn decode_utf8_payload_into(
             // dictionary; a 5-value column never materializes its strings.
             let translation = builder.begin_dictionary_block(&entries);
             // Bulk fast path (the Q2 profile's per-row Decoder::u32 +
-            // push_code overhead): no nulls, full range, and a chunk
-            // dictionary whose codes match the block's (identity
-            // translation) — copy the raw code stream in one pass.
+            // push_code overhead): no nulls and a full-range cursor —
+            // block codes translate to chunk codes during the copy
+            // (bounds-checked by the translation lookup itself).
             if non_null_count == row_count
                 && ranges.covers_all(row_count)
-                && translation.as_ref().is_some_and(|translation| {
-                    translation
-                        .iter()
-                        .enumerate()
-                        .all(|(index, code)| *code as usize == index)
-                })
+                && let Some(translation) = translation.as_deref()
             {
                 let raw = decoder.take(row_count * 4)?;
-                let out_of_bounds = raw.chunks_exact(4).any(|chunk| {
-                    u32::from_le_bytes(chunk.try_into().expect("4-byte code")) as usize
-                        >= entries.len()
-                });
-                if out_of_bounds {
-                    return Err("dictionary index is out of bounds".to_owned());
-                }
-                builder.push_codes_bulk(raw)?;
+                builder.push_codes_bulk(raw, translation)?;
                 produced = row_count;
             } else {
                 for row in 0..row_count {
