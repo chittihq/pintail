@@ -8,6 +8,7 @@ import { benchmarkQueries } from './queries'
 
 type CommandResult = { stdout: string; stderr: string }
 type EngineTiming = { medianMs: number; p95Ms: number; minMs: number; runs: number }
+type EngineResources = { cpuPeakPct: number; cpuAvgPct: number; memPeakMb: number }
 type QueryResult = {
   name: string
   mysqlMs: number
@@ -16,6 +17,7 @@ type QueryResult = {
   clickhouseFinalMs: number
   speedup: number
   timings: Record<string, EngineTiming>
+  resources: Record<string, EngineResources>
   pintailMatchesMysql: boolean
   clickhouseFinalMatchesMysql: boolean
   pintailExplain?: string
@@ -457,6 +459,67 @@ async function verifyCounts(
   log(`all engines expose ${orderRows.toLocaleString()} orders`)
 }
 
+/// Polls docker stats for one container while an engine is being measured.
+/// CPU% is cumulative across cores (an 8-cpu container can read 800%).
+function startResourceSampler(container: string) {
+  const samples: { cpuPct: number; memMb: number }[] = []
+  let active = true
+  const loop = (async () => {
+    while (active) {
+      try {
+        const out = (
+          await docker('stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}', container)
+        ).stdout
+        const [cpuText, memText] = out.split('|')
+        const cpuPct = Number.parseFloat(cpuText)
+        const memValue = Number.parseFloat(memText)
+        const memMb = memText.includes('GiB')
+          ? memValue * 1024
+          : memText.includes('KiB')
+            ? memValue / 1024
+            : memValue
+        if (Number.isFinite(cpuPct) && Number.isFinite(memMb)) {
+          samples.push({ cpuPct, memMb })
+        }
+      } catch {
+        // Container gone or stats hiccup: keep sampling.
+      }
+      if (active) await Bun.sleep(250)
+    }
+  })()
+  return {
+    async stop(): Promise<EngineResources> {
+      active = false
+      await loop
+      if (samples.length === 0) return { cpuPeakPct: 0, cpuAvgPct: 0, memPeakMb: 0 }
+      return {
+        cpuPeakPct: Math.round(Math.max(...samples.map((sample) => sample.cpuPct))),
+        cpuAvgPct: Math.round(
+          samples.reduce((total, sample) => total + sample.cpuPct, 0) / samples.length,
+        ),
+        memPeakMb: Math.round(Math.max(...samples.map((sample) => sample.memMb))),
+      }
+    },
+  }
+}
+
+async function sampled<T>(
+  container: string | undefined,
+  operation: () => Promise<T>,
+): Promise<{ value: T; resources: EngineResources }> {
+  if (!container) {
+    return { value: await operation(), resources: { cpuPeakPct: 0, cpuAvgPct: 0, memPeakMb: 0 } }
+  }
+  const sampler = startResourceSampler(container)
+  try {
+    const value = await operation()
+    return { value, resources: await sampler.stop() }
+  } catch (error) {
+    await sampler.stop()
+    throw error
+  }
+}
+
 // The MySQL side of a cold query can run for many minutes (Q6 exceeds 13)
 // with zero traffic on the wire, long enough for an idle timeout between
 // this machine and a remote docker host to kill the session. The failure
@@ -577,6 +640,7 @@ async function runQueries(
   }
   for (const query of benchmarkQueries) {
     log(query.name)
+    const resources: Record<string, EngineResources> = {}
     let mysqlMs: number
     let mysqlCanonical: string
     const cached = baseline?.queries[query.name]
@@ -586,7 +650,9 @@ async function runQueries(
       baselineProvenance = baseline?.measuredAt
       log(`  MySQL baseline reused from ${baseline?.measuredAt} (${cached.ms} ms cold)`)
     } else {
-      const mysqlRun = await timed(() => mysqlColdQuery(query.sql))
+      const mysqlSampled = await sampled(mysqlName, () => timed(() => mysqlColdQuery(query.sql)))
+      const mysqlRun = mysqlSampled.value
+      resources.mysql = mysqlSampled.resources
       mysqlMs = mysqlRun.ms
       mysqlCanonical = canonicalRows(mysqlRun.value)
       freshBaseline[query.name] = { ms: mysqlMs, canonical: mysqlCanonical }
@@ -594,29 +660,33 @@ async function runQueries(
       // a crash later in the run never throws measured work away.
       await saveBaseline()
     }
-    const pintailRun = await measured(
-      () =>
-        api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
-          method: 'POST',
-          token,
-          body: { db: databaseId, sql: query.sql },
-        }),
-      warmups,
-      runs,
+    const pintailSampled = await sampled(containerizedPintail ? pintailName : undefined, () =>
+      measured(
+        () =>
+          api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+            method: 'POST',
+            token,
+            body: { db: databaseId, sql: query.sql },
+          }),
+        warmups,
+        runs,
+      ),
     )
+    const pintailRun = pintailSampled.value
+    resources.pintail = pintailSampled.resources
     const clickhouseSql = query.clickhouseSql ?? query.sql
-    const clickhouseRun = await measured(
-      () => clickhouseQuery('benchmark', clickhouseSql, ''),
-      warmups,
-      runs,
+    const clickhouseSampled = await sampled(clickhouseName, () =>
+      measured(() => clickhouseQuery('benchmark', clickhouseSql, ''), warmups, runs),
     )
+    const clickhouseRun = clickhouseSampled.value
+    resources.clickhouse = clickhouseSampled.resources
     // The fair reference: ReplacingMergeTree doing pintail's merge-on-read
     // duty on every read (`final = 1`), same data, same host, same limits.
-    const clickhouseFinalRun = await measured(
-      () => clickhouseQuery('benchmark_rmt', clickhouseSql, ' SETTINGS final = 1'),
-      warmups,
-      runs,
+    const clickhouseFinalSampled = await sampled(clickhouseName, () =>
+      measured(() => clickhouseQuery('benchmark_rmt', clickhouseSql, ' SETTINGS final = 1'), warmups, runs),
     )
+    const clickhouseFinalRun = clickhouseFinalSampled.value
+    resources.clickhouseFinal = clickhouseFinalSampled.resources
     const pintailMatchesMysql = canonicalRows(pintailRun.value.rows) === mysqlCanonical
     const clickhouseFinalMatchesMysql =
       canonicalRows(clickhouseFinalRun.value) === mysqlCanonical
@@ -645,6 +715,7 @@ async function runQueries(
         clickhouseFinal: clickhouseFinalRun.timing,
         mysql: { medianMs: mysqlMs, p95Ms: mysqlMs, minMs: mysqlMs, runs: 1 },
       },
+      resources,
       pintailMatchesMysql,
       clickhouseFinalMatchesMysql,
       pintailExplain,
@@ -732,6 +803,25 @@ function publishResults(results: QueryResult[]) {
     fullGate
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
+    '',
+    '## Resources during measured runs',
+    '',
+    'Peak container CPU (cumulative across 8 cores, so up to 800%) and peak',
+    'memory, sampled via `docker stats` every 250 ms while each engine ran.',
+    'MySQL shows n/a when its cold baseline came from the cache.',
+    '',
+    '| Query | Pintail CPU | Pintail mem | CH CPU | CH mem | MySQL CPU | MySQL mem |',
+    '|---|---:|---:|---:|---:|---:|---:|',
+    ...results.map((row) => {
+      const cell = (resources?: EngineResources) =>
+        resources && (resources.cpuPeakPct > 0 || resources.memPeakMb > 0)
+          ? `${resources.cpuPeakPct}% | ${Math.round(resources.memPeakMb).toLocaleString()} MB`
+          : 'n/a | n/a'
+      return (
+        `| ${row.name} | ${cell(row.resources.pintail)} | ` +
+        `${cell(row.resources.clickhouse)} | ${cell(row.resources.mysql)} |`
+      )
+    }),
     '',
   ]
   writeFileSync(join(benchmarkDir, `results${suffix}.md`), `${lines.join('\n')}\n`)
