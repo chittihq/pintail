@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createServer } from 'node:net'
@@ -38,6 +39,67 @@ const networkName = `${runId}-network`
 // PINTAIL_BENCHMARK_LOCAL=1 restores the old local-process mode for dev.
 const containerizedPintail = process.env.PINTAIL_BENCHMARK_LOCAL !== '1'
 const engineLimits = ['--cpus', '8', '--memory', '8g']
+const mysqlImage = 'mysql:8.4'
+const mysqlServerArgs = [
+  '--server-id=909',
+  '--log-bin=mysql-bin',
+  '--binlog-format=ROW',
+  '--binlog-row-image=FULL',
+  '--binlog-row-metadata=FULL',
+  '--gtid-mode=ON',
+  '--enforce-gtid-consistency=ON',
+  '--default-time-zone=+00:00',
+  '--sql-mode=NO_ENGINE_SUBSTITUTION',
+  '--innodb-buffer-pool-size=1G',
+]
+
+// The MySQL baseline (seeded data and cold query timings) is a pure function
+// of these inputs. Reruns with an identical fingerprint reuse the seeded
+// datadir volume and the recorded cold timings instead of paying ~10 minutes
+// of seeding and ~an hour of single-core MySQL queries again.
+const benchmarkFingerprint = createHash('sha256')
+  .update(
+    JSON.stringify({
+      seedSql: readFileSync(join(benchmarkDir, 'seed.sql'), 'utf8'),
+      queries: readFileSync(join(benchmarkDir, 'queries.ts'), 'utf8'),
+      orderRows,
+      engineLimits,
+      mysqlImage,
+      mysqlServerArgs,
+    }),
+  )
+  .digest('hex')
+const seedVolumeName = `pintail-bench-seed-${benchmarkFingerprint.slice(0, 12)}`
+const runVolumeName = `${runId}-mysql-data`
+const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
+type MysqlBaseline = {
+  fingerprint: string
+  measuredAt: string
+  gitCommit?: string
+  queries: Record<string, { ms: number; canonical: string }>
+}
+let baselineProvenance: string | undefined
+let runVolumeCreated = false
+
+function loadMysqlBaseline(): MysqlBaseline | undefined {
+  if (!existsSync(baselinePath)) return undefined
+  try {
+    const parsed = JSON.parse(readFileSync(baselinePath, 'utf8')) as MysqlBaseline
+    if (parsed.fingerprint !== benchmarkFingerprint) return undefined
+    return parsed
+  } catch {
+    return undefined
+  }
+}
+
+async function volumeExists(name: string): Promise<boolean> {
+  try {
+    await docker('volume', 'inspect', name)
+    return true
+  } catch {
+    return false
+  }
+}
 const clickhouseHeaders = {
   Authorization: `Basic ${btoa('default:pintail-benchmark')}`,
 }
@@ -459,12 +521,26 @@ async function runQueries(
     if (!response.ok) throw new Error(`ClickHouse query failed: ${text}`)
     return (JSON.parse(text) as { data: unknown[][] }).data
   }
+  const baseline = loadMysqlBaseline()
+  const freshBaseline: MysqlBaseline['queries'] = {}
   for (const query of benchmarkQueries) {
     log(query.name)
-    const mysqlRun = await timed(() =>
-      connection.query<mysql.RowDataPacket[]>({ sql: query.sql, rowsAsArray: true }),
-    )
-    const mysqlRows = mysqlRun.value[0] as unknown as unknown[][]
+    let mysqlMs: number
+    let mysqlCanonical: string
+    const cached = baseline?.queries[query.name]
+    if (cached) {
+      mysqlMs = cached.ms
+      mysqlCanonical = cached.canonical
+      baselineProvenance = baseline?.measuredAt
+      log(`  MySQL baseline reused from ${baseline?.measuredAt} (${cached.ms} ms cold)`)
+    } else {
+      const mysqlRun = await timed(() =>
+        connection.query<mysql.RowDataPacket[]>({ sql: query.sql, rowsAsArray: true }),
+      )
+      mysqlMs = mysqlRun.ms
+      mysqlCanonical = canonicalRows(mysqlRun.value[0] as unknown as unknown[][])
+      freshBaseline[query.name] = { ms: mysqlMs, canonical: mysqlCanonical }
+    }
     const pintailRun = await measured(
       () =>
         api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
@@ -488,7 +564,6 @@ async function runQueries(
       warmups,
       runs,
     )
-    const mysqlCanonical = canonicalRows(mysqlRows)
     const pintailMatchesMysql = canonicalRows(pintailRun.value.rows) === mysqlCanonical
     const clickhouseFinalMatchesMysql =
       canonicalRows(clickhouseFinalRun.value) === mysqlCanonical
@@ -503,10 +578,10 @@ async function runQueries(
     } catch {
       pintailExplain = undefined
     }
-    const speedup = mysqlRun.ms / pintailRun.timing.medianMs
+    const speedup = mysqlMs / pintailRun.timing.medianMs
     results.push({
       name: query.name,
-      mysqlMs: mysqlRun.ms,
+      mysqlMs,
       pintailMs: pintailRun.timing.medianMs,
       clickhouseMs: clickhouseRun.timing.medianMs,
       clickhouseFinalMs: clickhouseFinalRun.timing.medianMs,
@@ -515,7 +590,7 @@ async function runQueries(
         pintail: pintailRun.timing,
         clickhouse: clickhouseRun.timing,
         clickhouseFinal: clickhouseFinalRun.timing,
-        mysql: { medianMs: mysqlRun.ms, p95Ms: mysqlRun.ms, minMs: mysqlRun.ms, runs: 1 },
+        mysql: { medianMs: mysqlMs, p95Ms: mysqlMs, minMs: mysqlMs, runs: 1 },
       },
       pintailMatchesMysql,
       clickhouseFinalMatchesMysql,
@@ -523,10 +598,20 @@ async function runQueries(
     })
     if (!pintailMatchesMysql) log(`RESULT MISMATCH: pintail differs from MySQL on ${query.name}`)
     log(
-      `MySQL ${mysqlRun.ms} ms | Pintail ${pintailRun.timing.medianMs} ms | ` +
+      `MySQL ${mysqlMs} ms | Pintail ${pintailRun.timing.medianMs} ms | ` +
         `ClickHouse ${clickhouseRun.timing.medianMs} ms | ` +
         `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ${speedup.toFixed(1)}×`,
     )
+  }
+  if (Object.keys(freshBaseline).length > 0) {
+    const record: MysqlBaseline = {
+      fingerprint: benchmarkFingerprint,
+      measuredAt: new Date().toISOString(),
+      gitCommit: (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout,
+      queries: { ...(baseline?.queries ?? {}), ...freshBaseline },
+    }
+    writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`)
+    log(`MySQL baseline cached to ${baselinePath}`)
   }
   return results
 }
@@ -553,7 +638,9 @@ function publishResults(results: QueryResult[]) {
       pintailPlacement: containerizedPintail
         ? 'container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)'
         : 'LOCAL PROCESS — cross-host numbers, not comparable',
-      iterations: '1 warmup + 5 measured (median reported); MySQL single cold run',
+      iterations: baselineProvenance
+        ? `1 warmup + 5 measured (median reported); MySQL cold baseline reused from ${baselineProvenance}`
+        : '1 warmup + 5 measured (median reported); MySQL single cold run',
       references: {
         clickhouse: 'plain MergeTree (raw-speed ceiling)',
         clickhouseFinal: 'ReplacingMergeTree, final=1 (apples-to-apples merge-on-read duty)',
@@ -578,7 +665,9 @@ function publishResults(results: QueryResult[]) {
     `Measured ${generatedAt} with ${orderRows.toLocaleString()} orders.`,
     '',
     'All engines run on the docker host under identical limits (8 CPUs, 8 GB).',
-    'Pintail/ClickHouse: median of 5 warm runs. MySQL: single cold run (baseline).',
+    baselineProvenance
+      ? `Pintail/ClickHouse: median of 5 warm runs. MySQL: cold baseline measured ${baselineProvenance}.`
+      : 'Pintail/ClickHouse: median of 5 warm runs. MySQL: single cold run (baseline).',
     'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
     "pintail's always-correct merge-on-read duty; the apples-to-apples reference.",
     '',
@@ -631,6 +720,9 @@ async function cleanup() {
       () => undefined,
     )
     await docker('network', 'rm', networkName).catch(() => undefined)
+    if (runVolumeCreated) {
+      await docker('volume', 'rm', runVolumeName).catch(() => undefined)
+    }
   }
   rmSync(dataDir, { recursive: true, force: true })
 }
@@ -649,6 +741,26 @@ async function main() {
   }
   await docker('network', 'create', networkName)
   dockerCreated = true
+  const haveSeedVolume = await volumeExists(seedVolumeName)
+  if (haveSeedVolume) {
+    // Copy the cached datadir into a per-run volume: the cache itself stays
+    // read-only, so a killed run can never corrupt it.
+    log(`restoring seeded MySQL datadir from volume ${seedVolumeName}`)
+    await docker('volume', 'create', runVolumeName)
+    runVolumeCreated = true
+    await docker(
+      'run',
+      '--rm',
+      '--volume',
+      `${seedVolumeName}:/from:ro`,
+      '--volume',
+      `${runVolumeName}:/to`,
+      'alpine:3',
+      'sh',
+      '-c',
+      'cp -a /from/. /to/',
+    )
+  }
   await docker(
     'run',
     '--detach',
@@ -659,19 +771,11 @@ async function main() {
     '--publish',
     '0:3306',
     ...engineLimits,
+    ...(haveSeedVolume ? ['--volume', `${runVolumeName}:/var/lib/mysql`] : []),
     '--env',
     'MYSQL_ROOT_PASSWORD=pintail-root',
-    'mysql:8.4',
-    '--server-id=909',
-    '--log-bin=mysql-bin',
-    '--binlog-format=ROW',
-    '--binlog-row-image=FULL',
-    '--binlog-row-metadata=FULL',
-    '--gtid-mode=ON',
-    '--enforce-gtid-consistency=ON',
-    '--default-time-zone=+00:00',
-    '--sql-mode=NO_ENGINE_SUBSTITUTION',
-    '--innodb-buffer-pool-size=1G',
+    mysqlImage,
+    ...mysqlServerArgs,
   )
   await docker(
     'run',
@@ -693,7 +797,38 @@ async function main() {
   const clickhouseUrl = `http://${host}:${clickhousePort}`
   mysqlConnection = await waitForMysql(host, mysqlPort)
   await waitForClickhouse(clickhouseUrl)
-  await seedSource(mysqlConnection)
+  if (haveSeedVolume) {
+    const [rows] = await mysqlConnection.query<mysql.RowDataPacket[]>(
+      'SELECT COUNT(*) AS count FROM benchmark_db.orders',
+    )
+    if (Number(rows[0].count) !== orderRows) {
+      throw new Error(
+        `restored seed volume ${seedVolumeName} holds ${rows[0].count} orders, expected ${orderRows}; ` +
+          'remove the volume to reseed',
+      )
+    }
+  } else {
+    await seedSource(mysqlConnection)
+    // Snapshot the freshly seeded datadir for later runs: stop mysqld for a
+    // consistent copy, capture its volume, and bring it back.
+    log(`caching seeded datadir as volume ${seedVolumeName}`)
+    await docker('stop', mysqlName)
+    await docker('volume', 'create', seedVolumeName)
+    await docker(
+      'run',
+      '--rm',
+      '--volumes-from',
+      mysqlName,
+      '--volume',
+      `${seedVolumeName}:/to`,
+      'alpine:3',
+      'sh',
+      '-c',
+      'cp -a /var/lib/mysql/. /to/',
+    )
+    await docker('start', mysqlName)
+    mysqlConnection = await waitForMysql(host, mysqlPort)
+  }
   await importClickhouse(clickhouseUrl)
 
   let pintailUrl: string
