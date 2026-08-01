@@ -132,6 +132,26 @@ fn typed_comparison_mask(
         (TypedValues::Utf8(column), Value::Utf8(text))
             if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) =>
         {
+            // Dictionary fast path: casefold each distinct value once,
+            // then one code lookup per row (the Q2 profile spent ~25% of
+            // the query in per-row view comparisons here).
+            if let Some((codes, values)) = column.dictionary() {
+                let matching: Vec<bool> = values
+                    .iter()
+                    .map(|value| compare_utf8_mysql(value, text) == Ordering::Equal)
+                    .collect();
+                let want = op == BinaryOp::Equal;
+                let mut mask = SelectionMask::none(codes.len());
+                for (row, code) in codes.iter().enumerate() {
+                    if validity.is_valid(row)
+                        && matching[usize::try_from(*code).expect("dict code fits usize")] == want
+                    {
+                        mask.set(row, true).expect("row within mask bounds");
+                    }
+                }
+                return Some(mask);
+            }
+            #[allow(clippy::items_after_statements)]
             const MAX_DISTINCT: usize = 16;
             let views = column.views();
             let heap = column.heap();

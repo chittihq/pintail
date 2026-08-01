@@ -117,6 +117,8 @@ fn user_row(id: u64) -> StoredRow {
 
 fn query_sql(name: &str) -> &'static str {
     match name {
+        "q1" => "SELECT COUNT(*) AS total_orders FROM orders",
+        "q2" => "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'delivered'",
         "q4" => {
             "SELECT region, status, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total \
              FROM orders GROUP BY region, status ORDER BY total DESC, region, status LIMIT 20"
@@ -147,7 +149,7 @@ fn query_sql(name: &str) -> &'static str {
              FROM orders WHERE order_date BETWEEN '2022-01-01' AND '2023-12-31' \
              GROUP BY region ORDER BY total DESC"
         }
-        other => panic!("unknown query {other}: expected q3|q5|q6|q7|q8"),
+        other => panic!("unknown query {other}: expected q1..q8"),
     }
 }
 

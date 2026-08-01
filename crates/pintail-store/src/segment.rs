@@ -2110,6 +2110,24 @@ impl ColumnBuilder {
         Some(translation)
     }
 
+    /// Bulk code append for the no-null full-range decode fast path.
+    fn push_codes_bulk(&mut self, raw: &[u8]) -> Result<(), String> {
+        match self {
+            Self::DictUtf8 {
+                codes, validity, ..
+            } => {
+                codes.reserve(raw.len() / 4);
+                validity.reserve(raw.len() / 4);
+                for chunk in raw.chunks_exact(4) {
+                    codes.push(u32::from_le_bytes(chunk.try_into().expect("4-byte code")));
+                    validity.push(true);
+                }
+                Ok(())
+            }
+            _ => Err("dictionary code in a non-dictionary column".to_owned()),
+        }
+    }
+
     fn push_code(&mut self, code: u32) -> Result<(), String> {
         match self {
             Self::DictUtf8 {
@@ -2743,6 +2761,14 @@ impl RangeCursor {
         }
         self.index < self.ranges.len() && self.ranges[self.index].0 <= row
     }
+
+    /// Whether the cursor selects every row in `0..row_count` (the common
+    /// full-block shape that unlocks bulk decode paths).
+    fn covers_all(&self, row_count: usize) -> bool {
+        self.ranges.first().is_some_and(|range| range.0 == 0)
+            && self.ranges.last().is_some_and(|range| range.1 >= row_count)
+            && self.ranges.windows(2).all(|pair| pair[0].1 >= pair[1].0)
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -3079,26 +3105,51 @@ fn decode_utf8_payload_into(
             // Code fast path: rows land as u32 codes into the chunk
             // dictionary; a 5-value column never materializes its strings.
             let translation = builder.begin_dictionary_block(&entries);
-            for row in 0..row_count {
-                let in_range = ranges.contains(row);
-                if is_null(row) {
+            // Bulk fast path (the Q2 profile's per-row Decoder::u32 +
+            // push_code overhead): no nulls, full range, and a chunk
+            // dictionary whose codes match the block's (identity
+            // translation) — copy the raw code stream in one pass.
+            if non_null_count == row_count
+                && ranges.covers_all(row_count)
+                && translation.as_ref().is_some_and(|translation| {
+                    translation
+                        .iter()
+                        .enumerate()
+                        .all(|(index, code)| *code as usize == index)
+                })
+            {
+                let raw = decoder.take(row_count * 4)?;
+                let out_of_bounds = raw.chunks_exact(4).any(|chunk| {
+                    u32::from_le_bytes(chunk.try_into().expect("4-byte code")) as usize
+                        >= entries.len()
+                });
+                if out_of_bounds {
+                    return Err("dictionary index is out of bounds".to_owned());
+                }
+                builder.push_codes_bulk(raw)?;
+                produced = row_count;
+            } else {
+                for row in 0..row_count {
+                    let in_range = ranges.contains(row);
+                    if is_null(row) {
+                        if in_range {
+                            match &translation {
+                                Some(_) => builder.push_null_code()?,
+                                None => builder.push(Cell::Null)?,
+                            }
+                        }
+                        continue;
+                    }
+                    let index = decoder.u32()? as usize;
+                    if index >= entries.len() {
+                        return Err(format!("dictionary index {index} is out of bounds"));
+                    }
+                    produced += 1;
                     if in_range {
                         match &translation {
-                            Some(_) => builder.push_null_code()?,
-                            None => builder.push(Cell::Null)?,
+                            Some(translation) => builder.push_code(translation[index])?,
+                            None => builder.push_utf8(entries[index])?,
                         }
-                    }
-                    continue;
-                }
-                let index = decoder.u32()? as usize;
-                if index >= entries.len() {
-                    return Err(format!("dictionary index {index} is out of bounds"));
-                }
-                produced += 1;
-                if in_range {
-                    match &translation {
-                        Some(translation) => builder.push_code(translation[index])?,
-                        None => builder.push_utf8(entries[index])?,
                     }
                 }
             }
