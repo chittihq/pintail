@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T16:59:57.821Z",
+  "generatedAt": "2026-08-01T17:32:58.310Z",
   "scale": 1,
   "rows": {
     "users": 100000,
@@ -24,27 +24,27 @@
     {
       "name": "Q1: Full table count",
       "mysqlMs": 2953,
-      "pintailMs": 195,
-      "clickhouseMs": 420,
-      "clickhouseFinalMs": 296,
-      "speedup": 15.143589743589743,
+      "pintailMs": 159,
+      "clickhouseMs": 165,
+      "clickhouseFinalMs": 170,
+      "speedup": 18.572327044025158,
       "timings": {
         "pintail": {
-          "medianMs": 195,
-          "p95Ms": 412,
-          "minMs": 150,
+          "medianMs": 159,
+          "p95Ms": 269,
+          "minMs": 158,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 420,
-          "p95Ms": 510,
-          "minMs": 210,
+          "medianMs": 165,
+          "p95Ms": 181,
+          "minMs": 161,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 296,
-          "p95Ms": 585,
-          "minMs": 173,
+          "medianMs": 170,
+          "p95Ms": 202,
+          "minMs": 164,
           "runs": 5
         },
         "mysql": {
@@ -54,6 +54,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 1,
+          "cpuAvgPct": 1,
+          "memPeakMb": 31
+        },
+        "clickhouse": {
+          "cpuPeakPct": 6,
+          "cpuAvgPct": 6,
+          "memPeakMb": 542
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 7,
+          "cpuAvgPct": 7,
+          "memPeakMb": 546
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Project outputs=[cnt]\n  Project outputs=[COUNT(*)]\n    OneRow\n"
@@ -61,27 +78,27 @@
     {
       "name": "Q2: Filtered count",
       "mysqlMs": 1318,
-      "pintailMs": 524,
-      "clickhouseMs": 186,
-      "clickhouseFinalMs": 203,
-      "speedup": 2.515267175572519,
+      "pintailMs": 531,
+      "clickhouseMs": 190,
+      "clickhouseFinalMs": 188,
+      "speedup": 2.48210922787194,
       "timings": {
         "pintail": {
-          "medianMs": 524,
-          "p95Ms": 541,
-          "minMs": 508,
+          "medianMs": 531,
+          "p95Ms": 680,
+          "minMs": 521,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 186,
-          "p95Ms": 847,
-          "minMs": 179,
+          "medianMs": 190,
+          "p95Ms": 341,
+          "minMs": 184,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 203,
-          "p95Ms": 1004,
-          "minMs": 188,
+          "medianMs": 188,
+          "p95Ms": 303,
+          "minMs": 183,
           "runs": 5
         },
         "mysql": {
@@ -91,6 +108,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 186,
+          "cpuAvgPct": 93,
+          "memPeakMb": 59
+        },
+        "clickhouse": {
+          "cpuPeakPct": 43,
+          "cpuAvgPct": 43,
+          "memPeakMb": 571
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 24,
+          "cpuAvgPct": 24,
+          "memPeakMb": 567
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Project outputs=[cnt]\n  HashAggregate groups=0 aggregates=1\n    Scan table=benchmark_db.orders rows=Some(20000000) columns=[7] predicates=1 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n"
@@ -98,27 +132,27 @@
     {
       "name": "Q3: Group by status",
       "mysqlMs": 61962,
-      "pintailMs": 1641,
-      "clickhouseMs": 302,
-      "clickhouseFinalMs": 283,
-      "speedup": 37.75868372943327,
+      "pintailMs": 1637,
+      "clickhouseMs": 245,
+      "clickhouseFinalMs": 235,
+      "speedup": 37.85094685400122,
       "timings": {
         "pintail": {
-          "medianMs": 1641,
-          "p95Ms": 1753,
-          "minMs": 1616,
+          "medianMs": 1637,
+          "p95Ms": 1756,
+          "minMs": 1595,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 302,
-          "p95Ms": 749,
-          "minMs": 234,
+          "medianMs": 245,
+          "p95Ms": 261,
+          "minMs": 238,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 283,
-          "p95Ms": 313,
-          "minMs": 235,
+          "medianMs": 235,
+          "p95Ms": 288,
+          "minMs": 232,
           "runs": 5
         },
         "mysql": {
@@ -128,34 +162,51 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 441,
+          "cpuAvgPct": 317,
+          "memPeakMb": 91
+        },
+        "clickhouse": {
+          "cpuPeakPct": 190,
+          "cpuAvgPct": 190,
+          "memPeakMb": 601
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 58,
+          "cpuAvgPct": 58,
+          "memPeakMb": 584
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false }] top_k=None\n  Project outputs=[status, cnt, avg_amt]\n    HashAggregate groups=1 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n"
     },
     {
-      "name": "Q4: Region × status breakdown",
+      "name": "Q4: Region \u00d7 status breakdown",
       "mysqlMs": 23291,
-      "pintailMs": 3137,
-      "clickhouseMs": 411,
-      "clickhouseFinalMs": 378,
-      "speedup": 7.424609499521837,
+      "pintailMs": 3142,
+      "clickhouseMs": 305,
+      "clickhouseFinalMs": 326,
+      "speedup": 7.412794398472311,
       "timings": {
         "pintail": {
-          "medianMs": 3137,
-          "p95Ms": 3197,
-          "minMs": 2976,
+          "medianMs": 3142,
+          "p95Ms": 3150,
+          "minMs": 2969,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 411,
-          "p95Ms": 611,
-          "minMs": 362,
+          "medianMs": 305,
+          "p95Ms": 454,
+          "minMs": 292,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 378,
-          "p95Ms": 495,
-          "minMs": 343,
+          "medianMs": 326,
+          "p95Ms": 755,
+          "minMs": 300,
           "runs": 5
         },
         "mysql": {
@@ -165,6 +216,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 347,
+          "cpuAvgPct": 301,
+          "memPeakMb": 110
+        },
+        "clickhouse": {
+          "cpuPeakPct": 334,
+          "cpuAvgPct": 174,
+          "memPeakMb": 627
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 362,
+          "cpuAvgPct": 183,
+          "memPeakMb": 648
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Limit offset=0 count=20\n  Sort keys=[BoundOrderKey { index: 3, ascending: false, nulls_first: false }, BoundOrderKey { index: 0, ascending: true, nulls_first: true }, BoundOrderKey { index: 1, ascending: true, nulls_first: true }] top_k=Some(20)\n    Project outputs=[region, status, cnt, total]\n      HashAggregate groups=2 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7, 8] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n"
@@ -172,27 +240,27 @@
     {
       "name": "Q5: Monthly revenue (2023)",
       "mysqlMs": 11030,
-      "pintailMs": 2932,
-      "clickhouseMs": 318,
-      "clickhouseFinalMs": 298,
-      "speedup": 3.76193724420191,
+      "pintailMs": 1641,
+      "clickhouseMs": 268,
+      "clickhouseFinalMs": 301,
+      "speedup": 6.72151127361365,
       "timings": {
         "pintail": {
-          "medianMs": 2932,
-          "p95Ms": 3061,
-          "minMs": 2867,
+          "medianMs": 1641,
+          "p95Ms": 2689,
+          "minMs": 1564,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 318,
-          "p95Ms": 359,
-          "minMs": 200,
+          "medianMs": 268,
+          "p95Ms": 336,
+          "minMs": 198,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 298,
+          "medianMs": 301,
           "p95Ms": 326,
-          "minMs": 209,
+          "minMs": 206,
           "runs": 5
         },
         "mysql": {
@@ -202,6 +270,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 630,
+          "cpuAvgPct": 434,
+          "memPeakMb": 118
+        },
+        "clickhouse": {
+          "cpuPeakPct": 124,
+          "cpuAvgPct": 124,
+          "memPeakMb": 610
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 80,
+          "cpuAvgPct": 80,
+          "memPeakMb": 615
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true }, BoundOrderKey { index: 1, ascending: true, nulls_first: true }] top_k=None\n  Project outputs=[yr, mo, cnt, revenue]\n    HashAggregate groups=2 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 9] predicates=2 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n"
@@ -209,27 +294,27 @@
     {
       "name": "Q6: Top 10 spenders",
       "mysqlMs": 1546227,
-      "pintailMs": 2078,
-      "clickhouseMs": 288,
-      "clickhouseFinalMs": 277,
-      "speedup": 744.0938402309913,
+      "pintailMs": 2217,
+      "clickhouseMs": 329,
+      "clickhouseFinalMs": 287,
+      "speedup": 697.4411366711772,
       "timings": {
         "pintail": {
-          "medianMs": 2078,
-          "p95Ms": 2116,
-          "minMs": 2043,
+          "medianMs": 2217,
+          "p95Ms": 2504,
+          "minMs": 2216,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 288,
-          "p95Ms": 398,
-          "minMs": 278,
+          "medianMs": 329,
+          "p95Ms": 510,
+          "minMs": 291,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 277,
-          "p95Ms": 420,
-          "minMs": 273,
+          "medianMs": 287,
+          "p95Ms": 361,
+          "minMs": 268,
           "runs": 5
         },
         "mysql": {
@@ -239,6 +324,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 414,
+          "cpuAvgPct": 339,
+          "memPeakMb": 338
+        },
+        "clickhouse": {
+          "cpuPeakPct": 280,
+          "cpuAvgPct": 143,
+          "memPeakMb": 738
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 347,
+          "cpuAvgPct": 347,
+          "memPeakMb": 787
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Limit offset=0 count=10\n  Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false }, BoundOrderKey { index: 0, ascending: true, nulls_first: true }] top_k=Some(10)\n    Project outputs=[user_id, order_count, total_spent]\n      HashAggregate groups=1 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n"
@@ -246,27 +348,27 @@
     {
       "name": "Q7: Regional analytics",
       "mysqlMs": 112029,
-      "pintailMs": 7562,
-      "clickhouseMs": 355,
-      "clickhouseFinalMs": 399,
-      "speedup": 14.814731552499339,
+      "pintailMs": 5240,
+      "clickhouseMs": 287,
+      "clickhouseFinalMs": 407,
+      "speedup": 21.379580152671757,
       "timings": {
         "pintail": {
-          "medianMs": 7562,
-          "p95Ms": 7865,
-          "minMs": 7359,
+          "medianMs": 5240,
+          "p95Ms": 5450,
+          "minMs": 5170,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 355,
-          "p95Ms": 399,
-          "minMs": 310,
+          "medianMs": 287,
+          "p95Ms": 428,
+          "minMs": 284,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 399,
-          "p95Ms": 522,
-          "minMs": 301,
+          "medianMs": 407,
+          "p95Ms": 457,
+          "minMs": 309,
           "runs": 5
         },
         "mysql": {
@@ -276,6 +378,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 318,
+          "cpuAvgPct": 285,
+          "memPeakMb": 289
+        },
+        "clickhouse": {
+          "cpuPeakPct": 312,
+          "cpuAvgPct": 158,
+          "memPeakMb": 713
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 350,
+          "cpuAvgPct": 179,
+          "memPeakMb": 678
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false }] top_k=None\n  Project outputs=[region, cnt, total, avg_amt, min_amt, max_amt, unique_users]\n    HashAggregate groups=1 aggregates=6\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6, 8, 9] predicates=1 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n"
@@ -283,27 +402,27 @@
     {
       "name": "Q8: Join users + orders",
       "mysqlMs": 1569431,
-      "pintailMs": 5369,
-      "clickhouseMs": 525,
-      "clickhouseFinalMs": 525,
-      "speedup": 292.3134661948221,
+      "pintailMs": 5309,
+      "clickhouseMs": 592,
+      "clickhouseFinalMs": 619,
+      "speedup": 295.61706536070824,
       "timings": {
         "pintail": {
-          "medianMs": 5369,
-          "p95Ms": 5597,
-          "minMs": 5282,
+          "medianMs": 5309,
+          "p95Ms": 5985,
+          "minMs": 5291,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 525,
-          "p95Ms": 939,
-          "minMs": 521,
+          "medianMs": 592,
+          "p95Ms": 677,
+          "minMs": 423,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 525,
-          "p95Ms": 528,
-          "minMs": 521,
+          "medianMs": 619,
+          "p95Ms": 705,
+          "minMs": 426,
           "runs": 5
         },
         "mysql": {
@@ -313,6 +432,23 @@
           "runs": 1
         }
       },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 577,
+          "cpuAvgPct": 486,
+          "memPeakMb": 575
+        },
+        "clickhouse": {
+          "cpuPeakPct": 345,
+          "cpuAvgPct": 306,
+          "memPeakMb": 828
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 363,
+          "cpuAvgPct": 326,
+          "memPeakMb": 828
+        }
+      },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
       "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false }] top_k=None\n  Project outputs=[region, cnt, total]\n    HashAggregate groups=1 aggregates=2\n      HashJoin kind=inner\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n        Scan table=benchmark_db.users rows=Some(100000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=0/0 decoded_blocks=0\n"
@@ -320,9 +456,9 @@
   ],
   "totals": {
     "mysqlMs": 3328241,
-    "pintailMs": 23438,
-    "clickhouseMs": 2805,
-    "clickhouseFinalMs": 2659,
-    "speedup": 142.00191995904086
+    "pintailMs": 19876,
+    "clickhouseMs": 2381,
+    "clickhouseFinalMs": 2533,
+    "speedup": 167.45024149728314
   }
 }

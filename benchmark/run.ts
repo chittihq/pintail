@@ -472,10 +472,13 @@ function startResourceSampler(container: string) {
         ).stdout
         const [cpuText, memText] = out.split('|')
         const cpuPct = Number.parseFloat(cpuText)
-        const memValue = Number.parseFloat(memText)
-        const memMb = memText.includes('GiB')
+        // MemUsage reads "512.3MiB / 8GiB": only the usage half decides
+        // the unit, or the ever-present GiB limit inflates MiB by 1024.
+        const usageText = memText.split('/')[0]
+        const memValue = Number.parseFloat(usageText)
+        const memMb = usageText.includes('GiB')
           ? memValue * 1024
-          : memText.includes('KiB')
+          : usageText.includes('KiB')
             ? memValue / 1024
             : memValue
         if (Number.isFinite(cpuPct) && Number.isFinite(memMb)) {
