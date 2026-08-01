@@ -74,18 +74,29 @@ const runVolumeName = `${runId}-mysql-data`
 const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
 type MysqlBaseline = {
   fingerprint: string
+  // Cold timings are hardware-bound: a baseline from one docker host must
+  // never be reused on another, so the host is validated separately from
+  // the workload fingerprint.
+  host: string
   measuredAt: string
   gitCommit?: string
   queries: Record<string, { ms: number; canonical: string }>
 }
 let baselineProvenance: string | undefined
 let runVolumeCreated = false
+let dockerHostName = ''
 
 function loadMysqlBaseline(): MysqlBaseline | undefined {
   if (!existsSync(baselinePath)) return undefined
   try {
     const parsed = JSON.parse(readFileSync(baselinePath, 'utf8')) as MysqlBaseline
     if (parsed.fingerprint !== benchmarkFingerprint) return undefined
+    if (parsed.host !== dockerHostName) {
+      log(
+        `MySQL baseline was measured on host '${parsed.host}', this is '${dockerHostName}': remeasuring`,
+      )
+      return undefined
+    }
     return parsed
   } catch {
     return undefined
@@ -606,6 +617,7 @@ async function runQueries(
   if (Object.keys(freshBaseline).length > 0) {
     const record: MysqlBaseline = {
       fingerprint: benchmarkFingerprint,
+      host: dockerHostName,
       measuredAt: new Date().toISOString(),
       gitCommit: (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout,
       queries: { ...(baseline?.queries ?? {}), ...freshBaseline },
@@ -730,6 +742,7 @@ async function cleanup() {
 async function main() {
   const info = await docker('info', '--format', '{{.Name}} {{.ServerVersion}} {{.OSType}}')
   log(`Docker: ${info.stdout}`)
+  dockerHostName = info.stdout.split(' ')[0] || 'unknown'
   // The docker image builds from the WORKING TREE: concurrent edits change
   // what gets measured (or break the build mid-edit). Refuse dirty trees so
   // every measurement is attributable to a commit.
