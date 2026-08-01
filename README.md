@@ -137,6 +137,26 @@ to work on the engine itself, two things will save you a review round-trip:
   release gate, which needs Docker and real MySQL containers, is documented
   in [docs/verification.md](docs/verification.md).
 
+## Acknowledgements
+
+Building from scratch doesn't mean inventing from scratch. Ideas we
+borrowed, with sources:
+
+- The merge-on-read range classification started from reading ClickHouse's
+  `PartsSplitter`, and ClickHouse itself is the benchmark target that keeps
+  us honest. Reading the ScyllaDB and DuckDB sources shaped several storage
+  and executor decisions; the ones we adopted (and the ones that lost in
+  our measurements) are logged in `experiments/RESULTS.md`.
+- String columns use the 16-byte German-string views from the
+  [Umbra paper](https://www.cidrdb.org/cidr2020/papers/p29-neumann-cidr20.pdf)
+  by Neumann and Freitag.
+- Date arithmetic is Howard Hinnant's
+  [civil-date algorithms](https://howardhinnant.github.io/date_algorithms.html).
+- The MySQL frontend stands on
+  [sqlparser-rs](https://github.com/apache/datafusion-sqlparser-rs) and
+  [opensrv](https://github.com/databendlabs/opensrv), and the engine leans
+  on rayon, zstd, lz4_flex, and xxHash daily.
+
 ## License
 
 Apache-2.0.
