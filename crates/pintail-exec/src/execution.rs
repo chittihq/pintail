@@ -1919,6 +1919,28 @@ enum DistinctSeen {
     Values(HashSet<Value>),
 }
 
+/// Map keyed by an already-hashed u64: `finish` re-mixes through splitmix
+/// so bucket selection stays well distributed without `SipHash`'s per-probe
+/// cost (top symbol of the Q8 profile).
+type MixedU64Map<V> = HashMap<u64, V, std::hash::BuildHasherDefault<MixedU64>>;
+
+#[derive(Default)]
+struct MixedU64(u64);
+
+impl std::hash::Hasher for MixedU64 {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        unreachable!("u64 keys hash through write_u64");
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = crate::batch::mix64(value);
+    }
+}
+
 /// splitmix-style hasher for raw integer distinct keys: `SipHash` cost is
 /// pure overhead here — the keys are column data in a per-query set, not
 /// a persistent attacker-fed table.
@@ -3139,7 +3161,7 @@ fn build_local_fused_join_groups(
     dense: Option<&DenseJoinTable<'_>>,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = Vec::<AggregateGroup>::new();
-    let mut raw_index = HashMap::<u64, usize>::new();
+    let mut raw_index = MixedU64Map::<usize>::default();
     let memory = MemoryTracker::new(usize::MAX);
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
