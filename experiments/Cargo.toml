@@ -15,6 +15,7 @@ members = [
     "e11-sweep-line",
     "e12-normalized-keys",
     "e13-partitioned-agg",
+    "e14-typed-kernels",
 ]
 
 [workspace.dependencies]

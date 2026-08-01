@@ -235,3 +235,34 @@ partition with zero cross-thread sharing — wins at every cardinality,
 4.2–8.9× over sequential. This is the adopted design for parallel
 high-cardinality aggregation (task #25); the sequential direct path stays
 for small inputs where scatter overhead dominates.
+
+## e14 — Typed kernels vs the Value-enum loop on the Q5 shape
+
+20M rows, per-row date→(year,month) conversion + year==2023 filter (~1/3
+selectivity), GROUP BY (year,month) → 12 dense groups, SUM+COUNT, 10
+threads local (M2). Born from the 63becb4 run: Q5 takes 5,623 ms in the
+engine against 213 ms for ClickHouse despite only ~24 groups.
+
+| variant | median ms |
+|---|---:|
+| value-enum rows (engine multi-column path model) | 345.5 |
+| typed composite u64 key + hashmap | 227.3 |
+| typed dense-array kernel | 207.0 |
+| two-pass partitioned (composite key) | 40.2 |
+| dense array per worker + merge | **29.8** |
+
+**Verdicts:** (1) The original hypothesis is REFUTED: the Vec<Value> key +
+hashmap loop costs 345 ms sequential — the engine's 5,623 ms cannot be
+living in the group-by. The bottleneck is upstream: YEAR()/MONTH() only
+evaluate on Value::Utf8 (expression.rs evaluate_direct_date_part), so Q5
+forces the date column's lazy text — 20M native i32 days formatted to
+"YYYY-MM-DD" strings, then string-parsed back per row, twice (plus the
+WHERE comparing against date literals). Native-unit date-part kernels
+(days → civil year/month, no text) are the real Q5/Q7 lever. (2) Once
+upstream is fixed, composite-key typed group-by is worth 1.5× sequential
+and the dense-array + per-worker merge parallel shape runs the whole
+filter+convert+aggregate in ~30 ms — 7× under ClickHouse's end-to-end
+213 ms, leaving budget for scan/decode. (3) Extending two-pass to
+composite int keys (40 ms) is within 1.35× of the dense ceiling and needs
+no cardinality bound; adopt that, keep dense arrays as a follow-up
+specialization if profiling justifies it.
