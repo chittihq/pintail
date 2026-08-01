@@ -1909,13 +1909,27 @@ struct AggregateState {
     /// values transfers to the exact ordering (rounding is monotone), so only
     /// f64 ties pay the full text/value comparison. Invalidated on merge.
     extreme_number: Option<f64>,
+    /// Scaled integer units of the current extreme when every update so far
+    /// arrived through `update_extreme_units` (same column, same scale, so
+    /// unit ordering IS the value ordering). Invalidated on merge.
+    extreme_units: Option<i128>,
 }
 
 #[derive(Clone)]
 enum AggregateValue {
     Count(u64),
     Sum(Option<Value>),
-    Average { sum: f64, count: u64 },
+    /// Exact decimal SUM carried as scaled integer units — accumulating
+    /// i128 units replaces a parse-add-format round trip per row on the
+    /// canonical text carrier (2026-08-02 phase-0 profile residue).
+    DecimalSum {
+        units: i128,
+        scale: u8,
+    },
+    Average {
+        sum: f64,
+        count: u64,
+    },
     Minimum(Option<Value>),
     Maximum(Option<Value>),
     GroupConcat(Vec<String>),
@@ -1935,6 +1949,7 @@ impl AggregateState {
             value,
             seen: aggregate.distinct.then(HashSet::new),
             extreme_number: None,
+            extreme_units: None,
         }
     }
 
@@ -1975,6 +1990,21 @@ impl AggregateState {
         match &mut self.value {
             AggregateValue::Count(count) => {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+            }
+            AggregateValue::DecimalSum { units, scale } => {
+                let text = match value {
+                    Value::Utf8(text) => text.as_str(),
+                    _ => {
+                        return Err(ExecError::InvalidPhysicalPlan(
+                            "decimal sum updated with a non-text value",
+                        ));
+                    }
+                };
+                let scaled = crate::batch::parse_decimal_scaled(text, *scale)
+                    .ok_or(ExecError::NumericOverflow)?;
+                *units = units
+                    .checked_add(scaled)
+                    .ok_or(ExecError::NumericOverflow)?;
             }
             AggregateValue::Sum(sum) => {
                 *sum = Some(if let Some(number) = number {
@@ -2069,6 +2099,32 @@ impl AggregateState {
             | (AggregateValue::Minimum(_), AggregateValue::Minimum(None))
             | (AggregateValue::Maximum(_), AggregateValue::Maximum(None)) => {}
             (
+                AggregateValue::DecimalSum { units: left, .. },
+                AggregateValue::DecimalSum { units: right, .. },
+            ) => {
+                *left = left.checked_add(right).ok_or(ExecError::NumericOverflow)?;
+            }
+            (value @ AggregateValue::Sum(None), AggregateValue::DecimalSum { units, scale }) => {
+                *value = AggregateValue::DecimalSum { units, scale };
+            }
+            (AggregateValue::DecimalSum { units, scale }, AggregateValue::Sum(Some(right))) => {
+                let scaled = crate::batch::parse_decimal_scaled(
+                    match &right {
+                        Value::Utf8(text) => text,
+                        _ => {
+                            return Err(ExecError::InvalidPhysicalPlan(
+                                "decimal sum merged with a non-text sum",
+                            ));
+                        }
+                    },
+                    *scale,
+                )
+                .ok_or(ExecError::NumericOverflow)?;
+                *units = units
+                    .checked_add(scaled)
+                    .ok_or(ExecError::NumericOverflow)?;
+            }
+            (
                 AggregateValue::Average {
                     sum: left_sum,
                     count: left_count,
@@ -2119,10 +2175,95 @@ impl AggregateState {
         Ok(())
     }
 
+    /// Exact decimal SUM on scaled integer units: no text parse, no text
+    /// format until `finish`. The state lazily morphs from `Sum(None)` on
+    /// the first unit-borne update.
+    fn update_decimal_sum_units(&mut self, units: i128, scale: u8) -> Result<(), ExecError> {
+        match &mut self.value {
+            AggregateValue::DecimalSum {
+                units: total,
+                scale: existing,
+            } if *existing == scale => {
+                *total = total.checked_add(units).ok_or(ExecError::NumericOverflow)?;
+                Ok(())
+            }
+            value @ AggregateValue::Sum(None) => {
+                *value = AggregateValue::DecimalSum { units, scale };
+                Ok(())
+            }
+            _ => Err(ExecError::InvalidPhysicalPlan(
+                "decimal unit sum applied to an incompatible aggregate state",
+            )),
+        }
+    }
+
+    /// MIN/MAX on packed units: comparisons run on the integer units and
+    /// the canonical text is formatted only when the extreme is replaced.
+    /// A retained extreme without known units (state arrived via merge or a
+    /// mixed path) pays one text comparison and then re-anchors the units.
+    fn update_extreme_units(
+        &mut self,
+        aggregate: &CompiledAggregate,
+        units: i128,
+        format: impl Fn() -> Option<String>,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let keep_less = match self.value {
+            AggregateValue::Minimum(_) => true,
+            AggregateValue::Maximum(_) => false,
+            _ => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "unit extreme applied to a non-extreme aggregate state",
+                ));
+            }
+        };
+        let current_retained = match &self.value {
+            AggregateValue::Minimum(slot) | AggregateValue::Maximum(slot) => slot.as_ref(),
+            _ => unreachable!(),
+        };
+        let (replace, preformatted) = match (self.extreme_units, current_retained) {
+            (_, None) => (true, None),
+            (Some(current), Some(_)) => (
+                if keep_less {
+                    units < current
+                } else {
+                    units > current
+                },
+                None,
+            ),
+            (None, Some(current)) => {
+                let candidate = Value::Utf8(format().ok_or(ExecError::NumericOverflow)?);
+                let ordering = compare_aggregate_values(&candidate, current, aggregate.data_type)?;
+                let replace = if keep_less {
+                    ordering == Ordering::Less
+                } else {
+                    ordering == Ordering::Greater
+                };
+                (replace, Some(candidate))
+            }
+        };
+        if replace {
+            let value = match preformatted {
+                Some(value) => value,
+                None => Value::Utf8(format().ok_or(ExecError::NumericOverflow)?),
+            };
+            let (AggregateValue::Minimum(slot) | AggregateValue::Maximum(slot)) = &mut self.value
+            else {
+                unreachable!()
+            };
+            replace_retained_value(slot, value, memory)?;
+            self.extreme_units = Some(units);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::cast_precision_loss)]
     fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
+            AggregateValue::DecimalSum { units, scale } => {
+                Value::Utf8(pintail_types::format_decimal_scaled(units, scale))
+            }
             AggregateValue::Sum(value)
             | AggregateValue::Minimum(value)
             | AggregateValue::Maximum(value) => value.unwrap_or(Value::Null),
@@ -3790,6 +3931,7 @@ fn direct_group_hash(batch: &RecordBatch, row: usize, columns: &[usize]) -> Resu
     Ok(hash)
 }
 
+#[allow(clippy::too_many_lines)]
 fn update_aggregate_states(
     batch: &RecordBatch,
     row: usize,
@@ -3826,6 +3968,60 @@ fn update_aggregate_states(
             None => state.update(aggregate, &Value::Boolean(true), memory)?,
             Some(expression) => {
                 if let Some(column) = expression.column_index() {
+                    // Typed-first: numeric aggregation over packed units
+                    // never touches the column's Value cells or lazy text
+                    // (2026-08-02 phase-0 profile: whole-column text
+                    // forcing dominated the string-keyed paths).
+                    if !aggregate.distinct
+                        && let Some((typed, validity)) =
+                            batch.column(column).and_then(super::ColumnVector::typed)
+                    {
+                        if !validity.is_valid(row) {
+                            continue; // NULL joins no aggregate
+                        }
+                        match aggregate.function {
+                            AggregateFunction::Count => {
+                                state.update_with_number(
+                                    aggregate,
+                                    &Value::Boolean(true),
+                                    None,
+                                    memory,
+                                )?;
+                                continue;
+                            }
+                            AggregateFunction::Sum if !aggregate_uses_float(aggregate) => {
+                                if let (Some(units), Some(scale)) =
+                                    (typed.units_at(row), typed.decimal_scale())
+                                {
+                                    state.update_decimal_sum_units(units, scale)?;
+                                    continue;
+                                }
+                            }
+                            AggregateFunction::Sum | AggregateFunction::Average => {
+                                if let Some(number) = typed.number_at(row) {
+                                    state.update_with_number(
+                                        aggregate,
+                                        &Value::Boolean(true),
+                                        Some(number),
+                                        memory,
+                                    )?;
+                                    continue;
+                                }
+                            }
+                            AggregateFunction::Minimum | AggregateFunction::Maximum => {
+                                if let Some(units) = typed.units_at(row) {
+                                    state.update_extreme_units(
+                                        aggregate,
+                                        units,
+                                        || typed.format_unit(row),
+                                        memory,
+                                    )?;
+                                    continue;
+                                }
+                            }
+                            AggregateFunction::GroupConcat => {}
+                        }
+                    }
                     let value = direct_group_value(batch, row, column)?;
                     let is_extreme = matches!(
                         aggregate.function,

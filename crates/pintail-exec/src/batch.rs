@@ -220,6 +220,44 @@ impl TypedValues {
     /// f64's exact integer range: dividing an exactly-represented scaled
     /// integer by an exact power of ten is correctly rounded, the same result
     /// text parsing produces.
+    /// One row's scaled/packed integer units, when this vector carries them.
+    pub(crate) fn units_at(&self, row: usize) -> Option<i128> {
+        match self {
+            Self::Decimal128 { values, .. } => values.get(row).copied(),
+            Self::Temporal { units, .. } => units.get(row).copied().map(i128::from),
+            _ => None,
+        }
+    }
+
+    /// The decimal scale when this vector carries scaled decimal units.
+    pub(crate) fn decimal_scale(&self) -> Option<u8> {
+        match self {
+            Self::Decimal128 { scale, .. } => Some(*scale),
+            _ => None,
+        }
+    }
+
+    /// Formats ONE row's canonical text from its units without forcing the
+    /// whole column's lazy text (phase-0 2026-08-02: whole-column forcing
+    /// was the dominant residue of the string-keyed aggregate paths).
+    pub(crate) fn format_unit(&self, row: usize) -> Option<String> {
+        match self {
+            Self::Decimal128 { values, scale, .. } => Some(pintail_types::format_decimal_scaled(
+                *values.get(row)?,
+                *scale,
+            )),
+            Self::Temporal { units, text } => {
+                let unit = *units.get(row)?;
+                match text.kind {
+                    TextKind::Date => pintail_types::format_date_days(unit),
+                    TextKind::DateTime { fsp } => pintail_types::format_datetime_micros(unit, fsp),
+                    TextKind::Ready | TextKind::Decimal { .. } => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn number_at(&self, row: usize) -> Option<f64> {
         const POW10: [f64; 19] = [
             1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
