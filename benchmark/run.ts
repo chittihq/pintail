@@ -16,6 +16,9 @@ type QueryResult = {
   clickhouseMs: number
   clickhouseFinalMs: number
   speedup: number
+  /// CH RMT+FINAL medianMs / pintail medianMs: >1 means pintail is faster
+  /// than ClickHouse doing the same merge-on-read duty.
+  speedupVsClickhouse: number
   timings: Record<string, EngineTiming>
   resources: Record<string, EngineResources>
   pintailMatchesMysql: boolean
@@ -705,6 +708,7 @@ async function runQueries(
       pintailExplain = undefined
     }
     const speedup = mysqlMs / pintailRun.timing.medianMs
+    const speedupVsClickhouse = clickhouseFinalRun.timing.medianMs / pintailRun.timing.medianMs
     results.push({
       name: query.name,
       mysqlMs,
@@ -712,6 +716,7 @@ async function runQueries(
       clickhouseMs: clickhouseRun.timing.medianMs,
       clickhouseFinalMs: clickhouseFinalRun.timing.medianMs,
       speedup,
+      speedupVsClickhouse,
       timings: {
         pintail: pintailRun.timing,
         clickhouse: clickhouseRun.timing,
@@ -727,7 +732,8 @@ async function runQueries(
     log(
       `MySQL ${mysqlMs} ms | Pintail ${pintailRun.timing.medianMs} ms | ` +
         `ClickHouse ${clickhouseRun.timing.medianMs} ms | ` +
-        `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ${speedup.toFixed(1)}×`,
+        `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ` +
+        `${speedup.toFixed(1)}× vs MySQL | ${speedupVsClickhouse.toFixed(2)}× vs CH`,
     )
   }
   return results
@@ -770,7 +776,11 @@ function publishResults(results: QueryResult[]) {
       resultMismatches: mismatches,
     },
     queries: results,
-    totals: { ...totals, speedup },
+    totals: {
+      ...totals,
+      speedup,
+      speedupVsClickhouse: totals.clickhouseFinalMs / totals.pintailMs,
+    },
   }
   writeFileSync(
     join(benchmarkDir, `results${suffix}.json`),
@@ -788,20 +798,22 @@ function publishResults(results: QueryResult[]) {
     'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
     "pintail's always-correct merge-on-read duty; the apples-to-apples reference.",
     '',
-    '| Query | MySQL | Pintail | Speedup | CH MergeTree | CH RMT+FINAL | Exact |',
-    '|---|---:|---:|---:|---:|---:|:--|',
+    '| Query | MySQL | Pintail | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |',
+    '|---|---:|---:|---:|---:|---:|---:|:--|',
     ...results.map(
       (row) =>
         `| ${row.name} | ${row.mysqlMs.toLocaleString()} ms | ` +
         `${row.pintailMs.toLocaleString()} ms | ${row.speedup.toFixed(1)}× | ` +
         `${row.clickhouseMs.toLocaleString()} ms | ` +
         `${row.clickhouseFinalMs.toLocaleString()} ms | ` +
+        `${row.speedupVsClickhouse.toFixed(2)}× | ` +
         `${row.pintailMatchesMysql ? 'yes' : 'MISMATCH'} |`,
     ),
     `| **Total** | **${totals.mysqlMs.toLocaleString()} ms** | ` +
       `**${totals.pintailMs.toLocaleString()} ms** | **${speedup.toFixed(1)}×** | ` +
       `**${totals.clickhouseMs.toLocaleString()} ms** | ` +
-      `**${totals.clickhouseFinalMs.toLocaleString()} ms** | |`,
+      `**${totals.clickhouseFinalMs.toLocaleString()} ms** | ` +
+      `**${(totals.clickhouseFinalMs / totals.pintailMs).toFixed(2)}×** | |`,
     '',
     fullGate
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
