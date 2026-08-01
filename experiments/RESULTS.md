@@ -315,3 +315,88 @@ region/user columns dwarf the merge it avoids. (3) Adoption rule: int
 keys with a bounded dense domain (user ids against table row counts) →
 per-worker bitmaps + OR-merge; otherwise typed HashSet (still 2.6× over
 Value sets). The engine knows key bounds from table statistics.
+
+## e17 — Morsel-driven fusion vs staged decode (Leis et al., SIGMOD 2014)
+
+20M rows, status u8 / amount i64, 64k-row LZ4 blocks (94 MB compressed),
+SUM+COUNT WHERE status=2, 10 threads local (M2).
+
+| variant | median ms |
+|---|---:|
+| staged sequential (decode all, then agg) | 78.8 |
+| staged parallel (decode ‖ barrier ‖ agg) | 12.4 |
+| morsel-fused (decode+agg per block) | **10.4** |
+| morsel-fused, per-thread scratch | 11.1 |
+
+**Verdict (revised per Codex review): parallel decode is the confirmed
+win (6.4×); fusion adds ~16% on this shape and removes the materialized
+180 MB intermediate.** The two-narrow-column workload cannot separate
+staging from fusion more sharply — fusion's case strengthens when staged
+intermediates exceed cache; re-measure with wider projections before
+citing more than ~1.2× for it. "Zero per-block allocation" was also
+false as written (lz4 decompress allocates internally; rayon map_init is
+iterator-local, not thread-pinned).
+
+## e18 — Small materialized aggregates per block (Moerkotte VLDB 1998; Data Blocks SIGMOD 2016)
+
+20M rows, 64k blocks, SMA = count/sum/min/max + per-status sub-cube,
+112 B/block, built once in 28.6 ms. Hot in-memory model.
+
+| Q3 shape (per-status SUM/COUNT) | median ms |
+|---|---:|
+| full fused parallel scan | 2.31 |
+| SMA, 0% dirty | **0.019** |
+| SMA, 1% dirty | 0.10 |
+| SMA, 20% dirty | 0.55 |
+| SMA, 100% dirty | 2.33 (= scan, no overhead) |
+
+**Verdict: UPPER BOUND ONLY — the product lever is real but this
+experiment does not validate CDC correctness.** "Dirty" here rescans
+unchanged data; real dirtiness means newer versions/tombstones in
+memtables and overlapping segments, MIN/MAX are not delta-adjustable
+under deletion, and sub-cubes assume a stable global dict mapping. The
+120× clean-path headroom (and ~10× at 20% dirty) justifies building a
+CDC-correct prototype through the real snapshot/merge-on-read path with
+per-statistic invalidation before any adoption claim.
+
+## e19 — Executing on compressed data (Abadi et al., SIGMOD 2006)
+
+20M rows, FOR+bit-pack per 64k block (20-bit width, 50 MB vs 160 MB raw),
+10 threads local (M2).
+
+| variant | median ms |
+|---|---:|
+| global SUM: unpack to scratch, then sum | 3.04 |
+| global SUM: fused unpack-accumulate + FOR algebra | **2.40** |
+| filtered SUM: unpack to scratch, then fused | 4.15 |
+| filtered SUM: single pass on packed + codes | **3.20** |
+
+**Verdict: fused-on-compressed is worth ~1.3× with scalar unpacking and
+3.2× storage; a later lever, contingent on a PTSEG v3 encoding pass
+(BtrBlocks/FastLanes-style SIMD widths would change both sides).** One
+data-shape caveat: single friendly width tested; codec edge cases
+(width 0, partial blocks) need fixtures before any engine adoption.
+
+## Codex adversarial review of e14–e19 (2026-08-02)
+
+A full second-model review produced 29 findings; the ones that change
+decisions, adopted as standing rules:
+
+1. **Phase zero is engine profiling, not a rewrite.** Q6's 11.7 s vs
+   e15's 540 ms Value-batch model leaves ~21× unexplained by any lab
+   result. No typed-pipeline rewrite starts until per-query spans
+   (decode, visibility, adoption, Value materialization, buffering,
+   scatter, finalize, top-K) explain ≥80% of Q6 wall time and point the
+   first milestone at the largest component. Concrete suspects found by
+   inspection: even the two-pass path materializes Values via
+   group_values.value(row) per row, and top-K clones retained rows.
+2. **e15/e14/e16 datasets diverge from the benchmark's** (Q6 is 100k
+   correlated user ids summing DECIMAL(12,2), not 2M random u64;
+   user↔region is correlated in seed.sql, flattering e16's bitmaps;
+   seed spans 5 years not 3). Re-shape before citing exact ratios;
+   orderings are expected to hold, magnitudes are not.
+3. **Harness gaps:** checksums only validated on the final run; XOR
+   folds are collision-prone; fixed variant order shares allocator/
+   thermal state. Adopt: per-run checksum stability asserts, sorted
+   exact result comparison for small outputs, and null-bearing fixtures
+   (current cell_pair-style helpers silently zero NULLs).
