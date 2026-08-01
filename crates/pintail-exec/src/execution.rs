@@ -3034,6 +3034,14 @@ fn build_local_fused_join_groups(
                                     "fused join aggregate expression is not a column",
                                 ))?;
                         if column < left_width {
+                            // Probe-side columns update typed-first: the
+                            // Q8 profile showed per-row decimal text
+                            // parse/format dominating this loop.
+                            if update_state_from_typed_column(
+                                state, aggregate, batch, column, row, &memory,
+                            )? {
+                                continue;
+                            }
                             direct_group_value(batch, row, column)?
                         } else {
                             right_values.get(column - left_width).ok_or(
@@ -4069,6 +4077,62 @@ fn direct_group_hash(batch: &RecordBatch, row: usize, columns: &[usize]) -> Resu
     Ok(hash)
 }
 
+/// Typed-first aggregate update from a batch column: packed units and raw
+/// integers route straight into the state with no Value cell and no lazy
+/// text. Returns whether the row was handled (NULL rows count as handled —
+/// they join no aggregate).
+fn update_state_from_typed_column(
+    state: &mut AggregateState,
+    aggregate: &CompiledAggregate,
+    batch: &RecordBatch,
+    column: usize,
+    row: usize,
+    memory: &MemoryTracker,
+) -> Result<bool, ExecError> {
+    let Some((typed, validity)) = batch.column(column).and_then(super::ColumnVector::typed) else {
+        return Ok(false);
+    };
+    if !validity.is_valid(row) {
+        return Ok(true);
+    }
+    if aggregate.distinct {
+        // COUNT(DISTINCT int_col): dedup on the raw integer, no Value (e16).
+        if matches!(aggregate.function, AggregateFunction::Count)
+            && let Some(key) = typed.int_key_at(row)
+        {
+            state.update_distinct_count_int(key, memory)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    match aggregate.function {
+        AggregateFunction::Count => {
+            state.update_with_number(aggregate, &Value::Boolean(true), None, memory)?;
+            return Ok(true);
+        }
+        AggregateFunction::Sum if !aggregate_uses_float(aggregate) => {
+            if let (Some(units), Some(scale)) = (typed.units_at(row), typed.decimal_scale()) {
+                state.update_decimal_sum_units(units, scale)?;
+                return Ok(true);
+            }
+        }
+        AggregateFunction::Sum | AggregateFunction::Average => {
+            if let Some(number) = typed.number_at(row) {
+                state.update_with_number(aggregate, &Value::Boolean(true), Some(number), memory)?;
+                return Ok(true);
+            }
+        }
+        AggregateFunction::Minimum | AggregateFunction::Maximum => {
+            if let Some(units) = typed.units_at(row) {
+                state.update_extreme_units(aggregate, units, || typed.format_unit(row), memory)?;
+                return Ok(true);
+            }
+        }
+        AggregateFunction::GroupConcat => {}
+    }
+    Ok(false)
+}
+
 #[allow(clippy::too_many_lines)]
 fn update_aggregate_states(
     batch: &RecordBatch,
@@ -4110,65 +4174,9 @@ fn update_aggregate_states(
                     // never touches the column's Value cells or lazy text
                     // (2026-08-02 phase-0 profile: whole-column text
                     // forcing dominated the string-keyed paths).
-                    if let Some((typed, validity)) =
-                        batch.column(column).and_then(super::ColumnVector::typed)
+                    if update_state_from_typed_column(state, aggregate, batch, column, row, memory)?
                     {
-                        if !validity.is_valid(row) {
-                            continue; // NULL joins no aggregate
-                        }
-                        if aggregate.distinct {
-                            // COUNT(DISTINCT int_col): dedup on the raw
-                            // integer, no Value cell (e16).
-                            if matches!(aggregate.function, AggregateFunction::Count)
-                                && let Some(key) = typed.int_key_at(row)
-                            {
-                                state.update_distinct_count_int(key, memory)?;
-                                continue;
-                            }
-                        } else {
-                            match aggregate.function {
-                                AggregateFunction::Count => {
-                                    state.update_with_number(
-                                        aggregate,
-                                        &Value::Boolean(true),
-                                        None,
-                                        memory,
-                                    )?;
-                                    continue;
-                                }
-                                AggregateFunction::Sum if !aggregate_uses_float(aggregate) => {
-                                    if let (Some(units), Some(scale)) =
-                                        (typed.units_at(row), typed.decimal_scale())
-                                    {
-                                        state.update_decimal_sum_units(units, scale)?;
-                                        continue;
-                                    }
-                                }
-                                AggregateFunction::Sum | AggregateFunction::Average => {
-                                    if let Some(number) = typed.number_at(row) {
-                                        state.update_with_number(
-                                            aggregate,
-                                            &Value::Boolean(true),
-                                            Some(number),
-                                            memory,
-                                        )?;
-                                        continue;
-                                    }
-                                }
-                                AggregateFunction::Minimum | AggregateFunction::Maximum => {
-                                    if let Some(units) = typed.units_at(row) {
-                                        state.update_extreme_units(
-                                            aggregate,
-                                            units,
-                                            || typed.format_unit(row),
-                                            memory,
-                                        )?;
-                                        continue;
-                                    }
-                                }
-                                AggregateFunction::GroupConcat => {}
-                            }
-                        }
+                        continue;
                     }
                     let value = direct_group_value(batch, row, column)?;
                     let is_extreme = matches!(
@@ -4940,8 +4948,8 @@ fn reserve_vec_elements<T>(
     Ok(actual)
 }
 
-fn reserve_hash_map_entries<K, V>(
-    values: &mut HashMap<K, V>,
+fn reserve_hash_map_entries<K, V, S>(
+    values: &mut HashMap<K, V, S>,
     additional: usize,
     entry_bytes: usize,
     transient_bytes: usize,
@@ -4949,6 +4957,7 @@ fn reserve_hash_map_entries<K, V>(
 ) -> Result<usize, ExecError>
 where
     K: Eq + Hash,
+    S: std::hash::BuildHasher,
 {
     let required = values.len().saturating_add(additional);
     if required <= values.capacity() {

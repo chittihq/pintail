@@ -87,6 +87,34 @@ fn row(id: u64) -> StoredRow {
     )
 }
 
+const USER_REGIONS: [&str; 8] = [
+    "us-east", "us-west", "eu-west", "eu-east", "ap-south", "ap-east", "sa-east", "af-south",
+];
+
+fn users_schema() -> TableSchema {
+    TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "region", DataType::Utf8, false),
+        ],
+    )
+    .expect("users schema")
+}
+
+/// seed.sql's users formulas for n = `id` (`1..=100_000`).
+fn user_row(id: u64) -> StoredRow {
+    StoredRow::new(
+        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("primary key"),
+        vec![
+            Value::UInt64(id),
+            Value::Utf8(USER_REGIONS[usize::try_from(id % 8).expect("region index")].to_owned()),
+        ],
+        id,
+        false,
+    )
+}
+
 fn query_sql(name: &str) -> &'static str {
     match name {
         "q3" => {
@@ -103,6 +131,11 @@ fn query_sql(name: &str) -> &'static str {
             "SELECT user_id, COUNT(*) AS order_count, ROUND(SUM(total_amount), 2) AS total_spent \
              FROM orders GROUP BY user_id ORDER BY total_spent DESC, user_id LIMIT 10"
         }
+        "q8" => {
+            "SELECT u.region, COUNT(*) AS cnt, ROUND(SUM(o.total_amount), 2) AS total \
+             FROM orders o JOIN users u ON o.user_id = u.id \
+             GROUP BY u.region ORDER BY total DESC"
+        }
         "q7" => {
             "SELECT region, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total, \
              ROUND(AVG(total_amount), 2) AS avg_amt, ROUND(MIN(total_amount), 2) AS min_amt, \
@@ -110,7 +143,7 @@ fn query_sql(name: &str) -> &'static str {
              FROM orders WHERE order_date BETWEEN '2022-01-01' AND '2023-12-31' \
              GROUP BY region ORDER BY total DESC"
         }
-        other => panic!("unknown query {other}: expected q3|q5|q6|q7"),
+        other => panic!("unknown query {other}: expected q3|q5|q6|q7|q8"),
     }
 }
 
@@ -148,9 +181,23 @@ fn main() {
         println!("reusing existing data at {}", data_dir.display());
     }
 
+    let users_dir = data_dir.join("users");
+    let users_fresh = !users_dir.exists();
+    std::fs::create_dir_all(&users_dir).expect("users directory");
+    let mut users_table = TableStore::open(&users_dir, users_schema(), StoreOptions::default())
+        .expect("open users table");
+    if users_fresh {
+        for start in (1_u64..=100_000).step_by(25_000) {
+            users_table
+                .bulk_ingest_snapshot((start..start + 25_000).map(user_row).collect())
+                .expect("users segment");
+        }
+    }
+    let users_snapshot = users_table.snapshot();
     let snapshot = table.snapshot();
     let database_id = DatabaseId::new(1);
     let table_id = TableId::new(1);
+    let users_id = TableId::new(2);
     let entry = TableEntry::new(
         table_id,
         "orders",
@@ -158,10 +205,21 @@ fn main() {
         TableStatistics::with_row_count(rows),
     )
     .expect("table entry");
-    let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+    let users_entry = TableEntry::new(
+        users_id,
+        "users",
+        users_schema(),
+        TableStatistics::with_row_count(100_000),
+    )
+    .expect("users entry");
+    let database =
+        DatabaseEntry::new(database_id, "app", [entry, users_entry]).expect("database entry");
     let catalog = CatalogSnapshot::new([database]).expect("catalog");
-    let provider =
-        SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+    let provider = SnapshotScanProvider::new([
+        (database_id, table_id, &snapshot),
+        (database_id, users_id, &users_snapshot),
+    ])
+    .expect("provider");
 
     let run = || {
         let statement = parse_statement(sql).expect("parse");
