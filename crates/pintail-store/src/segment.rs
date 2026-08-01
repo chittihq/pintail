@@ -2098,13 +2098,12 @@ impl ColumnBuilder {
                 let existing = (0..dict_offsets.len() - 1).find(|index| {
                     &dict_heap[dict_offsets[*index]..dict_offsets[index + 1]] == *entry
                 });
-                match existing {
-                    Some(index) => u32::try_from(index).expect("chunk dictionary fits u32"),
-                    None => {
-                        dict_heap.extend_from_slice(entry);
-                        dict_offsets.push(dict_heap.len());
-                        u32::try_from(dict_offsets.len() - 2).expect("chunk dictionary fits u32")
-                    }
+                if let Some(index) = existing {
+                    u32::try_from(index).expect("chunk dictionary fits u32")
+                } else {
+                    dict_heap.extend_from_slice(entry);
+                    dict_offsets.push(dict_heap.len());
+                    u32::try_from(dict_offsets.len() - 2).expect("chunk dictionary fits u32")
                 }
             })
             .collect();
