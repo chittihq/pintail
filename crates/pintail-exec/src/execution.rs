@@ -2043,6 +2043,10 @@ enum AggregateValue {
     DecimalSum {
         units: i128,
         scale: u8,
+        /// Emit Float64 at finish (the bound aggregate type): the exact
+        /// total converts with ONE correct rounding, unlike per-row f64
+        /// accumulation (the Q4 canonical mismatch, 2026-08-02).
+        float_output: bool,
     },
     Average {
         sum: f64,
@@ -2082,6 +2086,7 @@ impl AggregateState {
         self.update_with_number(aggregate, value, None, memory)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn update_with_number(
         &mut self,
         aggregate: &CompiledAggregate,
@@ -2101,7 +2106,7 @@ impl AggregateState {
             AggregateValue::Count(count) => {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
-            AggregateValue::DecimalSum { units, scale } => {
+            AggregateValue::DecimalSum { units, scale, .. } => {
                 let text = match value {
                     Value::Utf8(text) => text.as_str(),
                     _ => {
@@ -2179,6 +2184,7 @@ impl AggregateState {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn merge(
         &mut self,
         aggregate: &CompiledAggregate,
@@ -2216,10 +2222,21 @@ impl AggregateState {
             ) => {
                 *left = left.checked_add(right).ok_or(ExecError::NumericOverflow)?;
             }
-            (value @ AggregateValue::Sum(None), AggregateValue::DecimalSum { units, scale }) => {
-                *value = AggregateValue::DecimalSum { units, scale };
+            (
+                value @ AggregateValue::Sum(None),
+                AggregateValue::DecimalSum {
+                    units,
+                    scale,
+                    float_output,
+                },
+            ) => {
+                *value = AggregateValue::DecimalSum {
+                    units,
+                    scale,
+                    float_output,
+                };
             }
-            (AggregateValue::DecimalSum { units, scale }, AggregateValue::Sum(Some(right))) => {
+            (AggregateValue::DecimalSum { units, scale, .. }, AggregateValue::Sum(Some(right))) => {
                 let scaled = crate::batch::parse_decimal_scaled(
                     match &right {
                         Value::Utf8(text) => text,
@@ -2290,17 +2307,27 @@ impl AggregateState {
     /// Exact decimal SUM on scaled integer units: no text parse, no text
     /// format until `finish`. The state lazily morphs from `Sum(None)` on
     /// the first unit-borne update.
-    fn update_decimal_sum_units(&mut self, units: i128, scale: u8) -> Result<(), ExecError> {
+    fn update_decimal_sum_units(
+        &mut self,
+        units: i128,
+        scale: u8,
+        float_output: bool,
+    ) -> Result<(), ExecError> {
         match &mut self.value {
             AggregateValue::DecimalSum {
                 units: total,
                 scale: existing,
+                ..
             } if *existing == scale => {
                 *total = total.checked_add(units).ok_or(ExecError::NumericOverflow)?;
                 Ok(())
             }
             value @ AggregateValue::Sum(None) => {
-                *value = AggregateValue::DecimalSum { units, scale };
+                *value = AggregateValue::DecimalSum {
+                    units,
+                    scale,
+                    float_output,
+                };
                 Ok(())
             }
             _ => Err(ExecError::InvalidPhysicalPlan(
@@ -2399,8 +2426,17 @@ impl AggregateState {
     fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
-            AggregateValue::DecimalSum { units, scale } => {
-                Value::Utf8(pintail_types::format_decimal_scaled(units, scale))
+            AggregateValue::DecimalSum {
+                units,
+                scale,
+                float_output,
+            } => {
+                if float_output {
+                    #[allow(clippy::cast_precision_loss)]
+                    Value::float64(units as f64 / 10_f64.powi(i32::from(scale)))
+                } else {
+                    Value::Utf8(pintail_types::format_decimal_scaled(units, scale))
+                }
             }
             AggregateValue::Sum(value)
             | AggregateValue::Minimum(value)
@@ -3522,11 +3558,19 @@ fn build_direct_column_aggregate(
         };
         let lanes = keys.and_then(|_| two_pass_lanes(aggregates, &head));
         if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-            eprintln!(
-                "[agg] direct path: keys={} lanes={:?}",
-                keys.is_some(),
-                lanes.as_ref().map(std::vec::Vec::len)
-            );
+            let kinds = lanes.as_ref().map(|lanes| {
+                lanes
+                    .iter()
+                    .map(|lane| match lane {
+                        TwoPassLane::CountStar => "count*",
+                        TwoPassLane::Float { .. } => "float",
+                        TwoPassLane::Int { .. } => "int",
+                        TwoPassLane::Exact { .. } => "exact",
+                        TwoPassLane::DecimalUnits { .. } => "decimal-units",
+                    })
+                    .collect::<Vec<_>>()
+            });
+            eprintln!("[agg] direct path: keys={} lanes={kinds:?}", keys.is_some());
         }
         if let (Some(keys), Some(lanes)) = (keys, lanes) {
             // Streaming scatter (phase-0 profile, 2026-08-02): retaining
@@ -3676,6 +3720,14 @@ enum TwoPassLane {
     /// MIN/MAX over a plain int/uint/float/bool column: exact bits ride the
     /// lane so the retained Value stays exact.
     Exact { column: usize, data_type: DataType },
+    /// SUM over a decimal column: i64 scaled units ride the lane and pass 2
+    /// accumulates i128 exactly. f64 lanes drift past the 4-decimal
+    /// canonical on 500k-row group sums (the Q4 mismatch, 2026-08-02).
+    DecimalUnits {
+        column: usize,
+        scale: u8,
+        float_output: bool,
+    },
 }
 
 /// Whether every aggregate fits a scatter lane, and which kind. `None`
@@ -3709,8 +3761,19 @@ fn two_pass_lanes(
                             data_type: storage,
                         }),
                         DataType::Float64 => Some(TwoPassLane::Float { column }),
-                        _ => matches!(batch.column(column)?.data_type(), DataType::Decimal { .. })
-                            .then_some(TwoPassLane::Float { column }),
+                        _ => match batch.column(column)?.data_type() {
+                            DataType::Decimal { scale, .. }
+                                if aggregate.function == AggregateFunction::Sum =>
+                            {
+                                Some(TwoPassLane::DecimalUnits {
+                                    column,
+                                    scale,
+                                    float_output: aggregate_uses_float(aggregate),
+                                })
+                            }
+                            DataType::Decimal { .. } => Some(TwoPassLane::Float { column }),
+                            _ => None,
+                        },
                     }
                 }
                 AggregateFunction::Minimum | AggregateFunction::Maximum => matches!(
@@ -4166,6 +4229,22 @@ fn scatter_two_pass_row(
                         None => mask |= 1 << lane_index,
                     }
                 }
+                TwoPassLane::DecimalUnits { column, .. } => {
+                    let units = batch.column(*column).and_then(|column| {
+                        let (typed, validity) = column.typed()?;
+                        validity
+                            .is_valid(row)
+                            .then(|| typed.units_at(row))
+                            .flatten()
+                    });
+                    match units.and_then(|units| i64::try_from(units).ok()) {
+                        Some(units) => {
+                            bucket.lanes[lane_base + lane_index] =
+                                u64::from_ne_bytes(units.to_ne_bytes());
+                        }
+                        None => mask |= 1 << lane_index,
+                    }
+                }
                 TwoPassLane::Int { column, .. } | TwoPassLane::Exact { column, .. } => {
                     match batch.column(*column).and_then(|column| column.value(row)) {
                         Some(Value::Int64(value)) => {
@@ -4253,6 +4332,18 @@ fn two_pass_flush(
                     match lane {
                         TwoPassLane::CountStar => {
                             states[lane_index].update(aggregate, &Value::UInt64(1), memory)?;
+                        }
+                        TwoPassLane::DecimalUnits {
+                            scale,
+                            float_output,
+                            ..
+                        } => {
+                            let units = i64::from_ne_bytes(bits.to_ne_bytes());
+                            states[lane_index].update_decimal_sum_units(
+                                i128::from(units),
+                                *scale,
+                                *float_output,
+                            )?;
                         }
                         TwoPassLane::Float { .. } => {
                             let number = f64::from_bits(bits);
@@ -4401,13 +4492,19 @@ fn update_state_from_typed_column(
             state.update_with_number(aggregate, &Value::Boolean(true), None, memory)?;
             return Ok(true);
         }
-        AggregateFunction::Sum if !aggregate_uses_float(aggregate) => {
+        AggregateFunction::Sum => {
             if let (Some(units), Some(scale)) = (typed.units_at(row), typed.decimal_scale()) {
-                state.update_decimal_sum_units(units, scale)?;
+                state.update_decimal_sum_units(units, scale, aggregate_uses_float(aggregate))?;
+                return Ok(true);
+            }
+            if aggregate_uses_float(aggregate)
+                && let Some(number) = typed.number_at(row)
+            {
+                state.update_with_number(aggregate, &Value::Boolean(true), Some(number), memory)?;
                 return Ok(true);
             }
         }
-        AggregateFunction::Sum | AggregateFunction::Average => {
+        AggregateFunction::Average => {
             if let Some(number) = typed.number_at(row) {
                 state.update_with_number(aggregate, &Value::Boolean(true), Some(number), memory)?;
                 return Ok(true);

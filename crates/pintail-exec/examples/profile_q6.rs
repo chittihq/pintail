@@ -119,7 +119,7 @@ fn query_sql(name: &str) -> &'static str {
     match name {
         "q4" => {
             "SELECT region, status, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total \
-             FROM orders GROUP BY region, status ORDER BY region, status"
+             FROM orders GROUP BY region, status ORDER BY total DESC, region, status LIMIT 20"
         }
         "q3" => {
             "SELECT status, COUNT(*) AS cnt, ROUND(AVG(total_amount), 2) AS avg_amt \
@@ -269,6 +269,18 @@ fn main() {
                 "  iteration {iterations}: {:.0} ms, {} rows",
                 started.elapsed().as_secs_f64() * 1e3,
                 result.len()
+            );
+        }
+        return;
+    }
+    if std::env::var_os("PROFILE_PRINT_ROWS").is_some() {
+        for row in run() {
+            println!(
+                "ROW {}",
+                row.iter()
+                    .map(|value| format!("{value:?}"))
+                    .collect::<Vec<_>>()
+                    .join("|")
             );
         }
         return;
