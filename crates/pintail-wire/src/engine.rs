@@ -68,11 +68,32 @@ pub enum QueryError {
 }
 
 /// Opens reader-pinned table snapshots and runs Pintail's native SQL engine.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ReplicaEngine {
     data_dir: PathBuf,
     metadata_path: PathBuf,
     memory_limit: usize,
+    /// Loaded replicas keyed by database, revalidated per request against
+    /// on-disk file stamps: reopening every table snapshot (manifest read
+    /// plus WAL merge) and the metadata store cost ~200ms on EVERY query,
+    /// the fixed floor under the whole benchmark board.
+    cache: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CachedReplica>>>,
+}
+
+impl std::fmt::Debug for ReplicaEngine {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReplicaEngine")
+            .field("data_dir", &self.data_dir)
+            .field("metadata_path", &self.metadata_path)
+            .field("memory_limit", &self.memory_limit)
+            .finish_non_exhaustive()
+    }
+}
+
+struct CachedReplica {
+    stamp: Vec<(PathBuf, u64, Option<std::time::SystemTime>)>,
+    replica: std::sync::Arc<LoadedReplica>,
 }
 
 struct LoadedReplica {
@@ -93,7 +114,74 @@ impl ReplicaEngine {
             data_dir: data_dir.into(),
             metadata_path: metadata_path.into(),
             memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
+            cache: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Every file whose content can change what a query sees: the metadata
+    /// store plus each table directory's entries (manifests, WALs and the
+    /// immutable segment set). Any CDC apply, flush, compaction or schema
+    /// change alters at least one (path, len, mtime) triple.
+    fn replica_stamp(
+        &self,
+        database_id: &str,
+    ) -> Vec<(PathBuf, u64, Option<std::time::SystemTime>)> {
+        let mut stamp = Vec::new();
+        let mut record = |path: &Path| {
+            if let Ok(meta) = std::fs::metadata(path) {
+                stamp.push((path.to_path_buf(), meta.len(), meta.modified().ok()));
+            }
+        };
+        record(&self.metadata_path);
+        let tables_root = self
+            .data_dir
+            .join("databases")
+            .join(database_id)
+            .join("tables");
+        let mut directories = vec![tables_root];
+        while let Some(directory) = directories.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            let mut paths: Vec<PathBuf> = entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .collect();
+            paths.sort();
+            for path in paths {
+                if path.is_dir() {
+                    directories.push(path);
+                } else {
+                    record(&path);
+                }
+            }
+        }
+        stamp
+    }
+
+    fn load_replica_cached(
+        &self,
+        database_id: &str,
+    ) -> Result<std::sync::Arc<LoadedReplica>, QueryError> {
+        let stamp = self.replica_stamp(database_id);
+        if let Some(cached) = self
+            .cache
+            .lock()
+            .expect("replica cache lock")
+            .get(database_id)
+            .filter(|cached| cached.stamp == stamp)
+        {
+            return Ok(std::sync::Arc::clone(&cached.replica));
+        }
+        let replica = std::sync::Arc::new(self.load_replica(database_id)?);
+        self.cache.lock().expect("replica cache lock").insert(
+            database_id.to_owned(),
+            CachedReplica {
+                stamp,
+                replica: std::sync::Arc::clone(&replica),
+            },
+        );
+        Ok(replica)
     }
 
     #[must_use]
@@ -115,7 +203,7 @@ impl ReplicaEngine {
         max_rows: usize,
     ) -> Result<QueryOutput, QueryError> {
         let started = Instant::now();
-        let replica = self.load_replica(database_id)?;
+        let replica = self.load_replica_cached(database_id)?;
         let catalog = build_catalog(&replica)?;
         let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();

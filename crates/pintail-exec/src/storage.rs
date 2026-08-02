@@ -2751,6 +2751,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn settled_join_memo_invalidates_when_either_table_changes() {
         let orders_dir = tempfile::tempdir().expect("orders dir");
         let users_dir = tempfile::tempdir().expect("users dir");
