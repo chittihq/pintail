@@ -4328,6 +4328,25 @@ fn build_streaming_two_pass_aggregate(
         TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. }
     )
     .then(StringIntern::default);
+    // Distinct lanes stay on the classic path: dense per-worker partials
+    // would replicate each group's distinct set per thread and pay a
+    // drain-and-reinsert merge that costs more than the scatter it saves
+    // (n4 585ms -> 768ms when measured on 2026-08-02).
+    let mut dense = lanes
+        .iter()
+        .all(|lane| !matches!(lane, TwoPassLane::Distinct { .. }))
+        .then(|| dense_slot_count(keys))
+        .flatten()
+        .map(|slots| {
+            let mut table: DenseGroupSlots = Vec::new();
+            table.resize_with(slots, || None);
+            table
+        });
+    if let Some(slots) = &dense {
+        let slab = slots.len().saturating_mul(size_of::<Option<Vec<AggregateState>>>());
+        memory.reserve(slab)?;
+        group_reserved = group_reserved.saturating_add(slab);
+    }
 
     let mut window: Vec<(RecordBatch, Vec<Vec<u64>>)> = Vec::new();
     let mut window_reserved = 0_usize;
@@ -4363,6 +4382,8 @@ fn build_streaming_two_pass_aggregate(
                     aggregates,
                     partitions,
                     &mut maps,
+                    &mut dense,
+                    intern.as_ref().map_or(0, |intern| intern.values.len()),
                     memory,
                     &mut group_reserved,
                     &mut window_reserved,
@@ -4386,6 +4407,8 @@ fn build_streaming_two_pass_aggregate(
                     aggregates,
                     partitions,
                     &mut maps,
+                    &mut dense,
+                    intern.as_ref().map_or(0, |intern| intern.values.len()),
                     memory,
                     &mut group_reserved,
                     &mut window_reserved,
@@ -4471,6 +4494,8 @@ fn build_streaming_two_pass_aggregate(
         aggregates,
         partitions,
         &mut maps,
+        &mut dense,
+        intern.as_ref().map_or(0, |intern| intern.values.len()),
         memory,
         &mut group_reserved,
         &mut window_reserved,
@@ -4484,6 +4509,17 @@ fn build_streaming_two_pass_aggregate(
         &mut group_reserved,
     )?;
     memory.release(bucket_reserved);
+    if let Some(slots) = dense.take() {
+        fold_dense_into_maps(
+            slots,
+            keys,
+            aggregates,
+            partitions,
+            &mut maps,
+            memory,
+            &mut group_reserved,
+        )?;
+    }
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         let groups: usize = maps.iter().map(HashMap::len).sum();
         eprintln!(
@@ -4840,6 +4876,57 @@ fn two_pass_scatter_date_parts(
 }
 
 #[inline]
+/// Extracts one lane's scatter bits for one row; `None` is the NULL mark.
+/// Shared by the scatter path (which buffers the bits) and the dense direct
+/// path (which applies them immediately).
+fn two_pass_lane_bits(batch: &RecordBatch, row: usize, lane: &TwoPassLane) -> Option<u64> {
+    match lane {
+        TwoPassLane::CountStar => Some(0),
+        TwoPassLane::Float { column } => batch
+            .column(*column)
+            .and_then(|column| {
+                let (typed, validity) = column.typed()?;
+                validity
+                    .is_valid(row)
+                    .then(|| typed.number_at(row))
+                    .flatten()
+            })
+            .or_else(|| {
+                batch
+                    .column(*column)
+                    .and_then(|column| match column.value(row) {
+                        Some(Value::Null) | None => None,
+                        Some(value) => mysql_f64(value).ok(),
+                    })
+            })
+            .map(f64::to_bits),
+        TwoPassLane::DecimalUnits { column, .. } | TwoPassLane::ExtremeDecimal { column, .. } => {
+            batch
+                .column(*column)
+                .and_then(|column| {
+                    let (typed, validity) = column.typed()?;
+                    validity
+                        .is_valid(row)
+                        .then(|| typed.units_at(row))
+                        .flatten()
+                })
+                .and_then(|units| i64::try_from(units).ok())
+                .map(|units| u64::from_ne_bytes(units.to_ne_bytes()))
+        }
+        TwoPassLane::Int { column, .. }
+        | TwoPassLane::Exact { column, .. }
+        | TwoPassLane::Distinct { column, .. } => {
+            match batch.column(*column).and_then(|column| column.value(row)) {
+                Some(Value::Int64(value)) => Some(u64::from_ne_bytes(value.to_ne_bytes())),
+                Some(Value::UInt64(value)) => Some(*value),
+                Some(Value::Float64(value)) => Some(value.get().to_bits()),
+                Some(Value::Boolean(value)) => Some(u64::from(*value)),
+                _ => None,
+            }
+        }
+    }
+}
+
 fn scatter_two_pass_row(
     batch: &RecordBatch,
     row: usize,
@@ -4859,70 +4946,9 @@ fn scatter_two_pass_row(
         let lane_base = bucket.lanes.len();
         bucket.lanes.resize(lane_base + lane_count, 0);
         for (lane_index, lane) in lanes.iter().enumerate() {
-            match lane {
-                TwoPassLane::CountStar => {}
-                TwoPassLane::Float { column } => {
-                    let number = batch
-                        .column(*column)
-                        .and_then(|column| {
-                            let (typed, validity) = column.typed()?;
-                            validity
-                                .is_valid(row)
-                                .then(|| typed.number_at(row))
-                                .flatten()
-                        })
-                        .or_else(|| {
-                            batch
-                                .column(*column)
-                                .and_then(|column| match column.value(row) {
-                                    Some(Value::Null) | None => None,
-                                    Some(value) => mysql_f64(value).ok(),
-                                })
-                        });
-                    match number {
-                        Some(number) => {
-                            bucket.lanes[lane_base + lane_index] = number.to_bits();
-                        }
-                        None => mask |= 1 << lane_index,
-                    }
-                }
-                TwoPassLane::DecimalUnits { column, .. }
-                | TwoPassLane::ExtremeDecimal { column, .. } => {
-                    let units = batch.column(*column).and_then(|column| {
-                        let (typed, validity) = column.typed()?;
-                        validity
-                            .is_valid(row)
-                            .then(|| typed.units_at(row))
-                            .flatten()
-                    });
-                    match units.and_then(|units| i64::try_from(units).ok()) {
-                        Some(units) => {
-                            bucket.lanes[lane_base + lane_index] =
-                                u64::from_ne_bytes(units.to_ne_bytes());
-                        }
-                        None => mask |= 1 << lane_index,
-                    }
-                }
-                TwoPassLane::Int { column, .. }
-                | TwoPassLane::Exact { column, .. }
-                | TwoPassLane::Distinct { column, .. } => {
-                    match batch.column(*column).and_then(|column| column.value(row)) {
-                        Some(Value::Int64(value)) => {
-                            bucket.lanes[lane_base + lane_index] =
-                                u64::from_ne_bytes(value.to_ne_bytes());
-                        }
-                        Some(Value::UInt64(value)) => {
-                            bucket.lanes[lane_base + lane_index] = *value;
-                        }
-                        Some(Value::Float64(value)) => {
-                            bucket.lanes[lane_base + lane_index] = value.get().to_bits();
-                        }
-                        Some(Value::Boolean(value)) => {
-                            bucket.lanes[lane_base + lane_index] = u64::from(*value);
-                        }
-                        _ => mask |= 1 << lane_index,
-                    }
-                }
+            match two_pass_lane_bits(batch, row, lane) {
+                Some(bits) => bucket.lanes[lane_base + lane_index] = bits,
+                None => mask |= 1 << lane_index,
             }
         }
         bucket.keys.push(key_bits);
@@ -4974,12 +5000,70 @@ fn drain_two_pass_window(
     aggregates: &[CompiledAggregate],
     partitions: usize,
     maps: &mut [GroupKeyMap],
+    dense: &mut Option<DenseGroupSlots>,
+    intern_len: usize,
     memory: &MemoryTracker,
     group_reserved: &mut usize,
     window_reserved: &mut usize,
 ) -> Result<(), ExecError> {
     if window.is_empty() {
         return Ok(());
+    }
+    if let Some(slots) = dense.as_mut() {
+        if dense_in_bounds(keys, intern_len) {
+            let columns: &[usize] = match keys {
+                TwoPassKeySource::Text { column } => &[column],
+                TwoPassKeySource::TextPair { first, second } => &[first, second],
+                _ => unreachable!("dense slots are text-keyed"),
+            };
+            // One partial per rayon worker (fold), merged pairwise
+            // (reduce): batches of the window aggregate in parallel with
+            // no per-row buffering and no hashing. Transient partials are
+            // bounded by worker count x slot table, under the scatter
+            // window's own reservation.
+            let slot_count = slots.len();
+            let folded = window
+                .par_iter()
+                .try_fold(
+                    || vec![None; slot_count],
+                    |mut acc, (batch, translations)| {
+                        two_pass_dense_batch(
+                            batch,
+                            keys,
+                            columns,
+                            translations,
+                            lanes,
+                            aggregates,
+                            &mut acc,
+                            memory,
+                        )?;
+                        Ok(acc)
+                    },
+                )
+                .try_reduce(
+                    || vec![None; slot_count],
+                    |left, right| merge_dense_slots(left, right, aggregates, memory),
+                )?;
+            let merged = merge_dense_slots(std::mem::take(slots), folded, aggregates, memory)?;
+            *slots = merged;
+            window.clear();
+            memory.release(*window_reserved);
+            *window_reserved = 0;
+            return Ok(());
+        }
+        // The intern table outgrew the dense domain: unify what the dense
+        // slots hold into the partition maps and continue on the classic
+        // scatter path for the rest of the stream.
+        let slots = dense.take().expect("checked above");
+        fold_dense_into_maps(
+            slots,
+            keys,
+            aggregates,
+            partitions,
+            maps,
+            memory,
+            group_reserved,
+        )?;
     }
     let mut sets = window
         .par_iter()
@@ -5044,6 +5128,268 @@ fn two_pass_flush(
     outcome
 }
 
+/// Applies one lane's scattered bits to one aggregate state. Shared by
+/// pass-2 flush (bits re-read from buckets) and the dense direct path
+/// (bits applied straight from the batch).
+fn apply_two_pass_lane(
+    state: &mut AggregateState,
+    lane: &TwoPassLane,
+    aggregate: &CompiledAggregate,
+    bits: u64,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    match lane {
+        TwoPassLane::CountStar => state.update(aggregate, &Value::UInt64(1), memory),
+        TwoPassLane::DecimalUnits {
+            scale,
+            float_output,
+            ..
+        } => {
+            let units = i64::from_ne_bytes(bits.to_ne_bytes());
+            state.update_decimal_sum_units(i128::from(units), *scale, *float_output)
+        }
+        TwoPassLane::ExtremeDecimal { scale, .. } => {
+            let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
+            state.update_extreme_units(
+                aggregate,
+                units,
+                || Some(pintail_types::format_decimal_scaled(units, *scale)),
+                memory,
+            )
+        }
+        TwoPassLane::Distinct { data_type, .. } => {
+            let key = if *data_type == DataType::Int64 {
+                i128::from(i64::from_ne_bytes(bits.to_ne_bytes()))
+            } else {
+                i128::from(bits)
+            };
+            state.update_distinct_count_int(key, memory)
+        }
+        TwoPassLane::Float { .. } => {
+            let number = f64::from_bits(bits);
+            state.update_with_number(aggregate, &Value::float64(number), Some(number), memory)
+        }
+        TwoPassLane::Int { data_type, .. } => {
+            let value = two_pass_key_value(bits, false, *data_type);
+            // number=None keeps integer sums on the exact integer branch,
+            // as sequential does.
+            state.update_with_number(aggregate, &value, None, memory)
+        }
+        TwoPassLane::Exact { data_type, .. } => {
+            let value = two_pass_key_value(bits, false, *data_type);
+            let number = match &value {
+                Value::Int64(v) =>
+                {
+                    #[allow(clippy::cast_precision_loss)]
+                    Some(*v as f64)
+                }
+                Value::UInt64(v) =>
+                {
+                    #[allow(clippy::cast_precision_loss)]
+                    Some(*v as f64)
+                }
+                Value::Float64(v) => Some(v.get()),
+                _ => None,
+            };
+            state.update_with_number(aggregate, &value, number, memory)
+        }
+    }
+}
+
+/// Dense slot table for small text-keyed group domains: intern ids are
+/// dense small integers, so the whole scatter/flush round trip (buffer 17
+/// bytes per row, re-read, hash-probe) collapses into direct indexing.
+/// Slot 0 is the NULL group for single-column keys; pairs pack their
+/// NULL-encoded side ids directly.
+type DenseGroupSlots = Vec<Option<Vec<AggregateState>>>;
+
+/// Single text column: intern ids 0..=1023 map to slots 1..=1024.
+const DENSE_TEXT_CAP: usize = 1024;
+/// Text pair: side ids are (intern id + 1) with 0 as NULL, kept < 65.
+const DENSE_PAIR_SIDE: usize = 65;
+
+fn dense_slot_count(keys: TwoPassKeySource) -> Option<usize> {
+    match keys {
+        TwoPassKeySource::Text { .. } => Some(DENSE_TEXT_CAP + 1),
+        TwoPassKeySource::TextPair { .. } => Some(DENSE_PAIR_SIDE * DENSE_PAIR_SIDE),
+        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => None,
+    }
+}
+
+/// Whether every sentinel the current intern table can produce still fits
+/// the dense slots.
+fn dense_in_bounds(keys: TwoPassKeySource, intern_len: usize) -> bool {
+    match keys {
+        TwoPassKeySource::Text { .. } => intern_len <= DENSE_TEXT_CAP,
+        TwoPassKeySource::TextPair { .. } => intern_len + 1 < DENSE_PAIR_SIDE,
+        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => false,
+    }
+}
+
+fn dense_slot_index(keys: TwoPassKeySource, key_bits: u64, key_null: bool) -> usize {
+    match keys {
+        TwoPassKeySource::Text { .. } => {
+            if key_null {
+                0
+            } else {
+                usize::try_from(key_bits).expect("intern id fits usize") + 1
+            }
+        }
+        TwoPassKeySource::TextPair { .. } => {
+            let first = usize::try_from(key_bits >> 32).expect("side id fits usize");
+            let second = usize::try_from(key_bits & 0xFFFF_FFFF).expect("side id fits usize");
+            first * DENSE_PAIR_SIDE + second
+        }
+        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => {
+            unreachable!("dense slots are text-keyed")
+        }
+    }
+}
+
+/// Inverse of [`dense_slot_index`]: the map key the classic path would use.
+fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
+    match keys {
+        TwoPassKeySource::Text { .. } => {
+            if index == 0 {
+                (0, true)
+            } else {
+                (u64::try_from(index - 1).expect("slot index fits u64"), false)
+            }
+        }
+        TwoPassKeySource::TextPair { .. } => {
+            let first = u64::try_from(index / DENSE_PAIR_SIDE).expect("slot index fits u64");
+            let second = u64::try_from(index % DENSE_PAIR_SIDE).expect("slot index fits u64");
+            ((first << 32) | second, false)
+        }
+        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => {
+            unreachable!("dense slots are text-keyed")
+        }
+    }
+}
+
+/// Dense pass over one batch: same key readers as
+/// [`two_pass_scatter_text_prepared`], same lane extraction and state
+/// updates as scatter + flush — minus the buffering between them.
+fn two_pass_dense_batch(
+    batch: &RecordBatch,
+    keys: TwoPassKeySource,
+    columns: &[usize],
+    translations: &[Vec<u64>],
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    slots: &mut DenseGroupSlots,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let mut readers = Vec::with_capacity(columns.len());
+    for (column, translation) in columns.iter().zip(translations) {
+        let vector = batch.column(*column).ok_or(ExecError::InvalidBatch(
+            "grouping column is outside the input batch",
+        ))?;
+        let Some((crate::batch::TypedValues::Utf8(strings), validity)) = vector.typed() else {
+            return Err(ExecError::InvalidBatch(
+                "string two-pass key column lost its typed projection",
+            ));
+        };
+        let Some((codes, _)) = strings.dictionary() else {
+            return Err(ExecError::InvalidBatch(
+                "prepared text scatter requires dictionary codes",
+            ));
+        };
+        readers.push((codes, validity, translation));
+    }
+    let pair = readers.len() == 2;
+    for row in batch.selection().selected_rows() {
+        let mut key_bits = 0_u64;
+        let mut key_null = false;
+        for (codes, validity, translation) in &readers {
+            let id = if validity.is_valid(row) {
+                let code = usize::try_from(codes[row]).expect("dict code fits usize");
+                let interned = *translation
+                    .get(code)
+                    .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
+                if pair { interned + 1 } else { interned }
+            } else {
+                if !pair {
+                    key_null = true;
+                }
+                0
+            };
+            key_bits = if pair { (key_bits << 32) | id } else { id };
+        }
+        let states = slots[dense_slot_index(keys, key_bits, key_null)]
+            .get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+        for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
+            if let Some(bits) = two_pass_lane_bits(batch, row, lane) {
+                apply_two_pass_lane(&mut states[lane_index], lane, aggregate, bits, memory)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Merges one dense partial into another (per-batch fold outputs).
+fn merge_dense_slots(
+    mut into: DenseGroupSlots,
+    from: DenseGroupSlots,
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+) -> Result<DenseGroupSlots, ExecError> {
+    for (target, source) in into.iter_mut().zip(from) {
+        let Some(source) = source else { continue };
+        match target {
+            None => *target = Some(source),
+            Some(states) => {
+                for ((state, other), aggregate) in
+                    states.iter_mut().zip(source).zip(aggregates)
+                {
+                    state.merge(aggregate, other, memory)?;
+                }
+            }
+        }
+    }
+    Ok(into)
+}
+
+/// Folds dense slots into the partition maps (dense overflow, mixed
+/// serial-scatter flows, and the final pass share this): map collisions
+/// merge state-by-state, so dense and classic results always unify.
+fn fold_dense_into_maps(
+    slots: DenseGroupSlots,
+    keys: TwoPassKeySource,
+    aggregates: &[CompiledAggregate],
+    partitions: usize,
+    maps: &mut [GroupKeyMap],
+    memory: &MemoryTracker,
+    group_reserved: &mut usize,
+) -> Result<(), ExecError> {
+    let per_group_bytes = size_of::<(u64, bool)>()
+        .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+        .saturating_add(32);
+    for (index, slot) in slots.into_iter().enumerate() {
+        let Some(states) = slot else { continue };
+        let (bits, null) = dense_slot_sentinel(keys, index);
+        let partition = usize::try_from(
+            crate::batch::mix64(bits ^ u64::from(null)) % partitions as u64,
+        )
+        .expect("partition index fits usize");
+        match maps[partition].entry((bits, null)) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                memory.reserve(per_group_bytes)?;
+                *group_reserved = group_reserved.saturating_add(per_group_bytes);
+                entry.insert(states);
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                for ((state, other), aggregate) in
+                    entry.get_mut().iter_mut().zip(states).zip(aggregates)
+                {
+                    state.merge(aggregate, other, memory)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Pass 2 over several scatter outputs at once (one per parallel scatter
 /// worker): each partition folds its bucket from EVERY set, so parallel
 /// pass 1 needs no cross-worker merging (e13's shape, bounded windows).
@@ -5079,75 +5425,7 @@ fn two_pass_flush_sets(
                             continue;
                         }
                         let bits = bucket.lanes[row * lane_count + lane_index];
-                        match lane {
-                            TwoPassLane::CountStar => {
-                                states[lane_index].update(aggregate, &Value::UInt64(1), memory)?;
-                            }
-                            TwoPassLane::DecimalUnits {
-                                scale,
-                                float_output,
-                                ..
-                            } => {
-                                let units = i64::from_ne_bytes(bits.to_ne_bytes());
-                                states[lane_index].update_decimal_sum_units(
-                                    i128::from(units),
-                                    *scale,
-                                    *float_output,
-                                )?;
-                            }
-                            TwoPassLane::ExtremeDecimal { scale, .. } => {
-                                let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
-                                states[lane_index].update_extreme_units(
-                                    aggregate,
-                                    units,
-                                    || Some(pintail_types::format_decimal_scaled(units, *scale)),
-                                    memory,
-                                )?;
-                            }
-                            TwoPassLane::Distinct { data_type, .. } => {
-                                let key = if *data_type == DataType::Int64 {
-                                    i128::from(i64::from_ne_bytes(bits.to_ne_bytes()))
-                                } else {
-                                    i128::from(bits)
-                                };
-                                states[lane_index].update_distinct_count_int(key, memory)?;
-                            }
-                            TwoPassLane::Float { .. } => {
-                                let number = f64::from_bits(bits);
-                                states[lane_index].update_with_number(
-                                    aggregate,
-                                    &Value::float64(number),
-                                    Some(number),
-                                    memory,
-                                )?;
-                            }
-                            TwoPassLane::Int { data_type, .. } => {
-                                let value = two_pass_key_value(bits, false, *data_type);
-                                // number=None keeps integer sums on the
-                                // exact integer branch, as sequential does.
-                                states[lane_index]
-                                    .update_with_number(aggregate, &value, None, memory)?;
-                            }
-                            TwoPassLane::Exact { data_type, .. } => {
-                                let value = two_pass_key_value(bits, false, *data_type);
-                                let number = match &value {
-                                    Value::Int64(v) =>
-                                    {
-                                        #[allow(clippy::cast_precision_loss)]
-                                        Some(*v as f64)
-                                    }
-                                    Value::UInt64(v) =>
-                                    {
-                                        #[allow(clippy::cast_precision_loss)]
-                                        Some(*v as f64)
-                                    }
-                                    Value::Float64(v) => Some(v.get()),
-                                    _ => None,
-                                };
-                                states[lane_index]
-                                    .update_with_number(aggregate, &value, number, memory)?;
-                            }
-                        }
+                        apply_two_pass_lane(&mut states[lane_index], lane, aggregate, bits, memory)?;
                     }
                 }
             }
