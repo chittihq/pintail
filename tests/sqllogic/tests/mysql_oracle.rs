@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 600;
+const EXPECTED_CASES: usize = 625;
 
 struct OracleCase {
     family: &'static str,
@@ -777,6 +777,148 @@ fn hand_written_cases() -> Vec<OracleCase> {
              INNER JOIN \
              (SELECT CAST(9007199254740993 AS CHAR) AS id) r \
              ON l.id = r.id",
+        ),
+        // Window functions (issue #4): rankings, aggregate windows with
+        // MySQL default frames, windows nested in expressions, and windows
+        // over grouped output — all differentially checked against MySQL.
+        ordered(
+            "window ranking",
+            "SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC) AS rn FROM events ORDER BY id",
+        ),
+        ordered(
+            "window ranking",
+            "SELECT id, RANK() OVER (ORDER BY note) AS r, DENSE_RANK() OVER (ORDER BY note) AS d \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window ranking",
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY active ORDER BY score DESC) AS rn \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window ranking",
+            "SELECT id, RANK() OVER (PARTITION BY note ORDER BY id) AS r FROM events ORDER BY id",
+        ),
+        ordered(
+            "window aggregate",
+            "SELECT id, SUM(score) OVER (PARTITION BY active) AS t FROM events ORDER BY id",
+        ),
+        ordered(
+            "window aggregate",
+            "SELECT id, COUNT(*) OVER (PARTITION BY note) AS n FROM events ORDER BY id",
+        ),
+        ordered(
+            "window aggregate",
+            "SELECT id, AVG(score) OVER (PARTITION BY active) AS a FROM events ORDER BY id",
+        ),
+        ordered(
+            "window aggregate",
+            "SELECT id, MIN(score) OVER (PARTITION BY note) AS lo, \
+             MAX(score) OVER (PARTITION BY note) AS hi FROM events ORDER BY id",
+        ),
+        ordered(
+            "window running frame",
+            "SELECT id, SUM(score) OVER (ORDER BY id) AS running FROM events ORDER BY id",
+        ),
+        ordered(
+            "window running frame",
+            "SELECT id, SUM(score) OVER (ORDER BY note) AS peers FROM events ORDER BY id",
+        ),
+        ordered(
+            "window running frame",
+            "SELECT id, COUNT(*) OVER (PARTITION BY active ORDER BY id) AS c \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window nested in expression",
+            "SELECT id, ROUND(score * 100 / SUM(score) OVER (PARTITION BY active), 2) AS share \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window nested in expression",
+            "SELECT id, CASE WHEN ROW_NUMBER() OVER (ORDER BY score DESC) <= 3 \
+             THEN 'top' ELSE 'rest' END AS bucket FROM events ORDER BY id",
+        ),
+        ordered(
+            "window nested in expression",
+            "SELECT id, score - AVG(score) OVER (PARTITION BY active) AS deviation \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window over grouped output",
+            "SELECT note, SUM(score) AS total, \
+             SUM(SUM(score)) OVER () AS grand, \
+             ROW_NUMBER() OVER (ORDER BY SUM(score) DESC, note) AS heaviest \
+             FROM events GROUP BY note ORDER BY heaviest",
+        ),
+        ordered(
+            "window over grouped output",
+            "SELECT active, COUNT(*) AS n, \
+             COUNT(*) * 100 / SUM(COUNT(*)) OVER () AS pct \
+             FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "window over grouped output",
+            "SELECT note, MAX(score) AS best, \
+             RANK() OVER (ORDER BY MAX(score) DESC) AS r \
+             FROM events GROUP BY note HAVING COUNT(*) >= 1 ORDER BY r, note",
+        ),
+        ordered(
+            "window in cte",
+            "WITH seq AS (\
+               SELECT id, active, score, \
+               ROW_NUMBER() OVER (PARTITION BY active ORDER BY id) AS pos, \
+               MIN(score) OVER (PARTITION BY active) AS floor_score \
+             FROM events) \
+             SELECT active, COUNT(*) AS n, SUM(CASE WHEN pos > 1 THEN 1 ELSE 0 END) AS repeats, \
+             MIN(floor_score) AS lo FROM seq GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "window in cte",
+            "WITH ranked AS (\
+               SELECT id, note, score, \
+               ROW_NUMBER() OVER (PARTITION BY note ORDER BY score DESC) AS rn, \
+               COUNT(*) OVER (PARTITION BY note) AS n \
+             FROM events) \
+             SELECT id, note, rn, n FROM ranked WHERE rn <= 2 ORDER BY id",
+        ),
+        ordered(
+            "window multiple in one query",
+            "SELECT id, \
+             ROW_NUMBER() OVER (ORDER BY score) AS by_score, \
+             ROW_NUMBER() OVER (ORDER BY id DESC) AS by_id, \
+             SUM(score) OVER (PARTITION BY active) AS group_total \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "datetime helpers",
+            "SELECT TIMESTAMPDIFF(SECOND, '2024-01-01 00:00:00', '2024-01-01 00:05:30'), \
+             TIMESTAMPDIFF(MINUTE, '2024-01-01 00:00:00', '2024-01-02 03:04:00'), \
+             TIMESTAMPDIFF(HOUR, '2024-01-02 03:00:00', '2024-01-01 00:00:00'), \
+             TIMESTAMPDIFF(DAY, '2024-01-01 12:00:00', '2024-03-01 11:59:59')",
+        ),
+        ordered(
+            "datetime helpers",
+            "SELECT TIMESTAMPDIFF(MONTH, '2020-01-31', '2020-02-29'), \
+             TIMESTAMPDIFF(MONTH, '2020-01-31', '2020-03-01'), \
+             TIMESTAMPDIFF(MONTH, '2020-03-01', '2020-01-31'), \
+             TIMESTAMPDIFF(YEAR, '2020-02-29', '2024-02-28'), \
+             TIMESTAMPDIFF(YEAR, '2020-02-29', '2024-02-29')",
+        ),
+        ordered(
+            "datetime helpers",
+            "SELECT CEIL(7 / 2), FLOOR(7 / 2), CEIL(-7 / 2), FLOOR(-7 / 2), \
+             CEIL(10 * 0.95), CEIL(4 / 2)",
+        ),
+        ordered(
+            "datetime helpers",
+            "SELECT '2024-01-31' + INTERVAL 1 DAY, '2024-01-31' + INTERVAL 1 MONTH, \
+             '2024-03-31' - INTERVAL 1 MONTH, '2024-02-29' + INTERVAL 1 YEAR, \
+             '2024-01-01 23:30:00' + INTERVAL 45 MINUTE",
+        ),
+        ordered(
+            "datetime helpers",
+            "SELECT id, CEIL(score / 3) AS c, FLOOR(score / 3) AS f FROM events ORDER BY id",
         ),
     ]
 }

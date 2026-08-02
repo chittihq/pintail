@@ -11,8 +11,13 @@ plausible but incorrect result.
 - Scalar and `IN` subqueries may read tables, derived tables, and
   non-recursive CTEs, but they must be uncorrelated. An inner reference that
   depends on an outer query scope is rejected during binding.
-- Recursive CTEs, window functions, and set operations other than
-  `UNION ALL` are not implemented.
+- Window functions cover `ROW_NUMBER`, `RANK`, `DENSE_RANK`, and
+  `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` over `PARTITION BY` / `ORDER BY` with
+  MySQL's default frames, nested anywhere in projection expressions and
+  over grouped output. Explicit frames (`ROWS`/`RANGE BETWEEN`), named
+  windows, `LAG`/`LEAD`/`NTILE`/`FIRST_VALUE`/`LAST_VALUE`, and windows
+  combined with `DISTINCT` are not implemented. Recursive CTEs and set
+  operations other than `UNION ALL` are not implemented.
 - `GROUP_CONCAT` accepts one expression with optional `DISTINCT`. MySQL's
   aggregate-local `ORDER BY`, custom `SEPARATOR`, and session
   `group_concat_max_len` behavior are not implemented.
@@ -28,6 +33,9 @@ plausible but incorrect result.
 
 ### MySQL semantic differences
 
+- `ENUM` values compare and sort as their text, not as MySQL's
+  declaration-index order; `CAST(col AS CHAR)` on the MySQL side produces
+  matching orderings.
 - Text comparison, grouping, hashing, `LIKE`, and ordering use a
   case-insensitive Unicode-lowercase approximation. Pintail does not yet
   implement MySQL's complete collation matrix, accent weights, locale

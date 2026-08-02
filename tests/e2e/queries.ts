@@ -1,8 +1,8 @@
 /// Differential query corpus: every statement runs on MySQL and on Pintail
 /// (`/api/query`) after each workload phase, and the normalized results must
 /// be identical. Queries stay inside the documented M2 SQL surface
-/// (docs/limitations.md): no window functions, no recursive CTEs, set
-/// operations limited to UNION ALL, subqueries uncorrelated.
+/// (docs/limitations.md): windows without explicit frames, no recursive
+/// CTEs, set operations limited to UNION ALL, subqueries uncorrelated.
 ///
 /// Every ORDER BY ends with a unique key so ordering is fully determined;
 /// the comparison is order-sensitive.
@@ -174,5 +174,30 @@ export const differentialQueries: DifferentialQuery[] = [
       'FROM orders GROUP BY customer_id ORDER BY customer_id LIMIT 10',
     tables: ['orders'],
     csvColumns: [1],
+  },
+  {
+    name: 'window ranking per group',
+    sql:
+      'SELECT id, customer_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY id) AS seq ' +
+      'FROM orders ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'window share of total over grouped output',
+    sql:
+      // CAST the ENUM tiebreaker: MySQL orders bare ENUMs by declaration
+      // index while Pintail orders them as text (documented limitation).
+      'SELECT status, COUNT(*) AS n, ' +
+      'ROUND(COUNT(*) * 100 / SUM(COUNT(*)) OVER (), 2) AS pct, ' +
+      'ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, CAST(status AS CHAR)) AS busiest ' +
+      'FROM orders GROUP BY status ORDER BY busiest',
+    tables: ['orders'],
+  },
+  {
+    name: 'window running total',
+    sql:
+      'SELECT id, ROUND(SUM(total) OVER (ORDER BY id), 2) AS running ' +
+      'FROM orders ORDER BY id LIMIT 30',
+    tables: ['orders'],
   },
 ]

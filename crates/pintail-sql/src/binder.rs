@@ -3,11 +3,12 @@ use std::{cell::Cell, fmt};
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
-    BinaryOperator, CastKind, DataType as SqlDataType, DateTimeField, Distinct, DuplicateTreatment,
-    Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident,
-    JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableFactor,
-    UnaryOperator, Value as SqlValue, WildcardAdditionalOptions, WindowType,
+    BinaryOperator, CastKind, CeilFloorKind, DataType as SqlDataType, DateTimeField, Distinct,
+    DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
+    GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query,
+    Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier,
+    Statement, TableFactor, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    WindowType,
 };
 
 use crate::bound::{
@@ -186,15 +187,9 @@ impl<'catalog> Binder<'catalog> {
                 actual: predicate.data_type,
             });
         }
-        if !windows.is_empty()
-            && (!group_by.is_empty()
-                || !aggregates.is_empty()
-                || select.having.is_some()
-                || select.distinct.is_some())
-        {
+        if !windows.is_empty() && select.distinct.is_some() {
             return Err(BindError::UnsupportedQueryClause(
-                "window functions cannot combine with GROUP BY, aggregates, HAVING, or DISTINCT"
-                    .to_owned(),
+                "window functions cannot combine with DISTINCT".to_owned(),
             ));
         }
         if !group_by.is_empty() || !aggregates.is_empty() {
@@ -203,6 +198,22 @@ impl<'catalog> Binder<'catalog> {
             }
             if let Some(predicate) = &mut having {
                 rewrite_group_references(predicate, &group_by)?;
+            }
+            // Windows evaluate above the aggregation, so their arguments,
+            // PARTITION BY, and ORDER BY re-express in terms of group keys
+            // and aggregate outputs (q07's share-of-category shape).
+            for window in &mut windows {
+                if let WindowFunction::Aggregate(aggregate) = &mut window.function
+                    && let Some(expr) = &mut aggregate.expr
+                {
+                    rewrite_group_references(expr, &group_by)?;
+                }
+                for expr in &mut window.partition_by {
+                    rewrite_group_references(expr, &group_by)?;
+                }
+                for key in &mut window.order_by {
+                    rewrite_group_references(&mut key.expr, &group_by)?;
+                }
             }
         } else if having.is_some() {
             return Err(BindError::InvalidGrouping(
@@ -645,24 +656,16 @@ fn bind_projection(
     for item in items {
         match item {
             SelectItem::UnnamedExpr(expr) => {
-                // Windows are supported as top-level projection items only;
-                // nested OVER keeps the expression binder's rejection.
-                let bound = if let Some(function) = top_level_window_call(expr) {
-                    bind_window_function(function, tables, &mut windows, subqueries)?
-                } else {
-                    bind_expr_inner(expr, tables, &mut aggregates, subqueries)?
-                };
+                let bound =
+                    bind_expr_inner(expr, tables, &mut aggregates, &mut windows, subqueries)?;
                 projection.push(BoundProjection {
                     name: projection_name(expr),
                     expr: bound,
                 });
             }
             SelectItem::ExprWithAlias { expr, alias } => {
-                let bound = if let Some(function) = top_level_window_call(expr) {
-                    bind_window_function(function, tables, &mut windows, subqueries)?
-                } else {
-                    bind_expr_inner(expr, tables, &mut aggregates, subqueries)?
-                };
+                let bound =
+                    bind_expr_inner(expr, tables, &mut aggregates, &mut windows, subqueries)?;
                 projection.push(BoundProjection {
                     name: alias.value.clone(),
                     expr: bound,
@@ -782,7 +785,8 @@ fn bind_expr(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let mut aggregates = None;
-    bind_expr_inner(expr, tables, &mut aggregates, subqueries)
+    let mut windows = None;
+    bind_expr_inner(expr, tables, &mut aggregates, &mut windows, subqueries)
 }
 
 fn bind_aggregate_expr(
@@ -792,43 +796,84 @@ fn bind_aggregate_expr(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let mut aggregate_context = Some(aggregates);
-    bind_expr_inner(expr, tables, &mut aggregate_context, subqueries)
+    bind_expr_inner(expr, tables, &mut aggregate_context, &mut None, subqueries)
 }
 
+#[allow(clippy::too_many_lines)]
 fn bind_expr_inner(
     expr: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     match expr {
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
         Expr::Value(value) => bind_literal(&value.value),
-        Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates, subqueries),
-        Expr::UnaryOp { op, expr } => bind_unary(*op, expr, tables, aggregates, subqueries),
-        Expr::BinaryOp { left, op, right } => {
-            bind_binary(left, op, right, tables, aggregates, subqueries)
+        Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates, windows, subqueries),
+        // sqlparser gives CEIL/FLOOR dedicated nodes (for the `TO field`
+        // form); only the plain numeric spelling is supported.
+        Expr::Ceil { expr: inner, field } | Expr::Floor { expr: inner, field } => {
+            if !matches!(
+                field,
+                CeilFloorKind::DateTimeField(DateTimeField::NoDateTime)
+            ) {
+                return Err(BindError::UnsupportedExpression(expr.to_string()));
+            }
+            let function = if matches!(expr, Expr::Ceil { .. }) {
+                ScalarFunction::Ceil
+            } else {
+                ScalarFunction::Floor
+            };
+            bind_scalar(
+                function,
+                vec![bind_expr_inner(
+                    inner, tables, aggregates, windows, subqueries,
+                )?],
+            )
         }
-        Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates, subqueries),
-        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates, subqueries),
+        Expr::UnaryOp { op, expr } => {
+            bind_unary(*op, expr, tables, aggregates, windows, subqueries)
+        }
+        Expr::BinaryOp { left, op, right } => {
+            bind_binary(left, op, right, tables, aggregates, windows, subqueries)
+        }
+        Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates, windows, subqueries),
+        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates, windows, subqueries),
+        // A window call may appear anywhere inside a projection expression
+        // (share-of-total arithmetic, CASE arms); scopes without a window
+        // list (WHERE, HAVING, aggregate arguments) still reject it.
+        Expr::Function(function) if function.over.is_some() => {
+            if windows.is_some() {
+                bind_window_function(function, tables, aggregates, windows, subqueries)
+            } else {
+                Err(BindError::UnsupportedExpression(expr.to_string()))
+            }
+        }
         Expr::Function(function)
             if aggregates.is_some() && aggregate_function_name(function).is_some() =>
         {
-            bind_aggregate(function, tables, aggregates, subqueries)
+            bind_aggregate(function, tables, aggregates, windows, subqueries)
         }
-        Expr::Function(function) => bind_scalar_function(function, tables, aggregates, subqueries),
+        Expr::Function(function) => {
+            bind_scalar_function(function, tables, aggregates, windows, subqueries)
+        }
         Expr::InList {
             expr,
             list,
             negated,
-        } => bind_in_list(expr, list, *negated, tables, aggregates, subqueries),
+        } => bind_in_list(
+            expr, list, *negated, tables, aggregates, windows, subqueries,
+        ),
         Expr::Between {
             expr,
             negated,
             low,
             high,
-        } => bind_between(expr, low, high, *negated, tables, aggregates, subqueries),
+        } => bind_between(
+            expr, low, high, *negated, tables, aggregates, windows, subqueries,
+        ),
         Expr::Like {
             negated,
             any: false,
@@ -842,6 +887,7 @@ fn bind_expr_inner(
             escape_char.as_ref(),
             tables,
             aggregates,
+            windows,
             subqueries,
         ),
         Expr::Case {
@@ -855,6 +901,7 @@ fn bind_expr_inner(
             else_result.as_deref(),
             tables,
             aggregates,
+            windows,
             subqueries,
         ),
         Expr::Cast {
@@ -863,8 +910,8 @@ fn bind_expr_inner(
             data_type,
             array: false,
             format: None,
-        } => bind_cast(expr, data_type, tables, aggregates, subqueries),
-        Expr::Convert { .. } => bind_convert(expr, tables, aggregates, subqueries),
+        } => bind_cast(expr, data_type, tables, aggregates, windows, subqueries),
+        Expr::Convert { .. } => bind_convert(expr, tables, aggregates, windows, subqueries),
         Expr::Substring {
             expr,
             substring_from: Some(from),
@@ -872,11 +919,13 @@ fn bind_expr_inner(
             ..
         } => {
             let mut args = vec![
-                bind_expr_inner(expr, tables, aggregates, subqueries)?,
-                bind_expr_inner(from, tables, aggregates, subqueries)?,
+                bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
+                bind_expr_inner(from, tables, aggregates, windows, subqueries)?,
             ];
             if let Some(length) = substring_for {
-                args.push(bind_expr_inner(length, tables, aggregates, subqueries)?);
+                args.push(bind_expr_inner(
+                    length, tables, aggregates, windows, subqueries,
+                )?);
             }
             bind_scalar(ScalarFunction::Substring, args)
         }
@@ -887,14 +936,18 @@ fn bind_expr_inner(
             trim_characters: None,
         } => bind_scalar(
             ScalarFunction::Trim,
-            vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
+            vec![bind_expr_inner(
+                expr, tables, aggregates, windows, subqueries,
+            )?],
         ),
         Expr::Subquery(query) => bind_scalar_subquery(query, subqueries),
         Expr::InSubquery {
             expr,
             subquery,
             negated,
-        } => bind_in_subquery(expr, subquery, *negated, tables, aggregates, subqueries),
+        } => bind_in_subquery(
+            expr, subquery, *negated, tables, aggregates, windows, subqueries,
+        ),
         _ => Err(BindError::UnsupportedExpression(expr.to_string())),
     }
 }
@@ -940,9 +993,10 @@ fn bind_in_subquery(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr_inner(expr, tables, aggregates, subqueries)?;
+    let expr = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
     let values = match bind_constant_subquery(query) {
         Ok(values) => values,
         Err(BindError::UnsupportedSubquery(_)) => {
@@ -1028,6 +1082,7 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
                 expression,
                 &[],
                 &mut aggregates,
+                &mut None,
                 None,
             )?])
         }
@@ -1133,9 +1188,10 @@ fn bind_unary(
     expr: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr_inner(expr, tables, aggregates, subqueries)?;
+    let expr = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
     let (op, data_type) = match operator {
         UnaryOperator::Plus if is_numeric(expr.data_type) => (UnaryOp::Plus, expr.data_type),
         UnaryOperator::Minus if is_numeric(expr.data_type) => (UnaryOp::Minus, expr.data_type),
@@ -1165,10 +1221,31 @@ fn bind_binary(
     right: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let left = bind_expr_inner(left, tables, aggregates, subqueries)?;
-    let right = bind_expr_inner(right, tables, aggregates, subqueries)?;
+    // MySQL's inline interval arithmetic (`expr ± INTERVAL n unit`,
+    // `INTERVAL n unit + expr`) is DATE_ADD/DATE_SUB spelled as an operator.
+    if matches!(operator, BinaryOperator::Plus | BinaryOperator::Minus) {
+        if let Expr::Interval(interval) = right {
+            return bind_interval_arithmetic(
+                left,
+                interval,
+                matches!(operator, BinaryOperator::Minus),
+                tables,
+                aggregates,
+                windows,
+                subqueries,
+            );
+        }
+        if let (BinaryOperator::Plus, Expr::Interval(interval)) = (operator, left) {
+            return bind_interval_arithmetic(
+                right, interval, false, tables, aggregates, windows, subqueries,
+            );
+        }
+    }
+    let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
+    let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
     let (op, data_type) = match operator {
         BinaryOperator::Plus
         | BinaryOperator::Minus
@@ -1245,9 +1322,10 @@ fn bind_is_null(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let expr = bind_expr_inner(expr, tables, aggregates, subqueries)?;
+    let expr = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
     Ok(BoundExpr {
         kind: BoundExprKind::IsNull {
             expr: Box::new(expr),
@@ -1259,17 +1337,11 @@ fn bind_is_null(
 }
 
 /// A top-level `function(...) OVER (...)` projection item.
-fn top_level_window_call(expr: &Expr) -> Option<&Function> {
-    match expr {
-        Expr::Function(function) if function.over.is_some() => Some(function),
-        _ => None,
-    }
-}
-
 #[allow(clippy::too_many_lines)]
 fn bind_window_function(
     function: &Function,
     tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
@@ -1318,9 +1390,9 @@ fn bind_window_function(
                 return Err(BindError::UnsupportedAggregate(function.to_string()));
             }
             let expr = match &arguments.args[0] {
-                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
-                    Some(bind_expr(expr, tables, subqueries)?)
-                }
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(bind_expr_inner(
+                    expr, tables, aggregates, &mut None, subqueries,
+                )?),
                 FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
                     if aggregate_function == AggregateFunction::Count =>
                 {
@@ -1345,7 +1417,7 @@ fn bind_window_function(
     let partition_by = spec
         .partition_by
         .iter()
-        .map(|expr| bind_expr(expr, tables, subqueries))
+        .map(|expr| bind_expr_inner(expr, tables, aggregates, &mut None, subqueries))
         .collect::<Result<Vec<_>, _>>()?;
     let order_by = spec
         .order_by
@@ -1356,7 +1428,7 @@ fn bind_window_function(
             }
             let ascending = order.options.asc.unwrap_or(true);
             Ok(BoundWindowOrderKey {
-                expr: bind_expr(&order.expr, tables, subqueries)?,
+                expr: bind_expr_inner(&order.expr, tables, aggregates, &mut None, subqueries)?,
                 ascending,
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
             })
@@ -1391,6 +1463,7 @@ fn bind_scalar_function(
     function: &Function,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if function.uses_odbc_syntax
@@ -1420,15 +1493,21 @@ fn bind_scalar_function(
             function_name == "DATE_SUB",
             tables,
             aggregates,
+            windows,
             subqueries,
         );
+    }
+    if function_name == "TIMESTAMPDIFF" {
+        return bind_timestamp_diff(function, arguments, tables, aggregates, windows, subqueries);
     }
     let mut args = Vec::with_capacity(arguments.args.len());
     for argument in &arguments.args {
         let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
             return Err(BindError::UnsupportedExpression(function.to_string()));
         };
-        args.push(bind_expr_inner(expression, tables, aggregates, subqueries)?);
+        args.push(bind_expr_inner(
+            expression, tables, aggregates, windows, subqueries,
+        )?);
     }
     let scalar = match function_name.as_str() {
         "CONCAT" if !args.is_empty() => ScalarFunction::Concat,
@@ -1447,6 +1526,8 @@ fn bind_scalar_function(
         "COALESCE" if !args.is_empty() => ScalarFunction::Coalesce,
         "NULLIF" if args.len() == 2 => ScalarFunction::NullIf,
         "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round,
+        "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil,
+        "FLOOR" if args.len() == 1 => ScalarFunction::Floor,
         "NOW" if args.is_empty() => ScalarFunction::Now,
         "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
         "DATE" if args.len() == 1 => ScalarFunction::Date,
@@ -1471,6 +1552,7 @@ fn bind_date_interval(
     subtract: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let [
@@ -1480,26 +1562,88 @@ fn bind_date_interval(
     else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
+    bind_interval_arithmetic(
+        date, interval, subtract, tables, aggregates, windows, subqueries,
+    )
+    .map_err(|_| BindError::UnsupportedExpression(function.to_string()))
+}
+
+/// Shared by `DATE_ADD`/`DATE_SUB` and `MySQL`'s inline operator form
+/// (`expr +- INTERVAL n unit`): both are the same `DateInterval` scalar.
+#[allow(clippy::too_many_arguments)]
+fn bind_interval_arithmetic(
+    date: &Expr,
+    interval: &sqlparser::ast::Interval,
+    subtract: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
     if interval.leading_precision.is_some()
         || interval.last_field.is_some()
         || interval.fractional_seconds_precision.is_some()
     {
-        return Err(BindError::UnsupportedExpression(function.to_string()));
+        return Err(BindError::UnsupportedExpression(interval.to_string()));
     }
-    let unit = match interval.leading_field {
-        Some(DateTimeField::Year) => IntervalUnit::Year,
-        Some(DateTimeField::Month) => IntervalUnit::Month,
-        Some(DateTimeField::Day) => IntervalUnit::Day,
-        Some(DateTimeField::Hour) => IntervalUnit::Hour,
-        Some(DateTimeField::Minute) => IntervalUnit::Minute,
-        Some(DateTimeField::Second) => IntervalUnit::Second,
-        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    let Some(unit) = interval_unit_of(interval.leading_field.as_ref()) else {
+        return Err(BindError::UnsupportedExpression(interval.to_string()));
     };
     bind_scalar(
         ScalarFunction::DateInterval { unit, subtract },
         vec![
-            bind_expr_inner(date, tables, aggregates, subqueries)?,
-            bind_expr_inner(&interval.value, tables, aggregates, subqueries)?,
+            bind_expr_inner(date, tables, aggregates, windows, subqueries)?,
+            bind_expr_inner(&interval.value, tables, aggregates, windows, subqueries)?,
+        ],
+    )
+}
+
+fn interval_unit_of(field: Option<&DateTimeField>) -> Option<IntervalUnit> {
+    match field {
+        Some(DateTimeField::Year) => Some(IntervalUnit::Year),
+        Some(DateTimeField::Month) => Some(IntervalUnit::Month),
+        Some(DateTimeField::Day) => Some(IntervalUnit::Day),
+        Some(DateTimeField::Hour) => Some(IntervalUnit::Hour),
+        Some(DateTimeField::Minute) => Some(IntervalUnit::Minute),
+        Some(DateTimeField::Second) => Some(IntervalUnit::Second),
+        _ => None,
+    }
+}
+
+/// `TIMESTAMPDIFF(unit, from, to)` — the unit is a bare keyword argument.
+fn bind_timestamp_diff(
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let [
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(unit)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(from)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(to)),
+    ] = arguments.args.as_slice()
+    else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    let Expr::Identifier(unit) = unit else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    let unit = match unit.value.to_ascii_uppercase().as_str() {
+        "YEAR" => IntervalUnit::Year,
+        "MONTH" => IntervalUnit::Month,
+        "DAY" => IntervalUnit::Day,
+        "HOUR" => IntervalUnit::Hour,
+        "MINUTE" => IntervalUnit::Minute,
+        "SECOND" => IntervalUnit::Second,
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    };
+    bind_scalar(
+        ScalarFunction::TimestampDiff { unit },
+        vec![
+            bind_expr_inner(from, tables, aggregates, windows, subqueries)?,
+            bind_expr_inner(to, tables, aggregates, windows, subqueries)?,
         ],
     )
 }
@@ -1510,15 +1654,20 @@ fn bind_in_list(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if list.is_empty() {
         return Err(BindError::UnsupportedExpression(expr.to_string()));
     }
     let mut args = Vec::with_capacity(list.len() + 1);
-    args.push(bind_expr_inner(expr, tables, aggregates, subqueries)?);
+    args.push(bind_expr_inner(
+        expr, tables, aggregates, windows, subqueries,
+    )?);
     for value in list {
-        args.push(bind_expr_inner(value, tables, aggregates, subqueries)?);
+        args.push(bind_expr_inner(
+            value, tables, aggregates, windows, subqueries,
+        )?);
     }
     if args[1..]
         .iter()
@@ -1529,6 +1678,7 @@ fn bind_in_list(
     bind_scalar(ScalarFunction::InList { negated }, args)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bind_between(
     expr: &Expr,
     low: &Expr,
@@ -1536,12 +1686,13 @@ fn bind_between(
     negated: bool,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let args = vec![
-        bind_expr_inner(expr, tables, aggregates, subqueries)?,
-        bind_expr_inner(low, tables, aggregates, subqueries)?,
-        bind_expr_inner(high, tables, aggregates, subqueries)?,
+        bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
+        bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
+        bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
     ];
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
@@ -1551,6 +1702,7 @@ fn bind_between(
     bind_scalar(ScalarFunction::Between { negated }, args)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bind_like(
     expr: &Expr,
     pattern: &Expr,
@@ -1558,6 +1710,7 @@ fn bind_like(
     escape: Option<&sqlparser::ast::ValueWithSpan>,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let escape = match escape {
@@ -1579,8 +1732,8 @@ fn bind_like(
         ),
     };
     let args = vec![
-        bind_expr_inner(expr, tables, aggregates, subqueries)?,
-        bind_expr_inner(pattern, tables, aggregates, subqueries)?,
+        bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
+        bind_expr_inner(pattern, tables, aggregates, windows, subqueries)?,
     ];
     bind_scalar(ScalarFunction::Like { negated, escape }, args)
 }
@@ -1591,13 +1744,14 @@ fn bind_case(
     else_result: Option<&Expr>,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if conditions.is_empty() {
         return Err(BindError::InvalidScalarFunction("CASE".to_owned()));
     }
     let operand = operand
-        .map(|expression| bind_expr_inner(expression, tables, aggregates, subqueries))
+        .map(|expression| bind_expr_inner(expression, tables, aggregates, windows, subqueries))
         .transpose()?;
     let mut result = else_result.map_or_else(
         || {
@@ -1607,10 +1761,11 @@ fn bind_case(
                 nullable: true,
             })
         },
-        |expression| bind_expr_inner(expression, tables, aggregates, subqueries),
+        |expression| bind_expr_inner(expression, tables, aggregates, windows, subqueries),
     )?;
     for clause in conditions.iter().rev() {
-        let condition = bind_expr_inner(&clause.condition, tables, aggregates, subqueries)?;
+        let condition =
+            bind_expr_inner(&clause.condition, tables, aggregates, windows, subqueries)?;
         let condition = if let Some(operand) = &operand {
             equality_expr(operand.clone(), condition)?
         } else {
@@ -1621,7 +1776,7 @@ fn bind_case(
             }
             condition
         };
-        let value = bind_expr_inner(&clause.result, tables, aggregates, subqueries)?;
+        let value = bind_expr_inner(&clause.result, tables, aggregates, windows, subqueries)?;
         result = bind_scalar(ScalarFunction::If, vec![condition, value, result])?;
     }
     Ok(result)
@@ -1632,13 +1787,16 @@ fn bind_cast(
     data_type: &SqlDataType,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let target = cast_data_type(data_type)
         .ok_or_else(|| BindError::InvalidScalarFunction(format!("CAST AS {data_type}")))?;
     bind_scalar(
         ScalarFunction::Cast(target),
-        vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
+        vec![bind_expr_inner(
+            expr, tables, aggregates, windows, subqueries,
+        )?],
     )
 }
 
@@ -1646,6 +1804,7 @@ fn bind_convert(
     conversion: &Expr,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let Expr::Convert {
@@ -1677,7 +1836,9 @@ fn bind_convert(
     };
     bind_scalar(
         ScalarFunction::Cast(target),
-        vec![bind_expr_inner(expr, tables, aggregates, subqueries)?],
+        vec![bind_expr_inner(
+            expr, tables, aggregates, windows, subqueries,
+        )?],
     )
 }
 
@@ -1736,8 +1897,12 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             args.iter().all(|argument| argument.nullable),
         ),
         ScalarFunction::NullIf => (args[0].data_type, true),
-        ScalarFunction::Round => (
+        ScalarFunction::Round | ScalarFunction::Ceil | ScalarFunction::Floor => (
             Some(DataType::Float64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::TimestampDiff { .. } => (
+            Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
@@ -1824,6 +1989,10 @@ fn bind_aggregate(
     function: &Function,
     tables: &[BoundTable],
     aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    // Aggregate arguments never see a window scope (MySQL rejects
+    // SUM(ROW_NUMBER() OVER ...)); the parameter exists for call-site
+    // uniformity.
+    _windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     if function.uses_odbc_syntax
@@ -1966,12 +2135,10 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
             Ok(())
         }
         BoundExprKind::InSubquery { expr, .. } => rewrite_group_references(expr, group_by),
-        // Windows never coexist with GROUP BY in v1; the binder rejects the
-        // combination before grouping rewrites run.
-        BoundExprKind::Window(_) => Err(BindError::UnsupportedExpression(
-            "window function in a grouped query".to_owned(),
-        )),
-        BoundExprKind::ScalarSubquery(_)
+        // Window references resolve above the aggregation; the window's own
+        // internals are rewritten separately by the caller.
+        BoundExprKind::Window(_)
+        | BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_) => Ok(()),
     }
@@ -2606,6 +2773,26 @@ mod tests {
         assert!(matches!(
             bind("SELECT * FROM Events JOIN users USING (id)"),
             Err(BindError::UnsupportedJoinConstraint(_))
+        ));
+    }
+
+    #[test]
+    fn binds_datetime_helpers_and_inline_intervals() {
+        let query = bind(
+            "SELECT TIMESTAMPDIFF(SECOND, Name, Name), CEIL(id), FLOOR(id), \
+             Name + INTERVAL 90 DAY, Name - INTERVAL 1 MONTH \
+             FROM Events",
+        )
+        .expect("datetime helpers bind");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Int64));
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Float64));
+        assert_eq!(query.projection[2].expr.data_type, Some(DataType::Float64));
+        assert_eq!(query.projection[3].expr.data_type, Some(DataType::Utf8));
+        assert_eq!(query.projection[4].expr.data_type, Some(DataType::Utf8));
+        // WEEK parses but is outside the supported unit set.
+        assert!(matches!(
+            bind("SELECT TIMESTAMPDIFF(WEEK, Name, Name) FROM Events"),
+            Err(BindError::UnsupportedExpression(_))
         ));
     }
 

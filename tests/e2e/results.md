@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-02T18:46:13.275Z.
+Measured 2026-08-02T20:11:08.929Z.
 
-**173 passed, 0 failed, 5 documented-gap warnings.**
+**194 passed, 0 failed, 5 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -31,6 +31,9 @@ Measured 2026-08-02T18:46:13.275Z.
 | snapshot | query:unsigned boundary readback | PASS |  |
 | snapshot | query:derived table | PASS |  |
 | snapshot | query:group_concat single expression | PASS |  |
+| snapshot | query:window ranking per group | PASS |  |
+| snapshot | query:window share of total over grouped output | PASS |  |
+| snapshot | query:window running total | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -56,6 +59,9 @@ Measured 2026-08-02T18:46:13.275Z.
 | crud | query:unsigned boundary readback | PASS |  |
 | crud | query:derived table | PASS |  |
 | crud | query:group_concat single expression | PASS |  |
+| crud | query:window ranking per group | PASS |  |
+| crud | query:window share of total over grouped output | PASS |  |
+| crud | query:window running total | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -81,6 +87,9 @@ Measured 2026-08-02T18:46:13.275Z.
 | type-edges | query:unsigned boundary readback | PASS |  |
 | type-edges | query:derived table | PASS |  |
 | type-edges | query:group_concat single expression | PASS |  |
+| type-edges | query:window ranking per group | PASS |  |
+| type-edges | query:window share of total over grouped output | PASS |  |
+| type-edges | query:window running total | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
@@ -107,6 +116,9 @@ Measured 2026-08-02T18:46:13.275Z.
 | ddl | query:unsigned boundary readback | PASS |  |
 | ddl | query:derived table | PASS |  |
 | ddl | query:group_concat single expression | PASS |  |
+| ddl | query:window ranking per group | PASS |  |
+| ddl | query:window share of total over grouped output | PASS |  |
+| ddl | query:window running total | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
@@ -133,6 +145,9 @@ Measured 2026-08-02T18:46:13.275Z.
 | churn | query:unsigned boundary readback | PASS |  |
 | churn | query:derived table | PASS |  |
 | churn | query:group_concat single expression | PASS |  |
+| churn | query:window ranking per group | PASS |  |
+| churn | query:window share of total over grouped output | PASS |  |
+| churn | query:window running total | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
@@ -159,6 +174,9 @@ Measured 2026-08-02T18:46:13.275Z.
 | restart | query:unsigned boundary readback | PASS |  |
 | restart | query:derived table | PASS |  |
 | restart | query:group_concat single expression | PASS |  |
+| restart | query:window ranking per group | PASS |  |
+| restart | query:window share of total over grouped output | PASS |  |
+| restart | query:window running total | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
@@ -185,3 +203,6 @@ Measured 2026-08-02T18:46:13.275Z.
 | ddl-documented-gaps | query:unsigned boundary readback | PASS |  |
 | ddl-documented-gaps | query:derived table | PASS |  |
 | ddl-documented-gaps | query:group_concat single expression | PASS |  |
+| ddl-documented-gaps | query:window ranking per group | PASS |  |
+| ddl-documented-gaps | query:window share of total over grouped output | PASS |  |
+| ddl-documented-gaps | query:window running total | PASS |  |

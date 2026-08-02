@@ -125,6 +125,21 @@
     "status": "PASS"
   },
   {
+    "phase": "snapshot",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
     "phase": "crud",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -250,6 +265,21 @@
     "status": "PASS"
   },
   {
+    "phase": "crud",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
     "phase": "type-edges",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -372,6 +402,21 @@
   {
     "phase": "type-edges",
     "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:window running total",
     "status": "PASS"
   },
   {
@@ -502,6 +547,21 @@
   {
     "phase": "ddl",
     "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:window running total",
     "status": "PASS"
   },
   {
@@ -636,6 +696,21 @@
     "status": "PASS"
   },
   {
+    "phase": "churn",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
     "phase": "restart",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -764,6 +839,21 @@
   {
     "phase": "restart",
     "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:window running total",
     "status": "PASS"
   },
   {
@@ -897,6 +987,21 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:window running total",
     "status": "PASS"
   }
 ]

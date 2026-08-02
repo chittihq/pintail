@@ -586,6 +586,7 @@ impl CompiledExpr {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn allocation_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
         match self {
             Self::Column(index) => batch
@@ -680,7 +681,10 @@ impl CompiledExpr {
                     | ScalarFunction::DatePart(_)
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
-                    | ScalarFunction::Round => 0,
+                    | ScalarFunction::Round
+                    | ScalarFunction::Ceil
+                    | ScalarFunction::Floor
+                    | ScalarFunction::TimestampDiff { .. } => 0,
                 };
                 argument_memory.saturating_add(output)
             }
@@ -744,7 +748,10 @@ impl CompiledExpr {
                     | ScalarFunction::DatePart(_)
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
-                    | ScalarFunction::Round => 24,
+                    | ScalarFunction::Round
+                    | ScalarFunction::Ceil
+                    | ScalarFunction::Floor
+                    | ScalarFunction::TimestampDiff { .. } => 24,
                 }
             }
         }
@@ -1020,6 +1027,27 @@ fn evaluate_eager_scalar(
                 Err(ExecError::NumericOverflow)
             }
         }
+        ScalarFunction::Ceil => {
+            let value = mysql_f64(&values[0])?.ceil();
+            if value.is_finite() {
+                Ok(Value::float64(value))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
+        ScalarFunction::Floor => {
+            let value = mysql_f64(&values[0])?.floor();
+            if value.is_finite() {
+                Ok(Value::float64(value))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
+        ScalarFunction::TimestampDiff { unit } => {
+            let from = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            let to = parse_mysql_datetime(&scalar_string(&values[1])?)?;
+            Ok(Value::Int64(timestamp_diff(from, to, unit)))
+        }
         ScalarFunction::Now => Ok(Value::Utf8(
             Local::now()
                 .naive_local()
@@ -1123,6 +1151,38 @@ fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {
         DatePart::Minute => u64::from(value.minute()),
         DatePart::Second => u64::from(value.second()),
     }
+}
+
+/// `MySQL` `TIMESTAMPDIFF`: complete units from `from` to `to`, truncated
+/// toward zero (negative when `to` precedes `from`). `Chrono`'s duration
+/// accessors already truncate toward zero for the clock units.
+fn timestamp_diff(from: NaiveDateTime, to: NaiveDateTime, unit: IntervalUnit) -> i64 {
+    let elapsed = to.signed_duration_since(from);
+    match unit {
+        IntervalUnit::Second => elapsed.num_seconds(),
+        IntervalUnit::Minute => elapsed.num_minutes(),
+        IntervalUnit::Hour => elapsed.num_hours(),
+        IntervalUnit::Day => elapsed.num_days(),
+        IntervalUnit::Month => complete_months(from, to),
+        IntervalUnit::Year => complete_months(from, to) / 12,
+    }
+}
+
+/// Calendar months fully elapsed between two datetimes: the month delta,
+/// minus one when the later day-of-month/time has not yet reached the
+/// earlier one (`MySQL`'s boundary rule, e.g. Jan 31 -> Feb 29 is 0 months).
+fn complete_months(from: NaiveDateTime, to: NaiveDateTime) -> i64 {
+    let (early, late, sign) = if to >= from {
+        (from, to, 1)
+    } else {
+        (to, from, -1)
+    };
+    let mut months = i64::from(late.year() - early.year()) * 12 + i64::from(late.month())
+        - i64::from(early.month());
+    if (late.day(), late.time()) < (early.day(), early.time()) {
+        months -= 1;
+    }
+    sign * months
 }
 
 fn apply_interval(

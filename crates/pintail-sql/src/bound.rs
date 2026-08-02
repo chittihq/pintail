@@ -147,6 +147,16 @@ pub enum ScalarFunction {
     NullIf,
     /// Round a numeric value to an optional decimal precision.
     Round,
+    /// `CEIL(x)` / `CEILING(x)`.
+    Ceil,
+    /// `FLOOR(x)`.
+    Floor,
+    /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
+    /// `to`, truncated toward zero, matching `MySQL`.
+    TimestampDiff {
+        /// Calendar or clock unit being counted.
+        unit: IntervalUnit,
+    },
     /// Case-insensitive SQL pattern matching.
     Like {
         /// Whether the result is negated.

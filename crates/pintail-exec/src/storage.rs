@@ -2405,12 +2405,68 @@ mod tests {
     }
 
     #[test]
+    fn windows_nest_in_expressions_and_ride_above_grouping() {
+        let (_directory, snapshot, catalog) = window_fixture();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
+                .expect("provider");
+        // Window inside arithmetic (the q07 share-of-total shape).
+        let rows = execute_rows(
+            "SELECT id, id * 100 / SUM(id) OVER (PARTITION BY name) AS share              FROM events ORDER BY id",
+            &catalog,
+            &provider,
+        );
+        let shares = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
+        // Partition a: ids 1,2 (sum 3); partition b: ids 3,4,5 (sum 12).
+        assert_eq!(shares[0], Value::float64(100.0 / 3.0));
+        assert_eq!(shares[1], Value::float64(200.0 / 3.0));
+        assert_eq!(shares[2], Value::float64(25.0));
+        assert_eq!(shares[4], Value::float64(500.0 / 12.0));
+    }
+
+    #[test]
+    fn windows_ride_above_grouping() {
+        let (_directory, snapshot, catalog) = window_fixture();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
+                .expect("provider");
+        // Window over aggregate output: SUM(SUM(id)) OVER () computes each
+        // group's share of the grand total exactly like MySQL.
+        let rows = execute_rows(
+            "SELECT name, SUM(id) AS total,              SUM(id) * 100 / SUM(SUM(id)) OVER () AS share,              ROW_NUMBER() OVER (ORDER BY SUM(id) DESC) AS heaviest              FROM events GROUP BY name ORDER BY name",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec![
+                    Value::Utf8("a".to_owned()),
+                    Value::UInt64(3),
+                    Value::float64(20.0),
+                    Value::UInt64(2),
+                ],
+                vec![
+                    Value::Utf8("b".to_owned()),
+                    Value::UInt64(12),
+                    Value::float64(80.0),
+                    Value::UInt64(1),
+                ],
+            ]
+        );
+    }
+
+    #[test]
     fn windows_reject_unsupported_combinations() {
         let (_directory, _snapshot, catalog) = window_fixture();
         for sql in [
-            "SELECT name, SUM(id), ROW_NUMBER() OVER (ORDER BY name) FROM events GROUP BY name",
+            // Explicit frames stay v1-unsupported.
             "SELECT ROW_NUMBER() OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) FROM events",
-            "SELECT id + ROW_NUMBER() OVER (ORDER BY id) FROM events",
+            // Windows never appear in WHERE or inside aggregate arguments.
+            "SELECT id FROM events WHERE ROW_NUMBER() OVER (ORDER BY id) = 1",
+            "SELECT SUM(ROW_NUMBER() OVER (ORDER BY id)) FROM events",
+            // DISTINCT + window stays rejected.
+            "SELECT DISTINCT ROW_NUMBER() OVER (ORDER BY id) FROM events",
         ] {
             let statement = parse_statement(sql).expect("parse query");
             assert!(
@@ -2845,6 +2901,56 @@ mod tests {
         assert_eq!(overlaid[2], Value::Int64(2108), "updated amount replaces 2");
         assert_eq!(overlaid[4], Value::Int64(100));
         assert_eq!(overlaid[7], Value::Utf8("9.99".to_owned()));
+    }
+
+    #[test]
+    fn evaluates_datetime_helpers_and_inline_intervals_exactly() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let mut table = TableStore::open(directory.path(), schema(), StoreOptions::default())
+            .expect("open table");
+        table
+            .bulk_ingest_snapshot((1..=3).map(|key| row(key, "v")).collect())
+            .expect("seed rows");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(29);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema(),
+            TableStatistics::with_row_count(3),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+        let rows = execute_rows(
+            "SELECT CEIL(1.2), FLOOR(-1.2), \
+             TIMESTAMPDIFF(SECOND, '2024-01-01 00:00:00', '2024-01-01 00:05:30'), \
+             TIMESTAMPDIFF(MONTH, '2020-01-31', '2020-02-29'), \
+             TIMESTAMPDIFF(SECOND, '2024-01-01 00:00:10', '2024-01-01 00:00:00'), \
+             '2024-01-31' + INTERVAL 1 DAY, \
+             '2024-03-31' - INTERVAL 1 MONTH \
+             FROM events LIMIT 1",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(rows[0][0], Value::float64(2.0), "CEIL");
+        assert_eq!(rows[0][1], Value::float64(-2.0), "FLOOR");
+        assert_eq!(rows[0][2], Value::Int64(330), "TIMESTAMPDIFF SECOND");
+        assert_eq!(rows[0][3], Value::Int64(0), "TIMESTAMPDIFF MONTH boundary");
+        assert_eq!(rows[0][4], Value::Int64(-10), "negative direction");
+        assert_eq!(
+            rows[0][5],
+            Value::Utf8("2024-02-01".to_owned()),
+            "+ INTERVAL"
+        );
+        assert_eq!(
+            rows[0][6],
+            Value::Utf8("2024-02-29".to_owned()),
+            "- INTERVAL month clamp"
+        );
     }
 
     #[test]
