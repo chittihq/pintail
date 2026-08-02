@@ -229,6 +229,13 @@ plausible but incorrect result.
   profile, but their full application-level smokes are not automated on this
   workstation.
 
+- Binary result columns carry `BINARY_FLAG`, but the wire library
+  (`opensrv-mysql` 0.7) hardcodes column charset 33 (utf8) in result
+  metadata, so clients that detect binary columns via charset 63 — mysql2,
+  most connector libraries — decode raw binary bytes as text. The bytes on
+  the wire are the exact stored value; clients honoring `BINARY_FLAG` or
+  reading raw buffers receive them losslessly.
+
 ## Operations and backup
 
 - The embedded supervisor is deliberately finite-cycle rather than a

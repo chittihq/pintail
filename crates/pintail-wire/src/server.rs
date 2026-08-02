@@ -568,6 +568,13 @@ fn mysql_column(field: &QueryField) -> Column {
     let mut colflags = ColumnFlags::empty();
     colflags.set(ColumnFlags::UNSIGNED_FLAG, unsigned);
     colflags.set(ColumnFlags::NOT_NULL_FLAG, !field.nullable);
+    // opensrv-mysql hardcodes charset 33 in column definitions, so clients
+    // keying binary detection on charset 63 see text; the flag is the only
+    // binary signal this server can emit (docs/limitations.md).
+    colflags.set(
+        ColumnFlags::BINARY_FLAG,
+        matches!(field.data_type, Some(DataType::Binary)),
+    );
     Column {
         table: String::new(),
         column: field.name.clone(),
