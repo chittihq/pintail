@@ -1896,11 +1896,19 @@ fn arithmetic_type(
     if left.is_none() || right.is_none() {
         return None;
     }
+    // DECIMAL arithmetic currently passes through Float64 (limitations.md);
+    // routing it to an integer arm would truncate the fraction.
     if op == BinaryOp::Divide
         || left == Some(DataType::Float64)
         || right == Some(DataType::Float64)
-        || matches!(left, Some(DataType::Utf8 | DataType::Binary))
-        || matches!(right, Some(DataType::Utf8 | DataType::Binary))
+        || matches!(
+            left,
+            Some(DataType::Utf8 | DataType::Binary | DataType::Decimal { .. } | DataType::Float32)
+        )
+        || matches!(
+            right,
+            Some(DataType::Utf8 | DataType::Binary | DataType::Decimal { .. } | DataType::Float32)
+        )
     {
         Some(DataType::Float64)
     } else if left == Some(DataType::UInt64) && right == Some(DataType::UInt64) {
