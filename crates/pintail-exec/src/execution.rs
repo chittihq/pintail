@@ -1673,6 +1673,54 @@ fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> 
 /// Dense direct-address join table: (minimum key, per-offset build buckets).
 type DenseJoinTable<'a> = (i128, Vec<Option<&'a Vec<Vec<Value>>>>);
 
+/// Group identity resolved ONCE from the build side. Group columns of a
+/// fused join are build-side by construction, so the complete group set is
+/// known before probing: workers then index groups directly instead of
+/// hashing and comparing group values per probe row (the Q8 profile's
+/// dominant cost, 2026-08-02).
+struct JoinGroupPlan {
+    /// Group key values in index order.
+    values: Vec<Vec<Value>>,
+    /// Per build bucket (keyed by its address), the group index of each row.
+    buckets: HashMap<usize, Vec<usize>>,
+}
+
+fn resolve_join_group_plan(
+    build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
+    right_group_columns: &[usize],
+) -> Result<JoinGroupPlan, ExecError> {
+    let mut values = Vec::new();
+    let mut index = HashMap::<Vec<Value>, usize>::new();
+    let mut buckets = HashMap::with_capacity(build.len());
+    for bucket in build.values() {
+        let mut indexes = Vec::with_capacity(bucket.len());
+        for row in bucket {
+            let group_values = right_group_columns
+                .iter()
+                .map(|column| {
+                    row.get(*column)
+                        .cloned()
+                        .ok_or(ExecError::InvalidPhysicalPlan(
+                            "join aggregate group is outside the build-side layout",
+                        ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let key = group_values
+                .iter()
+                .cloned()
+                .map(normalized_collation_value)
+                .collect::<Vec<_>>();
+            let position = *index.entry(key).or_insert_with(|| {
+                values.push(group_values);
+                values.len() - 1
+            });
+            indexes.push(position);
+        }
+        buckets.insert(std::ptr::from_ref(bucket) as usize, indexes);
+    }
+    Ok(JoinGroupPlan { values, buckets })
+}
+
 /// Widest key span the dense join table will materialize (~4M slots).
 const MAX_DENSE_SPAN: i128 = 1 << 22;
 
@@ -1957,28 +2005,6 @@ struct AggregateGroup {
 enum DistinctSeen {
     Ints(HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>),
     Values(HashSet<Value>),
-}
-
-/// Map keyed by an already-hashed u64: `finish` re-mixes through splitmix
-/// so bucket selection stays well distributed without `SipHash`'s per-probe
-/// cost (top symbol of the Q8 profile).
-type MixedU64Map<V> = HashMap<u64, V, std::hash::BuildHasherDefault<MixedU64>>;
-
-#[derive(Default)]
-struct MixedU64(u64);
-
-impl std::hash::Hasher for MixedU64 {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, _bytes: &[u8]) {
-        unreachable!("u64 keys hash through write_u64");
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.0 = crate::batch::mix64(value);
-    }
 }
 
 /// splitmix-style hasher for raw integer distinct keys: `SipHash` cost is
@@ -3231,6 +3257,7 @@ fn build_fused_inner_join_aggregate(
         } else {
             None
         };
+    let plan = resolve_join_group_plan(&join.build, &right_group_columns)?;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     loop {
         let mut batches = Vec::with_capacity(8);
@@ -3270,10 +3297,10 @@ fn build_fused_inner_join_aggregate(
                     left_key,
                     *key_mode,
                     left_width,
-                    &right_group_columns,
                     aggregates,
                     &join.build,
                     dense.as_ref(),
+                    &plan,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -3331,13 +3358,23 @@ fn build_local_fused_join_groups(
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
     left_width: usize,
-    right_group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
     dense: Option<&DenseJoinTable<'_>>,
+    plan: &JoinGroupPlan,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
-    let mut groups = Vec::<AggregateGroup>::new();
-    let mut raw_index = MixedU64Map::<usize>::default();
+    // Groups are fixed by the build side: start with the resolved set and
+    // index into it, so the probe loop never hashes or compares group
+    // values (the Q8 profile's dominant cost).
+    let mut groups = plan
+        .values
+        .iter()
+        .map(|values| AggregateGroup {
+            values: values.clone(),
+            states: aggregates.iter().map(AggregateState::new).collect(),
+        })
+        .collect::<Vec<_>>();
+    let mut touched = vec![false; groups.len()];
     let memory = MemoryTracker::new(usize::MAX);
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
@@ -3383,51 +3420,15 @@ fn build_local_fused_join_groups(
             };
             matches
         };
-        for right_values in matches {
-            let raw_hash = joined_right_group_hash(right_values, right_group_columns)?;
-            let existing = raw_index
-                .get(&raw_hash)
-                .copied()
-                .filter(|index| {
-                    joined_right_group_matches(
-                        &groups[*index].values,
-                        right_values,
-                        right_group_columns,
-                        true,
-                    )
-                })
-                .or_else(|| {
-                    groups.iter().position(|group| {
-                        joined_right_group_matches(
-                            &group.values,
-                            right_values,
-                            right_group_columns,
-                            false,
-                        )
-                    })
-                });
-            let group_index = if let Some(index) = existing {
-                index
-            } else {
-                let values = right_group_columns
-                    .iter()
-                    .map(|column| {
-                        right_values
-                            .get(*column)
-                            .cloned()
-                            .ok_or(ExecError::InvalidPhysicalPlan(
-                                "join aggregate group is outside the build-side layout",
-                            ))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let index = groups.len();
-                groups.push(AggregateGroup {
-                    values,
-                    states: aggregates.iter().map(AggregateState::new).collect(),
-                });
-                index
-            };
-            raw_index.entry(raw_hash).or_insert(group_index);
+        let indexes = plan
+            .buckets
+            .get(&(std::ptr::from_ref(matches) as usize))
+            .ok_or(ExecError::InvalidPhysicalPlan(
+                "probe matched a bucket outside the resolved group plan",
+            ))?;
+        for (right_values, group_index) in matches.iter().zip(indexes) {
+            let group_index = *group_index;
+            touched[group_index] = true;
             for (aggregate, state) in aggregates.iter().zip(&mut groups[group_index].states) {
                 let value = match aggregate.expr.as_ref() {
                     None => &Value::Boolean(true),
@@ -3473,44 +3474,6 @@ fn build_local_fused_join_groups(
             (key, group)
         })
         .collect())
-}
-
-fn joined_right_group_hash(values: &[Value], columns: &[usize]) -> Result<u64, ExecError> {
-    let mut hasher = DefaultHasher::new();
-    for column in columns {
-        values
-            .get(*column)
-            .ok_or(ExecError::InvalidPhysicalPlan(
-                "join aggregate group is outside the build-side layout",
-            ))?
-            .hash(&mut hasher);
-    }
-    Ok(hasher.finish())
-}
-
-fn joined_right_group_matches(
-    grouped: &[Value],
-    values: &[Value],
-    columns: &[usize],
-    exact: bool,
-) -> bool {
-    grouped.iter().zip(columns).all(|(left, column)| {
-        values.get(*column).is_some_and(|right| {
-            if exact {
-                return left == right;
-            }
-            match (left, right) {
-                (Value::Utf8(left), Value::Utf8(right)) => {
-                    if left.is_ascii() && right.is_ascii() {
-                        left.eq_ignore_ascii_case(right)
-                    } else {
-                        compare_utf8_mysql(left, right) == Ordering::Equal
-                    }
-                }
-                _ => left == right,
-            }
-        })
-    })
 }
 
 /// Dictionary-code aggregation for low-cardinality string group keys
