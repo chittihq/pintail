@@ -2695,7 +2695,18 @@ fn build_hash_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
-    let memo_key = if let PullOperator::Scan { stream, .. } = &*input {
+    // Storage predicates are ALSO compiled into Filter operators above the
+    // scan (belt and braces), so a filtered plan is Filter(..(Scan)). Those
+    // filters are exactly scan.predicates, which the scan signature already
+    // covers — walking through them keeps the key sound.
+    fn settled_scan(operator: &PullOperator) -> Option<&PullOperator> {
+        match operator {
+            PullOperator::Scan { .. } => Some(operator),
+            PullOperator::Filter { input, .. } => settled_scan(input),
+            _ => None,
+        }
+    }
+    let memo_key = if let Some(PullOperator::Scan { stream, .. }) = settled_scan(input) {
         stream
             .settled_identity()
             .and_then(|(directory, generation, projection)| {
@@ -2711,7 +2722,14 @@ fn build_hash_aggregate(
         None
     };
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-        eprintln!("[agg] memo key: {memo_key:?}");
+        eprintln!(
+            "[agg] memo key: {:?} (scan found: {})",
+            memo_key.as_ref().map(|(_, generation, signature)| (
+                generation,
+                signature.chars().take(60).collect::<String>()
+            )),
+            settled_scan(input).is_some()
+        );
     }
     if let Some(key) = &memo_key
         && let Some(rows) = SETTLED_AGGREGATE_MEMO
@@ -2728,7 +2746,7 @@ fn build_hash_aggregate(
         return Ok(MaterializedRows { rows, position: 0 });
     }
     if memo_key.is_none()
-        && let PullOperator::Scan { stream, .. } = &*input
+        && let Some(PullOperator::Scan { stream, .. }) = settled_scan(input)
         && let Some(delta) = stream.insert_only_delta()
         && let Some(signature) = settled_signature(group_by, aggregates)
         && aggregates.iter().all(|aggregate| {
