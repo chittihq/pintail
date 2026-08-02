@@ -149,7 +149,25 @@ fn query_sql(name: &str) -> &'static str {
              FROM orders WHERE order_date BETWEEN '2022-01-01' AND '2023-12-31' \
              GROUP BY region ORDER BY total DESC"
         }
-        other => panic!("unknown query {other}: expected q1..q8"),
+        "n1" => "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'delivered'",
+        "n2" => {
+            "SELECT region, COUNT(*) AS cnt, ROUND(AVG(total_amount), 2) AS avg_amt \
+             FROM orders GROUP BY region ORDER BY cnt DESC"
+        }
+        "n3" => {
+            "SELECT YEAR(order_date) AS yr, MONTH(order_date) AS mo, COUNT(*) AS cnt, \
+             ROUND(SUM(total_amount), 2) AS revenue FROM orders \
+             WHERE order_date >= '2022-01-01' AND order_date < '2023-01-01' \
+             GROUP BY yr, mo ORDER BY yr, mo"
+        }
+        "n4" => {
+            "SELECT region, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total, \
+             ROUND(AVG(total_amount), 2) AS avg_amt, ROUND(MIN(total_amount), 2) AS min_amt, \
+             ROUND(MAX(total_amount), 2) AS max_amt, COUNT(DISTINCT user_id) AS unique_users \
+             FROM orders WHERE order_date BETWEEN '2021-01-01' AND '2022-12-31' \
+             GROUP BY region ORDER BY total DESC"
+        }
+        other => panic!("unknown query {other}: expected q1..q8 or n1..n4"),
     }
 }
 

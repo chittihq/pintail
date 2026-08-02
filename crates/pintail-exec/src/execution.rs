@@ -2031,6 +2031,32 @@ impl std::hash::Hasher for IntKeyHasher {
     }
 }
 
+/// splitmix-style hasher for the two-pass `(group sentinel, seen)` map keys:
+/// like [`IntKeyHasher`], the keys are per-query column data, so `SipHash`'s
+/// DoS resistance buys nothing.
+#[derive(Default)]
+struct GroupKeyHasher(u64);
+
+impl std::hash::Hasher for GroupKeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        unreachable!("two-pass group keys hash through write_u64/write_u8");
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = crate::batch::mix64(value ^ self.0);
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.0 ^= u64::from(value).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+type GroupKeyMap = HashMap<(u64, bool), Vec<AggregateState>, std::hash::BuildHasherDefault<GroupKeyHasher>>;
+
 fn int_distinct_key(value: &Value) -> Option<i128> {
     match value {
         Value::Int64(value) => Some(i128::from(*value)),
@@ -2741,10 +2767,16 @@ fn build_hash_aggregate(
             _ => None,
         }
     }
-    let memo_key = settled_plan_key(input).and_then(|(directory, generation, scan)| {
-        settled_signature(group_by, aggregates)
-            .map(|signature| (directory, generation, format!("p{scan:?};{signature}")))
-    });
+    // Profiling escape hatch: with the memo on, every settled re-run is a
+    // replay and a sampling profiler only ever sees the first execution.
+    let memo_key = if std::env::var_os("PINTAIL_DISABLE_SETTLED_MEMO").is_some() {
+        None
+    } else {
+        settled_plan_key(input).and_then(|(directory, generation, scan)| {
+            settled_signature(group_by, aggregates)
+                .map(|signature| (directory, generation, format!("p{scan:?};{signature}")))
+        })
+    };
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         eprintln!(
             "[agg] memo key: {:?} (scan found: {})",
@@ -4259,8 +4291,8 @@ fn build_streaming_two_pass_aggregate(
     let scan_floor = input.scan_transient_floor().saturating_mul(2);
     let mut buckets: Vec<TwoPassBucket> =
         (0..partitions).map(|_| TwoPassBucket::default()).collect();
-    let mut maps: Vec<HashMap<(u64, bool), Vec<AggregateState>>> =
-        (0..partitions).map(|_| HashMap::new()).collect();
+    let mut maps: Vec<GroupKeyMap> =
+        (0..partitions).map(|_| GroupKeyMap::default()).collect();
     let mut bucket_reserved = 0_usize;
     let mut group_reserved = 0_usize;
     let mut flushes = 0_u32;
@@ -4914,7 +4946,7 @@ fn drain_two_pass_window(
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
     partitions: usize,
-    maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
+    maps: &mut [GroupKeyMap],
     memory: &MemoryTracker,
     group_reserved: &mut usize,
     window_reserved: &mut usize,
@@ -4969,7 +5001,7 @@ fn drain_two_pass_window(
 
 fn two_pass_flush(
     buckets: &mut [TwoPassBucket],
-    maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
+    maps: &mut [GroupKeyMap],
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
@@ -4991,7 +5023,7 @@ fn two_pass_flush(
 #[allow(clippy::too_many_lines)]
 fn two_pass_flush_sets(
     sets: &mut [Vec<TwoPassBucket>],
-    maps: &mut [HashMap<(u64, bool), Vec<AggregateState>>],
+    maps: &mut [GroupKeyMap],
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
