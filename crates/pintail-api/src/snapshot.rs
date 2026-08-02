@@ -254,12 +254,9 @@ async fn run_snapshot_job(
             .map_err(display)?;
     }
     for source in sources {
-        let mut store = TableStore::open(
-            table_directory(&root, &source.name),
-            source.table_schema().map_err(display)?,
-            StoreOptions::default(),
-        )
-        .map_err(display)?;
+        let mut source = source;
+        let directory = table_directory(&root, &source.name);
+        let mut store = open_tracked_store(&metadata, database_id, &mut source, directory)?;
         if force {
             store.reset_for_resnapshot().map_err(display)?;
         }
@@ -464,6 +461,32 @@ fn snapshot_event(database_id: &str, progress: SnapshotProgress) -> ApiEvent {
         eta_seconds: progress.eta_seconds,
         at: Utc::now().to_rfc3339(),
     }
+}
+
+/// Opens a table store at its durable schema-history version: live DDL can
+/// evolve a store past the probe's version-1 shape, and opening it with a
+/// stale schema fails with a version mismatch (the resync path did exactly
+/// that — found by the e2e control-plane gate, 2026-08-03). Mirrors
+/// `CdcTarget::open_tracked`.
+pub(crate) fn open_tracked_store(
+    metadata: &pintail_meta::MetaStore,
+    database_id: &str,
+    source: &mut pintail_probe::SourceTable,
+    directory: std::path::PathBuf,
+) -> Result<pintail_store::TableStore, String> {
+    let history = metadata
+        .schema_history(database_id, &source.name)
+        .map_err(display)?;
+    let version = history.last().map_or(1, |record| record.version);
+    if let Some(record) = history.last() {
+        source.columns = serde_json::from_str(&record.columns_json).map_err(display)?;
+    }
+    TableStore::open(
+        directory,
+        source.table_schema_with_version(version).map_err(display)?,
+        StoreOptions::default(),
+    )
+    .map_err(display)
 }
 
 pub(crate) fn table_directory(root: &FsPath, table: &str) -> PathBuf {

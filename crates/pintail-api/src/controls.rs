@@ -10,7 +10,6 @@ use mysql_async::{Opts, Pool};
 use pintail_meta::DatabaseRecord;
 use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
 use pintail_probe::ProbeReport;
-use pintail_store::{StoreOptions, TableStore};
 use serde::Serialize;
 
 use crate::{
@@ -163,12 +162,8 @@ pub(crate) async fn run_reconcile_job(
             .join("tables"),
         &source.name,
     );
-    let store = TableStore::open(
-        directory,
-        source.table_schema().map_err(display)?,
-        StoreOptions::default(),
-    )
-    .map_err(display)?;
+    let mut source = source;
+    let store = snapshot::open_tracked_store(&metadata, database_id, &mut source, directory)?;
     let target = PollTarget::new(source, store).map_err(display)?;
     let metadata_path = state.metadata_path().map_err(display)?.to_path_buf();
     drop(metadata);

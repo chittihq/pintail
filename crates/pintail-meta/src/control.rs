@@ -344,20 +344,49 @@ impl MetaStore {
     /// failure.
     pub fn set_database_mode(&self, id: &str, mode: &str, now: &str) -> Result<()> {
         validate_mode(mode)?;
-        let effective = (mode == "paused").then_some("paused");
-        let state = if mode == "paused" {
-            "paused"
-        } else {
-            "created"
+        let changed = match mode {
+            "paused" => self
+                .connection
+                .execute(
+                    "UPDATE databases SET mode = 'paused', effective_mode = 'paused', \
+                       state = 'paused', updated_at = ?2 WHERE id = ?1",
+                    (id, now),
+                )
+                .context("failed to pause database")?,
+            // `auto` means "follow the probe recommendation": a live
+            // effective mode stays live until the next probe re-derives it,
+            // while leaving pause via `auto` waits for that probe.
+            "auto" => self
+                .connection
+                .execute(
+                    "UPDATE databases SET mode = 'auto', \
+                       effective_mode = CASE WHEN effective_mode = 'paused' \
+                         THEN NULL ELSE effective_mode END, \
+                       updated_at = ?2 WHERE id = ?1",
+                    (id, now),
+                )
+                .context("failed to update database mode")?,
+            // An explicit cdc/polling switch takes effect immediately and
+            // must keep replication ALIVE: the supervisor only schedules
+            // databases whose state is streaming/polling/error, so an
+            // active (or paused) database transitions to the new mode's
+            // running state instead of being reset to 'created' — that
+            // reset silently stopped replication until a manual re-probe
+            // (found by the e2e control-plane gate, 2026-08-03).
+            explicit => self
+                .connection
+                .execute(
+                    "UPDATE databases SET mode = ?2, effective_mode = ?2, \
+                       state = CASE \
+                         WHEN state IN ('streaming', 'polling', 'error', 'paused') \
+                         THEN (CASE ?2 WHEN 'polling' THEN 'polling' ELSE 'streaming' END) \
+                         ELSE state \
+                       END, \
+                       updated_at = ?3 WHERE id = ?1",
+                    (id, explicit, now),
+                )
+                .context("failed to update database mode")?,
         };
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE databases SET mode = ?2, effective_mode = ?3, \
-                   state = ?4, updated_at = ?5 WHERE id = ?1",
-                (id, mode, effective, state, now),
-            )
-            .context("failed to update database mode")?;
         if changed == 0 {
             bail!("database {id} does not exist");
         }

@@ -210,7 +210,29 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
             .map_err(display)
         }
         Some("polling") => {
-            let poll_targets = targets
+            // A tracked table can vanish from the source between probes (DROP
+            // or RENAME that CDC has no handler for). Polling validates every
+            // target against the probe report, so one ghost record would fail
+            // the whole cycle forever; skip those tables instead and say so.
+            let (present, absent): (Vec<_>, Vec<_>) = targets.into_iter().partition(|target| {
+                report
+                    .tables
+                    .iter()
+                    .any(|table| table.name.eq_ignore_ascii_case(&target.source().name))
+            });
+            if !absent.is_empty() {
+                let names = absent
+                    .iter()
+                    .map(|target| target.source().name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                state.publish(ApiEvent::database(
+                    "replication.skip",
+                    &database.id,
+                    format!("polling skipped tables absent from the source: {names}"),
+                ));
+            }
+            let poll_targets = present
                 .into_iter()
                 .map(|target| {
                     let source = target.source().clone();

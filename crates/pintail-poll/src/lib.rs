@@ -39,7 +39,11 @@ impl PollTarget {
     ///
     /// Returns an error when the store schema differs from the source.
     pub fn new(source: SourceTable, store: TableStore) -> Result<Self, PollError> {
-        if store.schema() != &source.table_schema()? {
+        // Compare at the store's catalog generation: live DDL (ALTER,
+        // TRUNCATE) advances the durable schema version, and a version-1
+        // rebuild would reject every store that ever evolved even though
+        // the column layout still matches.
+        if store.schema() != &source.table_schema_with_version(store.schema().version())? {
             return Err(PollError::InvalidConfiguration(format!(
                 "store schema for {} does not match the probed source schema",
                 source.name
@@ -1231,8 +1235,65 @@ fn contains_case_insensitive(values: &BTreeSet<String>, expected: &str) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use super::{PollOptions, PollStrategy, contains_case_insensitive, soft_delete_value};
-    use pintail_types::Value;
+    use super::{
+        PollOptions, PollStrategy, PollTarget, contains_case_insensitive, soft_delete_value,
+    };
+    use pintail_probe::{SourceColumn, SourceKey, SourceTable};
+    use pintail_store::{StoreOptions, TableStore};
+    use pintail_types::{DataType, KeyMode, Value};
+
+    fn note_table() -> SourceTable {
+        SourceTable {
+            name: "audit_log".to_owned(),
+            engine: Some("InnoDB".to_owned()),
+            estimated_rows: Some(1),
+            columns: vec![SourceColumn {
+                id: 1,
+                name: "note".to_owned(),
+                mysql_data_type: "varchar".to_owned(),
+                mysql_column_type: "varchar(128)".to_owned(),
+                pintail_type: DataType::Utf8,
+                nullable: false,
+                character_set: Some("utf8mb4".to_owned()),
+                collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+                generated_stored: false,
+                auto_increment: false,
+            }],
+            key: SourceKey {
+                mode: KeyMode::AppendRowId,
+                index_name: None,
+                columns: Vec::new(),
+            },
+            unique_keys: Vec::new(),
+            requires_reconciliation: false,
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn poll_target_accepts_stores_at_evolved_schema_versions() {
+        let source = note_table();
+        let directory = tempfile::tempdir().expect("temp store directory");
+        let mut store = TableStore::open(
+            directory.path(),
+            source.table_schema().expect("schema"),
+            StoreOptions::default(),
+        )
+        .expect("open store");
+        // A live TRUNCATE or ALTER advances the durable schema version while
+        // keeping the column layout; polling must still accept the store.
+        store
+            .evolve_schema(source.table_schema_with_version(2).expect("schema v2"))
+            .expect("evolve schema");
+        let target = PollTarget::new(source.clone(), store).expect("evolved store is accepted");
+        let mut renamed = source;
+        renamed.columns[0].name = "message".to_owned();
+        renamed.key.columns = Vec::new();
+        let Err(error) = PollTarget::new(renamed, target.into_store()) else {
+            panic!("drifted column layout must be rejected");
+        };
+        assert!(error.to_string().contains("does not match"));
+    }
 
     #[test]
     fn soft_delete_and_case_insensitive_options_are_deterministic() {
