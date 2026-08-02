@@ -22,7 +22,10 @@ impl Scan {
     /// Returns the planner's current cardinality estimate.
     #[must_use]
     pub fn estimated_rows(&self) -> Option<u64> {
-        match (self.table.row_count, self.limit) {
+        match (
+            self.table.row_count.or(self.table.estimated_rows),
+            self.limit,
+        ) {
             (Some(rows), Some(limit)) => Some(rows.min(limit)),
             (Some(rows), None) => Some(rows),
             (None, _) => None,

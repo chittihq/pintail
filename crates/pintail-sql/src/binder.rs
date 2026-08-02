@@ -401,6 +401,7 @@ impl<'catalog> Binder<'catalog> {
             schema_version: table.schema().version(),
             columns,
             row_count: table.statistics().row_count(),
+            estimated_rows: table.statistics().estimated_row_count(),
             key_column_ids: table.key_column_ids().to_vec(),
             input: None,
         })
@@ -443,6 +444,7 @@ impl<'catalog> Binder<'catalog> {
             schema_version: 0,
             columns,
             row_count: None,
+            estimated_rows: None,
             key_column_ids: Vec::new(),
             input: Some(Box::new(input)),
         }

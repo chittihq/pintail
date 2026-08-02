@@ -44,6 +44,7 @@ impl TableId {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TableStatistics {
     row_count: Option<u64>,
+    estimated_row_count: Option<u64>,
 }
 
 impl TableStatistics {
@@ -52,6 +53,19 @@ impl TableStatistics {
     pub const fn with_row_count(row_count: u64) -> Self {
         Self {
             row_count: Some(row_count),
+            estimated_row_count: Some(row_count),
+        }
+    }
+
+    /// Constructs statistics whose row count is an estimate only: good
+    /// enough for join-size guards, never good enough to answer
+    /// `COUNT(*)`. A CDC replica's `rows_synced` is exactly this — it
+    /// advances with the snapshot, not with every applied change.
+    #[must_use]
+    pub const fn with_estimated_row_count(row_count: u64) -> Self {
+        Self {
+            row_count: None,
+            estimated_row_count: Some(row_count),
         }
     }
 
@@ -59,6 +73,15 @@ impl TableStatistics {
     #[must_use]
     pub const fn row_count(self) -> Option<u64> {
         self.row_count
+    }
+
+    /// Returns the best available row-count estimate (exact wins).
+    #[must_use]
+    pub const fn estimated_row_count(self) -> Option<u64> {
+        match self.row_count {
+            Some(exact) => Some(exact),
+            None => self.estimated_row_count,
+        }
     }
 }
 

@@ -20,6 +20,9 @@ pub struct BoundTable {
     pub columns: Vec<BoundColumn>,
     /// Exact catalog row count, when available.
     pub row_count: Option<u64>,
+    /// Best-effort row-count estimate (exact when known); used only for
+    /// planning guards, never to answer queries.
+    pub estimated_rows: Option<u64>,
     /// Stable columns that produce the physical storage key.
     pub key_column_ids: Vec<u32>,
     /// Bound input for a derived table or common table expression.

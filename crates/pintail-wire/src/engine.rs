@@ -437,11 +437,16 @@ fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError>
                 .copied()
                 .or(target.source.estimated_rows)
                 .unwrap_or(0);
+            // rows_synced advances with the snapshot, not with CDC, so it
+            // is an estimate: join-size guards may use it, but COUNT(*)
+            // must execute (the settled memo and segment SMAs keep that
+            // fast) — an exact claim here served stale counts during
+            // replication (found by the e2e control-plane gate).
             let entry = TableEntry::new(
                 id,
                 &target.source.name,
                 target.snapshot.schema().clone(),
-                TableStatistics::with_row_count(rows),
+                TableStatistics::with_estimated_row_count(rows),
             )
             .map_err(|error| QueryError::Internal(error.to_string()))?;
             let key_columns = target.source.key_column_ids();
