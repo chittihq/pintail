@@ -421,9 +421,8 @@ async fn probe_table(
         }
     }
     for raw in raw_columns {
-        let generated = !raw.generation_expression.is_empty()
-            || raw.extra.to_ascii_lowercase().contains("generated");
-        let generated_stored = generated && raw.extra.to_ascii_lowercase().contains("stored");
+        let (generated, generated_stored) =
+            generated_flags(&raw.generation_expression, &raw.extra);
         if generated && !generated_stored {
             warnings.push(format!(
                 "skipping virtual generated column {} because it is absent from row binlog images",
@@ -554,6 +553,19 @@ fn derive_capabilities(
         },
         reasons,
     }
+}
+
+/// (generated, stored): MySQL 8 reports `DEFAULT CURRENT_TIMESTAMP` columns
+/// as `EXTRA='DEFAULT_GENERATED'`; those are ordinary stored columns and must
+/// not be confused with `VIRTUAL GENERATED` / `STORED GENERATED` expressions,
+/// which are the only ones absent from (virtual) or derivable in (stored)
+/// row binlog images.
+fn generated_flags(generation_expression: &str, extra: &str) -> (bool, bool) {
+    let extra = extra.to_ascii_lowercase();
+    let generated = !generation_expression.is_empty()
+        || extra.contains("virtual generated")
+        || extra.contains("stored generated");
+    (generated, generated && extra.contains("stored generated"))
 }
 
 fn choose_key(columns: &[RawColumn], parts: &[RawIndexPart]) -> SourceKey {
@@ -752,8 +764,8 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
 mod tests {
     use super::{
         RawColumn, RawIndexPart, RecommendedMode, SourceColumn, SourceFlavor, SourceKey,
-        SourceTable, choose_key, derive_capabilities, invisible_fk_rule, map_mysql_type,
-        usable_unique_keys,
+        SourceTable, choose_key, derive_capabilities, generated_flags, invisible_fk_rule,
+        map_mysql_type, usable_unique_keys,
     };
     use pintail_types::{DataType, KeyMode};
     use std::collections::BTreeMap;
@@ -844,6 +856,21 @@ mod tests {
         assert!(invisible_fk_rule("CASCADE"));
         assert!(invisible_fk_rule("set null"));
         assert!(!invisible_fk_rule("RESTRICT"));
+    }
+
+    #[test]
+    fn default_generated_timestamps_are_not_virtual_columns() {
+        // created_at DATETIME DEFAULT CURRENT_TIMESTAMP — replicated.
+        assert_eq!(generated_flags("", "DEFAULT_GENERATED"), (false, false));
+        assert_eq!(
+            generated_flags("", "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"),
+            (false, false)
+        );
+        assert_eq!(generated_flags("", "auto_increment"), (false, false));
+        // Real generated expressions keep their skip/keep behavior.
+        assert_eq!(generated_flags("a + 1", "VIRTUAL GENERATED"), (true, false));
+        assert_eq!(generated_flags("a + 1", "STORED GENERATED"), (true, true));
+        assert_eq!(generated_flags("", "VIRTUAL GENERATED"), (true, false));
     }
 
     #[test]
