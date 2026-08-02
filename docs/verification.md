@@ -41,6 +41,7 @@ PINTAIL_DASHBOARD_PREBUILT=1 \
 PINTAIL_DASHBOARD_PREBUILT=1 \
   cargo test -p pintail-api --test mysql_api \
   -- --ignored --nocapture --test-threads=1
+(cd tests/e2e && bun install --frozen-lockfile && bun run e2e)
 docker compose config --quiet
 PINTAIL_HTTP_PORT=0 PINTAIL_WIRE_PORT=0 \
   docker compose --project-name pintail-release up --build --detach --wait
@@ -49,9 +50,24 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL 8.4 container and compares 600
-generated and hand-written queries over equivalent nullable MySQL and Pintail
-data. The M3 and M4 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
+The oracle starts a uniquely named MySQL 8.4 container and compares 625
+generated and hand-written queries — including window-function, interval,
+and TIMESTAMPDIFF families — over equivalent nullable MySQL and Pintail
+data. The end-to-end differential gate (`tests/e2e`) boots a real MySQL 8.4
+source and the release binary, registers the database through the HTTP API,
+and drives eight workload phases (transactional CRUD with rollbacks, type
+edges, live DDL including a mid-stream CREATE TABLE, 400 seeded churn
+operations with live queries every 100 operations, a SIGKILL restart with
+writes while the process is down, a control-plane pass that exercises the
+operator API routes — status, metrics, activity, mode switching, resync,
+API-key lifecycle, and database create/update/delete — and documented-gap
+DDL). After every phase it re-verifies 27 unique invariants:
+each base table read back identically over the wire protocol, plus a
+differential query corpus of joins, windows, aggregates, subqueries, CTEs,
+and UNION ALL. A PASS is those invariants holding in every phase (the
+headline count is checks x phases, not independent behaviors); documented
+gaps report WARN. `E2E_PHASES` selects a subset while iterating and
+`PINTAIL_E2E_BINARY` skips the release build. The M3 and M4 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
 and a binlog-disabled source. They snapshot one million rows, SIGKILL real
 snapshot and CDC worker processes, verify restart replay, exercise GTID and
 file/position CRUD plus MyISAM boundaries, quarantine a decode failure, and
@@ -71,4 +87,12 @@ wizard→snapshot→streaming→typed-query flow at desktop and 390-pixel widths
 See the [`M9 release report`](docs/milestones/M9.md) for the recorded outcome.
 Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
+
+CI runs these gates automatically on GitHub-hosted runners with no external
+infrastructure: `.github/workflows/e2e.yml` gives every push and pull
+request a three-phase e2e smoke and runs the full eight-phase gate nightly,
+and `.github/workflows/compat.yml` runs the Docker-gated compatibility
+suites (CDC against MySQL 8.4 GTID/file-position/MINIMAL-metadata and
+MariaDB 11, snapshot and polling sources, the control-plane API suite,
+MinIO backup restore, and the wire-protocol client matrix) every night.
 
