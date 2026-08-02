@@ -272,7 +272,10 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     |(directory, generation, rows)| crate::execution::InsertOnlyDelta {
                         directory: directory.to_path_buf(),
                         generation,
-                        projection: scan.projected_column_ids.clone(),
+                        scan: format!(
+                            "{:?}|{:?}|{:?}",
+                            scan.projected_column_ids, scan.predicates, scan.limit
+                        ),
                         types: types.clone(),
                         rows: rows
                             .iter()
@@ -303,16 +306,20 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     .then_some(scan.limit)
                     .flatten()
                     .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
-                settled: (scan.predicates.is_empty() && scan.limit.is_none())
-                    .then(|| snapshot.settled_identity())
-                    .flatten()
-                    .map(|(directory, generation)| {
-                        (
-                            directory.to_path_buf(),
-                            generation,
-                            scan.projected_column_ids.clone(),
-                        )
-                    }),
+                // A filtered aggregate over a settled snapshot is just as
+                // much a pure function of the data version as a bare one —
+                // the predicates and limit simply join the memo key (issue
+                // #6: Q2/Q5/Q7 were excluded for no sound reason).
+                settled: snapshot.settled_identity().map(|(directory, generation)| {
+                    (
+                        directory.to_path_buf(),
+                        generation,
+                        format!(
+                            "{:?}|{:?}|{:?}",
+                            scan.projected_column_ids, scan.predicates, scan.limit
+                        ),
+                    )
+                }),
                 delta,
             }));
         }
@@ -659,17 +666,18 @@ struct SnapshotStream {
     types: Vec<pintail_types::DataType>,
     retained_bytes: usize,
     remaining: Option<usize>,
-    /// `(table directory, manifest generation, projected column ids)` when
-    /// this stream is a bare full-table scan over a settled snapshot (empty
-    /// memtable, no predicates, no limit) — the settled aggregate memo key.
-    settled: Option<(std::path::PathBuf, u64, Vec<u32>)>,
+    /// `(table directory, manifest generation, scan signature)` over a
+    /// settled snapshot (empty memtable) — the settled aggregate memo key.
+    /// The signature covers projection, predicates and limit, so different
+    /// scans of the same generation never share an entry.
+    settled: Option<(std::path::PathBuf, u64, String)>,
     /// Insert-only memtable rows above the segment identity, when the memo
     /// can merge them (bare scan, bounded delta).
     delta: Option<crate::execution::InsertOnlyDelta>,
 }
 
 impl BatchStream for SnapshotStream {
-    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, Vec<u32>)> {
+    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, String)> {
         self.settled.clone()
     }
 
@@ -2716,6 +2724,22 @@ mod tests {
         table.ingest_cdc(vec![row(1011, "v")]).expect("cdc ingest");
         assert_eq!(count(&table, &catalog), Value::UInt64(1011));
         table.ingest_cdc(vec![row(1012, "v")]).expect("cdc ingest");
+        assert_eq!(count(&table, &catalog), Value::UInt64(1012));
+        // Filtered aggregates memoize under their own key: same generation,
+        // different predicate, different entry — and both stay exact.
+        let filtered = |table: &TableStore, catalog: &CatalogSnapshot| {
+            let snapshot = table.snapshot();
+            let provider =
+                SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+            execute_rows(
+                "SELECT COUNT(name) FROM events WHERE id > 500",
+                catalog,
+                &provider,
+            )[0][0]
+                .clone()
+        };
+        assert_eq!(filtered(&table, &catalog), Value::UInt64(512));
+        assert_eq!(filtered(&table, &catalog), Value::UInt64(512));
         assert_eq!(count(&table, &catalog), Value::UInt64(1012));
         // An update of an EXISTING key overlaps the segment key space: the
         // delta merge must refuse and the full scan stays exact (the row

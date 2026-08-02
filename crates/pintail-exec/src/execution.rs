@@ -520,12 +520,11 @@ pub trait BatchStream: Send {
     /// prune (already started, non-key column, type mismatch) ignore it.
     fn restrict_key_position_range(&mut self, _position: usize, _min: &Value, _max: &Value) {}
 
-    /// `(table directory, manifest generation, projected column ids)` when
-    /// this stream is a bare full-table scan over a settled snapshot — the
-    /// exactness-preserving identity for the settled aggregate memo.
-    /// Default: not settled.
+    /// `(table directory, manifest generation, scan signature)` over a
+    /// settled snapshot — the exactness-preserving identity for the settled
+    /// aggregate memo. Default: not settled.
     #[must_use]
-    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, Vec<u32>)> {
+    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, String)> {
         None
     }
 
@@ -545,7 +544,9 @@ pub trait BatchStream: Send {
 pub struct InsertOnlyDelta {
     pub(crate) directory: std::path::PathBuf,
     pub(crate) generation: u64,
-    pub(crate) projection: Vec<u32>,
+    /// Same scan signature the settled memo keys on (projection,
+    /// predicates, limit), so the delta finds its base entry.
+    pub(crate) scan: String,
     pub(crate) types: Vec<DataType>,
     pub(crate) rows: Vec<Vec<Value>>,
 }
@@ -2747,7 +2748,7 @@ fn build_hash_aggregate(
         let key = (
             delta.directory.clone(),
             delta.generation,
-            format!("p{:?};{signature}", delta.projection),
+            format!("{};{signature}", delta.scan),
         );
         let base = SETTLED_AGGREGATE_MEMO
             .lock()
