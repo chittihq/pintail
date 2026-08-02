@@ -228,7 +228,10 @@ pub enum SmaSum {
     Int(i128),
     Float(f64),
     /// Exact decimal total in scaled units.
-    DecimalUnits { units: i128, scale: u8 },
+    DecimalUnits {
+        units: i128,
+        scale: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -242,6 +245,7 @@ pub enum SmaExtremes {
 /// Computes per-column SMAs for a segment's rows. Columns whose type or
 /// contents fall outside the supported statistics keep only the non-NULL
 /// count, which still answers COUNT(column).
+#[allow(clippy::too_many_lines)]
 pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> SegmentSmas {
     let tombstones = rows.iter().filter(|row| row.is_deleted()).count() as u64;
     let live_rows = rows.len() as u64 - tombstones;
@@ -277,7 +281,8 @@ pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> 
                 }
                 let observed = match (value, decimal_scale) {
                     (Value::Utf8(text), Some(scale)) => {
-                        pintail_types::parse_decimal_scaled(text, scale).map(|units| (3, units, 0.0))
+                        pintail_types::parse_decimal_scaled(text, scale)
+                            .map(|units| (3, units, 0.0))
                     }
                     (Value::Int64(value), None) => Some((1, i128::from(*value), 0.0)),
                     (Value::UInt64(value), None) => Some((2, i128::from(*value), 0.0)),
@@ -330,8 +335,11 @@ pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> 
                         let scale = decimal_scale.expect("decimal family implies scale");
                         (
                             int_sum.map(|units| SmaSum::DecimalUnits { units, scale }),
-                            int_extremes
-                                .map(|(min, max)| SmaExtremes::DecimalUnits { min, max, scale }),
+                            int_extremes.map(|(min, max)| SmaExtremes::DecimalUnits {
+                                min,
+                                max,
+                                scale,
+                            }),
                         )
                     }
                     Some(4) => (

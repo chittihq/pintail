@@ -77,6 +77,7 @@ fn decode_value(
     map_mysql_value(table, column, value).map_err(|error| CdcError::Decode(error.to_string()))
 }
 
+#[allow(clippy::too_many_lines)]
 fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlValue, CdcError> {
     if value == MysqlValue::NULL {
         return Ok(value);
@@ -376,7 +377,12 @@ mod tests {
             ("mediumint", "mediumint unsigned", -1, 16_777_215),
             ("int", "int unsigned", -1_294_967_296, 3_000_000_000),
             ("bigint", "bigint unsigned", -1, u64::MAX),
-            ("bigint", "bigint unsigned", i64::MIN, 9_223_372_036_854_775_808),
+            (
+                "bigint",
+                "bigint unsigned",
+                i64::MIN,
+                9_223_372_036_854_775_808,
+            ),
         ];
         for (data_type, column_type, signed, expected) in cases {
             let unsigned_column = column(data_type, column_type);

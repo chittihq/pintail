@@ -141,6 +141,7 @@ fn is_unreferenced_identity(plan: &LogicalPlan, referenced: &BTreeSet<TableKey>)
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::Aggregate {

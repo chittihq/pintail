@@ -6,7 +6,10 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::{
     StoreError,
     codec::{Decoder, Encoder, decode_key, encode_key},
-    segment::{ColumnSma, SegmentMeta, SegmentSmas, SmaExtremes, SmaSum, schema_fingerprint, sync_directory},
+    segment::{
+        ColumnSma, SegmentMeta, SegmentSmas, SmaExtremes, SmaSum, schema_fingerprint,
+        sync_directory,
+    },
 };
 
 pub(crate) const FILE_NAME: &str = "manifest.ptm";
@@ -272,13 +275,18 @@ fn corrupt_here(decoder: &Decoder<'_>, reason: impl Into<String>) -> StoreError 
 fn encode_i128(encoder: &mut Encoder, value: i128) {
     #[allow(clippy::cast_sign_loss)]
     let bits = value as u128;
+    #[allow(clippy::cast_possible_truncation)]
     encoder.u64(bits as u64);
     encoder.u64((bits >> 64) as u64);
 }
 
 fn decode_i128(decoder: &mut Decoder<'_>) -> Result<i128, StoreError> {
-    let low = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
-    let high = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
+    let low = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(decoder, reason))?;
+    let high = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(decoder, reason))?;
     #[allow(clippy::cast_possible_wrap)]
     Ok(((u128::from(high) << 64) | u128::from(low)) as i128)
 }
@@ -342,61 +350,101 @@ fn encode_smas(encoder: &mut Encoder, smas: Option<&SegmentSmas>) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn decode_smas(decoder: &mut Decoder<'_>) -> Result<Option<SegmentSmas>, StoreError> {
-    match decoder.u8().map_err(|reason| corrupt_here(decoder, reason))? {
+    match decoder
+        .u8()
+        .map_err(|reason| corrupt_here(decoder, reason))?
+    {
         0 => return Ok(None),
         1 => {}
         tag => {
             return Err(corrupt_here(decoder, format!("invalid SMA presence {tag}")));
         }
     }
-    let live_rows = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
-    let tombstones = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
-    let column_count = decoder.u32().map_err(|reason| corrupt_here(decoder, reason))?;
+    let live_rows = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(decoder, reason))?;
+    let tombstones = decoder
+        .u64()
+        .map_err(|reason| corrupt_here(decoder, reason))?;
+    let column_count = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(decoder, reason))?;
     let mut columns = Vec::with_capacity(column_count as usize);
     for _ in 0..column_count {
-        let column_id = decoder.u32().map_err(|reason| corrupt_here(decoder, reason))?;
-        let non_null = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
-        let sum = match decoder.u8().map_err(|reason| corrupt_here(decoder, reason))? {
+        let column_id = decoder
+            .u32()
+            .map_err(|reason| corrupt_here(decoder, reason))?;
+        let non_null = decoder
+            .u64()
+            .map_err(|reason| corrupt_here(decoder, reason))?;
+        let sum = match decoder
+            .u8()
+            .map_err(|reason| corrupt_here(decoder, reason))?
+        {
             0 => None,
             1 => Some(SmaSum::Int(decode_i128(decoder)?)),
             2 => Some(SmaSum::Float(f64::from_bits(
-                decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?,
             ))),
             3 => {
                 let units = decode_i128(decoder)?;
-                let scale = decoder.u8().map_err(|reason| corrupt_here(decoder, reason))?;
+                let scale = decoder
+                    .u8()
+                    .map_err(|reason| corrupt_here(decoder, reason))?;
                 Some(SmaSum::DecimalUnits { units, scale })
             }
             tag => {
                 return Err(corrupt_here(decoder, format!("invalid SMA sum tag {tag}")));
             }
         };
-        let extremes = match decoder.u8().map_err(|reason| corrupt_here(decoder, reason))? {
+        let extremes = match decoder
+            .u8()
+            .map_err(|reason| corrupt_here(decoder, reason))?
+        {
             0 => None,
             1 => {
                 #[allow(clippy::cast_possible_wrap)]
-                let min = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))? as i64;
+                let min = decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?
+                    as i64;
                 #[allow(clippy::cast_possible_wrap)]
-                let max = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))? as i64;
+                let max = decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?
+                    as i64;
                 Some(SmaExtremes::Int { min, max })
             }
             2 => Some(SmaExtremes::UInt {
-                min: decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
-                max: decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                min: decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?,
+                max: decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?,
             }),
             3 => Some(SmaExtremes::Float {
                 min: f64::from_bits(
-                    decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                    decoder
+                        .u64()
+                        .map_err(|reason| corrupt_here(decoder, reason))?,
                 ),
                 max: f64::from_bits(
-                    decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                    decoder
+                        .u64()
+                        .map_err(|reason| corrupt_here(decoder, reason))?,
                 ),
             }),
             4 => {
                 let min = decode_i128(decoder)?;
                 let max = decode_i128(decoder)?;
-                let scale = decoder.u8().map_err(|reason| corrupt_here(decoder, reason))?;
+                let scale = decoder
+                    .u8()
+                    .map_err(|reason| corrupt_here(decoder, reason))?;
                 Some(SmaExtremes::DecimalUnits { min, max, scale })
             }
             tag => {

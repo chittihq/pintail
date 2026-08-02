@@ -421,8 +421,7 @@ async fn probe_table(
         }
     }
     for raw in raw_columns {
-        let (generated, generated_stored) =
-            generated_flags(&raw.generation_expression, &raw.extra);
+        let (generated, generated_stored) = generated_flags(&raw.generation_expression, &raw.extra);
         if generated && !generated_stored {
             warnings.push(format!(
                 "skipping virtual generated column {} because it is absent from row binlog images",
@@ -524,9 +523,8 @@ fn derive_capabilities(
         // Informational, not disqualifying: the CDC decoder takes column
         // identity, signedness, enum/set labels, and charsets from the probed
         // schema, so MINIMAL row metadata decodes identically to FULL.
-        reasons.push(
-            "binlog_row_metadata is MINIMAL; CDC decodes from the probed schema".to_owned(),
-        );
+        reasons
+            .push("binlog_row_metadata is MINIMAL; CDC decodes from the probed schema".to_owned());
     }
     if !replication_grants {
         reasons.push("replication stream/client grants are incomplete".to_owned());
@@ -555,7 +553,7 @@ fn derive_capabilities(
     }
 }
 
-/// (generated, stored): MySQL 8 reports `DEFAULT CURRENT_TIMESTAMP` columns
+/// `(generated, stored)`: `MySQL` 8 reports `DEFAULT CURRENT_TIMESTAMP` columns
 /// as `EXTRA='DEFAULT_GENERATED'`; those are ordinary stored columns and must
 /// not be confused with `VIRTUAL GENERATED` / `STORED GENERATED` expressions,
 /// which are the only ones absent from (virtual) or derivable in (stored)

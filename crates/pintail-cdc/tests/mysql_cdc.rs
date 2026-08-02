@@ -1076,10 +1076,7 @@ async fn run_compatibility_variant(variant: &CompatibilityVariant) {
     // variant) must not demote the recommendation — the decoder works from
     // the probed schema, not binlog optional metadata.
     assert!(
-        matches!(
-            report.capabilities.recommended_mode,
-            RecommendedMode::Cdc
-        ),
+        matches!(report.capabilities.recommended_mode, RecommendedMode::Cdc),
         "{} expected a CDC recommendation, got {:?}: {:?}",
         variant.label,
         report.capabilities.recommended_mode,

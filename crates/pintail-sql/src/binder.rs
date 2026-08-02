@@ -507,10 +507,10 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
 /// at execution, so widening only fixes the declared metadata). Mixed
 /// signed/UInt64 and cross-kind pairs (text vs number, temporal vs number)
 /// stay rejected.
-fn unify_union_types(
-    left: Option<DataType>,
-    right: Option<DataType>,
-) -> Option<Option<DataType>> {
+// Outer None = incompatible pair; inner None = still untyped (NULL literals
+// on both branches). A dedicated enum would just restate Option twice.
+#[allow(clippy::option_option)]
+fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<Option<DataType>> {
     fn unsigned_rank(data_type: DataType) -> Option<u8> {
         match data_type {
             DataType::UInt8 => Some(0),
@@ -558,8 +558,16 @@ fn unify_union_types(
     if mixed_sign {
         return Some(Some(DataType::Int64));
     }
-    if let (DataType::Decimal { precision: lp, scale: ls }, DataType::Decimal { precision: rp, scale: rs }) =
-        (left, right)
+    if let (
+        DataType::Decimal {
+            precision: lp,
+            scale: ls,
+        },
+        DataType::Decimal {
+            precision: rp,
+            scale: rs,
+        },
+    ) = (left, right)
     {
         return Some(Some(DataType::Decimal {
             precision: lp.max(rp),
@@ -2656,10 +2664,7 @@ mod tests {
     fn union_all_unifies_numeric_branch_types() {
         // Events.id and users.id share a type; widen one side via CAST-free
         // literals instead: UInt vs Int literals unify to Int64.
-        let query = bind(
-            "SELECT 1 AS v UNION ALL SELECT -2 ORDER BY v",
-        )
-        .expect("unified union");
+        let query = bind("SELECT 1 AS v UNION ALL SELECT -2 ORDER BY v").expect("unified union");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Int64));
         assert!(matches!(
             bind("SELECT Name AS v FROM Events UNION ALL SELECT id FROM users"),

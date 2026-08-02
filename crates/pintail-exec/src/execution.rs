@@ -154,9 +154,9 @@ impl PhysicalPlan {
                     nullable: expression.expr.nullable,
                 })
                 .collect(),
-            Self::Filter { input, .. }
-            | Self::Distinct { input }
-            | Self::Limit { input, .. } => input.output_fields(),
+            Self::Filter { input, .. } | Self::Distinct { input } | Self::Limit { input, .. } => {
+                input.output_fields()
+            }
             Self::Sort { input, trim, .. } => {
                 let mut fields = input.output_fields();
                 fields.truncate(fields.len().saturating_sub(*trim));
@@ -2081,7 +2081,7 @@ impl std::hash::Hasher for IntKeyHasher {
 
 /// splitmix-style hasher for the two-pass `(group sentinel, seen)` map keys:
 /// like [`IntKeyHasher`], the keys are per-query column data, so `SipHash`'s
-/// DoS resistance buys nothing.
+/// `DoS` resistance buys nothing.
 #[derive(Default)]
 struct GroupKeyHasher(u64);
 
@@ -2103,7 +2103,8 @@ impl std::hash::Hasher for GroupKeyHasher {
     }
 }
 
-type GroupKeyMap = HashMap<(u64, bool), Vec<AggregateState>, std::hash::BuildHasherDefault<GroupKeyHasher>>;
+type GroupKeyMap =
+    HashMap<(u64, bool), Vec<AggregateState>, std::hash::BuildHasherDefault<GroupKeyHasher>>;
 
 fn int_distinct_key(value: &Value) -> Option<i128> {
     match value {
@@ -2939,6 +2940,7 @@ fn build_hash_aggregate(
 /// tests and `PINTAIL_AGG_DEBUG` diagnostics.
 static SMA_FOLD_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+#[allow(dead_code)] // test-and-diagnostics accessor; production reads go through PINTAIL_AGG_DEBUG
 pub(crate) fn sma_fold_hits() -> u64 {
     SMA_FOLD_HITS.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -2992,10 +2994,7 @@ fn try_sma_fold(
                 };
                 let mut entries = Vec::with_capacity(sma.segments.len());
                 for segment in &sma.segments {
-                    let Some(entry) = segment
-                        .columns
-                        .iter()
-                        .find(|entry| entry.column_id == id)
+                    let Some(entry) = segment.columns.iter().find(|entry| entry.column_id == id)
                     else {
                         return Ok(None);
                     };
@@ -3068,12 +3067,10 @@ fn try_sma_fold(
                                         Err(_) => return Ok(None),
                                     })
                                 }
-                                Some(DataType::Int64) => {
-                                    Value::Int64(match i64::try_from(total) {
-                                        Ok(total) => total,
-                                        Err(_) => return Ok(None),
-                                    })
-                                }
+                                Some(DataType::Int64) => Value::Int64(match i64::try_from(total) {
+                                    Ok(total) => total,
+                                    Err(_) => return Ok(None),
+                                }),
                                 _ => return Ok(None),
                             };
                             Some(AggregateValue::Sum(Some(value)))
@@ -4659,8 +4656,7 @@ fn build_streaming_two_pass_aggregate(
     let scan_floor = input.scan_transient_floor().saturating_mul(2);
     let mut buckets: Vec<TwoPassBucket> =
         (0..partitions).map(|_| TwoPassBucket::default()).collect();
-    let mut maps: Vec<GroupKeyMap> =
-        (0..partitions).map(|_| GroupKeyMap::default()).collect();
+    let mut maps: Vec<GroupKeyMap> = (0..partitions).map(|_| GroupKeyMap::default()).collect();
     let mut bucket_reserved = 0_usize;
     let mut group_reserved = 0_usize;
     let mut flushes = 0_u32;
@@ -4684,7 +4680,9 @@ fn build_streaming_two_pass_aggregate(
             table
         });
     if let Some(slots) = &dense {
-        let slab = slots.len().saturating_mul(size_of::<Option<Vec<AggregateState>>>());
+        let slab = slots
+            .len()
+            .saturating_mul(size_of::<Option<Vec<AggregateState>>>());
         memory.reserve(slab)?;
         group_reserved = group_reserved.saturating_add(slab);
     }
@@ -5594,7 +5592,10 @@ fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
             if index == 0 {
                 (0, true)
             } else {
-                (u64::try_from(index - 1).expect("slot index fits u64"), false)
+                (
+                    u64::try_from(index - 1).expect("slot index fits u64"),
+                    false,
+                )
             }
         }
         TwoPassKeySource::TextPair { .. } => {
@@ -5611,6 +5612,7 @@ fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
 /// Dense pass over one batch: same key readers as
 /// [`two_pass_scatter_text_prepared`], same lane extraction and state
 /// updates as scatter + flush — minus the buffering between them.
+#[allow(clippy::too_many_arguments)]
 fn two_pass_dense_batch(
     batch: &RecordBatch,
     keys: TwoPassKeySource,
@@ -5680,9 +5682,7 @@ fn merge_dense_slots(
         match target {
             None => *target = Some(source),
             Some(states) => {
-                for ((state, other), aggregate) in
-                    states.iter_mut().zip(source).zip(aggregates)
-                {
+                for ((state, other), aggregate) in states.iter_mut().zip(source).zip(aggregates) {
                     state.merge(aggregate, other, memory)?;
                 }
             }
@@ -5694,6 +5694,7 @@ fn merge_dense_slots(
 /// Folds dense slots into the partition maps (dense overflow, mixed
 /// serial-scatter flows, and the final pass share this): map collisions
 /// merge state-by-state, so dense and classic results always unify.
+#[allow(clippy::too_many_arguments)]
 fn fold_dense_into_maps(
     slots: DenseGroupSlots,
     keys: TwoPassKeySource,
@@ -5709,10 +5710,9 @@ fn fold_dense_into_maps(
     for (index, slot) in slots.into_iter().enumerate() {
         let Some(states) = slot else { continue };
         let (bits, null) = dense_slot_sentinel(keys, index);
-        let partition = usize::try_from(
-            crate::batch::mix64(bits ^ u64::from(null)) % partitions as u64,
-        )
-        .expect("partition index fits usize");
+        let partition =
+            usize::try_from(crate::batch::mix64(bits ^ u64::from(null)) % partitions as u64)
+                .expect("partition index fits usize");
         match maps[partition].entry((bits, null)) {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 memory.reserve(per_group_bytes)?;
@@ -5766,7 +5766,13 @@ fn two_pass_flush_sets(
                             continue;
                         }
                         let bits = bucket.lanes[row * lane_count + lane_index];
-                        apply_two_pass_lane(&mut states[lane_index], lane, aggregate, bits, memory)?;
+                        apply_two_pass_lane(
+                            &mut states[lane_index],
+                            lane,
+                            aggregate,
+                            bits,
+                            memory,
+                        )?;
                     }
                 }
             }

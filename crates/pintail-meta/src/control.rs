@@ -322,12 +322,7 @@ impl MetaStore {
     /// # Errors
     ///
     /// Returns an error for a missing database or a storage failure.
-    pub fn refresh_database_probe_json(
-        &self,
-        id: &str,
-        probe_json: &str,
-        now: &str,
-    ) -> Result<()> {
+    pub fn refresh_database_probe_json(&self, id: &str, probe_json: &str, now: &str) -> Result<()> {
         let changed = self
             .connection
             .execute(
