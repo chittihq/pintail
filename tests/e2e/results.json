@@ -565,6 +565,36 @@
     "status": "PASS"
   },
   {
+    "phase": "churn-live",
+    "check": "live:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn-live",
+    "check": "live:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn-live",
+    "check": "live:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn-live",
+    "check": "live:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn-live",
+    "check": "live:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn-live",
+    "check": "live:union all across sources",
+    "status": "PASS"
+  },
+  {
     "phase": "churn",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -853,6 +883,212 @@
   },
   {
     "phase": "restart",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:auth login issues a fresh token",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:auth setup status responds",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:health, status, and metrics respond",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:databases list and detail agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:connection test succeeds",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:activity and dlq respond",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:table metadata routes match the source",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:api key disable blocks the wire, enable restores it",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:sse event stream connects",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:mode switches to polling and back with exact counts",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:resync and reconcile are accepted",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:throwaway database lifecycle: create, update, delete",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:group by with having",
+    "status": "WARN",
+    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:window running total",
     "status": "PASS"
   },

@@ -40,9 +40,11 @@ interface CheckResult {
 }
 
 const results: CheckResult[] = []
-/// Tables currently under a documented-gap operation: convergence and corpus
-/// divergences involving them downgrade from FAIL to WARN.
-const documentedGapTables = new Set<string>()
+/// Tables currently under a documented-gap operation, each with the exact
+/// divergence signature the documentation predicts. A divergence matching
+/// its signature reports WARN; anything else on the same table stays FAIL,
+/// so unrelated regressions cannot hide behind a known gap.
+const documentedGapTables = new Map<string, RegExp>()
 
 let mysqlConnection: mysql.Connection | undefined
 let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
@@ -371,7 +373,8 @@ async function verifyConvergence(phase: string) {
     if (diff === undefined) {
       results.push({ phase, check: `converge:${table}`, status: 'PASS' })
     } else {
-      const status = documentedGapTables.has(table) ? 'WARN' : 'FAIL'
+      const signature = documentedGapTables.get(table)
+      const status = signature?.test(diff) ? 'WARN' : 'FAIL'
       results.push({ phase, check: `converge:${table}`, status, detail: diff })
       for (const line of diff.split('\n')) log(`${status} converge:${table} — ${line}`)
     }
@@ -590,20 +593,67 @@ async function phaseDdlDocumentedGaps() {
   // Table rename is documented as quarantine; type changes are not part of
   // the DDL gate. Exercise both so regressions in the documented behavior
   // surface as WARN diffs, and improvements flip them to PASS.
-  documentedGapTables.add('audit_log')
-  documentedGapTables.add('audit_history')
+  // Rename quarantine: the renamed table never appears in the replica.
+  documentedGapTables.set('audit_log', /unknown table/)
+  documentedGapTables.set('audit_history', /unknown table/)
   await sql(`RENAME TABLE audit_log TO audit_history`)
   await sql(`INSERT INTO audit_history VALUES ('post rename')`)
-  documentedGapTables.add('order_items')
+  // In-place type change: replication stops applying to the table, so the
+  // divergence is a row-content diff (never a missing table or an error).
+  documentedGapTables.set('order_items', /^row \d+:/)
   await sql(`ALTER TABLE order_items MODIFY qty INT UNSIGNED NOT NULL`)
   await sql(`UPDATE order_items SET qty = qty + 1 WHERE order_id = 1`)
+}
+
+/// Runs one corpus query with convergence retries: writes are paused at the
+/// call site, so the replica settles to the source state within the window.
+async function liveQueryConverges(
+  query: (typeof differentialQueries)[number],
+  deadlineMs: number,
+): Promise<string | undefined> {
+  const deadline = Date.now() + deadlineMs
+  let last: string | undefined = 'never compared'
+  while (Date.now() < deadline) {
+    const expected = await mysqlRows(query.sql)
+    try {
+      const actual = await pintailQuery(query.sql)
+      last = diffRows(expected, actual, { csvColumns: query.csvColumns })
+      if (last === undefined) return undefined
+    } catch (error) {
+      last = String(error)
+    }
+    await Bun.sleep(1000)
+  }
+  return last
 }
 
 async function phaseChurn() {
   const random = mulberry32(0xc0ffee)
   const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+  const liveEligible = differentialQueries.filter(
+    (query) =>
+      !query.documentedGap && !query.tables.some((table) => documentedGapTables.has(table)),
+  )
+  let liveIndex = 0
   let inTransaction = false
   for (let op = 0; op < 400; op += 1) {
+    // Every 100 operations, sweep three corpus queries against the live,
+    // still-ingesting replica: this is what exercises the mid-ingest
+    // aggregate paths rather than only the settled state.
+    if (op > 0 && op % 100 === 0 && !inTransaction) {
+      for (let sweep = 0; sweep < 3; sweep += 1) {
+        const query = liveEligible[liveIndex % liveEligible.length]
+        liveIndex += 1
+        const diff = await liveQueryConverges(query, 60_000)
+        results.push({
+          phase: 'churn-live',
+          check: `live:${query.name}`,
+          status: diff === undefined ? 'PASS' : 'FAIL',
+          detail: diff,
+        })
+        if (diff) for (const line of diff.split('\n')) log(`FAIL live:${query.name} — ${line}`)
+      }
+    }
     if (!inTransaction && random() < 0.1) {
       await mysqlConnection!.beginTransaction()
       inTransaction = true
@@ -647,6 +697,208 @@ async function phaseRestart() {
   await sql(`DELETE FROM orders WHERE id = (SELECT id FROM (SELECT MAX(id) AS id FROM orders) pick)`)
   await startPintail()
   await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (10, 'shipped', 67.89, '2025-08-02')`)
+}
+
+/// Exercises the control-plane routes against the deployed binary: auth,
+/// database lifecycle on a throwaway registration, table metadata, API-key
+/// enable/disable round trip, mode switching, resync/reconcile, and the
+/// observability endpoints. Each route records its own PASS/FAIL.
+async function phaseControlPlane() {
+  const check = async (name: string, run: () => Promise<void>) => {
+    try {
+      await run()
+      results.push({ phase: 'control-plane', check: `api:${name}`, status: 'PASS' })
+    } catch (error) {
+      results.push({
+        phase: 'control-plane',
+        check: `api:${name}`,
+        status: 'FAIL',
+        detail: String(error),
+      })
+      log(`FAIL api:${name} — ${error}`)
+    }
+  }
+
+  await check('auth login issues a fresh token', async () => {
+    const login = await api<{ token: string }>('/api/auth/login', {
+      method: 'POST',
+      auth: false,
+      body: { email: 'e2e@pintail.local', password: 'e2e-gate-password' },
+    })
+    if (!login.token) throw new Error('login returned no token')
+    token = login.token
+  })
+  await check('auth setup status responds', async () => {
+    await api('/api/auth/setup/status', { auth: false })
+  })
+  await check('health, status, and metrics respond', async () => {
+    for (const path of ['/health', '/status', '/metrics']) {
+      const response = await fetch(`${pintailUrl}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) throw new Error(`${path} returned ${response.status}`)
+    }
+  })
+  await check('databases list and detail agree', async () => {
+    const list = await api<Array<{ id: string }>>('/api/databases')
+    if (!list.some((database) => database.id === databaseId)) {
+      throw new Error('registered database missing from the list')
+    }
+    await api(`/api/databases/${databaseId}`)
+    await api(`/api/databases/${databaseId}/status`)
+  })
+  await check('connection test succeeds', async () => {
+    await api(`/api/databases/${databaseId}/test`, { method: 'POST' })
+  })
+  await check('activity and dlq respond', async () => {
+    await api(`/api/activity?db=${databaseId}&limit=10`)
+    const dlq = await api<unknown[]>('/api/dlq')
+    if (dlq.length > 0) throw new Error(`DLQ is not empty: ${JSON.stringify(dlq[0])}`)
+  })
+  await check('table metadata routes match the source', async () => {
+    const tables = await api<Array<{ name: string }>>(`/api/tables?db=${databaseId}`)
+    if (!tables.some((table) => table.name === 'orders')) {
+      throw new Error('orders missing from table list')
+    }
+    await api(`/api/tables/orders/schema?db=${databaseId}`)
+    await api(`/api/tables/orders/data?db=${databaseId}`)
+    const counted = await api<unknown>(`/api/tables/orders/count?db=${databaseId}`)
+    const expected = await mysqlRows('SELECT COUNT(*) FROM orders')
+    const mysqlCount = Number(expected[0][0])
+    const text = JSON.stringify(counted)
+    if (!text.includes(String(mysqlCount))) {
+      throw new Error(`count response ${text} does not contain MySQL's ${mysqlCount}`)
+    }
+  })
+  await check('api key disable blocks the wire, enable restores it', async () => {
+    const keys = await api<Array<{ id: string; name: string }>>(
+      `/api/databases/${databaseId}/api-keys`,
+    )
+    const key = keys.find((candidate) => candidate.name === 'e2e-gate')
+    if (!key) throw new Error('e2e-gate key missing from the list')
+    await api(`/api/databases/${databaseId}/api-keys/${key.id}`, {
+      method: 'PATCH',
+      body: { enabled: false },
+    })
+    try {
+      pintailWire = undefined
+      let rejected = false
+      try {
+        await pintailQuery('SELECT 1 FROM orders LIMIT 1')
+      } catch {
+        rejected = true
+      }
+      if (!rejected) throw new Error('disabled key still authenticates on the wire')
+    } finally {
+      await api(`/api/databases/${databaseId}/api-keys/${key.id}`, {
+        method: 'PATCH',
+        body: { enabled: true },
+      })
+      pintailWire = undefined
+    }
+    await pintailQuery('SELECT 1 FROM orders LIMIT 1')
+  })
+  await check('sse event stream connects', async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5_000)
+    try {
+      const response = await fetch(`${pintailUrl}/api/events`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`/api/events returned ${response.status}`)
+      const type = response.headers.get('content-type') ?? ''
+      if (!type.includes('event-stream')) throw new Error(`unexpected content type ${type}`)
+    } catch (error) {
+      if (!String(error).includes('abort')) throw error
+    } finally {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  })
+  await check('mode switches to polling and back with exact counts', async () => {
+    await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'polling' } })
+    try {
+      await sql(
+        `INSERT INTO orders (customer_id, status, total, placed_on) VALUES (11, 'pending', 55.55, '2025-08-03')`,
+      )
+      const deadline = Date.now() + 120_000
+      for (;;) {
+        const expected = await mysqlRows('SELECT COUNT(*) FROM orders')
+        const actual = await pintailQuery('SELECT COUNT(*) FROM orders')
+        if (String(expected[0][0]) === String(actual[0][0])) break
+        if (Date.now() > deadline) {
+          const status = await api<unknown>(`/api/databases/${databaseId}/status`)
+          const activity = await api<unknown[]>(`/api/activity?db=${databaseId}&limit=5`)
+          throw new Error(
+            `polling never converged: ${expected[0][0]} vs ${actual[0][0]}; ` +
+              `status: ${JSON.stringify(status)}; activity: ${JSON.stringify(activity)}`,
+          )
+        }
+        await Bun.sleep(2_000)
+      }
+    } finally {
+      // Restore CDC even when convergence fails: leaving the database in
+      // polling mode would cascade the failure into every later check.
+      await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'cdc' } })
+    }
+  })
+  await check('resync and reconcile are accepted', async () => {
+    await api(`/api/databases/${databaseId}/tables/orders/resync`, { method: 'POST' })
+    // The resync schedules a snapshot job; reconcile is correctly refused
+    // (409) while that job runs, so wait for streaming state first.
+    const deadline = Date.now() + 120_000
+    for (;;) {
+      const status = await api<{
+        state: string
+        tables?: Array<{ name: string; last_error?: string }>
+      }>(`/api/databases/${databaseId}/snapshot/status`)
+      if (status.state === 'streaming' || status.state === 'polling') break
+      if (status.state === 'error' || Date.now() > deadline) {
+        const errors = (status.tables ?? [])
+          .filter((table) => table.last_error)
+          .map((table) => `${table.name}: ${table.last_error}`)
+          .join('; ')
+        const activity = await api<unknown[]>(`/api/activity?db=${databaseId}&limit=5`)
+        throw new Error(
+          `resync did not settle: ${status.state}; ${errors}; recent activity: ${JSON.stringify(activity)}`,
+        )
+      }
+      await Bun.sleep(2_000)
+    }
+    const retries = Date.now() + 60_000
+    for (;;) {
+      try {
+        await api(`/api/databases/${databaseId}/tables/customers/reconcile`, { method: 'POST' })
+        break
+      } catch (error) {
+        if (!String(error).includes('409') || Date.now() > retries) throw error
+        await Bun.sleep(3_000)
+      }
+    }
+  })
+  await check('throwaway database lifecycle: create, update, delete', async () => {
+    const host = await dockerHost()
+    const mysqlPort = await publishedPort(mysqlName, 3306)
+    const created = await api<{ id: string }>('/api/databases', {
+      method: 'POST',
+      body: {
+        name: 'e2e_dup',
+        dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}`,
+        mode: 'cdc',
+      },
+    })
+    await api(`/api/databases/${created.id}/probe`)
+    await api(`/api/databases/${created.id}`, {
+      method: 'PUT',
+      body: { name: 'e2e_dup_renamed', mode: 'cdc' },
+    })
+    await api(`/api/databases/${created.id}`, { method: 'DELETE' })
+    const list = await api<Array<{ id: string }>>('/api/databases')
+    if (list.some((database) => database.id === created.id)) {
+      throw new Error('deleted database still listed')
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +1027,7 @@ async function main() {
     ['ddl', phaseDdl],
     ['churn', phaseChurn],
     ['restart', phaseRestart],
+    ['control-plane', phaseControlPlane],
     ['ddl-documented-gaps', phaseDdlDocumentedGaps],
   ]
   const selected = process.env.E2E_PHASES?.split(',').map((phase) => phase.trim())

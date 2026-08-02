@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-02T20:11:08.929Z.
+Measured 2026-08-02T23:15:25.292Z.
 
-**194 passed, 0 failed, 5 documented-gap warnings.**
+**240 passed, 0 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -119,6 +119,12 @@ Measured 2026-08-02T20:11:08.929Z.
 | ddl | query:window ranking per group | PASS |  |
 | ddl | query:window share of total over grouped output | PASS |  |
 | ddl | query:window running total | PASS |  |
+| churn-live | live:point lookup by key | PASS |  |
+| churn-live | live:range scan with compound predicate | PASS |  |
+| churn-live | live:inner join with aggregation | PASS |  |
+| churn-live | live:left join preserves unmatched rows | PASS |  |
+| churn-live | live:three-way join through items | PASS |  |
+| churn-live | live:union all across sources | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
@@ -177,6 +183,47 @@ Measured 2026-08-02T20:11:08.929Z.
 | restart | query:window ranking per group | PASS |  |
 | restart | query:window share of total over grouped output | PASS |  |
 | restart | query:window running total | PASS |  |
+| control-plane | api:auth login issues a fresh token | PASS |  |
+| control-plane | api:auth setup status responds | PASS |  |
+| control-plane | api:health, status, and metrics respond | PASS |  |
+| control-plane | api:databases list and detail agree | PASS |  |
+| control-plane | api:connection test succeeds | PASS |  |
+| control-plane | api:activity and dlq respond | PASS |  |
+| control-plane | api:table metadata routes match the source | PASS |  |
+| control-plane | api:api key disable blocks the wire, enable restores it | PASS |  |
+| control-plane | api:sse event stream connects | PASS |  |
+| control-plane | api:mode switches to polling and back with exact counts | PASS |  |
+| control-plane | api:resync and reconcile are accepted | PASS |  |
+| control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
+| control-plane | converge:audit_log | PASS |  |
+| control-plane | converge:counters | PASS |  |
+| control-plane | converge:customers | PASS |  |
+| control-plane | converge:order_items | PASS |  |
+| control-plane | converge:orders | PASS |  |
+| control-plane | converge:shipments | PASS |  |
+| control-plane | query:point lookup by key | PASS |  |
+| control-plane | query:range scan with compound predicate | PASS |  |
+| control-plane | query:inner join with aggregation | PASS |  |
+| control-plane | query:left join preserves unmatched rows | PASS |  |
+| control-plane | query:three-way join through items | PASS |  |
+| control-plane | query:union all across sources | PASS |  |
+| control-plane | query:group by with having | WARN | DECIMAL AVG passes through Float64; exact half-cent averages can round differently |
+| control-plane | query:distinct count and min max | PASS |  |
+| control-plane | query:uncorrelated in-subquery | PASS |  |
+| control-plane | query:scalar subquery threshold | PASS |  |
+| control-plane | query:non-recursive cte | PASS |  |
+| control-plane | query:date bucketing | PASS |  |
+| control-plane | query:string functions and like | PASS |  |
+| control-plane | query:case expression buckets | PASS |  |
+| control-plane | query:null handling | PASS |  |
+| control-plane | query:coalesce and ifnull | PASS |  |
+| control-plane | query:enum and set filters | PASS |  |
+| control-plane | query:unsigned boundary readback | PASS |  |
+| control-plane | query:derived table | PASS |  |
+| control-plane | query:group_concat single expression | PASS |  |
+| control-plane | query:window ranking per group | PASS |  |
+| control-plane | query:window share of total over grouped output | PASS |  |
+| control-plane | query:window running total | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
