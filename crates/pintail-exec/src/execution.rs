@@ -4264,11 +4264,7 @@ fn build_streaming_two_pass_aggregate(
     )
     .then(StringIntern::default);
 
-    let parallel_keys = matches!(
-        keys,
-        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. }
-    );
-    let mut window: Vec<RecordBatch> = Vec::new();
+    let mut window: Vec<(RecordBatch, Vec<Vec<u64>>)> = Vec::new();
     let mut window_reserved = 0_usize;
     let mut window_rows = 0_usize;
     let mut batch = Some(first);
@@ -4276,7 +4272,20 @@ fn build_streaming_two_pass_aggregate(
         let Some(current) = batch.take() else {
             break;
         };
-        if parallel_keys {
+        // String sources prepare their (tiny, per-distinct-value) dictionary
+        // translations serially, then scatter rows in parallel from the
+        // read-only tables; batches whose strings decoded without codes
+        // fall back to the serial scatter below.
+        let prepared = match (keys, &mut intern) {
+            (TwoPassKeySource::Text { column }, Some(intern)) => {
+                prepare_text_translations(&current, &[column], intern, memory)?
+            }
+            (TwoPassKeySource::TextPair { first, second }, Some(intern)) => {
+                prepare_text_translations(&current, &[first, second], intern, memory)?
+            }
+            _ => Some(Vec::new()),
+        };
+        if let Some(translations) = prepared {
             let rows = current.visible_row_count();
             let need = rows
                 .saturating_mul(scatter_row_bytes)
@@ -4301,7 +4310,7 @@ fn build_streaming_two_pass_aggregate(
             }
             window_reserved = window_reserved.saturating_add(need);
             window_rows += rows;
-            window.push(current);
+            window.push((current, translations));
             if window_rows.saturating_mul(scatter_row_bytes) >= flush_bytes
                 || (scan_floor > 0 && memory.remaining() < scan_floor)
             {
@@ -4618,6 +4627,91 @@ fn string_key_reader<'a>(
     Ok((reader, validity))
 }
 
+/// Resolves this batch's dictionary translations against the global
+/// intern table — the only step that needs `&mut intern`, and it costs one
+/// intern per DISTINCT value. Returns `None` when any key column decoded
+/// without codes (plain views need per-row interning, so those batches
+/// stay on the serial path).
+fn prepare_text_translations(
+    batch: &RecordBatch,
+    columns: &[usize],
+    intern: &mut StringIntern,
+    memory: &MemoryTracker,
+) -> Result<Option<Vec<Vec<u64>>>, ExecError> {
+    let mut prepared = Vec::with_capacity(columns.len());
+    for column in columns {
+        let vector = batch.column(*column).ok_or(ExecError::InvalidBatch(
+            "grouping column is outside the input batch",
+        ))?;
+        let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed() else {
+            return Err(ExecError::InvalidBatch(
+                "string two-pass key column lost its typed projection",
+            ));
+        };
+        let Some((_, dict_values)) = strings.dictionary() else {
+            return Ok(None);
+        };
+        prepared.push(
+            dict_values
+                .iter()
+                .map(|value| intern.intern(value.as_bytes(), memory))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+    Ok(Some(prepared))
+}
+
+/// Scatters string keys from prepared (read-only) translations: no intern
+/// access, so windows of batches scatter in parallel.
+fn two_pass_scatter_text_prepared(
+    batch: &RecordBatch,
+    columns: &[usize],
+    translations: &[Vec<u64>],
+    lanes: &[TwoPassLane],
+    partitions: usize,
+    buckets: &mut [TwoPassBucket],
+) -> Result<(), ExecError> {
+    let mut readers = Vec::with_capacity(columns.len());
+    for (column, translation) in columns.iter().zip(translations) {
+        let vector = batch.column(*column).ok_or(ExecError::InvalidBatch(
+            "grouping column is outside the input batch",
+        ))?;
+        let Some((crate::batch::TypedValues::Utf8(strings), validity)) = vector.typed() else {
+            return Err(ExecError::InvalidBatch(
+                "string two-pass key column lost its typed projection",
+            ));
+        };
+        let Some((codes, _)) = strings.dictionary() else {
+            return Err(ExecError::InvalidBatch(
+                "prepared text scatter requires dictionary codes",
+            ));
+        };
+        readers.push((codes, validity, translation));
+    }
+    let pair = readers.len() == 2;
+    for row in batch.selection().selected_rows() {
+        let mut key_bits = 0_u64;
+        let mut key_null = false;
+        for (codes, validity, translation) in &readers {
+            let id = if validity.is_valid(row) {
+                let code = usize::try_from(codes[row]).expect("dict code fits usize");
+                let interned = *translation
+                    .get(code)
+                    .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
+                if pair { interned + 1 } else { interned }
+            } else {
+                if !pair {
+                    key_null = true;
+                }
+                0
+            };
+            key_bits = if pair { (key_bits << 32) | id } else { id };
+        }
+        scatter_two_pass_row(batch, row, key_bits, key_null, lanes, partitions, buckets);
+    }
+    Ok(())
+}
+
 /// Two string group columns: ids pack as `(a+1) << 32 | (b+1)` with 0 as
 /// the per-column NULL sentinel (mask bit 7 stays clear).
 #[allow(clippy::too_many_arguments)]
@@ -4809,7 +4903,7 @@ impl StringIntern {
 /// share the intern table and stay on the serial path.
 #[allow(clippy::too_many_arguments)]
 fn drain_two_pass_window(
-    window: &mut Vec<RecordBatch>,
+    window: &mut Vec<(RecordBatch, Vec<Vec<u64>>)>,
     keys: TwoPassKeySource,
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
@@ -4824,22 +4918,41 @@ fn drain_two_pass_window(
     }
     let mut sets = window
         .par_iter()
-        .map(|batch| -> Result<Vec<TwoPassBucket>, ExecError> {
-            let mut buckets: Vec<TwoPassBucket> =
-                (0..partitions).map(|_| TwoPassBucket::default()).collect();
-            match keys {
-                TwoPassKeySource::Int { column, .. } => {
-                    two_pass_scatter_batch(batch, column, lanes, partitions, &mut buckets)?;
+        .map(
+            |(batch, translations)| -> Result<Vec<TwoPassBucket>, ExecError> {
+                let mut buckets: Vec<TwoPassBucket> =
+                    (0..partitions).map(|_| TwoPassBucket::default()).collect();
+                match keys {
+                    TwoPassKeySource::Int { column, .. } => {
+                        two_pass_scatter_batch(batch, column, lanes, partitions, &mut buckets)?;
+                    }
+                    TwoPassKeySource::DateParts { parts } => {
+                        two_pass_scatter_date_parts(batch, parts, lanes, partitions, &mut buckets)?;
+                    }
+                    TwoPassKeySource::Text { column } => {
+                        two_pass_scatter_text_prepared(
+                            batch,
+                            &[column],
+                            translations,
+                            lanes,
+                            partitions,
+                            &mut buckets,
+                        )?;
+                    }
+                    TwoPassKeySource::TextPair { first, second } => {
+                        two_pass_scatter_text_prepared(
+                            batch,
+                            &[first, second],
+                            translations,
+                            lanes,
+                            partitions,
+                            &mut buckets,
+                        )?;
+                    }
                 }
-                TwoPassKeySource::DateParts { parts } => {
-                    two_pass_scatter_date_parts(batch, parts, lanes, partitions, &mut buckets)?;
-                }
-                TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. } => {
-                    unreachable!("string keys stay on the serial scatter path")
-                }
-            }
-            Ok(buckets)
-        })
+                Ok(buckets)
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
     window.clear();
     let outcome = two_pass_flush_sets(&mut sets, maps, lanes, aggregates, memory, group_reserved);
