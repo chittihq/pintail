@@ -394,7 +394,7 @@ fn equi_join_keys(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum JoinKeyMode {
     CollatedText,
     Binary,
@@ -2706,21 +2706,45 @@ fn build_hash_aggregate(
             _ => None,
         }
     }
-    let memo_key = if let Some(PullOperator::Scan { stream, .. }) = settled_scan(input) {
-        stream
-            .settled_identity()
-            .and_then(|(directory, generation, projection)| {
-                settled_signature(group_by, aggregates).map(|signature| {
-                    (
-                        directory,
-                        generation,
-                        format!("p{projection:?};{signature}"),
-                    )
-                })
-            })
-    } else {
-        None
-    };
+    /// Data-version identity of a whole settled plan: scans directly,
+    /// filters transparently (their predicates ARE the scan signature),
+    /// and fresh inner joins when BOTH sides are settled — either table's
+    /// ingest or flush changes its component of the key.
+    fn settled_plan_key(operator: &PullOperator) -> Option<(std::path::PathBuf, u64, String)> {
+        match operator {
+            PullOperator::Scan { stream, .. } => stream.settled_identity(),
+            PullOperator::Filter { input, .. } => settled_plan_key(input),
+            PullOperator::HashJoin {
+                left,
+                right,
+                kind,
+                left_key,
+                right_key,
+                key_mode,
+                right_width,
+                state,
+                ..
+            } if state.is_none() => {
+                let (left_dir, left_gen, left_sig) = settled_plan_key(left)?;
+                let (right_dir, right_gen, right_sig) = settled_plan_key(right)?;
+                Some((
+                    left_dir,
+                    left_gen,
+                    format!(
+                        "J{kind:?}|{key_mode:?}|{}|{}|{right_width}|L({left_sig})|R({}:{right_gen}:{right_sig})",
+                        left_key.deterministic_signature()?,
+                        right_key.deterministic_signature()?,
+                        right_dir.display(),
+                    ),
+                ))
+            }
+            _ => None,
+        }
+    }
+    let memo_key = settled_plan_key(input).and_then(|(directory, generation, scan)| {
+        settled_signature(group_by, aggregates)
+            .map(|signature| (directory, generation, format!("p{scan:?};{signature}")))
+    });
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         eprintln!(
             "[agg] memo key: {:?} (scan found: {})",

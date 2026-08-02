@@ -2751,6 +2751,117 @@ mod tests {
     }
 
     #[test]
+    fn settled_join_memo_invalidates_when_either_table_changes() {
+        let orders_dir = tempfile::tempdir().expect("orders dir");
+        let users_dir = tempfile::tempdir().expect("users dir");
+        let orders_schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "user_id", DataType::UInt64, false),
+            ],
+        )
+        .expect("orders schema");
+        let users_schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "region", DataType::Utf8, true),
+            ],
+        )
+        .expect("users schema");
+        let mut orders = TableStore::open(
+            orders_dir.path(),
+            orders_schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("orders table");
+        let mut users = TableStore::open(
+            users_dir.path(),
+            users_schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("users table");
+        let order_row = |id: u64, user: u64| {
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                vec![Value::UInt64(id), Value::UInt64(user)],
+                id,
+                false,
+            )
+        };
+        let user_row = |id: u64, region: &str| {
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                vec![Value::UInt64(id), Value::Utf8(region.to_owned())],
+                id,
+                false,
+            )
+        };
+        orders
+            .bulk_ingest_snapshot((1..=100).map(|id| order_row(id, 1 + id % 4)).collect())
+            .expect("orders seed");
+        users
+            .bulk_ingest_snapshot((1..=4).map(|id| user_row(id, "east")).collect())
+            .expect("users seed");
+        let database_id = DatabaseId::new(21);
+        let orders_id = TableId::new(31);
+        let users_id = TableId::new(32);
+        let catalog = {
+            let orders_entry = TableEntry::new(
+                orders_id,
+                "orders",
+                orders_schema.clone(),
+                TableStatistics::with_row_count(100),
+            )
+            .expect("orders entry");
+            let users_entry = TableEntry::new(
+                users_id,
+                "users",
+                users_schema.clone(),
+                TableStatistics::with_row_count(4),
+            )
+            .expect("users entry");
+            let database = DatabaseEntry::new(database_id, "app", [orders_entry, users_entry])
+                .expect("database");
+            CatalogSnapshot::new([database]).expect("catalog")
+        };
+        let joined = |orders: &TableStore, users: &TableStore| {
+            let orders_snapshot = orders.snapshot();
+            let users_snapshot = users.snapshot();
+            let provider = SnapshotScanProvider::new([
+                (database_id, orders_id, &orders_snapshot),
+                (database_id, users_id, &users_snapshot),
+            ])
+            .expect("provider");
+            execute_rows(
+                "SELECT u.region, COUNT(*) FROM orders o JOIN users u ON o.user_id = u.id                  GROUP BY u.region",
+                &catalog,
+                &provider,
+            )
+        };
+        // Cold, then memoized: identical exact rows.
+        assert_eq!(joined(&orders, &users)[0][1], Value::UInt64(100));
+        assert_eq!(joined(&orders, &users)[0][1], Value::UInt64(100));
+        // Growing the LEFT table changes its generation: fresh exact result.
+        orders
+            .bulk_ingest_snapshot((101..=110).map(|id| order_row(id, 1)).collect())
+            .expect("orders growth");
+        assert_eq!(joined(&orders, &users)[0][1], Value::UInt64(110));
+        // Growing the RIGHT table changes its generation: user 5 arrives
+        // with a new region, and rows for it appear only after the change.
+        assert_eq!(joined(&orders, &users).len(), 1);
+        users
+            .bulk_ingest_snapshot(vec![user_row(5, "west")])
+            .expect("users growth");
+        orders
+            .bulk_ingest_snapshot(vec![order_row(111, 5)])
+            .expect("order for new user");
+        let rows = joined(&orders, &users);
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
     fn dictionary_coded_columns_aggregate_and_filter_exactly() {
         let directory = tempfile::tempdir().expect("temporary table");
         let schema = schema();
