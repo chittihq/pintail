@@ -45,10 +45,10 @@ database**. Give it a MySQL DSN reachable from the container, probe it,
 pick CDC or polling (the probe recommends one), and start the snapshot.
 Once the state reads Streaming or Polling, the data is queryable.
 
-CDC needs `ROW` binlogs with full row images; `binlog_row_metadata` can
-stay on its MINIMAL default, which matters on managed MySQL where you
-can't change it. MySQL 5.7, 8.x, and MariaDB all work, and if binlogs are
-off entirely, the probe falls back to polling.
+CDC works with the binlog settings most servers already have, including
+managed MySQL where you can't change them. MySQL 5.7, 8.x, and MariaDB
+all work, and if binlogs are off entirely, the probe falls back to
+polling.
 
 The first boot prints the generated JWT and DSN-encryption secrets once.
 Keep the `pintail-data` volume, and treat its logs as sensitive. The
@@ -82,21 +82,11 @@ generated and hand-written queries.
 
 ## How it works, briefly
 
-Ingested rows land in a WAL-backed memtable and flush into PTSEG segments,
-Pintail's own columnar format. Dates, datetimes, and decimals are stored as
-fixed-width integers when they round-trip exactly, so scans compare native
-values instead of parsing text. Updates are resolved at read time with a
-sweep-line that classifies each key range: ranges with one version stream
-straight from the segment, and only genuinely overlapping ranges pay for a
-merge. This is the part ClickHouse's ReplacingMergeTree makes you opt into
-with `FINAL`; Pintail always returns the merged answer.
-
-Scans decode in parallel, aggregation runs on per-batch thread-local state,
-and predicated scans decode the filter column first so selective queries
-skip most of the remaining bytes. Segments also remember their own counts,
-sums, and min/max, so common aggregates stay fast even while data is
-streaming in — and any shortcut that can't prove it is still exact steps
-aside and lets the scan run. The longer version is in
+Pintail keeps its own columnar copy of your data, built for scanning
+millions of rows at a time, and applies changes from MySQL continuously.
+Every query answers from the up-to-date, merged view — there is no
+"eventually correct" mode, and results stay fast even while data is
+streaming in. If you want the internals, they are written up in
 [docs/architecture.md](docs/architecture.md) and
 [docs/format.md](docs/format.md).
 
@@ -107,11 +97,24 @@ identically limited containers (8 CPUs, 8 GB each) and requires exact
 result equality plus at least 50x over source MySQL in aggregate. ClickHouse
 runs alongside as the reference we are chasing, measured both as plain
 MergeTree and as ReplacingMergeTree with `FINAL`, which is the honest
-comparison for an always-correct replica. As of the latest runs Pintail is
-ahead on all eight; the same file also keeps a cold, never-seen-query
-table where ClickHouse still wins some, published on purpose. Current
-numbers are in [benchmark/results.md](benchmark/results.md). Reproduce
-them with:
+comparison for an always-correct replica. From the latest run, warm
+medians over 20 million rows:
+
+| Query | MySQL | Pintail | ClickHouse |
+|---|---:|---:|---:|
+| Full table count | 2.3 s | 152 ms | 151 ms |
+| Filtered count | 1.2 s | 153 ms | 178 ms |
+| Group by status | 64 s | 169 ms | 244 ms |
+| Region × status breakdown | 24 s | 167 ms | 307 ms |
+| Monthly revenue | 12 s | 168 ms | 210 ms |
+| Top 10 spenders | 27 min | 220 ms | 284 ms |
+| Regional analytics | 117 s | 170 ms | 294 ms |
+| Join users + orders | 27 min | 173 ms | 631 ms |
+
+Every result is checked for exact equality with MySQL before it counts.
+The same file also keeps a cold, never-seen-query table where ClickHouse
+still wins some, published on purpose. Full numbers are in
+[benchmark/results.md](benchmark/results.md). Reproduce them with:
 
 ```sh
 (cd benchmark && bun install --frozen-lockfile && bun run benchmark)
