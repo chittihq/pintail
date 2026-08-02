@@ -19,6 +19,7 @@ type QueryResult = {
   /// CH RMT+FINAL medianMs / pintail medianMs: >1 means pintail is faster
   /// than ClickHouse doing the same merge-on-read duty.
   speedupVsClickhouse: number
+  coldOnly: boolean
   timings: Record<string, EngineTiming>
   resources: Record<string, EngineResources>
   pintailMatchesMysql: boolean
@@ -62,11 +63,13 @@ const mysqlServerArgs = [
 // of these inputs. Reruns with an identical fingerprint reuse the seeded
 // datadir volume and the recorded cold timings instead of paying ~10 minutes
 // of seeding and ~an hour of single-core MySQL queries again.
+// Seeded data is a pure function of these inputs ONLY — query text must
+// not participate, or every new benchmark query would force a ~10-minute
+// reseed. Baseline entries carry their own per-query SQL hash instead.
 const benchmarkFingerprint = createHash('sha256')
   .update(
     JSON.stringify({
       seedSql: readFileSync(join(benchmarkDir, 'seed.sql'), 'utf8'),
-      queries: readFileSync(join(benchmarkDir, 'queries.ts'), 'utf8'),
       orderRows,
       engineLimits,
       mysqlImage,
@@ -74,6 +77,7 @@ const benchmarkFingerprint = createHash('sha256')
     }),
   )
   .digest('hex')
+const sqlHash = (sql: string) => createHash('sha256').update(sql).digest('hex').slice(0, 16)
 const seedVolumeName = `pintail-bench-seed-${benchmarkFingerprint.slice(0, 12)}`
 const runVolumeName = `${runId}-mysql-data`
 const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
@@ -85,7 +89,7 @@ type MysqlBaseline = {
   host: string
   measuredAt: string
   gitCommit?: string
-  queries: Record<string, { ms: number; canonical: string }>
+  queries: Record<string, { ms: number; canonical: string; sqlHash?: string }>
 }
 let baselineProvenance: string | undefined
 let runVolumeCreated = false
@@ -650,7 +654,8 @@ async function runQueries(
     let mysqlMs: number
     let mysqlCanonical: string
     const cached = baseline?.queries[query.name]
-    if (cached) {
+    const cacheValid = cached && (cached.sqlHash === undefined || cached.sqlHash === sqlHash(query.sql))
+    if (cached && cacheValid) {
       mysqlMs = cached.ms
       mysqlCanonical = cached.canonical
       baselineProvenance = baseline?.measuredAt
@@ -661,11 +666,20 @@ async function runQueries(
       resources.mysql = mysqlSampled.resources
       mysqlMs = mysqlRun.ms
       mysqlCanonical = canonicalRows(mysqlRun.value)
-      freshBaseline[query.name] = { ms: mysqlMs, canonical: mysqlCanonical }
+      freshBaseline[query.name] = {
+        ms: mysqlMs,
+        canonical: mysqlCanonical,
+        sqlHash: sqlHash(query.sql),
+      }
       // Cold MySQL timings cost minutes each; persist after every query so
       // a crash later in the run never throws measured work away.
       await saveBaseline()
     }
+    // Novel queries run exactly once per engine with no warmup: the
+    // settled aggregate memo cannot have seen them, so these rows measure
+    // raw engine speed rather than memoized replay.
+    const queryWarmups = query.coldOnly ? 0 : warmups
+    const queryRuns = query.coldOnly ? 1 : runs
     const pintailSampled = await sampled(containerizedPintail ? pintailName : undefined, () =>
       measured(
         () =>
@@ -674,22 +688,26 @@ async function runQueries(
             token,
             body: { db: databaseId, sql: query.sql },
           }),
-        warmups,
-        runs,
+        queryWarmups,
+        queryRuns,
       ),
     )
     const pintailRun = pintailSampled.value
     resources.pintail = pintailSampled.resources
     const clickhouseSql = query.clickhouseSql ?? query.sql
     const clickhouseSampled = await sampled(clickhouseName, () =>
-      measured(() => clickhouseQuery('benchmark', clickhouseSql, ''), warmups, runs),
+      measured(() => clickhouseQuery('benchmark', clickhouseSql, ''), queryWarmups, queryRuns),
     )
     const clickhouseRun = clickhouseSampled.value
     resources.clickhouse = clickhouseSampled.resources
     // The fair reference: ReplacingMergeTree doing pintail's merge-on-read
     // duty on every read (`final = 1`), same data, same host, same limits.
     const clickhouseFinalSampled = await sampled(clickhouseName, () =>
-      measured(() => clickhouseQuery('benchmark_rmt', clickhouseSql, ' SETTINGS final = 1'), warmups, runs),
+      measured(
+        () => clickhouseQuery('benchmark_rmt', clickhouseSql, ' SETTINGS final = 1'),
+        queryWarmups,
+        queryRuns,
+      ),
     )
     const clickhouseFinalRun = clickhouseFinalSampled.value
     resources.clickhouseFinal = clickhouseFinalSampled.resources
@@ -717,6 +735,7 @@ async function runQueries(
       clickhouseFinalMs: clickhouseFinalRun.timing.medianMs,
       speedup,
       speedupVsClickhouse,
+      coldOnly: query.coldOnly === true,
       timings: {
         pintail: pintailRun.timing,
         clickhouse: clickhouseRun.timing,
@@ -739,7 +758,12 @@ async function runQueries(
   return results
 }
 
-function publishResults(results: QueryResult[]) {
+function publishResults(allResults: QueryResult[]) {
+  // Gate totals keep their original definition: repeat-query medians of
+  // the canonical eight. Novel (cold) rows publish separately — they
+  // measure the engine, not the memo.
+  const results = allResults.filter((row) => !row.coldOnly)
+  const novelResults = allResults.filter((row) => row.coldOnly)
   const totals = results.reduce(
     (total, row) => ({
       mysqlMs: total.mysqlMs + row.mysqlMs,
@@ -752,7 +776,7 @@ function publishResults(results: QueryResult[]) {
   const speedup = totals.mysqlMs / totals.pintailMs
   const suffix = fullGate ? '' : '-smoke'
   const generatedAt = new Date().toISOString()
-  const mismatches = results.filter((row) => !row.pintailMatchesMysql).map((row) => row.name)
+  const mismatches = allResults.filter((row) => !row.pintailMatchesMysql).map((row) => row.name)
   const report = {
     generatedAt,
     scale,
@@ -823,6 +847,24 @@ function publishResults(results: QueryResult[]) {
     fullGate
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
+    '',
+    '## Novel queries (cold, single run — raw engine speed)',
+    '',
+    'These queries run exactly once per engine with no warmup, so the',
+    'settled aggregate memo cannot serve them: this is what a never-seen',
+    'ad-hoc query pays. Excluded from the release-gate totals.',
+    '',
+    '| Query | MySQL | Pintail | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |',
+    '|---|---:|---:|---:|---:|---:|---:|:--|',
+    ...novelResults.map(
+      (row) =>
+        `| ${row.name} | ${row.mysqlMs.toLocaleString()} ms | ` +
+        `${row.pintailMs.toLocaleString()} ms | ${row.speedup.toFixed(1)}× | ` +
+        `${row.clickhouseMs.toLocaleString()} ms | ` +
+        `${row.clickhouseFinalMs.toLocaleString()} ms | ` +
+        `${row.speedupVsClickhouse.toFixed(2)}× | ` +
+        `${row.pintailMatchesMysql ? 'yes' : 'MISMATCH'} |`,
+    ),
     '',
     '## Resources during measured runs',
     '',
