@@ -895,6 +895,17 @@ async fn apply_ddl_actions(
                 targets.push(target);
                 target_indexes.insert(table.to_ascii_lowercase(), index);
                 record_target_schema(metadata, database_id, &targets[index], 1, statement)?;
+                // The stored probe report is the table inventory for both the
+                // supervisor's next cycle and the query engine's catalog;
+                // without this refresh the auto-included table vanishes from
+                // both once this runner invocation ends.
+                let probe_json = serde_json::to_string(&refreshed)
+                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                metadata.refresh_database_probe_json(
+                    database_id,
+                    &probe_json,
+                    &Utc::now().to_rfc3339(),
+                )?;
             }
         }
     }

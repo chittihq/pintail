@@ -313,6 +313,34 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Replaces only the stored probe report, leaving state and modes
+    /// untouched. The CDC runner uses this when live DDL changes the source
+    /// inventory (e.g. auto-including a newly created table): every consumer
+    /// of `probe_json` — the supervisor's target set and the query engine's
+    /// catalog — must see the new table without disturbing replication state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing database or a storage failure.
+    pub fn refresh_database_probe_json(
+        &self,
+        id: &str,
+        probe_json: &str,
+        now: &str,
+    ) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE databases SET probe_json = ?2, updated_at = ?3 WHERE id = ?1",
+                (id, probe_json, now),
+            )
+            .context("failed to refresh database probe")?;
+        if changed == 0 {
+            bail!("database {id} does not exist");
+        }
+        Ok(())
+    }
+
     /// Changes the requested replication mode.
     ///
     /// # Errors
