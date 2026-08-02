@@ -1,0 +1,11 @@
+{
+  "name": "pintail-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "bun run run.ts"
+  },
+  "dependencies": {
+    "mysql2": "3.23.2"
+  }
+}

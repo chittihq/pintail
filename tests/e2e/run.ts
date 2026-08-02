@@ -1,0 +1,847 @@
+/// End-to-end differential gate: the whole product, production-shaped.
+///
+/// Boots a real MySQL source in Docker, builds and runs the real pintail
+/// server binary, registers the source over the HTTP API, snapshots, and
+/// then drives workload phases — CRUD inside transactions, type edge cases,
+/// live DDL, seeded random churn, and a SIGKILL restart. After every phase
+/// it proves two things against the live replica:
+///
+///   1. Convergence: every base table in MySQL reads back identically from
+///      pintail (retried until the CDC supervisor catches up).
+///   2. Query equivalence: the differential corpus in queries.ts returns
+///      identical results from MySQL and pintail.
+///
+/// Operations pintail documents as gaps (table rename quarantine, in-place
+/// type changes) are exercised too, but their divergences report as WARN
+/// instead of failing the gate.
+///
+/// Run with: bun run run.ts            (full gate)
+///           E2E_PHASES=crud,ddl ...   (subset while iterating)
+
+import { createServer } from 'node:net'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import mysql from 'mysql2/promise'
+import { differentialQueries } from './queries'
+
+const repository = resolve(import.meta.dir, '..', '..')
+const nonce = Date.now().toString(36)
+const mysqlName = `pintail-e2e-mysql-${process.pid}-${nonce}`
+const DATABASE = 'e2e_db'
+const CONVERGE_TIMEOUT_MS = 180_000
+const CONVERGE_POLL_MS = 2_000
+
+interface CheckResult {
+  phase: string
+  check: string
+  status: 'PASS' | 'FAIL' | 'WARN' | 'SKIP'
+  detail?: string
+}
+
+const results: CheckResult[] = []
+/// Tables currently under a documented-gap operation: convergence and corpus
+/// divergences involving them downgrade from FAIL to WARN.
+const documentedGapTables = new Set<string>()
+
+let mysqlConnection: mysql.Connection | undefined
+let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
+let pintailBinary = ''
+let pintailDataDir = ''
+let pintailHttpPort = 0
+let pintailWirePort = 0
+let pintailUrl = ''
+let token = ''
+let databaseId = ''
+let mysqlStarted = false
+
+function log(message: string) {
+  console.log(`[e2e] ${message}`)
+}
+
+async function command(args: string[], options: { cwd?: string; quiet?: boolean } = {}) {
+  const child = Bun.spawn(args, {
+    cwd: options.cwd ?? repository,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (status !== 0) {
+    throw new Error(`${args.join(' ')} failed with ${status}\n${stdout.trim()}\n${stderr.trim()}`)
+  }
+  if (!options.quiet && stderr.trim()) console.error(stderr.trim())
+  return { stdout: stdout.trim(), stderr: stderr.trim() }
+}
+
+async function docker(...args: string[]) {
+  return command(['docker', ...args], { quiet: true })
+}
+
+async function dockerHost(): Promise<string> {
+  const context = (await docker('context', 'show')).stdout
+  const endpoint = (
+    await docker('context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}')
+  ).stdout
+  if (!endpoint.startsWith('ssh://')) return '127.0.0.1'
+  const target = endpoint.slice('ssh://'.length).split('@').at(-1)!.split(':')[0]
+  const ssh = await command(['ssh', '-G', target], { quiet: true })
+  const hostname = ssh.stdout
+    .split('\n')
+    .find((line) => line.startsWith('hostname '))
+    ?.slice('hostname '.length)
+  if (!hostname) throw new Error(`could not resolve Docker SSH target ${target}`)
+  return hostname
+}
+
+async function publishedPort(name: string, containerPort: number): Promise<number> {
+  const output = (await docker('port', name, `${containerPort}/tcp`)).stdout
+  const match = output.split('\n')[0]?.match(/:(\d+)$/)
+  if (!match) throw new Error(`Docker did not publish ${name}:${containerPort}`)
+  return Number(match[1])
+}
+
+async function freePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('could not allocate a local port'))
+        return
+      }
+      server.close((error) => (error ? reject(error) : resolvePort(address.port)))
+    })
+  })
+}
+
+async function waitForMysql(host: string, port: number, attempts = 240) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const connection = await mysql.createConnection({
+        host,
+        port,
+        user: 'root',
+        password: 'pintail-root',
+        multipleStatements: true,
+        supportBigNumbers: true,
+        bigNumberStrings: true,
+        dateStrings: true,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 10_000,
+      })
+      await connection.query('SELECT 1')
+      return connection
+    } catch {
+      await Bun.sleep(500)
+    }
+  }
+  throw new Error('MySQL did not become ready in time')
+}
+
+async function api<T>(
+  path: string,
+  options: { method?: string; body?: unknown; auth?: boolean } = {},
+): Promise<T> {
+  const response = await fetch(`${pintailUrl}${path}`, {
+    method: options.method ?? 'GET',
+    headers: {
+      ...(options.auth === false ? {} : { Authorization: `Bearer ${token}` }),
+      ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  })
+  const text = await response.text()
+  if (!response.ok) {
+    throw new Error(`${options.method ?? 'GET'} ${path} returned ${response.status}: ${text}`)
+  }
+  return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+/// Queries run over the MySQL wire protocol — the way production clients
+/// connect — so both engines' values arrive through the same mysql2 typing
+/// (u64/decimal as exact strings, temporal as strings, binary as Buffers).
+let pintailWire: mysql.Connection | undefined
+let wireSecret = ''
+
+async function pintailQuery(sql: string): Promise<unknown[][]> {
+  for (let attempt = 0; ; attempt += 1) {
+    if (!pintailWire) {
+      pintailWire = await mysql.createConnection({
+        host: '127.0.0.1',
+        port: pintailWirePort,
+        user: DATABASE,
+        password: wireSecret,
+        database: DATABASE,
+        supportBigNumbers: true,
+        bigNumberStrings: true,
+        dateStrings: true,
+        // The wire library hardcodes charset 33 in column metadata
+        // (docs/limitations.md), so binary columns would be lossily decoded
+        // as utf8 text. Take raw buffers and let canonicalValue decide.
+        typeCast: (field, next) => {
+          if (field.type === 'VAR_STRING' || field.type === 'STRING' || field.type === 'BLOB') {
+            return field.buffer()
+          }
+          return next()
+        },
+      })
+    }
+    const connection = pintailWire
+    try {
+      const [rows] = await connection.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+      return rows as unknown as unknown[][]
+    } catch (error) {
+      const transient = /ECONNREFUSED|ECONNRESET|EPIPE|closed state|Connection lost/i.test(
+        String(error),
+      )
+      if (transient) {
+        pintailWire = undefined
+        try {
+          await connection.end()
+        } catch {}
+        if (attempt < 2) {
+          await Bun.sleep(1000)
+          continue
+        }
+      }
+      throw error
+    }
+  }
+}
+
+async function mysqlRows(sql: string): Promise<unknown[][]> {
+  const [rows] = await mysqlConnection!.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+  return rows as unknown as unknown[][]
+}
+
+// ---------------------------------------------------------------------------
+// Canonicalization: MySQL wire values (via mysql2) and pintail JSON values
+// must map to one comparable form.
+
+function canonicalValue(value: unknown): string {
+  if (value === null || value === undefined) return 'NULL'
+  if (Buffer.isBuffer(value)) {
+    // Text arrives as Buffer from the pintail wire (charset-33 workaround
+    // above) and binary arrives as Buffer from MySQL: valid UTF-8 compares
+    // as text, anything else as hex, identically on both sides.
+    const text = value.toString('utf8')
+    if (Buffer.compare(Buffer.from(text, 'utf8'), value) === 0) {
+      return canonicalValue(text)
+    }
+    return `0x${value.toString('hex')}`
+  }
+  if (value instanceof Date) return canonicalValue(value.toISOString())
+  if (typeof value === 'object') return canonicalJson(value)
+  let text = String(value)
+  // JSON documents arrive as text from one side and objects from the other.
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      return canonicalJson(JSON.parse(text))
+    } catch {}
+  }
+  // Temporal: unify 'T' separators, drop timezone suffix, trim only the
+  // fractional-second zeros (never the seconds themselves).
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(text)) {
+    text = text.replace('T', ' ').replace(/(Z|[+-]\d{2}:?\d{2})$/, '')
+    text = text.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+    return text
+  }
+  // Numeric: fixed exponent-free form, 4 decimal places like the benchmark.
+  if (text !== '' && /^-?\d+(\.\d+)?$/.test(text)) {
+    // u64 values above 2^53 lose precision through Number; keep integers
+    // longer than 15 digits as exact strings.
+    if (/^-?\d+$/.test(text) && text.replace('-', '').length > 15) return text
+    return Number(text).toFixed(4)
+  }
+  return text
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    )
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`
+  }
+  return JSON.stringify(canonicalValue(value))
+}
+
+function canonicalRow(row: unknown[], csvColumns?: number[]): string {
+  return row
+    .map((value, index) => {
+      let canonical = canonicalValue(value)
+      if (csvColumns?.includes(index)) {
+        canonical = canonical.split(',').sort().join(',')
+      }
+      return canonical
+    })
+    .join('')
+}
+
+function diffRows(
+  expected: unknown[][],
+  actual: unknown[][],
+  options: { multiset?: boolean; csvColumns?: number[] } = {},
+): string | undefined {
+  let left = expected.map((row) => canonicalRow(row, options.csvColumns))
+  let right = actual.map((row) => canonicalRow(row, options.csvColumns))
+  if (options.multiset) {
+    left = [...left].sort()
+    right = [...right].sort()
+  }
+  if (left.length !== right.length) {
+    return `row count ${expected.length} vs ${actual.length}`
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return `row ${index}:\n  mysql   ${left[index].replaceAll('', ' | ')}\n  pintail ${right[index].replaceAll('', ' | ')}`
+    }
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Convergence: every MySQL base table must read back identically.
+
+async function baseTables(): Promise<string[]> {
+  const rows = await mysqlRows(
+    `SELECT TABLE_NAME FROM information_schema.TABLES ` +
+      `WHERE TABLE_SCHEMA = '${DATABASE}' AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`,
+  )
+  return rows.map((row) => String(row[0]))
+}
+
+async function tableColumns(table: string): Promise<string[]> {
+  const rows = await mysqlRows(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS ` +
+      `WHERE TABLE_SCHEMA = '${DATABASE}' AND TABLE_NAME = '${table}' ` +
+      `AND GENERATION_EXPRESSION = '' ORDER BY ORDINAL_POSITION`,
+  )
+  return rows.map((row) => String(row[0]))
+}
+
+async function tableKey(table: string): Promise<string[]> {
+  const rows = await mysqlRows(
+    `SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE ` +
+      `WHERE TABLE_SCHEMA = '${DATABASE}' AND TABLE_NAME = '${table}' ` +
+      `AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION`,
+  )
+  return rows.map((row) => String(row[0]))
+}
+
+async function tableDiff(table: string): Promise<string | undefined> {
+  const columns = await tableColumns(table)
+  const key = await tableKey(table)
+  const projection = columns.map((column) => `\`${column}\``).join(', ')
+  const order = (key.length > 0 ? key : columns).map((column) => `\`${column}\``).join(', ')
+  const sql = `SELECT ${projection} FROM \`${table}\` ORDER BY ${order}`
+  const expected = await mysqlRows(sql)
+  let actual: unknown[][]
+  try {
+    actual = await pintailQuery(sql)
+  } catch (error) {
+    return `pintail query failed: ${error}`
+  }
+  // Keyless tables have no deterministic order on either side.
+  return diffRows(expected, actual, { multiset: key.length === 0 })
+}
+
+async function verifyConvergence(phase: string) {
+  const tables = await baseTables()
+  const pending = new Map<string, string>()
+  const deadline = Date.now() + CONVERGE_TIMEOUT_MS
+  for (const table of tables) pending.set(table, 'not yet checked')
+  while (pending.size > 0 && Date.now() < deadline) {
+    for (const table of [...pending.keys()]) {
+      const diff = await tableDiff(table)
+      if (diff === undefined) pending.delete(table)
+      else pending.set(table, diff)
+    }
+    if (pending.size > 0) await Bun.sleep(CONVERGE_POLL_MS)
+  }
+  for (const table of tables) {
+    const diff = pending.get(table)
+    if (diff === undefined) {
+      results.push({ phase, check: `converge:${table}`, status: 'PASS' })
+    } else {
+      const status = documentedGapTables.has(table) ? 'WARN' : 'FAIL'
+      results.push({ phase, check: `converge:${table}`, status, detail: diff })
+      for (const line of diff.split('\n')) log(`${status} converge:${table} — ${line}`)
+    }
+  }
+  if (pending.size === 0) {
+    log(`${phase}: converged (${tables.length} tables)`)
+  }
+}
+
+async function verifyCorpus(phase: string) {
+  for (const query of differentialQueries) {
+    if (query.tables.some((table) => documentedGapTables.has(table))) {
+      results.push({ phase, check: `query:${query.name}`, status: 'SKIP' })
+      continue
+    }
+    let expected: unknown[][]
+    try {
+      expected = await mysqlRows(query.sql)
+    } catch (error) {
+      results.push({
+        phase,
+        check: `query:${query.name}`,
+        status: 'FAIL',
+        detail: `mysql rejected the corpus query: ${error}`,
+      })
+      continue
+    }
+    try {
+      const actual = await pintailQuery(query.sql)
+      const diff = diffRows(expected, actual, { csvColumns: query.csvColumns })
+      const failure = query.documentedGap ? ('WARN' as const) : ('FAIL' as const)
+      results.push({
+        phase,
+        check: `query:${query.name}`,
+        status: diff === undefined ? 'PASS' : failure,
+        detail: diff && query.documentedGap ? `${query.documentedGap}\n${diff}` : diff,
+      })
+      if (diff) for (const line of diff.split('\n')) log(`${failure} query:${query.name} — ${line}`)
+    } catch (error) {
+      results.push({
+        phase,
+        check: `query:${query.name}`,
+        status: 'FAIL',
+        detail: String(error),
+      })
+      log(`FAIL query:${query.name} — ${error}`)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Workload phases.
+
+function mulberry32(seed: number) {
+  let state = seed
+  return () => {
+    state |= 0
+    state = (state + 0x6d2b79f5) | 0
+    let t = Math.imul(state ^ (state >>> 15), 1 | state)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+async function sql(statement: string) {
+  await mysqlConnection!.query(statement)
+}
+
+async function phaseSeed() {
+  await sql(`CREATE TABLE customers (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    email VARCHAR(96) NULL,
+    tier ENUM('free','pro','enterprise') NOT NULL DEFAULT 'free',
+    tags SET('alpha','beta','vip') NOT NULL DEFAULT '',
+    balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+    meta JSON NULL,
+    avatar VARBINARY(16) NULL,
+    latin_note VARCHAR(32) CHARACTER SET latin1 NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE orders (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT UNSIGNED NOT NULL,
+    status ENUM('pending','processing','shipped','delivered','cancelled') NOT NULL,
+    total DECIMAL(12,2) NOT NULL,
+    placed_on DATE NOT NULL,
+    updated_at TIMESTAMP(6) NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE order_items (
+    order_id BIGINT UNSIGNED NOT NULL,
+    line_no INT NOT NULL,
+    product VARCHAR(64) NOT NULL,
+    qty SMALLINT UNSIGNED NOT NULL,
+    price DECIMAL(10,2) NOT NULL,
+    PRIMARY KEY (order_id, line_no)
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE audit_log (note VARCHAR(128) NOT NULL) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE counters (
+    id TINYINT UNSIGNED PRIMARY KEY,
+    u8 TINYINT UNSIGNED NOT NULL,
+    u16 SMALLINT UNSIGNED NOT NULL,
+    u32 INT UNSIGNED NOT NULL,
+    u64 BIGINT UNSIGNED NOT NULL,
+    s64 BIGINT NOT NULL
+  )`)
+
+  const random = mulberry32(0x5eed)
+  const tiers = ['free', 'pro', 'enterprise']
+  const tags = ['', 'alpha', 'beta', 'vip', 'alpha,vip', 'beta,vip']
+  const names = ['Asha', 'Bruno', 'Chloé', 'Dmitri', 'えみ', 'Farah', 'Göran', 'Priya']
+  for (let id = 1; id <= 40; id += 1) {
+    const name = `${names[id % names.length]} ${id}`
+    const email = id % 7 === 0 ? 'NULL' : `'user${id}@example.com'`
+    const tier = tiers[Math.floor(random() * 3)]
+    const tag = tags[Math.floor(random() * tags.length)]
+    const balance = (random() * 2000 - 500).toFixed(2)
+    const meta =
+      id % 5 === 0 ? 'NULL' : `'{"lang":"en","score":${Math.floor(random() * 100)}}'`
+    const avatar = id % 6 === 0 ? 'NULL' : `X'${id.toString(16).padStart(4, '0')}beef'`
+    await sql(
+      `INSERT INTO customers (name, email, tier, tags, balance, meta, avatar, latin_note) VALUES ` +
+        `('${name}', ${email}, '${tier}', '${tag}', ${balance}, ${meta}, ${avatar}, _latin1 0x636166E9)`,
+    )
+  }
+  const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+  for (let id = 1; id <= 200; id += 1) {
+    const customer = 1 + Math.floor(random() * 40)
+    const status = statuses[Math.floor(random() * statuses.length)]
+    const total = (random() * 1000).toFixed(2)
+    const day = 1 + Math.floor(random() * 28)
+    const month = 1 + Math.floor(random() * 12)
+    const updated =
+      id % 3 === 0 ? 'NULL' : `'2025-0${(id % 9) + 1}-1${id % 10} 08:0${id % 10}:00'`
+    await sql(
+      `INSERT INTO orders (customer_id, status, total, placed_on, updated_at) VALUES ` +
+        `(${customer}, '${status}', ${total}, '2024-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}', ${updated})`,
+    )
+    const lines = 1 + Math.floor(random() * 3)
+    for (let line = 1; line <= lines; line += 1) {
+      await sql(
+        `INSERT INTO order_items VALUES (${id}, ${line}, 'sku-${(id * 7 + line) % 50}', ` +
+          `${1 + Math.floor(random() * 9)}, ${(random() * 200).toFixed(2)})`,
+      )
+    }
+  }
+  await sql(`INSERT INTO audit_log VALUES ('seed complete'), ('第二条 unicode note')`)
+  await sql(
+    `INSERT INTO counters VALUES (1, 200, 65535, 3000000000, 18446744073709551615, -9223372036854775808), ` +
+      `(2, 0, 0, 0, 0, 9223372036854775807)`,
+  )
+}
+
+async function phaseCrud() {
+  // Point updates, bulk updates, deletes, and an explicit rollback.
+  await sql(`UPDATE customers SET balance = balance + 10.55, tier = 'pro' WHERE id = 3`)
+  await sql(`UPDATE orders SET status = 'delivered', updated_at = '2025-06-01 12:00:00' WHERE id <= 20`)
+  await sql(`DELETE FROM orders WHERE id IN (5, 15, 25)`)
+  await sql(`DELETE FROM order_items WHERE order_id IN (5, 15, 25)`)
+  await sql(
+    `INSERT INTO customers (id, name, email, balance) VALUES (1, 'dupe', 'x@y.z', 1) ` +
+      `ON DUPLICATE KEY UPDATE balance = balance + 100`,
+  )
+  await mysqlConnection!.beginTransaction()
+  await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (2, 'pending', 42.42, '2025-07-01')`)
+  await sql(`UPDATE customers SET balance = balance - 42.42 WHERE id = 2`)
+  await mysqlConnection!.commit()
+  await mysqlConnection!.beginTransaction()
+  await sql(`DELETE FROM customers WHERE id = 4`)
+  await sql(`UPDATE orders SET total = 0 WHERE customer_id = 4`)
+  await mysqlConnection!.rollback()
+  await sql(`INSERT INTO audit_log VALUES ('crud complete')`)
+}
+
+async function phaseTypeEdges() {
+  await sql(
+    `INSERT INTO customers (name, email, tier, tags, balance, meta, avatar, latin_note) VALUES ` +
+      `('emoji 🦆 café', '', 'enterprise', 'alpha,beta,vip', -0.01, '{"nested":{"deep":[1,2,3]},"nul":null}', X'00FF10', _latin1 0x80), ` +
+      `('nulls', NULL, 'free', '', 0.00, NULL, NULL, NULL)`,
+  )
+  await sql(`UPDATE counters SET u8 = 255, u16 = 65534, u32 = 4294967295, u64 = 9223372036854775808 WHERE id = 2`)
+  await sql(
+    `INSERT INTO orders (customer_id, status, total, placed_on, updated_at) VALUES ` +
+      `(1, 'pending', 0.01, '2020-02-29', '2038-01-19 03:14:07.499999'), ` +
+      `(1, 'cancelled', 9999999999.99, '1970-01-01', '1970-01-01 00:00:01.000001')`,
+  )
+}
+
+async function phaseDdl() {
+  // ADD COLUMN, live writes into it, then DROP a different column.
+  await sql(`ALTER TABLE orders ADD COLUMN coupon VARCHAR(24) NULL`)
+  await sql(`UPDATE orders SET coupon = 'SUMMER10' WHERE id % 10 = 0`)
+  await sql(
+    `INSERT INTO orders (customer_id, status, total, placed_on, coupon) VALUES (7, 'shipped', 77.77, '2025-07-07', 'NEW7')`,
+  )
+  await sql(`ALTER TABLE customers DROP COLUMN latin_note`)
+  await sql(`UPDATE customers SET balance = balance + 1 WHERE id = 1`)
+  // CREATE TABLE mid-stream: the replica must pick it up automatically.
+  await sql(`CREATE TABLE shipments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    order_id BIGINT UNSIGNED NOT NULL,
+    carrier VARCHAR(32) NOT NULL,
+    shipped_on DATE NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(
+    `INSERT INTO shipments (order_id, carrier, shipped_on) VALUES ` +
+      `(1, 'DHL', '2025-07-08'), (2, 'UPS', NULL), (3, 'FedEx', '2025-07-09')`,
+  )
+  await sql(`UPDATE shipments SET carrier = 'DHL Express' WHERE id = 1`)
+  // TRUNCATE and refill.
+  await sql(`TRUNCATE TABLE audit_log`)
+  await sql(`INSERT INTO audit_log VALUES ('after truncate')`)
+}
+
+async function phaseDdlDocumentedGaps() {
+  // Table rename is documented as quarantine; type changes are not part of
+  // the DDL gate. Exercise both so regressions in the documented behavior
+  // surface as WARN diffs, and improvements flip them to PASS.
+  documentedGapTables.add('audit_log')
+  documentedGapTables.add('audit_history')
+  await sql(`RENAME TABLE audit_log TO audit_history`)
+  await sql(`INSERT INTO audit_history VALUES ('post rename')`)
+  documentedGapTables.add('order_items')
+  await sql(`ALTER TABLE order_items MODIFY qty INT UNSIGNED NOT NULL`)
+  await sql(`UPDATE order_items SET qty = qty + 1 WHERE order_id = 1`)
+}
+
+async function phaseChurn() {
+  const random = mulberry32(0xc0ffee)
+  const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+  let inTransaction = false
+  for (let op = 0; op < 400; op += 1) {
+    if (!inTransaction && random() < 0.1) {
+      await mysqlConnection!.beginTransaction()
+      inTransaction = true
+    }
+    const roll = random()
+    if (roll < 0.45) {
+      const customer = 1 + Math.floor(random() * 40)
+      await sql(
+        `INSERT INTO orders (customer_id, status, total, placed_on) VALUES ` +
+          `(${customer}, '${statuses[Math.floor(random() * 5)]}', ${(random() * 500).toFixed(2)}, ` +
+          `'2025-0${1 + Math.floor(random() * 9)}-0${1 + Math.floor(random() * 9)}')`,
+      )
+    } else if (roll < 0.75) {
+      await sql(
+        `UPDATE orders SET status = '${statuses[Math.floor(random() * 5)]}', ` +
+          `total = total + ${(random() * 10 - 5).toFixed(2)} ` +
+          `WHERE id = (SELECT id FROM (SELECT MIN(id) + FLOOR(RAND(${op}) * (MAX(id) - MIN(id))) AS id FROM orders) pick)`,
+      )
+    } else if (roll < 0.9) {
+      await sql(`DELETE FROM orders WHERE id = (SELECT id FROM (SELECT MIN(id) AS id FROM orders WHERE status = 'cancelled') pick WHERE pick.id IS NOT NULL)`)
+    } else {
+      const customer = 1 + Math.floor(random() * 40)
+      await sql(`UPDATE customers SET balance = balance + ${(random() * 20 - 10).toFixed(2)} WHERE id = ${customer}`)
+    }
+    if (inTransaction && random() < 0.3) {
+      if (random() < 0.15) await mysqlConnection!.rollback()
+      else await mysqlConnection!.commit()
+      inTransaction = false
+    }
+  }
+  if (inTransaction) await mysqlConnection!.commit()
+}
+
+async function phaseRestart() {
+  log('SIGKILLing pintail mid-stream')
+  pintailProcess!.kill(9)
+  await pintailProcess!.exited
+  // Write while the replica is down; the checkpoint must replay all of it.
+  await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (9, 'processing', 123.45, '2025-08-01')`)
+  await sql(`UPDATE customers SET tier = 'enterprise' WHERE id = 9`)
+  await sql(`DELETE FROM orders WHERE id = (SELECT id FROM (SELECT MAX(id) AS id FROM orders) pick)`)
+  await startPintail()
+  await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (10, 'shipped', 67.89, '2025-08-02')`)
+}
+
+// ---------------------------------------------------------------------------
+// Boot.
+
+async function buildPintail(): Promise<string> {
+  if (process.env.PINTAIL_E2E_BINARY) return resolve(process.env.PINTAIL_E2E_BINARY)
+  log('building the release pintail binary')
+  await command(['cargo', 'build', '--release', '-p', 'pintail'])
+  const metadata = await command(['cargo', 'metadata', '--format-version', '1', '--no-deps'], {
+    quiet: true,
+  })
+  return join(JSON.parse(metadata.stdout).target_directory, 'release', 'pintail')
+}
+
+async function startPintail() {
+  pintailWire = undefined
+  pintailProcess = Bun.spawn(
+    [
+      pintailBinary,
+      '--data-dir',
+      pintailDataDir,
+      '--http-bind',
+      `127.0.0.1:${pintailHttpPort}`,
+      '--wire-bind',
+      `127.0.0.1:${pintailWirePort}`,
+    ],
+    { cwd: repository, stdout: 'inherit', stderr: 'inherit' },
+  )
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    try {
+      const response = await fetch(`${pintailUrl}/health`)
+      if (response.ok) return
+    } catch {}
+    await Bun.sleep(500)
+  }
+  throw new Error('pintail did not become healthy within 120 seconds')
+}
+
+async function main() {
+  const host = await dockerHost()
+  log(`starting MySQL source ${mysqlName}`)
+  await docker(
+    'run',
+    '--detach',
+    '--name',
+    mysqlName,
+    '--publish',
+    '0:3306',
+    '--tmpfs',
+    '/var/lib/mysql:rw,size=2g',
+    '--env',
+    'MYSQL_ROOT_PASSWORD=pintail-root',
+    '--env',
+    `MYSQL_DATABASE=${DATABASE}`,
+    'mysql:8.4',
+    '--server-id=942',
+    '--log-bin=mysql-bin',
+    '--binlog-format=ROW',
+    '--binlog-row-image=FULL',
+    '--binlog-row-metadata=FULL',
+    '--gtid-mode=ON',
+    '--enforce-gtid-consistency=ON',
+    '--default-time-zone=+00:00',
+    '--sql-mode=NO_ENGINE_SUBSTITUTION',
+  )
+  mysqlStarted = true
+  const mysqlPort = await publishedPort(mysqlName, 3306)
+  mysqlConnection = await waitForMysql(host, mysqlPort)
+  await sql(`USE ${DATABASE}`)
+  await sql(`CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'`)
+  await sql(
+    `GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'`,
+  )
+
+  pintailBinary = await buildPintail()
+  pintailDataDir = mkdtempSync(join(tmpdir(), 'pintail-e2e-'))
+  pintailHttpPort = await freePort()
+  pintailWirePort = await freePort()
+  pintailUrl = `http://127.0.0.1:${pintailHttpPort}`
+  await startPintail()
+  const setup = await api<{ token: string }>('/api/auth/setup', {
+    method: 'POST',
+    auth: false,
+    body: { email: 'e2e@pintail.local', password: 'e2e-gate-password' },
+  })
+  token = setup.token
+
+  log('seeding the source schema and initial rows')
+  await phaseSeed()
+
+  const database = await api<{ id: string }>('/api/databases', {
+    method: 'POST',
+    body: { name: DATABASE, dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}`, mode: 'cdc' },
+  })
+  databaseId = database.id
+  const apiKey = await api<{ secret: string }>(`/api/databases/${databaseId}/api-keys`, {
+    method: 'POST',
+    body: { name: 'e2e-gate', scopes: ['query', 'read'] },
+  })
+  wireSecret = apiKey.secret
+  await api(`/api/databases/${databaseId}/probe`)
+  const accepted = await api<{ run_id: string }>(`/api/databases/${databaseId}/snapshot`, {
+    method: 'POST',
+    body: { force: false },
+  })
+  log(`snapshot ${accepted.run_id} started`)
+  for (let attempt = 0; ; attempt += 1) {
+    const status = await api<{ state: string; tables: Array<{ name: string; last_error?: string }> }>(
+      `/api/databases/${databaseId}/snapshot/status`,
+    )
+    if (status.state === 'error') {
+      throw new Error(
+        `snapshot failed: ${status.tables.map((t) => t.last_error).filter(Boolean).join('; ')}`,
+      )
+    }
+    if (status.state === 'polling' || status.state === 'streaming') break
+    if (attempt > 600) throw new Error('snapshot did not complete within ten minutes')
+    await Bun.sleep(1000)
+  }
+
+  const phases: Array<[string, () => Promise<void>]> = [
+    ['snapshot', async () => {}],
+    ['crud', phaseCrud],
+    ['type-edges', phaseTypeEdges],
+    ['ddl', phaseDdl],
+    ['churn', phaseChurn],
+    ['restart', phaseRestart],
+    ['ddl-documented-gaps', phaseDdlDocumentedGaps],
+  ]
+  const selected = process.env.E2E_PHASES?.split(',').map((phase) => phase.trim())
+  for (const [name, run] of phases) {
+    if (selected && name !== 'snapshot' && !selected.includes(name)) continue
+    log(`phase: ${name}`)
+    await run()
+    await verifyConvergence(name)
+    await verifyCorpus(name)
+  }
+
+  publish()
+}
+
+function publish() {
+  const failed = results.filter((result) => result.status === 'FAIL')
+  const warned = results.filter((result) => result.status === 'WARN')
+  const passed = results.filter((result) => result.status === 'PASS')
+  const lines = [
+    '# Pintail end-to-end differential gate',
+    '',
+    `Measured ${new Date().toISOString()}.`,
+    '',
+    `**${passed.length} passed, ${failed.length} failed, ${warned.length} documented-gap warnings.**`,
+    '',
+    '| Phase | Check | Status | Detail |',
+    '|---|---|---|---|',
+    ...results.map(
+      (result) =>
+        `| ${result.phase} | ${result.check} | ${result.status} | ${(result.detail ?? '').split('\n')[0].replaceAll('|', '\\|')} |`,
+    ),
+    '',
+  ]
+  writeFileSync(join(import.meta.dir, 'results.md'), lines.join('\n'))
+  writeFileSync(join(import.meta.dir, 'results.json'), JSON.stringify(results, null, 2))
+  log(`gate: ${failed.length === 0 ? 'PASS' : 'FAIL'} (${passed.length} passed, ${failed.length} failed, ${warned.length} warned)`)
+  for (const failure of failed) {
+    log(`  FAIL ${failure.phase}/${failure.check}: ${failure.detail?.split('\n')[0]}`)
+  }
+  if (failed.length > 0) {
+    process.exitCode = 1
+  }
+}
+
+async function cleanup() {
+  try {
+    pintailProcess?.kill()
+  } catch {}
+  try {
+    await mysqlConnection?.end()
+  } catch {}
+  if (mysqlStarted) {
+    try {
+      await docker('rm', '--force', '--volumes', mysqlName)
+    } catch (error) {
+      log(`cleanup: ${error}`)
+    }
+  }
+  if (pintailDataDir) {
+    try {
+      rmSync(pintailDataDir, { recursive: true, force: true })
+    } catch {}
+  }
+}
+
+try {
+  await main()
+} finally {
+  await cleanup()
+}

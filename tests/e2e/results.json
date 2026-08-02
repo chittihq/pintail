@@ -1,0 +1,902 @@
+[
+  {
+    "phase": "snapshot",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:group by with having",
+    "status": "WARN",
+    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+  },
+  {
+    "phase": "churn",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:group by with having",
+    "status": "WARN",
+    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+  },
+  {
+    "phase": "restart",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:audit_history",
+    "status": "WARN",
+    "detail": "pintail query failed: Error: unknown table e2e_db.audit_history"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:order_items",
+    "status": "WARN",
+    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | sku-8 | 7.0000 | 17.8100\n  pintail 1.0000 | 1.0000 | sku-8 | 6.0000 | 17.8100"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:three-way join through items",
+    "status": "SKIP"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:group by with having",
+    "status": "WARN",
+    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  }
+]
