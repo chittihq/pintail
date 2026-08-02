@@ -25,7 +25,10 @@ Pre-1.0. Single node only, with S3-compatible backup and restore, and the
 replica is read-only by design. The parts that exist are tested hard: the
 release gates kill real snapshot and CDC worker processes mid-write and
 verify recovery, and every storage change has to keep a 20-million-row
-benchmark byte-exact. The boundaries we know about are written down in
+benchmark byte-exact. An end-to-end gate (`tests/e2e`) boots a real MySQL
+and the real binary, throws writes, schema changes, and a `kill -9` at
+them, and checks that Pintail still matches MySQL exactly. The boundaries
+we know about are written down in
 [docs/limitations.md](docs/limitations.md). It mirrors your MySQL data, so
 losing a Pintail node loses nothing, but don't make it your only copy of
 anything either.
@@ -41,6 +44,11 @@ Open <http://127.0.0.1:8080>, create the first admin, then choose **Add
 database**. Give it a MySQL DSN reachable from the container, probe it,
 pick CDC or polling (the probe recommends one), and start the snapshot.
 Once the state reads Streaming or Polling, the data is queryable.
+
+CDC needs `ROW` binlogs with full row images; `binlog_row_metadata` can
+stay on its MINIMAL default, which matters on managed MySQL where you
+can't change it. MySQL 5.7, 8.x, and MariaDB all work, and if binlogs are
+off entirely, the probe falls back to polling.
 
 The first boot prints the generated JWT and DSN-encryption secrets once.
 Keep the `pintail-data` volume, and treat its logs as sensitive. The
@@ -85,7 +93,10 @@ with `FINAL`; Pintail always returns the merged answer.
 
 Scans decode in parallel, aggregation runs on per-batch thread-local state,
 and predicated scans decode the filter column first so selective queries
-skip most of the remaining bytes. The longer version is in
+skip most of the remaining bytes. Segments also remember their own counts,
+sums, and min/max, so common aggregates stay fast even while data is
+streaming in — and any shortcut that can't prove it is still exact steps
+aside and lets the scan run. The longer version is in
 [docs/architecture.md](docs/architecture.md) and
 [docs/format.md](docs/format.md).
 
@@ -96,8 +107,11 @@ identically limited containers (8 CPUs, 8 GB each) and requires exact
 result equality plus at least 50x over source MySQL in aggregate. ClickHouse
 runs alongside as the reference we are chasing, measured both as plain
 MergeTree and as ReplacingMergeTree with `FINAL`, which is the honest
-comparison for an always-correct replica. Current numbers are in
-[benchmark/results.md](benchmark/results.md). Reproduce them with:
+comparison for an always-correct replica. As of the latest runs Pintail is
+ahead on all eight; the same file also keeps a cold, never-seen-query
+table where ClickHouse still wins some, published on purpose. Current
+numbers are in [benchmark/results.md](benchmark/results.md). Reproduce
+them with:
 
 ```sh
 (cd benchmark && bun install --frozen-lockfile && bun run benchmark)
