@@ -111,7 +111,7 @@ impl<'catalog> Binder<'catalog> {
         }
 
         let mut bound = self.bind_set_expr(&query.body, &ctes)?;
-        bound.order_by = bind_order_by(query, &bound.projection)?;
+        bind_order_by(query, &mut bound)?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         Ok(bound)
     }
@@ -131,8 +131,8 @@ impl<'catalog> Binder<'catalog> {
                 right,
             } => {
                 let mut left = self.bind_set_expr(left, ctes)?;
-                let right = self.bind_set_expr(right, ctes)?;
-                validate_union_layout(&left, &right)?;
+                let mut right = self.bind_set_expr(right, ctes)?;
+                unify_union_layout(&mut left, &mut right)?;
                 left.union_all.push(right);
                 Ok(left)
             }
@@ -226,6 +226,7 @@ impl<'catalog> Binder<'catalog> {
             having,
             distinct,
             order_by: Vec::new(),
+            hidden_sort_columns: 0,
             union_all: Vec::new(),
             windows,
             limit: None,
@@ -472,23 +473,103 @@ fn reject_duplicate_relation(tables: &[BoundTable], table: &BoundTable) -> Resul
     }
 }
 
-fn validate_union_layout(left: &BoundQuery, right: &BoundQuery) -> Result<(), BindError> {
+fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(), BindError> {
     if left.projection.len() != right.projection.len() {
         return Err(BindError::IncompatibleSetOperation(
             "UNION ALL branches have different column counts".to_owned(),
         ));
     }
-    for (index, (left, right)) in left.projection.iter().zip(&right.projection).enumerate() {
-        if left.expr.data_type != right.expr.data_type {
+    for (index, (left, right)) in left
+        .projection
+        .iter_mut()
+        .zip(&mut right.projection)
+        .enumerate()
+    {
+        let Some(unified) = unify_union_types(left.expr.data_type, right.expr.data_type) else {
             return Err(BindError::IncompatibleSetOperation(format!(
                 "UNION ALL column {} has types {:?} and {:?}",
                 index + 1,
                 left.expr.data_type,
                 right.expr.data_type
             )));
-        }
+        };
+        left.expr.data_type = unified;
+        right.expr.data_type = unified;
+        let nullable = left.expr.nullable || right.expr.nullable;
+        left.expr.nullable = nullable;
+        right.expr.nullable = nullable;
     }
     Ok(())
+}
+
+/// MySQL-style result type for a UNION column pair: equal types pass
+/// through; numeric families widen (values are already Int64/UInt64/Float64
+/// at execution, so widening only fixes the declared metadata). Mixed
+/// signed/UInt64 and cross-kind pairs (text vs number, temporal vs number)
+/// stay rejected.
+fn unify_union_types(
+    left: Option<DataType>,
+    right: Option<DataType>,
+) -> Option<Option<DataType>> {
+    fn unsigned_rank(data_type: DataType) -> Option<u8> {
+        match data_type {
+            DataType::UInt8 => Some(0),
+            DataType::UInt16 => Some(1),
+            DataType::UInt32 => Some(2),
+            DataType::UInt64 => Some(3),
+            _ => None,
+        }
+    }
+    fn signed_rank(data_type: DataType) -> Option<u8> {
+        match data_type {
+            DataType::Boolean | DataType::Int8 => Some(0),
+            DataType::Int16 => Some(1),
+            DataType::Int32 => Some(2),
+            DataType::Int64 => Some(3),
+            _ => None,
+        }
+    }
+    fn is_float(data_type: DataType) -> bool {
+        matches!(data_type, DataType::Float32 | DataType::Float64)
+    }
+    fn is_numeric(data_type: DataType) -> bool {
+        unsigned_rank(data_type).is_some()
+            || signed_rank(data_type).is_some()
+            || is_float(data_type)
+            || matches!(data_type, DataType::Decimal { .. })
+    }
+
+    let (left, right) = match (left, right) {
+        (None, other) | (other, None) => return Some(other),
+        (Some(left), Some(right)) => (left, right),
+    };
+    if left == right {
+        return Some(Some(left));
+    }
+    if let (Some(l), Some(r)) = (unsigned_rank(left), unsigned_rank(right)) {
+        return Some(Some(if l >= r { left } else { right }));
+    }
+    if let (Some(l), Some(r)) = (signed_rank(left), signed_rank(right)) {
+        return Some(Some(if l >= r { left } else { right }));
+    }
+    // Mixed sign: safe as Int64 while the unsigned side fits an i64.
+    let mixed_sign = (signed_rank(left).is_some() && unsigned_rank(right).is_some_and(|r| r < 3))
+        || (unsigned_rank(left).is_some_and(|l| l < 3) && signed_rank(right).is_some());
+    if mixed_sign {
+        return Some(Some(DataType::Int64));
+    }
+    if let (DataType::Decimal { precision: lp, scale: ls }, DataType::Decimal { precision: rp, scale: rs }) =
+        (left, right)
+    {
+        return Some(Some(DataType::Decimal {
+            precision: lp.max(rp),
+            scale: ls.max(rs),
+        }));
+    }
+    if is_numeric(left) && is_numeric(right) && (is_float(left) || is_float(right)) {
+        return Some(Some(DataType::Float64));
+    }
+    None
 }
 
 fn bind_join_operator(
@@ -1994,12 +2075,9 @@ fn bind_limit(limit: &LimitClause) -> Result<BoundLimit, BindError> {
     }
 }
 
-fn bind_order_by(
-    query: &Query,
-    projection: &[BoundProjection],
-) -> Result<Vec<BoundOrderKey>, BindError> {
+fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError> {
     let Some(order_by) = &query.order_by else {
-        return Ok(Vec::new());
+        return Ok(());
     };
     if order_by.interpolate.is_some() {
         return Err(BindError::InvalidOrderBy(order_by.to_string()));
@@ -2007,13 +2085,30 @@ fn bind_order_by(
     let OrderByKind::Expressions(expressions) = &order_by.kind else {
         return Err(BindError::InvalidOrderBy(order_by.to_string()));
     };
-    expressions
+    // MySQL lets ORDER BY reach source columns that never made it into the
+    // select list. That needs a hidden trailing projection column (trimmed
+    // after the sort), which is only sound when the projection is a plain
+    // row-per-row mapping of one scope: aggregation, DISTINCT, windows, and
+    // UNION all change the row set or reject unprojected sorts outright.
+    let allow_hidden = bound.group_by.is_empty()
+        && bound.aggregates.is_empty()
+        && bound.windows.is_empty()
+        && !bound.distinct
+        && bound.union_all.is_empty();
+    let visible = bound.projection.len();
+    let keys = expressions
         .iter()
         .map(|order| {
             if order.with_fill.is_some() {
                 return Err(BindError::InvalidOrderBy(order.to_string()));
             }
-            let index = resolve_order_index(&order.expr, projection)?;
+            let index = resolve_order_index(
+                &order.expr,
+                visible,
+                &mut bound.projection,
+                &bound.tables,
+                allow_hidden,
+            )?;
             let ascending = order.options.asc.unwrap_or(true);
             Ok(BoundOrderKey {
                 index,
@@ -2021,10 +2116,19 @@ fn bind_order_by(
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    bound.order_by = keys;
+    bound.hidden_sort_columns = bound.projection.len() - visible;
+    Ok(())
 }
 
-fn resolve_order_index(expr: &Expr, projection: &[BoundProjection]) -> Result<usize, BindError> {
+fn resolve_order_index(
+    expr: &Expr,
+    visible: usize,
+    projection: &mut Vec<BoundProjection>,
+    tables: &[BoundTable],
+    allow_hidden: bool,
+) -> Result<usize, BindError> {
     if let Expr::Value(value) = expr
         && let SqlValue::Number(value, _) = &value.value
         && !value.contains(['.', 'e', 'E'])
@@ -2034,7 +2138,7 @@ fn resolve_order_index(expr: &Expr, projection: &[BoundProjection]) -> Result<us
             .map_err(|_| BindError::InvalidOrderBy(expr.to_string()))?;
         return ordinal
             .checked_sub(1)
-            .filter(|index| *index < projection.len())
+            .filter(|index| *index < visible)
             .ok_or_else(|| BindError::InvalidOrderBy(expr.to_string()));
     }
 
@@ -2042,17 +2146,39 @@ fn resolve_order_index(expr: &Expr, projection: &[BoundProjection]) -> Result<us
         Expr::Identifier(identifier) => identifier.value.clone(),
         _ => projection_name(expr),
     };
-    let matches = projection
+    let matches = projection[..visible]
         .iter()
         .enumerate()
         .filter(|(_, item)| item.name.eq_ignore_ascii_case(&requested))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     match matches.as_slice() {
-        [index] => Ok(*index),
-        [] => Err(BindError::InvalidOrderBy(expr.to_string())),
-        _ => Err(BindError::AmbiguousOrderBy(requested)),
+        [index] => return Ok(*index),
+        [] => {}
+        _ => return Err(BindError::AmbiguousOrderBy(requested)),
     }
+
+    // Not an output name: try the FROM scope the way MySQL does, first as an
+    // already-projected source column (any alias), then as a hidden sort key.
+    let identifiers = match expr {
+        Expr::Identifier(identifier) => vec![identifier.clone()],
+        Expr::CompoundIdentifier(identifiers) => identifiers.clone(),
+        _ => return Err(BindError::InvalidOrderBy(expr.to_string())),
+    };
+    let Ok(column) = bind_column(&identifiers, tables) else {
+        return Err(BindError::InvalidOrderBy(expr.to_string()));
+    };
+    if let Some(index) = projection.iter().position(|item| item.expr == column) {
+        return Ok(index);
+    }
+    if !allow_hidden {
+        return Err(BindError::InvalidOrderBy(expr.to_string()));
+    }
+    projection.push(BoundProjection {
+        name: format!("<order-{}>", projection.len()),
+        expr: column,
+    });
+    Ok(projection.len() - 1)
 }
 
 fn unsigned_literal(expr: &Expr) -> Result<u64, BindError> {
@@ -2504,9 +2630,40 @@ mod tests {
                 },
             ]
         );
+        // MySQL lets ORDER BY reach unprojected source columns; the binder
+        // appends a hidden trailing sort column trimmed after ordering.
+        let hidden = bind("SELECT Name AS label FROM Events ORDER BY id").expect("hidden sort");
+        assert_eq!(hidden.projection.len(), 2);
+        assert_eq!(hidden.hidden_sort_columns, 1);
+        assert_eq!(hidden.order_by[0].index, 1);
+        let qualified = bind("SELECT e.Name AS label FROM Events e ORDER BY e.id DESC")
+            .expect("qualified hidden sort");
+        assert_eq!(qualified.hidden_sort_columns, 1);
+        assert_eq!(qualified.order_by[0].index, 1);
+        // A qualified ref to an already-projected column reuses its slot.
+        let projected =
+            bind("SELECT e.id AS key_id FROM Events e ORDER BY e.id").expect("projected ref");
+        assert_eq!(projected.hidden_sort_columns, 0);
+        assert_eq!(projected.order_by[0].index, 0);
+        // Aggregated queries keep the strict behavior: no hidden columns.
         assert!(matches!(
-            bind("SELECT Name AS label FROM Events ORDER BY id"),
+            bind("SELECT COUNT(*) AS n FROM Events GROUP BY Name ORDER BY id"),
             Err(BindError::InvalidOrderBy(_))
+        ));
+    }
+
+    #[test]
+    fn union_all_unifies_numeric_branch_types() {
+        // Events.id and users.id share a type; widen one side via CAST-free
+        // literals instead: UInt vs Int literals unify to Int64.
+        let query = bind(
+            "SELECT 1 AS v UNION ALL SELECT -2 ORDER BY v",
+        )
+        .expect("unified union");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Int64));
+        assert!(matches!(
+            bind("SELECT Name AS v FROM Events UNION ALL SELECT id FROM users"),
+            Err(BindError::IncompatibleSetOperation(_))
         ));
     }
 

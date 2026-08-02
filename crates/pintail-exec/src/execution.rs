@@ -118,6 +118,8 @@ pub enum PhysicalPlan {
         keys: Vec<BoundOrderKey>,
         /// Maximum prefix retained before the downstream LIMIT.
         top_k: Option<usize>,
+        /// Trailing hidden sort-only columns dropped after ordering.
+        trim: usize,
     },
     /// Window computations appended as extra columns over sorted partitions.
     Window {
@@ -154,8 +156,12 @@ impl PhysicalPlan {
                 .collect(),
             Self::Filter { input, .. }
             | Self::Distinct { input }
-            | Self::Sort { input, .. }
             | Self::Limit { input, .. } => input.output_fields(),
+            Self::Sort { input, trim, .. } => {
+                let mut fields = input.output_fields();
+                fields.truncate(fields.len().saturating_sub(*trim));
+                fields
+            }
             Self::Window { input, outputs, .. } => {
                 let mut fields = input.output_fields();
                 fields.extend(outputs.iter().map(|column| OutputField {
@@ -307,10 +313,11 @@ impl PhysicalPlanner {
                 windows,
                 outputs,
             }),
-            LogicalPlan::Sort { input, keys } => Ok(PhysicalPlan::Sort {
+            LogicalPlan::Sort { input, keys, trim } => Ok(PhysicalPlan::Sort {
                 input: Box::new(Self::plan(*input)?),
                 keys,
                 top_k: None,
+                trim,
             }),
             LogicalPlan::Join {
                 left,
@@ -353,10 +360,11 @@ impl PhysicalPlanner {
 
 fn plan_limit(input: LogicalPlan, offset: u64, count: u64) -> Result<PhysicalPlan, ExecError> {
     let input = match input {
-        LogicalPlan::Sort { input, keys } => PhysicalPlan::Sort {
+        LogicalPlan::Sort { input, keys, trim } => PhysicalPlan::Sort {
             input: Box::new(PhysicalPlanner::plan(*input)?),
             keys,
             top_k: usize::try_from(offset.saturating_add(count)).ok(),
+            trim,
         },
         input => PhysicalPlanner::plan(input)?,
     };
@@ -1016,6 +1024,7 @@ enum PullOperator {
         keys: Vec<BoundOrderKey>,
         column_types: Vec<DataType>,
         top_k: Option<usize>,
+        trim: usize,
         state: Option<MaterializedRows>,
     },
     Window {
@@ -1327,10 +1336,19 @@ impl PullOperator {
                 keys,
                 column_types,
                 top_k,
+                trim,
                 state,
             } => {
                 if state.is_none() {
-                    *state = Some(build_sort(input, keys, *top_k, memory)?);
+                    let mut sorted = build_sort(input, keys, *top_k, memory)?;
+                    if *trim > 0 {
+                        // Hidden sort-only columns ordered the rows; the
+                        // output layout never contains them.
+                        for row in &mut sorted.rows {
+                            row.truncate(column_types.len());
+                        }
+                    }
+                    *state = Some(sorted);
                 }
                 next_materialized_batch(
                     state.as_mut().expect("initialized above"),
@@ -1610,8 +1628,13 @@ fn build_operator(
                 columns,
             ))
         }
-        PhysicalPlan::Sort { input, keys, top_k } => {
-            let column_types = input
+        PhysicalPlan::Sort {
+            input,
+            keys,
+            top_k,
+            trim,
+        } => {
+            let mut column_types = input
                 .output_fields()
                 .into_iter()
                 .map(|field| field.data_type.unwrap_or(DataType::Utf8))
@@ -1621,13 +1644,17 @@ fn build_operator(
                     "sort key is outside the projected result layout",
                 ));
             }
-            let (input, columns) = build_operator(*input, provider, memory)?;
+            let visible = column_types.len().saturating_sub(trim);
+            column_types.truncate(visible);
+            let (input, mut columns) = build_operator(*input, provider, memory)?;
+            columns.truncate(visible);
             Ok((
                 PullOperator::Sort {
                     input: Box::new(input),
                     keys,
                     column_types,
                     top_k,
+                    trim,
                     state: None,
                 },
                 columns,

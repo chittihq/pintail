@@ -112,6 +112,9 @@ pub enum LogicalPlan {
         input: Box<LogicalPlan>,
         /// Result-layout sort keys.
         keys: Vec<BoundOrderKey>,
+        /// Trailing hidden sort-only columns dropped from the output after
+        /// ordering (ORDER BY over unprojected source columns).
+        trim: usize,
     },
     /// Offset and count.
     Limit {
@@ -180,6 +183,7 @@ impl LogicalPlanner {
             having,
             distinct,
             order_by,
+            hidden_sort_columns,
             union_all,
             windows,
             limit,
@@ -253,6 +257,7 @@ impl LogicalPlanner {
             plan = LogicalPlan::Sort {
                 input: Box::new(plan),
                 keys: order_by,
+                trim: hidden_sort_columns,
             };
         }
         if let Some(limit) = limit {
@@ -458,7 +463,7 @@ mod tests {
         let LogicalPlan::Limit { input, .. } = plan else {
             panic!("limit root");
         };
-        let LogicalPlan::Sort { input, keys } = *input else {
+        let LogicalPlan::Sort { input, keys, .. } = *input else {
             panic!("sort");
         };
         assert_eq!(keys.len(), 1);

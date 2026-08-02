@@ -431,6 +431,9 @@ pub struct BoundQuery {
     pub distinct: bool,
     /// Ordered result-layout sort keys.
     pub order_by: Vec<BoundOrderKey>,
+    /// Trailing projection columns that exist only so ORDER BY can sort by
+    /// unprojected source columns; they are trimmed after the sort.
+    pub hidden_sort_columns: usize,
     /// Additional type-compatible SELECT branches concatenated in source order.
     pub union_all: Vec<BoundQuery>,
     /// Optional normalized row limit.

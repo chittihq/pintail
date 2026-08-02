@@ -197,8 +197,13 @@ fn write_plan(
             writeln!(output, "Window functions={}", windows.len())?;
             write_plan(input, depth + 1, output, provider)
         }
-        PhysicalPlan::Sort { input, keys, top_k } => {
-            writeln!(output, "Sort keys={keys:?} top_k={top_k:?}")?;
+        PhysicalPlan::Sort {
+            input,
+            keys,
+            top_k,
+            trim,
+        } => {
+            writeln!(output, "Sort keys={keys:?} top_k={top_k:?} trim={trim}")?;
             write_plan(input, depth + 1, output, provider)
         }
         PhysicalPlan::Limit {

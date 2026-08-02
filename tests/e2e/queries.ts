@@ -54,20 +54,19 @@ export const differentialQueries: DifferentialQuery[] = [
   {
     name: 'three-way join through items',
     sql:
-      'SELECT c.name, i.product, i.qty, ROUND(i.qty * i.price, 2) AS line_total, ' +
-      'o.id AS order_id, i.line_no AS line_no ' +
+      'SELECT c.name, i.product, i.qty, ROUND(i.qty * i.price, 2) AS line_total ' +
       'FROM order_items i ' +
       'JOIN orders o ON i.order_id = o.id ' +
       'JOIN customers c ON o.customer_id = c.id ' +
-      'ORDER BY line_total DESC, order_id, line_no LIMIT 40',
+      'ORDER BY line_total DESC, o.id, i.line_no LIMIT 40',
     tables: ['order_items', 'orders', 'customers'],
   },
   {
     name: 'union all across sources',
     sql:
-      "SELECT CAST(id AS UNSIGNED) AS entity_id, 'customer' AS kind FROM customers WHERE tier = 'enterprise' " +
+      "SELECT id AS entity_id, 'customer' AS kind FROM customers WHERE tier = 'enterprise' " +
       'UNION ALL ' +
-      "SELECT CAST(id AS UNSIGNED) AS entity_id, 'order' AS kind FROM orders WHERE total > 900 " +
+      "SELECT id AS entity_id, 'order' AS kind FROM orders WHERE total > 900 " +
       'ORDER BY kind, entity_id',
     tables: ['customers', 'orders'],
   },

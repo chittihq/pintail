@@ -115,7 +115,8 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
             windows,
             outputs,
         },
-        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+        LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
+            trim,
             input: Box::new(push_aggregates_through_identity_joins(*input)),
             keys,
         },
@@ -231,7 +232,8 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
             windows,
             outputs,
         },
-        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+        LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
+            trim,
             input: Box::new(replace_metadata_counts(*input)),
             keys,
         },
@@ -316,7 +318,8 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
             windows,
             outputs,
         },
-        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+        LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
+            trim,
             input: Box::new(fold_constants(*input)),
             keys,
         },
@@ -495,7 +498,8 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             windows,
             outputs,
         },
-        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+        LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
+            trim,
             input: Box::new(push_predicates(*input)),
             keys,
         },
@@ -672,7 +676,8 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(reorder_cross_joins(*input)),
         },
-        LogicalPlan::Sort { input, keys } => LogicalPlan::Sort {
+        LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
+            trim,
             input: Box::new(reorder_cross_joins(*input)),
             keys,
         },
