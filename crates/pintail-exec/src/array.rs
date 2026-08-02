@@ -273,17 +273,36 @@ pub struct StrColumn {
     /// Dictionary provenance when built from coded blocks: per-row codes
     /// plus the (small) distinct values, so group-by can key on integers.
     dict: Option<StrDictionary>,
+    /// Per-row views materialize on first TEXT touch when the column came
+    /// from codes: predicates, group keys and DISTINCT read codes only, so
+    /// a 20M-row low-cardinality column never builds 20M views (issue #6).
+    lazy: Option<Box<std::sync::OnceLock<StrBody>>>,
+}
+
+/// Materialized per-row views and their heap.
+#[derive(Clone, Debug, Default)]
+struct StrBody {
+    views: Vec<StrView>,
+    heap: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct StrDictionary {
     codes: Vec<u32>,
     values: Vec<String>,
+    validity: Vec<bool>,
 }
 
 impl StrColumn {
     /// Appends one string.
     pub fn push(&mut self, bytes: &[u8]) {
+        if self.lazy.is_some() {
+            let body = self.body().cloned().unwrap_or_default();
+            self.views = body.views;
+            self.heap = body.heap;
+            self.dict = None;
+            self.lazy = None;
+        }
         let view = StrView::new(bytes, &mut self.heap);
         self.views.push(view);
     }
@@ -291,7 +310,9 @@ impl StrColumn {
     /// Number of strings.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.views.len()
+        self.dict
+            .as_ref()
+            .map_or_else(|| self.views.len(), |dict| dict.codes.len())
     }
 
     /// Whether the column is empty.
@@ -303,13 +324,13 @@ impl StrColumn {
     /// The views for kernel iteration.
     #[must_use]
     pub fn views(&self) -> &[StrView] {
-        &self.views
+        self.body().map_or(&self.views, |body| &body.views)
     }
 
     /// The shared long-string heap.
     #[must_use]
     pub fn heap(&self) -> &[u8] {
-        &self.heap
+        self.body().map_or(&self.heap, |body| &body.heap)
     }
 
     /// Builds a column from dictionary codes: one template view per distinct
@@ -331,33 +352,66 @@ impl StrColumn {
         codes: &[u32],
         validity: &[bool],
     ) -> Self {
-        let mut column = Self {
+        Self {
+            views: Vec::new(),
+            heap: Vec::new(),
             dict: Some(StrDictionary {
                 codes: codes.to_vec(),
                 values: dict_offsets
                     .windows(2)
                     .map(|pair| String::from_utf8_lossy(&dict_heap[pair[0]..pair[1]]).into_owned())
                     .collect(),
+                validity: validity.to_vec(),
             }),
-            ..Self::default()
-        };
-        let templates = dict_offsets
-            .windows(2)
-            .map(|pair| StrView::new(&dict_heap[pair[0]..pair[1]], &mut column.heap))
-            .collect::<Vec<_>>();
-        let empty = StrView::new(&[], &mut column.heap);
-        column.views = codes
-            .iter()
-            .zip(validity)
-            .map(|(code, valid)| {
-                if *valid {
-                    templates[*code as usize]
-                } else {
-                    empty
-                }
-            })
-            .collect();
-        column
+            lazy: Some(Box::new(std::sync::OnceLock::new())),
+        }
+    }
+
+    /// Builds the per-row views on first text touch: one template view per
+    /// distinct entry, then one 16-byte view copy per row.
+    fn body(&self) -> Option<&StrBody> {
+        let lazy = self.lazy.as_ref()?;
+        let dict = self.dict.as_ref()?;
+        Some(lazy.get_or_init(|| {
+            let mut body = StrBody::default();
+            let templates = dict
+                .values
+                .iter()
+                .map(|value| StrView::new(value.as_bytes(), &mut body.heap))
+                .collect::<Vec<_>>();
+            let empty = StrView::new(&[], &mut body.heap);
+            body.views = dict
+                .codes
+                .iter()
+                .zip(&dict.validity)
+                .map(|(code, valid)| {
+                    if *valid {
+                        templates[*code as usize]
+                    } else {
+                        empty
+                    }
+                })
+                .collect();
+            body
+        }))
+    }
+
+    /// Retained bytes WITHOUT forcing materialization: the memory tracker
+    /// must never be the thing that defeats laziness.
+    #[must_use]
+    pub fn byte_size(&self) -> usize {
+        if let Some(dict) = &self.dict {
+            let coded = dict.codes.len() * size_of::<u32>()
+                + dict.validity.len()
+                + dict.values.iter().map(String::len).sum::<usize>();
+            let built = self
+                .lazy
+                .as_ref()
+                .and_then(|lazy| lazy.get())
+                .map_or(0, |body| body.views.len() * 16 + body.heap.len());
+            return coded + built;
+        }
+        self.views.len() * 16 + self.heap.len()
     }
 
     /// Prepares a comparison needle sharing no storage with the column.

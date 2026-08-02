@@ -601,7 +601,7 @@ impl ColumnVector {
             Some((TypedValues::Int64(packed), _)) => packed.capacity() * size_of::<i64>(),
             Some((TypedValues::UInt64(packed), _)) => packed.capacity() * size_of::<u64>(),
             Some((TypedValues::Float64(packed), _)) => packed.capacity() * size_of::<f64>(),
-            Some((TypedValues::Utf8(packed), _)) => packed.len() * 16 + packed.heap().len(),
+            Some((TypedValues::Utf8(packed), _)) => packed.byte_size(),
             Some((
                 TypedValues::Decimal128 {
                     values: packed,
@@ -611,15 +611,11 @@ impl ColumnVector {
                 _,
             )) => {
                 packed.capacity() * size_of::<i128>()
-                    + text
-                        .built()
-                        .map_or(0, |text| text.len() * 16 + text.heap().len())
+                    + text.built().map_or(0, crate::array::StrColumn::byte_size)
             }
             Some((TypedValues::Temporal { units, text }, _)) => {
                 units.capacity() * size_of::<i64>()
-                    + text
-                        .built()
-                        .map_or(0, |text| text.len() * 16 + text.heap().len())
+                    + text.built().map_or(0, crate::array::StrColumn::byte_size)
             }
         };
         let value_bytes = self.values.get().map_or(0, |values| {
