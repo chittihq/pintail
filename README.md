@@ -1,37 +1,32 @@
 # Pintail
 
-Pintail is a columnar analytical database that mirrors your MySQL database
-and answers the queries MySQL is slow at. It ships as one binary: the
-storage engine, the replication pipeline, the SQL engine, a MySQL-compatible
-wire endpoint, and a web dashboard are all inside it.
+Pintail makes slow MySQL reports fast. It keeps a live copy of your
+MySQL database, organized for analytics, and answers the questions MySQL
+struggles with: the report that takes half an hour comes back in well
+under a second. Everything ships in one binary — storage, sync, SQL, a
+MySQL-compatible endpoint, and a web dashboard.
 
-You point it at a MySQL or MariaDB server. It takes a consistent snapshot,
-follows the binlog (or polls, when binlogs are off), and keeps an
-up-to-date columnar copy. The `GROUP BY` over 20 million rows that takes
-MySQL half an hour comes back in seconds. Same data, same MySQL clients.
+You point it at a MySQL or MariaDB server and it copies the data and
+stays in sync on its own. Your existing tools and clients connect to
+Pintail exactly the way they connect to MySQL.
 
-The engine is written from scratch in Rust. No DataFusion, no DuckDB, no
-embedded ClickHouse. That was a deliberate choice: we wanted to own the
-storage format and the executor end to end, and we benchmark every design
-decision instead of assuming (see `experiments/` and
-[docs/decisions.md](docs/decisions.md) for the receipts). Whether that bet
-pays off against ClickHouse is a number you can check in
-[benchmark/results.md](benchmark/results.md), including the queries where
-it currently doesn't.
+The engine is written from scratch in Rust — there is no DuckDB or
+ClickHouse hiding inside. Every design decision is benchmarked instead of
+assumed, and the results are public, including the queries where
+ClickHouse still wins (see
+[benchmark/results.md](benchmark/results.md)).
 
 ## Status
 
 Pre-1.0. Single node only, with S3-compatible backup and restore, and the
-replica is read-only by design. The parts that exist are tested hard: the
-release gates kill real snapshot and CDC worker processes mid-write and
-verify recovery, and every storage change has to keep a 20-million-row
-benchmark byte-exact. An end-to-end gate (`tests/e2e`) boots a real MySQL
-and the real binary, throws writes, schema changes, and a `kill -9` at
-them, and checks that Pintail still matches MySQL exactly. The boundaries
-we know about are written down in
-[docs/limitations.md](docs/limitations.md). It mirrors your MySQL data, so
-losing a Pintail node loses nothing, but don't make it your only copy of
-anything either.
+copy is read-only by design. What exists is tested hard: the test suites
+crash Pintail on purpose in the middle of writes and verify nothing is
+lost, and an end-to-end test boots a real MySQL, throws writes, schema
+changes, and a `kill -9` at it, then checks every table still matches
+exactly. Known limits are written down in
+[docs/limitations.md](docs/limitations.md). Pintail mirrors your MySQL
+data, so losing a Pintail node loses nothing — but don't make it your
+only copy of anything either.
 
 ## Quick start
 
@@ -41,14 +36,13 @@ docker compose logs pintail
 ```
 
 Open <http://127.0.0.1:8080>, create the first admin, then choose **Add
-database**. Give it a MySQL DSN reachable from the container, probe it,
-pick CDC or polling (the probe recommends one), and start the snapshot.
-Once the state reads Streaming or Polling, the data is queryable.
+database**. Give it your MySQL connection string, let Pintail check the
+server (it recommends the best sync mode), and start the first copy. Once
+the state reads Streaming or Polling, you can query.
 
-CDC works with the binlog settings most servers already have, including
+Syncing works with the settings most servers already have, including
 managed MySQL where you can't change them. MySQL 5.7, 8.x, and MariaDB
-all work, and if binlogs are off entirely, the probe falls back to
-polling.
+all work.
 
 The first boot prints the generated JWT and DSN-encryption secrets once.
 Keep the `pintail-data` volume, and treat its logs as sensitive. The
@@ -74,16 +68,14 @@ Use a MySQL 8.4 or MariaDB CLI. Oracle's 9.x CLI dropped the
 `mysql_native_password` client plugin that Pintail's challenge auth uses;
 mysql2, PyMySQL, DBeaver, and Metabase all work.
 
-The SQL surface is the analytical subset of the MySQL dialect: joins,
-subqueries, aggregates, and window functions (`ROW_NUMBER`, `RANK`,
-`DENSE_RANK`, and aggregates over `PARTITION BY` / `ORDER BY`). It is
-checked against real MySQL with an oracle that compares results for 600
-generated and hand-written queries.
+You can use joins, subqueries, aggregates, and window functions — the
+parts of MySQL's dialect that reports are made of. Correctness is checked
+against a real MySQL by comparing the results of 600 test queries.
 
 ## How it works, briefly
 
-Pintail keeps its own columnar copy of your data, built for scanning
-millions of rows at a time, and applies changes from MySQL continuously.
+Pintail keeps its own copy of your data, organized for scanning millions
+of rows at a time, and applies changes from MySQL continuously.
 Every query answers from the up-to-date, merged view — there is no
 "eventually correct" mode, and results stay fast even while data is
 streaming in. If you want the internals, they are written up in
@@ -92,13 +84,10 @@ streaming in. If you want the internals, they are written up in
 
 ## Benchmarks
 
-The release gate replays eight analytical queries over 20,000,000 rows on
-identically limited containers (8 CPUs, 8 GB each) and requires exact
-result equality plus at least 50x over source MySQL in aggregate. ClickHouse
-runs alongside as the reference we are chasing, measured both as plain
-MergeTree and as ReplacingMergeTree with `FINAL`, which is the honest
-comparison for an always-correct replica. From the latest run, warm
-medians over 20 million rows:
+Eight typical reporting queries over 20 million rows, with MySQL,
+Pintail, and ClickHouse each in identical containers (8 CPUs, 8 GB). A
+result only counts if it exactly matches MySQL's answer. From the latest
+run:
 
 | Query | MySQL | Pintail | ClickHouse |
 |---|---:|---:|---:|
@@ -111,17 +100,16 @@ medians over 20 million rows:
 | Regional analytics | 117 s | 170 ms | 294 ms |
 | Join users + orders | 27 min | 173 ms | 631 ms |
 
-Every result is checked for exact equality with MySQL before it counts.
-The same file also keeps a cold, never-seen-query table where ClickHouse
-still wins some, published on purpose. Full numbers are in
-[benchmark/results.md](benchmark/results.md). Reproduce them with:
+The same file also keeps a table of first-time, never-cached queries,
+where ClickHouse still wins some — published on purpose. Full numbers are
+in [benchmark/results.md](benchmark/results.md). Reproduce them with:
 
 ```sh
 (cd benchmark && bun install --frozen-lockfile && bun run benchmark)
 ```
 
-There is also a 30-minute CDC soak at 5,500 events/s with source/replica
-checksums and memory-slope tracking, recorded in
+There is also a 30-minute stress test that streams 5,500 changes per
+second while continuously checking the copy stays identical, recorded in
 [tests/loadgen/results.md](tests/loadgen/results.md).
 
 ## Building from source
