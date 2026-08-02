@@ -2872,6 +2872,42 @@ impl TableSnapshot {
             .then(|| (self.directory.as_path(), self.manifest.generation))
     }
 
+    /// Per-segment SMAs plus residual memtable rows, when the fold is
+    /// provably exact under merge-on-read (WS3-B, docs/decisions.md):
+    /// every segment carries SMAs and zero tombstones, segment key ranges
+    /// are pairwise disjoint (no cross-segment overlays), and every
+    /// memtable row is a pure insert above the whole segment key space.
+    /// Any tombstone, overlap, or update returns `None` — MIN/MAX cannot
+    /// be delta-adjusted under deletes, so the fold never tries.
+    #[must_use]
+    pub fn sma_fold_state(&self) -> Option<(Vec<&crate::segment::SegmentSmas>, Vec<&StoredRow>)> {
+        let mut segments: Vec<&crate::segment::SegmentMeta> =
+            self.manifest.segments.iter().collect();
+        segments.sort_by(|left, right| left.min_key.cmp(&right.min_key));
+        for pair in segments.windows(2) {
+            if pair[1].min_key <= pair[0].max_key {
+                return None;
+            }
+        }
+        let mut smas = Vec::with_capacity(segments.len());
+        for meta in &segments {
+            let sma = meta.smas.as_ref()?;
+            if sma.tombstones != 0 {
+                return None;
+            }
+            smas.push(sma);
+        }
+        let max_segment_key = segments.last().map(|meta| &meta.max_key);
+        let mut rows = Vec::with_capacity(self.memtable.len());
+        for row in self.memtable.values() {
+            if row.is_deleted() || max_segment_key.is_some_and(|max| row.key() <= max) {
+                return None;
+            }
+            rows.push(row);
+        }
+        Some((smas, rows))
+    }
+
     /// The segment-resident identity plus the memtable rows, when every
     /// memtable row is a pure insert above the segment key space (no
     /// tombstones, no updates of segment rows). The delta-maintained

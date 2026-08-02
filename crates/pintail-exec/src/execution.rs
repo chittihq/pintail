@@ -543,6 +543,27 @@ pub trait BatchStream: Send {
     fn insert_only_delta(&self) -> Option<InsertOnlyDelta> {
         None
     }
+
+    /// Per-segment SMAs plus residual memtable rows for a bare full-table
+    /// scan whose fold is provably exact under merge-on-read (WS3-B).
+    /// Default: none.
+    #[must_use]
+    fn sma_fold_input(&self) -> Option<SmaFoldInput> {
+        None
+    }
+}
+
+/// Persistent per-segment SMAs (manifest v2) plus the projected residual
+/// memtable rows: bare COUNT/SUM/AVG/MIN/MAX fold the segment statistics
+/// and aggregate only the residual, so answers stay fast DURING ingest and
+/// across flushes — the case the settled memo cannot serve.
+#[derive(Clone)]
+pub struct SmaFoldInput {
+    /// Projected column ids, index-aligned with aggregate column indexes.
+    pub(crate) column_ids: Vec<u32>,
+    pub(crate) segments: Vec<pintail_store::SegmentSmas>,
+    /// Projected memtable rows above the whole segment key space.
+    pub(crate) rows: Vec<Vec<Value>>,
 }
 
 /// Projected memtable rows riding above a generation-keyed aggregate memo
@@ -2888,6 +2909,19 @@ fn build_hash_aggregate(
             });
         }
     }
+    if group_by.is_empty()
+        && !aggregates.is_empty()
+        && let Some(rows) = try_sma_fold(input, aggregates, memory)?
+    {
+        if let Some(key) = &memo_key {
+            let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
+            if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
+                memo.clear();
+            }
+            memo.insert(key.clone(), rows.clone());
+        }
+        return Ok(MaterializedRows { rows, position: 0 });
+    }
     let result = build_hash_aggregate_scan(input, group_by, aggregates, memory)?;
     if let Some(key) = memo_key
         && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
@@ -2899,6 +2933,313 @@ fn build_hash_aggregate(
         memo.insert(key, result.rows.clone());
     }
     Ok(result)
+}
+
+/// Successful SMA folds since process start: proof of engagement for
+/// tests and `PINTAIL_AGG_DEBUG` diagnostics.
+static SMA_FOLD_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn sma_fold_hits() -> u64 {
+    SMA_FOLD_HITS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Folds per-segment SMAs into finished bare-aggregate states and merges
+/// the residual memtable rows through the normal update path, so the whole
+/// table never rescans while it ingests (WS3-B). Returns `None` whenever
+/// any aggregate, column, or segment falls outside the provably-exact
+/// envelope; the caller then runs the ordinary scan.
+#[allow(clippy::too_many_lines)]
+fn try_sma_fold(
+    input: &mut PullOperator,
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
+    // Only a direct bare Scan qualifies: any Filter above it implies
+    // residual predicates, and the stream then carries no SMA input.
+    let PullOperator::Scan { stream, .. } = &*input else {
+        return Ok(None);
+    };
+    let Some(sma) = stream.sma_fold_input() else {
+        return Ok(None);
+    };
+    let live_rows: u64 = sma.segments.iter().map(|segment| segment.live_rows).sum();
+    let mut states = Vec::with_capacity(aggregates.len());
+    let mut columns = Vec::with_capacity(aggregates.len());
+    for aggregate in aggregates {
+        if aggregate.distinct {
+            return Ok(None);
+        }
+        let column = match &aggregate.expr {
+            None => {
+                if aggregate.function != AggregateFunction::Count {
+                    return Ok(None);
+                }
+                None
+            }
+            Some(expr) => match expr.column_index() {
+                Some(index) => Some(index),
+                None => return Ok(None),
+            },
+        };
+        // Every segment must carry an SMA entry for the queried column;
+        // a schema-evolved segment written before the column existed
+        // declines the fold rather than guessing.
+        let entries = match column {
+            None => Vec::new(),
+            Some(index) => {
+                let Some(id) = sma.column_ids.get(index).copied() else {
+                    return Ok(None);
+                };
+                let mut entries = Vec::with_capacity(sma.segments.len());
+                for segment in &sma.segments {
+                    let Some(entry) = segment
+                        .columns
+                        .iter()
+                        .find(|entry| entry.column_id == id)
+                    else {
+                        return Ok(None);
+                    };
+                    entries.push(entry);
+                }
+                entries
+            }
+        };
+        let mut state = AggregateState::new(aggregate);
+        let synthetic = match aggregate.function {
+            AggregateFunction::Count => {
+                let total = match column {
+                    None => live_rows,
+                    Some(_) => entries.iter().map(|entry| entry.non_null).sum(),
+                };
+                Some(AggregateValue::Count(total))
+            }
+            AggregateFunction::Sum | AggregateFunction::Average => {
+                let mut total: Option<pintail_store::SmaSum> = None;
+                let mut count = 0_u64;
+                let mut foldable = true;
+                for entry in &entries {
+                    if entry.non_null == 0 {
+                        continue;
+                    }
+                    count += entry.non_null;
+                    let Some(sum) = entry.sum else {
+                        foldable = false;
+                        break;
+                    };
+                    total = Some(match (total, sum) {
+                        (None, sum) => sum,
+                        (
+                            Some(pintail_store::SmaSum::Int(left)),
+                            pintail_store::SmaSum::Int(right),
+                        ) => pintail_store::SmaSum::Int(
+                            left.checked_add(right).ok_or(ExecError::NumericOverflow)?,
+                        ),
+                        (
+                            Some(pintail_store::SmaSum::Float(left)),
+                            pintail_store::SmaSum::Float(right),
+                        ) => pintail_store::SmaSum::Float(left + right),
+                        (
+                            Some(pintail_store::SmaSum::DecimalUnits { units, scale }),
+                            pintail_store::SmaSum::DecimalUnits {
+                                units: right,
+                                scale: right_scale,
+                            },
+                        ) if scale == right_scale => pintail_store::SmaSum::DecimalUnits {
+                            units: units.checked_add(right).ok_or(ExecError::NumericOverflow)?,
+                            scale,
+                        },
+                        _ => {
+                            foldable = false;
+                            break;
+                        }
+                    });
+                }
+                if !foldable {
+                    return Ok(None);
+                }
+                match (aggregate.function, total) {
+                    (_, None) => None,
+                    (AggregateFunction::Sum, Some(total)) => match total {
+                        pintail_store::SmaSum::Int(total) => {
+                            let value = match aggregate.data_type.map(DataType::storage_type) {
+                                Some(DataType::UInt64) => {
+                                    Value::UInt64(match u64::try_from(total) {
+                                        Ok(total) => total,
+                                        Err(_) => return Ok(None),
+                                    })
+                                }
+                                Some(DataType::Int64) => {
+                                    Value::Int64(match i64::try_from(total) {
+                                        Ok(total) => total,
+                                        Err(_) => return Ok(None),
+                                    })
+                                }
+                                _ => return Ok(None),
+                            };
+                            Some(AggregateValue::Sum(Some(value)))
+                        }
+                        pintail_store::SmaSum::Float(total) => {
+                            if !total.is_finite() {
+                                return Ok(None);
+                            }
+                            Some(AggregateValue::Sum(Some(Value::float64(total))))
+                        }
+                        pintail_store::SmaSum::DecimalUnits { units, scale } => {
+                            Some(AggregateValue::DecimalSum {
+                                units,
+                                scale,
+                                float_output: aggregate_uses_float(aggregate),
+                            })
+                        }
+                    },
+                    (AggregateFunction::Average, Some(total)) => {
+                        #[allow(clippy::cast_precision_loss)]
+                        let sum = match total {
+                            pintail_store::SmaSum::Int(total) => total as f64,
+                            pintail_store::SmaSum::Float(total) => total,
+                            pintail_store::SmaSum::DecimalUnits { units, scale } => {
+                                units as f64 / 10_f64.powi(i32::from(scale))
+                            }
+                        };
+                        if !sum.is_finite() {
+                            return Ok(None);
+                        }
+                        Some(AggregateValue::Average { sum, count })
+                    }
+                    _ => unreachable!("outer match covers Sum and Average"),
+                }
+            }
+            AggregateFunction::Minimum | AggregateFunction::Maximum => {
+                let mut folded: Option<pintail_store::SmaExtremes> = None;
+                for entry in &entries {
+                    if entry.non_null == 0 {
+                        continue;
+                    }
+                    let Some(extremes) = entry.extremes else {
+                        return Ok(None);
+                    };
+                    folded = Some(match (folded, extremes) {
+                        (None, extremes) => extremes,
+                        (
+                            Some(pintail_store::SmaExtremes::Int { min, max }),
+                            pintail_store::SmaExtremes::Int {
+                                min: right_min,
+                                max: right_max,
+                            },
+                        ) => pintail_store::SmaExtremes::Int {
+                            min: min.min(right_min),
+                            max: max.max(right_max),
+                        },
+                        (
+                            Some(pintail_store::SmaExtremes::UInt { min, max }),
+                            pintail_store::SmaExtremes::UInt {
+                                min: right_min,
+                                max: right_max,
+                            },
+                        ) => pintail_store::SmaExtremes::UInt {
+                            min: min.min(right_min),
+                            max: max.max(right_max),
+                        },
+                        (
+                            Some(pintail_store::SmaExtremes::Float { min, max }),
+                            pintail_store::SmaExtremes::Float {
+                                min: right_min,
+                                max: right_max,
+                            },
+                        ) => pintail_store::SmaExtremes::Float {
+                            min: min.min(right_min),
+                            max: max.max(right_max),
+                        },
+                        (
+                            Some(pintail_store::SmaExtremes::DecimalUnits { min, max, scale }),
+                            pintail_store::SmaExtremes::DecimalUnits {
+                                min: right_min,
+                                max: right_max,
+                                scale: right_scale,
+                            },
+                        ) if scale == right_scale => pintail_store::SmaExtremes::DecimalUnits {
+                            min: min.min(right_min),
+                            max: max.max(right_max),
+                            scale,
+                        },
+                        _ => return Ok(None),
+                    });
+                }
+                match folded {
+                    None => None,
+                    Some(extremes) => {
+                        let minimum = aggregate.function == AggregateFunction::Minimum;
+                        let value = match extremes {
+                            pintail_store::SmaExtremes::Int { min, max } => {
+                                Value::Int64(if minimum { min } else { max })
+                            }
+                            pintail_store::SmaExtremes::UInt { min, max } => {
+                                Value::UInt64(if minimum { min } else { max })
+                            }
+                            pintail_store::SmaExtremes::Float { min, max } => {
+                                Value::float64(if minimum { min } else { max })
+                            }
+                            pintail_store::SmaExtremes::DecimalUnits { min, max, scale } => {
+                                Value::Utf8(pintail_types::format_decimal_scaled(
+                                    if minimum { min } else { max },
+                                    scale,
+                                ))
+                            }
+                        };
+                        Some(if minimum {
+                            AggregateValue::Minimum(Some(value))
+                        } else {
+                            AggregateValue::Maximum(Some(value))
+                        })
+                    }
+                }
+            }
+            AggregateFunction::GroupConcat => return Ok(None),
+        };
+        if let Some(value) = synthetic {
+            state.merge(
+                aggregate,
+                AggregateState {
+                    value,
+                    seen: None,
+                    extreme_number: None,
+                    extreme_units: None,
+                },
+                memory,
+            )?;
+        }
+        states.push(state);
+        columns.push(column);
+    }
+    for row in &sma.rows {
+        for ((state, aggregate), column) in states.iter_mut().zip(aggregates).zip(&columns) {
+            match column {
+                None => state.update(aggregate, &Value::UInt64(1), memory)?,
+                Some(index) => {
+                    let Some(value) = row.get(*index) else {
+                        return Err(ExecError::InvalidBatch(
+                            "SMA residual row does not match the scan projection",
+                        ));
+                    };
+                    state.update(aggregate, value, memory)?;
+                }
+            }
+        }
+    }
+    let row = states
+        .into_iter()
+        .map(|state| state.finish(memory))
+        .collect::<Result<Vec<_>, _>>()?;
+    memory.reserve(estimated_row_payload_bytes(&row))?;
+    SMA_FOLD_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        eprintln!(
+            "[agg] SMA fold: {} segments, {} residual rows",
+            sma.segments.len(),
+            sma.rows.len()
+        );
+    }
+    Ok(Some(vec![row]))
 }
 
 #[allow(clippy::too_many_lines)]

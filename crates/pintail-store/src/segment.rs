@@ -191,6 +191,169 @@ pub(crate) struct SegmentMeta {
     pub(crate) max_key: PrimaryKey,
     pub(crate) bloom: Vec<u8>,
     pub(crate) unique_keys: bool,
+    /// Small materialized aggregates carried in the manifest since format
+    /// v2; `None` for segments recorded by a v1 manifest (they decline the
+    /// aggregate fast path and scan normally).
+    pub(crate) smas: Option<SegmentSmas>,
+}
+
+/// Per-segment small materialized aggregates (WS3-B): enough to fold bare
+/// COUNT/SUM/AVG/MIN/MAX over a segment without touching its blocks, as
+/// long as merge-on-read cannot overlay the segment (no tombstones inside,
+/// no newer key in its range — the caller checks both).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SegmentSmas {
+    /// Rows that survive merge-on-read within this segment alone.
+    pub live_rows: u64,
+    /// Delete markers stored in this segment. Any tombstone disables the
+    /// fold: MIN/MAX cannot be delta-adjusted under deletes.
+    pub tombstones: u64,
+    /// One entry per schema column that carries foldable statistics.
+    pub columns: Vec<ColumnSma>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColumnSma {
+    /// Schema column id (stable across projection and evolution).
+    pub column_id: u32,
+    /// Live rows whose value is non-NULL.
+    pub non_null: u64,
+    pub sum: Option<SmaSum>,
+    pub extremes: Option<SmaExtremes>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SmaSum {
+    /// Exact integer total (i128 cannot overflow from u64/i64 addends).
+    Int(i128),
+    Float(f64),
+    /// Exact decimal total in scaled units.
+    DecimalUnits { units: i128, scale: u8 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SmaExtremes {
+    Int { min: i64, max: i64 },
+    UInt { min: u64, max: u64 },
+    Float { min: f64, max: f64 },
+    DecimalUnits { min: i128, max: i128, scale: u8 },
+}
+
+/// Computes per-column SMAs for a segment's rows. Columns whose type or
+/// contents fall outside the supported statistics keep only the non-NULL
+/// count, which still answers COUNT(column).
+pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> SegmentSmas {
+    let tombstones = rows.iter().filter(|row| row.is_deleted()).count() as u64;
+    let live_rows = rows.len() as u64 - tombstones;
+    let columns = schema
+        .columns()
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let mut non_null = 0_u64;
+            let mut int_sum = Some(0_i128);
+            let mut int_extremes: Option<(i128, i128)> = None;
+            let mut float_sum = Some(0.0_f64);
+            let mut float_extremes: Option<(f64, f64)> = None;
+            let decimal_scale = match column.data_type() {
+                DataType::Decimal { scale, .. } => Some(scale),
+                _ => None,
+            };
+            // One numeric family per column; the first value outside it
+            // clears every statistic except the non-NULL count.
+            let mut family: Option<u8> = None;
+            let mut supported = true;
+            for row in rows {
+                if row.is_deleted() {
+                    continue;
+                }
+                let value = &row.values()[index];
+                if matches!(value, Value::Null) {
+                    continue;
+                }
+                non_null += 1;
+                if !supported {
+                    continue;
+                }
+                let observed = match (value, decimal_scale) {
+                    (Value::Utf8(text), Some(scale)) => {
+                        pintail_types::parse_decimal_scaled(text, scale).map(|units| (3, units, 0.0))
+                    }
+                    (Value::Int64(value), None) => Some((1, i128::from(*value), 0.0)),
+                    (Value::UInt64(value), None) => Some((2, i128::from(*value), 0.0)),
+                    (Value::Float64(value), None) => Some((4, 0, value.get())),
+                    _ => None,
+                };
+                let Some((kind, integer, float)) = observed else {
+                    supported = false;
+                    continue;
+                };
+                if *family.get_or_insert(kind) != kind {
+                    supported = false;
+                    continue;
+                }
+                if kind == 4 {
+                    float_sum = float_sum
+                        .map(|sum| sum + float)
+                        .filter(|sum| sum.is_finite());
+                    float_extremes = Some(match float_extremes {
+                        Some((min, max)) => (min.min(float), max.max(float)),
+                        None => (float, float),
+                    });
+                } else {
+                    int_sum = int_sum.and_then(|sum| sum.checked_add(integer));
+                    int_extremes = Some(match int_extremes {
+                        Some((min, max)) => (min.min(integer), max.max(integer)),
+                        None => (integer, integer),
+                    });
+                }
+            }
+            let (sum, extremes) = if !supported || non_null == 0 {
+                (None, None)
+            } else {
+                match family {
+                    Some(1) => (
+                        int_sum.map(SmaSum::Int),
+                        int_extremes.map(|(min, max)| SmaExtremes::Int {
+                            min: i64::try_from(min).expect("i64 addends"),
+                            max: i64::try_from(max).expect("i64 addends"),
+                        }),
+                    ),
+                    Some(2) => (
+                        int_sum.map(SmaSum::Int),
+                        int_extremes.map(|(min, max)| SmaExtremes::UInt {
+                            min: u64::try_from(min).expect("u64 addends"),
+                            max: u64::try_from(max).expect("u64 addends"),
+                        }),
+                    ),
+                    Some(3) => {
+                        let scale = decimal_scale.expect("decimal family implies scale");
+                        (
+                            int_sum.map(|units| SmaSum::DecimalUnits { units, scale }),
+                            int_extremes
+                                .map(|(min, max)| SmaExtremes::DecimalUnits { min, max, scale }),
+                        )
+                    }
+                    Some(4) => (
+                        float_sum.map(SmaSum::Float),
+                        float_extremes.map(|(min, max)| SmaExtremes::Float { min, max }),
+                    ),
+                    _ => (None, None),
+                }
+            };
+            ColumnSma {
+                column_id: column.id(),
+                non_null,
+                sum,
+                extremes,
+            }
+        })
+        .collect();
+    SegmentSmas {
+        live_rows,
+        tombstones,
+        columns,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -586,6 +749,7 @@ pub(crate) fn write(
         max_key,
         bloom,
         unique_keys,
+        smas: Some(compute_segment_smas(schema, rows)),
     })
 }
 

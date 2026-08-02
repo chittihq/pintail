@@ -6,12 +6,14 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::{
     StoreError,
     codec::{Decoder, Encoder, decode_key, encode_key},
-    segment::{SegmentMeta, schema_fingerprint, sync_directory},
+    segment::{ColumnSma, SegmentMeta, SegmentSmas, SmaExtremes, SmaSum, schema_fingerprint, sync_directory},
 };
 
 pub(crate) const FILE_NAME: &str = "manifest.ptm";
 const MAGIC: &[u8; 5] = b"PTMAN";
-const FORMAT_VERSION: u8 = 1;
+/// v2 adds optional per-segment SMAs; v1 manifests still decode (their
+/// segments carry no SMAs and decline the aggregate fast path).
+const FORMAT_VERSION: u8 = 2;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Manifest {
@@ -79,11 +81,10 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
     {
         return Err(StoreError::corrupt_manifest(0, "invalid magic"));
     }
-    if decoder
+    let format_version = decoder
         .u8()
-        .map_err(|reason| corrupt_here(&decoder, reason))?
-        != FORMAT_VERSION
-    {
+        .map_err(|reason| corrupt_here(&decoder, reason))?;
+    if !(1..=FORMAT_VERSION).contains(&format_version) {
         return Err(corrupt_here(&decoder, "unsupported format version"));
     }
     let generation = decoder
@@ -156,6 +157,11 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
                 ));
             }
         };
+        let smas = if format_version >= 2 {
+            decode_smas(&mut decoder)?
+        } else {
+            None
+        };
         segments.push(SegmentMeta {
             id,
             file_name,
@@ -167,6 +173,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
             max_key,
             bloom,
             unique_keys,
+            smas,
         });
     }
     decoder
@@ -251,6 +258,7 @@ pub(crate) fn encode(manifest: &Manifest) -> Result<Vec<u8>, StoreError> {
         encode_key(&mut encoder, &segment.max_key)?;
         encoder.bytes(&segment.bloom, "segment primary-key bloom")?;
         encoder.u8(u8::from(segment.unique_keys));
+        encode_smas(&mut encoder, segment.smas.as_ref())?;
     }
     let checksum = xxh3_64(encoder.as_slice());
     encoder.u64(checksum);
@@ -259,6 +267,157 @@ pub(crate) fn encode(manifest: &Manifest) -> Result<Vec<u8>, StoreError> {
 
 fn corrupt_here(decoder: &Decoder<'_>, reason: impl Into<String>) -> StoreError {
     StoreError::corrupt_manifest(decoder.position(), reason)
+}
+
+fn encode_i128(encoder: &mut Encoder, value: i128) {
+    #[allow(clippy::cast_sign_loss)]
+    let bits = value as u128;
+    encoder.u64(bits as u64);
+    encoder.u64((bits >> 64) as u64);
+}
+
+fn decode_i128(decoder: &mut Decoder<'_>) -> Result<i128, StoreError> {
+    let low = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
+    let high = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
+    #[allow(clippy::cast_possible_wrap)]
+    Ok(((u128::from(high) << 64) | u128::from(low)) as i128)
+}
+
+fn encode_smas(encoder: &mut Encoder, smas: Option<&SegmentSmas>) -> Result<(), StoreError> {
+    let Some(smas) = smas else {
+        encoder.u8(0);
+        return Ok(());
+    };
+    encoder.u8(1);
+    encoder.u64(smas.live_rows);
+    encoder.u64(smas.tombstones);
+    encoder.length(smas.columns.len(), "segment SMA column count")?;
+    for column in &smas.columns {
+        encoder.u32(column.column_id);
+        encoder.u64(column.non_null);
+        match column.sum {
+            None => encoder.u8(0),
+            Some(SmaSum::Int(total)) => {
+                encoder.u8(1);
+                encode_i128(encoder, total);
+            }
+            Some(SmaSum::Float(total)) => {
+                encoder.u8(2);
+                encoder.u64(total.to_bits());
+            }
+            Some(SmaSum::DecimalUnits { units, scale }) => {
+                encoder.u8(3);
+                encode_i128(encoder, units);
+                encoder.u8(scale);
+            }
+        }
+        match column.extremes {
+            None => encoder.u8(0),
+            Some(SmaExtremes::Int { min, max }) => {
+                encoder.u8(1);
+                #[allow(clippy::cast_sign_loss)]
+                {
+                    encoder.u64(min as u64);
+                    encoder.u64(max as u64);
+                }
+            }
+            Some(SmaExtremes::UInt { min, max }) => {
+                encoder.u8(2);
+                encoder.u64(min);
+                encoder.u64(max);
+            }
+            Some(SmaExtremes::Float { min, max }) => {
+                encoder.u8(3);
+                encoder.u64(min.to_bits());
+                encoder.u64(max.to_bits());
+            }
+            Some(SmaExtremes::DecimalUnits { min, max, scale }) => {
+                encoder.u8(4);
+                encode_i128(encoder, min);
+                encode_i128(encoder, max);
+                encoder.u8(scale);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_smas(decoder: &mut Decoder<'_>) -> Result<Option<SegmentSmas>, StoreError> {
+    match decoder.u8().map_err(|reason| corrupt_here(decoder, reason))? {
+        0 => return Ok(None),
+        1 => {}
+        tag => {
+            return Err(corrupt_here(decoder, format!("invalid SMA presence {tag}")));
+        }
+    }
+    let live_rows = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
+    let tombstones = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
+    let column_count = decoder.u32().map_err(|reason| corrupt_here(decoder, reason))?;
+    let mut columns = Vec::with_capacity(column_count as usize);
+    for _ in 0..column_count {
+        let column_id = decoder.u32().map_err(|reason| corrupt_here(decoder, reason))?;
+        let non_null = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?;
+        let sum = match decoder.u8().map_err(|reason| corrupt_here(decoder, reason))? {
+            0 => None,
+            1 => Some(SmaSum::Int(decode_i128(decoder)?)),
+            2 => Some(SmaSum::Float(f64::from_bits(
+                decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+            ))),
+            3 => {
+                let units = decode_i128(decoder)?;
+                let scale = decoder.u8().map_err(|reason| corrupt_here(decoder, reason))?;
+                Some(SmaSum::DecimalUnits { units, scale })
+            }
+            tag => {
+                return Err(corrupt_here(decoder, format!("invalid SMA sum tag {tag}")));
+            }
+        };
+        let extremes = match decoder.u8().map_err(|reason| corrupt_here(decoder, reason))? {
+            0 => None,
+            1 => {
+                #[allow(clippy::cast_possible_wrap)]
+                let min = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))? as i64;
+                #[allow(clippy::cast_possible_wrap)]
+                let max = decoder.u64().map_err(|reason| corrupt_here(decoder, reason))? as i64;
+                Some(SmaExtremes::Int { min, max })
+            }
+            2 => Some(SmaExtremes::UInt {
+                min: decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                max: decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+            }),
+            3 => Some(SmaExtremes::Float {
+                min: f64::from_bits(
+                    decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                ),
+                max: f64::from_bits(
+                    decoder.u64().map_err(|reason| corrupt_here(decoder, reason))?,
+                ),
+            }),
+            4 => {
+                let min = decode_i128(decoder)?;
+                let max = decode_i128(decoder)?;
+                let scale = decoder.u8().map_err(|reason| corrupt_here(decoder, reason))?;
+                Some(SmaExtremes::DecimalUnits { min, max, scale })
+            }
+            tag => {
+                return Err(corrupt_here(
+                    decoder,
+                    format!("invalid SMA extremes tag {tag}"),
+                ));
+            }
+        };
+        columns.push(ColumnSma {
+            column_id,
+            non_null,
+            sum,
+            extremes,
+        });
+    }
+    Ok(Some(SegmentSmas {
+        live_rows,
+        tombstones,
+        columns,
+    }))
 }
 
 fn encode_key_mode(key_mode: KeyMode) -> u8 {

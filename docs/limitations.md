@@ -151,6 +151,15 @@ plausible but incorrect result.
   values, negative TIME, JSON, Unicode, binary data, BIT values, Boolean
   values, and narrow integers.
 
+- Persistent per-segment SMAs (manifest v2) answer bare
+  COUNT/SUM/AVG/MIN/MAX without scanning while replication ingests, but
+  only when the fold is provably exact: no tombstones, pairwise-disjoint
+  segment key ranges, memtable strictly above the segment key space, no
+  unique-key visibility, no predicates, no GROUP BY, no DISTINCT.
+  Everything else scans normally. Grouped sub-cubes and predicate-covered
+  blocks are deliberate follow-ups; v1 manifests (no SMAs) stay readable
+  and simply decline the fold.
+
 ## DDL and polling
 - Polling converges source state; it cannot reproduce intermediate states that
   exist entirely between cycles. Hard deletes on cursor tables remain visible

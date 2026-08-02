@@ -232,10 +232,34 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 retained_bytes: stream_overhead,
                 remaining: None,
                 settled: None,
+                sma: None,
                 delta: None,
             }));
         };
         let unique_keys = self.unique_visibility.get(&key);
+        // Bounded residual so the eager projection clone stays cheap for
+        // scans that never fold; unique-key visibility changes merge-on-read
+        // semantics, so those tables decline. Both the streamed and the
+        // materialized scan paths carry the same fold input.
+        #[allow(clippy::items_after_statements)]
+        const SMA_RESIDUAL_ROW_CAP: usize = 16_384;
+        let sma = (scan.predicates.is_empty() && scan.limit.is_none() && unique_keys.is_none())
+            .then(|| snapshot.sma_fold_state())
+            .flatten()
+            .filter(|(_, rows)| rows.len() <= SMA_RESIDUAL_ROW_CAP)
+            .map(|(smas, rows)| crate::execution::SmaFoldInput {
+                column_ids: scan.projected_column_ids.clone(),
+                segments: smas.into_iter().cloned().collect(),
+                rows: rows
+                    .iter()
+                    .map(|row| {
+                        output_positions
+                            .iter()
+                            .map(|position| row.values()[*position].clone())
+                            .collect()
+                    })
+                    .collect(),
+            });
         let mut physical_column_ids = scan.projected_column_ids.clone();
         if let Some(unique_keys) = unique_keys {
             for column_id in unique_keys.iter().flatten() {
@@ -321,6 +345,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     )
                 }),
                 delta,
+                sma,
             }));
         }
         let projected = snapshot
@@ -389,6 +414,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             remaining: None,
             settled: None,
             delta: None,
+            sma,
         }))
     }
 }
@@ -674,11 +700,18 @@ struct SnapshotStream {
     /// Insert-only memtable rows above the segment identity, when the memo
     /// can merge them (bare scan, bounded delta).
     delta: Option<crate::execution::InsertOnlyDelta>,
+    /// Per-segment SMAs + residual memtable rows when the bare-aggregate
+    /// fold is provably exact (WS3-B); `None` otherwise.
+    sma: Option<crate::execution::SmaFoldInput>,
 }
 
 impl BatchStream for SnapshotStream {
     fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, String)> {
         self.settled.clone()
+    }
+
+    fn sma_fold_input(&self) -> Option<crate::execution::SmaFoldInput> {
+        self.sma.clone()
     }
 
     fn insert_only_delta(&self) -> Option<crate::execution::InsertOnlyDelta> {
@@ -2676,6 +2709,142 @@ mod tests {
             };
             assert_eq!(row[3], Value::UInt64(id_sum), "id sums stay exact");
         }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn sma_fold_answers_bare_aggregates_during_ingest_and_declines_on_overlap() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "amount", DataType::Int64, true),
+                Column::new(
+                    3,
+                    "price",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    true,
+                ),
+            ],
+        )
+        .expect("schema");
+        let sma_row = |id: u64, amount: Option<i64>, price: &str| {
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                vec![
+                    Value::UInt64(id),
+                    amount.map_or(Value::Null, Value::Int64),
+                    Value::Utf8(price.to_owned()),
+                ],
+                id,
+                false,
+            )
+        };
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        // Two disjoint segments, each carrying manifest-v2 SMAs.
+        table
+            .bulk_ingest_snapshot((1..=500).map(|id| sma_row(id, Some(2), "1.25")).collect())
+            .expect("first segment");
+        table
+            .bulk_ingest_snapshot(
+                (501..=1000)
+                    .map(|id| sma_row(id, if id % 2 == 0 { None } else { Some(4) }, "0.75"))
+                    .collect(),
+            )
+            .expect("second segment");
+        let database_id = DatabaseId::new(31);
+        let table_id = TableId::new(37);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema.clone(),
+            TableStatistics::with_row_count(1000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let aggregate = |table: &TableStore| {
+            let snapshot = table.snapshot();
+            let provider =
+                SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+            execute_rows(
+                "SELECT COUNT(id), COUNT(amount), SUM(amount), MIN(amount), MAX(amount),                  SUM(price), MIN(price), MAX(price), AVG(amount)                  FROM events",
+                &catalog,
+                &provider,
+            )
+            .remove(0)
+        };
+        // 500 rows of amount=2 plus 250 odd rows of amount=4 (evens NULL).
+        let expect_settled = |row: &[Value]| {
+            assert_eq!(row[0], Value::UInt64(1000), "COUNT(id)");
+            assert_eq!(row[1], Value::UInt64(750), "COUNT(amount)");
+            assert_eq!(row[2], Value::Int64(2000), "SUM(amount)");
+            assert_eq!(row[3], Value::Int64(2), "MIN(amount)");
+            assert_eq!(row[4], Value::Int64(4), "MAX(amount)");
+            assert_eq!(row[5], Value::float64(1000.0), "SUM(price)");
+            assert_eq!(row[6], Value::Utf8("0.75".to_owned()), "MIN(price)");
+            assert_eq!(row[7], Value::Utf8("1.25".to_owned()), "MAX(price)");
+        };
+        let hits_before = crate::execution::sma_fold_hits();
+        let settled = aggregate(&table);
+        expect_settled(&settled);
+        assert!(
+            crate::execution::sma_fold_hits() > hits_before,
+            "settled bare aggregates must fold segment SMAs"
+        );
+        // SMAs are persistent: a reopened store decodes them from the v2
+        // manifest. (The settled memo may still serve the reopened query —
+        // same directory and generation — so assert on the store API.)
+        drop(table);
+        let mut table = TableStore::open(directory.path(), schema, StoreOptions::default())
+            .expect("reopen table");
+        {
+            let snapshot = table.snapshot();
+            let (segments, residual) = snapshot
+                .sma_fold_state()
+                .expect("reopened manifest carries decodable SMAs");
+            assert_eq!(segments.iter().map(|sma| sma.live_rows).sum::<u64>(), 1000);
+            assert!(residual.is_empty());
+        }
+        expect_settled(&aggregate(&table));
+        // Pure inserts above the segment key space: the fold aggregates the
+        // residual memtable rows and stays exact DURING ingest.
+        table
+            .ingest_cdc(vec![sma_row(1001, Some(10), "2.00")])
+            .expect("cdc insert");
+        let hits_before = crate::execution::sma_fold_hits();
+        let during_ingest = aggregate(&table);
+        assert!(
+            crate::execution::sma_fold_hits() > hits_before,
+            "insert-only ingest must keep folding"
+        );
+        assert_eq!(during_ingest[0], Value::UInt64(1001));
+        assert_eq!(during_ingest[1], Value::UInt64(751));
+        assert_eq!(during_ingest[2], Value::Int64(2010));
+        assert_eq!(during_ingest[4], Value::Int64(10), "MAX sees the new row");
+        assert_eq!(during_ingest[5], Value::float64(1002.0));
+        assert_eq!(during_ingest[7], Value::Utf8("2.00".to_owned()));
+        // An update of an EXISTING key overlaps the segment key space: the
+        // fold must refuse (merge-on-read overlay) and the scan stays exact.
+        table
+            .ingest_cdc(vec![sma_row(5, Some(100), "9.99")])
+            .expect("cdc update");
+        let hits_before = crate::execution::sma_fold_hits();
+        let overlaid = aggregate(&table);
+        assert_eq!(
+            crate::execution::sma_fold_hits(),
+            hits_before,
+            "overlapping memtable keys must decline the fold"
+        );
+        assert_eq!(overlaid[0], Value::UInt64(1001), "count unchanged");
+        assert_eq!(overlaid[2], Value::Int64(2108), "updated amount replaces 2");
+        assert_eq!(overlaid[4], Value::Int64(100));
+        assert_eq!(overlaid[7], Value::Utf8("9.99".to_owned()));
     }
 
     #[test]
