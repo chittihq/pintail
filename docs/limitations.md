@@ -126,6 +126,14 @@ plausible but incorrect result.
 - Binlog text transcoding currently covers utf8mb4/utf8mb3, ASCII, and MySQL
   latin1 (cp1252). Another source charset is quarantined through the DLQ
   instead of being silently interpreted.
+- `binlog_row_metadata` may be MINIMAL (or absent, as on MySQL 5.7 and
+  MariaDB): column identity is ordinal against the probed
+  `information_schema` schema, enum/set labels and charsets come from the
+  probed declarations, and unsigned integers are reinterpreted at their
+  declared width because MINIMAL row events omit the SIGNEDNESS field. The
+  hard CDC requirements remain `binlog_format=ROW` and
+  `binlog_row_image=FULL`; a non-FULL row image demotes the source to
+  polling.
 - Versions reserve 16 bits for the intra-transaction mutation ordinal. GTID
   sequences must fit 48 bits. File/position versions support a 16-bit numeric
   file suffix and 32-bit event offset. A source transaction above 65,535

@@ -17,7 +17,7 @@ use mysql_async::{Opts, Pool, prelude::Queryable};
 use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
 use pintail_poll::{PollTarget, run_cdc_reconciliation};
-use pintail_probe::{ProbeReport, probe};
+use pintail_probe::{ProbeReport, RecommendedMode, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreOptions, TableSnapshot, TableStore};
 use pintail_types::{Column, Value};
@@ -1003,6 +1003,20 @@ async fn cdc_compatibility_matrix_covers_file_position_mariadb_and_myisam() {
             ],
         },
         CompatibilityVariant {
+            label: "mysql84-minimal-metadata",
+            image: "mysql:8.4",
+            client: "mysql",
+            arguments: &[
+                "--server-id=286",
+                "--log-bin=mysql-bin",
+                "--binlog-format=ROW",
+                "--binlog-row-image=FULL",
+                "--binlog-row-metadata=MINIMAL",
+                "--default-time-zone=+00:00",
+                "--sql-mode=NO_ENGINE_SUBSTITUTION",
+            ],
+        },
+        CompatibilityVariant {
             label: "mysql57-filepos",
             image: "mysql:5.7",
             client: "mysql",
@@ -1057,6 +1071,20 @@ async fn run_compatibility_variant(variant: &CompatibilityVariant) {
     let report = probe(&pool, "app")
         .await
         .unwrap_or_else(|error| panic!("{} probe: {error}", variant.label));
+    // Every matrix source is CDC-capable: ROW + FULL row image + grants.
+    // binlog_row_metadata (absent on 5.7/MariaDB, MINIMAL in the dedicated
+    // variant) must not demote the recommendation — the decoder works from
+    // the probed schema, not binlog optional metadata.
+    assert!(
+        matches!(
+            report.capabilities.recommended_mode,
+            RecommendedMode::Cdc
+        ),
+        "{} expected a CDC recommendation, got {:?}: {:?}",
+        variant.label,
+        report.capabilities.recommended_mode,
+        report.capabilities.reasons
+    );
     let workspace = tempfile::tempdir().expect("compatibility workspace");
     let metadata_path = workspace.path().join("pintail-meta.db");
     MetaStore::open(&metadata_path)
@@ -1185,6 +1213,27 @@ fn assert_compatibility_rows(label: &str, targets: &[CdcTarget]) {
         Value::Utf8("red,blue".to_owned()),
         "{label}"
     );
+    // Unsigned boundary values must decode bit-exactly through the binlog
+    // regardless of binlog_row_metadata: the CDC UPDATE rewrote row 1 and the
+    // CDC INSERT created row 3, so both row images crossed the decoder.
+    for (column, updated, inserted) in [
+        ("utiny_value", 200_u64, 255_u64),
+        ("usmall_value", 65_535, 65_534),
+        ("umedium_value", 16_777_215, 16_777_214),
+        ("uint_value", 3_000_000_000, 4_294_967_295),
+        ("ubig_value", u64::MAX, 9_223_372_036_854_775_808),
+    ] {
+        assert_eq!(
+            rows[0].values()[columns[column]],
+            Value::UInt64(updated),
+            "{label} {column} update image"
+        );
+        assert_eq!(
+            rows[1].values()[columns[column]],
+            Value::UInt64(inserted),
+            "{label} {column} insert image"
+        );
+    }
     let myisam = targets["myisam_events"]
         .store()
         .snapshot()
@@ -1638,13 +1687,20 @@ fn compatibility_schema() -> &'static str {
        set_value SET('red','green','blue'),\
        bit_value BIT(9),\
        binary_value VARBINARY(8),\
-       blob_value BLOB\
+       blob_value BLOB,\
+       utiny_value TINYINT UNSIGNED,\
+       usmall_value SMALLINT UNSIGNED,\
+       umedium_value MEDIUMINT UNSIGNED,\
+       uint_value INT UNSIGNED,\
+       ubig_value BIGINT UNSIGNED\
      ) DEFAULT CHARACTER SET utf8mb4;\
      INSERT INTO compat_events VALUES \
        (1,'before',0.0000000000,'1000-01-01','2024-02-29 12:34:56.123456',\
-        '1970-01-01 00:00:01.000001','plain','alpha','green',b'0',X'',X''),\
+        '1970-01-01 00:00:01.000001','plain','alpha','green',b'0',X'',X'',\
+        200,65535,16777215,3000000000,18446744073709551615),\
        (2,'delete',1.0000000000,'2000-01-01','2000-01-01 00:00:00.000000',\
-        '2000-01-01 00:00:00.000000','plain','alpha','green',b'1',0x01,0x02);\
+        '2000-01-01 00:00:00.000000','plain','alpha','green',b'1',0x01,0x02,\
+        0,0,0,0,0);\
      CREATE TABLE myisam_events (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64)) \
        ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4;\
      INSERT INTO myisam_events VALUES (1,'before');"
@@ -1657,7 +1713,8 @@ fn compatibility_mutations() -> &'static str {
        INSERT INTO compat_events VALUES (\
          3,'inserted',1234567890123456789012345678.1234567890,\
          '0000-00-00','0000-00-00 00:00:00.000000','0000-00-00 00:00:00.000000',\
-         _latin1 0x636166E9,'βeta','red,blue',b'101010101',0x00FF10,0xDEADBEEF\
+         _latin1 0x636166E9,'βeta','red,blue',b'101010101',0x00FF10,0xDEADBEEF,\
+         255,65534,16777214,4294967295,9223372036854775808\
        );\
      COMMIT;\
      INSERT INTO myisam_events VALUES (2,'temporary');\

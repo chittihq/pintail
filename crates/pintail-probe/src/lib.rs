@@ -494,7 +494,9 @@ fn derive_capabilities(
     let has_grant =
         |name: &str| has_all || normalized_grants.iter().any(|grant| grant.contains(name));
     let replication_stream = has_grant("REPLICATION SLAVE") || has_grant("REPLICATION REPLICA");
-    let replication_position = has_grant("REPLICATION CLIENT");
+    // MariaDB 10.5 renamed REPLICATION CLIENT to BINLOG MONITOR, and its
+    // SHOW GRANTS reports the new name even when the old one was granted.
+    let replication_position = has_grant("REPLICATION CLIENT") || has_grant("BINLOG MONITOR");
     let replication_grants = replication_stream && replication_position;
     let global_read_lock =
         has_all || (has_grant("RELOAD") && has_grant("LOCK TABLES")) || has_grant("FLUSH_TABLES");
@@ -520,7 +522,12 @@ fn derive_capabilities(
         reasons.push("binlog_row_image is not FULL".to_owned());
     }
     if !full_row_metadata {
-        reasons.push("binlog_row_metadata is not FULL".to_owned());
+        // Informational, not disqualifying: the CDC decoder takes column
+        // identity, signedness, enum/set labels, and charsets from the probed
+        // schema, so MINIMAL row metadata decodes identically to FULL.
+        reasons.push(
+            "binlog_row_metadata is MINIMAL; CDC decodes from the probed schema".to_owned(),
+        );
     }
     if !replication_grants {
         reasons.push("replication stream/client grants are incomplete".to_owned());
@@ -531,7 +538,7 @@ fn derive_capabilities(
                 .to_owned(),
         );
     }
-    let cdc = log_bin && row_binlog && full_row_image && full_row_metadata && replication_grants;
+    let cdc = log_bin && row_binlog && full_row_image && replication_grants;
     SourceCapabilities {
         log_bin,
         row_binlog,

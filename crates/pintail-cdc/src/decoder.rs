@@ -82,6 +82,30 @@ fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlV
         return Ok(value);
     }
     let mysql_type = column.mysql_data_type.to_ascii_lowercase();
+    // binlog_row_metadata=MINIMAL omits the SIGNEDNESS field, so the binlog
+    // decoder yields every unsigned integer column as signed — negative once
+    // the value crosses the signed midpoint. The probed declaration is the
+    // authority: reinterpret the two's-complement bits at the column's width.
+    // Under FULL metadata unsigned columns arrive as UInt and this never fires.
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    if let MysqlValue::Int(signed) = value
+        && column
+            .mysql_column_type
+            .to_ascii_lowercase()
+            .contains("unsigned")
+    {
+        let reinterpreted = match mysql_type.as_str() {
+            "tinyint" => Some(u64::from(signed as u8)),
+            "smallint" => Some(u64::from(signed as u16)),
+            "mediumint" => Some(u64::from(signed as u32 & 0x00FF_FFFF)),
+            "int" | "integer" => Some(u64::from(signed as u32)),
+            "bigint" => Some(signed as u64),
+            _ => None,
+        };
+        if let Some(reinterpreted) = reinterpreted {
+            return Ok(MysqlValue::UInt(reinterpreted));
+        }
+    }
     if mysql_type == "enum" {
         let index = numeric_index(&value).ok_or_else(|| {
             CdcError::Decode(format!("{}.{} ENUM index is invalid", "<row>", column.name))
@@ -340,6 +364,45 @@ mod tests {
             MysqlValue::Bytes(b"red,blue".to_vec())
         );
         assert_eq!(set_bits(&MysqlValue::Bytes(vec![1, 1])), Some(257));
+    }
+
+    #[test]
+    fn reinterprets_minimal_metadata_unsigned_integers() {
+        // Under binlog_row_metadata=MINIMAL every unsigned column decodes as
+        // signed; the probed declaration recovers the true value bit-exactly.
+        let cases: [(&str, &str, i64, u64); 6] = [
+            ("tinyint", "tinyint unsigned", -56, 200),
+            ("smallint", "smallint unsigned", -1, 65_535),
+            ("mediumint", "mediumint unsigned", -1, 16_777_215),
+            ("int", "int unsigned", -1_294_967_296, 3_000_000_000),
+            ("bigint", "bigint unsigned", -1, u64::MAX),
+            ("bigint", "bigint unsigned", i64::MIN, 9_223_372_036_854_775_808),
+        ];
+        for (data_type, column_type, signed, expected) in cases {
+            let unsigned_column = column(data_type, column_type);
+            assert_eq!(
+                adapt_binlog_value(&unsigned_column, MysqlValue::Int(signed))
+                    .expect("unsigned reinterpretation"),
+                MysqlValue::UInt(expected),
+                "{column_type} {signed}"
+            );
+        }
+        // In-range positives normalize to UInt without changing value.
+        let int_column = column("int", "int unsigned");
+        assert_eq!(
+            adapt_binlog_value(&int_column, MysqlValue::Int(42)).expect("in-range"),
+            MysqlValue::UInt(42)
+        );
+        // Signed columns and FULL-metadata UInt values pass through untouched.
+        let signed_column = column("int", "int");
+        assert_eq!(
+            adapt_binlog_value(&signed_column, MysqlValue::Int(-56)).expect("signed"),
+            MysqlValue::Int(-56)
+        );
+        assert_eq!(
+            adapt_binlog_value(&int_column, MysqlValue::UInt(3_000_000_000)).expect("full"),
+            MysqlValue::UInt(3_000_000_000)
+        );
     }
 
     #[test]
