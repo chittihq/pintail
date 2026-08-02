@@ -1575,6 +1575,31 @@ fn build_operator(
                         .map(|aggregate| aggregate.data_type.unwrap_or(DataType::Utf8)),
                 )
                 .collect();
+            // The aggregate's output schema is positional (group keys, then
+            // aggregate results). Downstream operators that sit between the
+            // aggregate and the final projection — the window operator — need
+            // real column entries so their own type layout and appended
+            // outputs line up; synthetic identities keep Column resolution
+            // unambiguous, matching the window-output convention.
+            let output_columns = group_by
+                .iter()
+                .map(|expression| (expression.data_type, expression.nullable))
+                .chain(
+                    aggregates
+                        .iter()
+                        .map(|aggregate| (aggregate.data_type, aggregate.nullable)),
+                )
+                .enumerate()
+                .map(|(index, (data_type, nullable))| BoundColumn {
+                    database_id: DatabaseId::new(u64::MAX),
+                    table_id: TableId::new(u64::MAX - 1),
+                    column_id: u32::try_from(index).unwrap_or(u32::MAX),
+                    relation_name: "<aggregate>".to_owned(),
+                    name: format!("<aggregate-{index}>"),
+                    data_type: data_type.unwrap_or(DataType::Utf8),
+                    nullable,
+                })
+                .collect();
             let group_by = group_by
                 .iter()
                 .map(|expression| CompiledExpr::compile(expression, &columns))
@@ -1591,7 +1616,7 @@ fn build_operator(
                     column_types,
                     state: None,
                 },
-                Vec::new(),
+                output_columns,
             ))
         }
         PhysicalPlan::Project { input, expressions } => {
@@ -5305,22 +5330,34 @@ struct StringIntern {
 
 impl StringIntern {
     fn intern(&mut self, bytes: &[u8], memory: &MemoryTracker) -> Result<u64, ExecError> {
-        if let Some(id) = self.index.get(bytes) {
+        // Group keys unify under the same case-insensitive rule the
+        // sequential path applies (compare_utf8_mysql): fold to lowercase
+        // for identity, keep the first-seen spelling for output — exactly
+        // what MySQL's ci collations return for GROUP BY.
+        let value = std::str::from_utf8(bytes)
+            .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?;
+        let folded: Vec<u8> = if value.is_ascii() {
+            bytes.to_ascii_lowercase()
+        } else {
+            value
+                .chars()
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+                .into_bytes()
+        };
+        if let Some(id) = self.index.get(&folded) {
             return Ok(*id);
         }
         let id = u64::try_from(self.values.len()).expect("intern ids fit u64");
         memory.reserve(
             bytes
                 .len()
-                .saturating_mul(2)
+                .saturating_mul(3)
                 .saturating_add(HASH_ENTRY_OVERHEAD)
                 .saturating_add(size_of::<String>() + size_of::<u64>()),
         )?;
-        self.index.insert(bytes.to_vec(), id);
-        self.values.push(
-            String::from_utf8(bytes.to_vec())
-                .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?,
-        );
+        self.index.insert(folded, id);
+        self.values.push(value.to_owned());
         Ok(id)
     }
 }
