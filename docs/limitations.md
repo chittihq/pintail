@@ -64,6 +64,10 @@ plausible but incorrect result.
   each step to its own result scale while MySQL carries extra unrounded
   digits between steps. Numeric overflow returns an error.
 
+- `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and
+  error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses
+  en_US grouping only (no locale argument).
+
 ### Planning and execution
 
 - Storage predicate-to-key-range translation requires an explicitly declared

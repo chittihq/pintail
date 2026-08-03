@@ -641,7 +641,7 @@ impl CompiledExpr {
                 };
                 let first = string(0);
                 let output = match function {
-                    ScalarFunction::Concat => args
+                    ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .fold(0_usize, usize::saturating_add),
@@ -650,6 +650,9 @@ impl CompiledExpr {
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
+                    | ScalarFunction::Reverse
+                    | ScalarFunction::Unhex
+                    | ScalarFunction::FromBase64
                     | ScalarFunction::Cast(_) => first,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate => string_arguments.saturating_mul(12),
@@ -657,7 +660,7 @@ impl CompiledExpr {
                         first.saturating_add(first.saturating_add(1).saturating_mul(string(2)))
                     }
                     ScalarFunction::If => string(1).max(string(2)),
-                    ScalarFunction::Coalesce => args
+                    ScalarFunction::Coalesce | ScalarFunction::Elt => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .max()
@@ -666,7 +669,11 @@ impl CompiledExpr {
                     | ScalarFunction::CurrentDate
                     | ScalarFunction::Date
                     | ScalarFunction::DateInterval { .. }
-                    | ScalarFunction::FromUnixTime => 64,
+                    | ScalarFunction::FromUnixTime
+                    | ScalarFunction::Abs { .. }
+                    | ScalarFunction::Greatest { .. }
+                    | ScalarFunction::Least { .. }
+                    | ScalarFunction::Format => 64,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
                         .iter()
@@ -693,12 +700,19 @@ impl CompiledExpr {
                     | ScalarFunction::Log2
                     | ScalarFunction::Log10
                     | ScalarFunction::Truncate
+                    | ScalarFunction::Instr
+                    | ScalarFunction::FindInSet
+                    | ScalarFunction::Ascii
+                    | ScalarFunction::Ord
+                    | ScalarFunction::Field
                     | ScalarFunction::TimestampDiff { .. } => 0,
-                    // Decimal text results are bounded by precision 38 plus
-                    // sign and point.
-                    ScalarFunction::Abs { .. }
-                    | ScalarFunction::Greatest { .. }
-                    | ScalarFunction::Least { .. } => 48,
+                    ScalarFunction::Repeat
+                    | ScalarFunction::Space
+                    | ScalarFunction::Lpad
+                    | ScalarFunction::Rpad => STRING_BUILD_CAP,
+                    ScalarFunction::Hex | ScalarFunction::ToBase64 => {
+                        first.saturating_mul(2).saturating_add(24)
+                    }
                 };
                 argument_memory.saturating_add(output)
             }
@@ -727,7 +741,7 @@ impl CompiledExpr {
                 };
                 let first = bound(0);
                 match function {
-                    ScalarFunction::Concat => args
+                    ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .fold(0_usize, usize::saturating_add),
@@ -736,13 +750,16 @@ impl CompiledExpr {
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
+                    | ScalarFunction::Reverse
+                    | ScalarFunction::Unhex
+                    | ScalarFunction::FromBase64
                     | ScalarFunction::Cast(_) => first,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Replace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(bound(2)))
                     }
                     ScalarFunction::If => bound(1).max(bound(2)),
-                    ScalarFunction::Coalesce => args
+                    ScalarFunction::Coalesce | ScalarFunction::Elt => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .max()
@@ -752,7 +769,11 @@ impl CompiledExpr {
                     | ScalarFunction::Date
                     | ScalarFunction::DateInterval { .. }
                     | ScalarFunction::DateFormat
-                    | ScalarFunction::FromUnixTime => 64,
+                    | ScalarFunction::FromUnixTime
+                    | ScalarFunction::Abs { .. }
+                    | ScalarFunction::Greatest { .. }
+                    | ScalarFunction::Least { .. }
+                    | ScalarFunction::Format => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::Locate
@@ -774,10 +795,19 @@ impl CompiledExpr {
                     | ScalarFunction::Log2
                     | ScalarFunction::Log10
                     | ScalarFunction::Truncate
+                    | ScalarFunction::Instr
+                    | ScalarFunction::FindInSet
+                    | ScalarFunction::Ascii
+                    | ScalarFunction::Ord
+                    | ScalarFunction::Field
                     | ScalarFunction::TimestampDiff { .. } => 24,
-                    ScalarFunction::Abs { .. }
-                    | ScalarFunction::Greatest { .. }
-                    | ScalarFunction::Least { .. } => 48,
+                    ScalarFunction::Repeat
+                    | ScalarFunction::Space
+                    | ScalarFunction::Lpad
+                    | ScalarFunction::Rpad => STRING_BUILD_CAP,
+                    ScalarFunction::Hex | ScalarFunction::ToBase64 => {
+                        first.saturating_mul(2).saturating_add(24)
+                    }
                 }
             }
         }
@@ -964,7 +994,13 @@ fn evaluate_eager_scalar(
     if values.iter().any(|value| matches!(value, Value::Null))
         && !matches!(
             function,
-            ScalarFunction::InList { .. } | ScalarFunction::NullIf
+            ScalarFunction::InList { .. }
+                | ScalarFunction::NullIf
+                // NULL arguments are data, not poison, for these: CONCAT_WS
+                // skips them, ELT/FIELD treat them positionally.
+                | ScalarFunction::ConcatWs
+                | ScalarFunction::Elt
+                | ScalarFunction::Field
         )
     {
         return Ok(Value::Null);
@@ -1131,6 +1167,132 @@ fn evaluate_eager_scalar(
                 });
             }
             Ok(best.cloned().unwrap_or(Value::Null))
+        }
+        ScalarFunction::ConcatWs => {
+            if matches!(values[0], Value::Null) {
+                return Ok(Value::Null);
+            }
+            let separator = scalar_string(&values[0])?;
+            let parts = values[1..]
+                .iter()
+                .filter(|value| !matches!(value, Value::Null))
+                .map(scalar_string)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Value::Utf8(parts.join(&separator)))
+        }
+        ScalarFunction::Reverse => Ok(Value::Utf8(
+            scalar_string(&values[0])?.chars().rev().collect(),
+        )),
+        ScalarFunction::Repeat => {
+            let text = scalar_string(&values[0])?;
+            let count = mysql_i64(&values[1])?;
+            if count <= 0 {
+                return Ok(Value::Utf8(String::new()));
+            }
+            repeat_capped(&text, count)
+        }
+        ScalarFunction::Space => {
+            let count = mysql_i64(&values[0])?;
+            if count <= 0 {
+                return Ok(Value::Utf8(String::new()));
+            }
+            repeat_capped(" ", count)
+        }
+        ScalarFunction::Lpad | ScalarFunction::Rpad => {
+            let text = scalar_string(&values[0])?;
+            let target = mysql_i64(&values[1])?;
+            let pad = scalar_string(&values[2])?;
+            mysql_pad(
+                &text,
+                target,
+                &pad,
+                matches!(function, ScalarFunction::Lpad),
+            )
+        }
+        ScalarFunction::Instr => {
+            let haystack = scalar_string(&values[0])?.to_lowercase();
+            let needle = scalar_string(&values[1])?.to_lowercase();
+            Ok(Value::UInt64(locate(&needle, &haystack, 1)))
+        }
+        ScalarFunction::FindInSet => {
+            let needle = scalar_string(&values[0])?;
+            let list = scalar_string(&values[1])?;
+            if needle.contains(',') {
+                return Ok(Value::UInt64(0));
+            }
+            let position = list
+                .split(',')
+                .position(|entry| compare_utf8_mysql(entry, &needle) == Ordering::Equal)
+                .map_or(0, |index| index as u64 + 1);
+            Ok(Value::UInt64(if list.is_empty() { 0 } else { position }))
+        }
+        ScalarFunction::Ascii => Ok(Value::UInt64(
+            scalar_string(&values[0])?
+                .bytes()
+                .next()
+                .map_or(0, u64::from),
+        )),
+        ScalarFunction::Ord => {
+            let text = scalar_string(&values[0])?;
+            let Some(first) = text.chars().next() else {
+                return Ok(Value::UInt64(0));
+            };
+            // MySQL: the leading character's bytes read big-endian.
+            let mut buffer = [0_u8; 4];
+            let encoded = first.encode_utf8(&mut buffer).as_bytes();
+            Ok(Value::UInt64(encoded.iter().fold(0_u64, |total, byte| {
+                total.wrapping_mul(256).wrapping_add(u64::from(*byte))
+            })))
+        }
+        ScalarFunction::Hex => match &values[0] {
+            Value::Int64(signed) => Ok(Value::Utf8(format!("{signed:X}"))),
+            Value::UInt64(unsigned) => Ok(Value::Utf8(format!("{unsigned:X}"))),
+            Value::Binary(bytes) => Ok(Value::Utf8(hex_upper(bytes))),
+            value => Ok(Value::Utf8(hex_upper(scalar_string(value)?.as_bytes()))),
+        },
+        ScalarFunction::Unhex => {
+            let text = scalar_string(&values[0])?;
+            Ok(unhex(&text).map_or(Value::Null, Value::Binary))
+        }
+        ScalarFunction::Elt => {
+            let index = mysql_i64(&values[0])?;
+            if index < 1 {
+                return Ok(Value::Null);
+            }
+            match values.get(usize::try_from(index).unwrap_or(usize::MAX)) {
+                Some(Value::Null) | None => Ok(Value::Null),
+                Some(value) => Ok(Value::Utf8(scalar_string(value)?)),
+            }
+        }
+        ScalarFunction::Field => {
+            if matches!(values[0], Value::Null) {
+                return Ok(Value::UInt64(0));
+            }
+            let needle = scalar_string(&values[0])?;
+            for (index, value) in values[1..].iter().enumerate() {
+                if !matches!(value, Value::Null)
+                    && compare_utf8_mysql(&scalar_string(value)?, &needle) == Ordering::Equal
+                {
+                    return Ok(Value::UInt64(index as u64 + 1));
+                }
+            }
+            Ok(Value::UInt64(0))
+        }
+        ScalarFunction::Format => {
+            let value = mysql_f64(&values[0])?;
+            let digits = mysql_i64(&values[1])?.clamp(0, 30);
+            Ok(Value::Utf8(format_grouped(
+                value,
+                usize::try_from(digits).expect("clamped to usize range"),
+            )))
+        }
+        ScalarFunction::ToBase64 => {
+            let text = scalar_string(&values[0])?;
+            Ok(Value::Utf8(base64_encode(text.as_bytes())))
+        }
+        ScalarFunction::FromBase64 => {
+            let text = scalar_string(&values[0])?;
+            Ok(base64_decode(&text).map_or(Value::Null, Value::Binary))
         }
         ScalarFunction::Round => {
             let value = mysql_f64(&values[0])?;
@@ -1527,6 +1689,147 @@ fn decimal_units_of(value: &Value) -> Option<(i128, u8)> {
         Value::UInt64(unsigned) => Some((i128::from(*unsigned), 0)),
         _ => None,
     }
+}
+
+/// `REPEAT`/`SPACE`/pad results are capped at 4096 bytes
+/// (`docs/limitations.md`); `MySQL`'s cap is `max_allowed_packet`.
+const STRING_BUILD_CAP: usize = 4096;
+
+fn repeat_capped(text: &str, count: i64) -> Result<Value, ExecError> {
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    let bytes = text.len().saturating_mul(count);
+    if bytes > STRING_BUILD_CAP {
+        return Err(ExecError::NumericOverflow);
+    }
+    Ok(Value::Utf8(text.repeat(count)))
+}
+
+fn mysql_pad(text: &str, target: i64, pad: &str, left: bool) -> Result<Value, ExecError> {
+    if target < 0 {
+        return Ok(Value::Null);
+    }
+    let target = usize::try_from(target).unwrap_or(usize::MAX);
+    if target > STRING_BUILD_CAP {
+        return Err(ExecError::NumericOverflow);
+    }
+    let length = text.chars().count();
+    if target <= length {
+        return Ok(Value::Utf8(text.chars().take(target).collect()));
+    }
+    if pad.is_empty() {
+        // MySQL returns NULL when padding is required but empty.
+        return Ok(Value::Null);
+    }
+    let filler = pad
+        .chars()
+        .cycle()
+        .take(target - length)
+        .collect::<String>();
+    Ok(Value::Utf8(if left {
+        format!("{filler}{text}")
+    } else {
+        format!("{text}{filler}")
+    }))
+}
+
+fn hex_upper(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        output.push(char::from(DIGITS[usize::from(byte & 0x0F)]));
+    }
+    output
+}
+
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    let padded = if text.len() % 2 == 0 {
+        text.to_owned()
+    } else {
+        format!("0{text}")
+    };
+    (0..padded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&padded[index..index + 2], 16).ok())
+        .collect()
+}
+
+/// `en_US` thousands grouping with fixed fraction digits, `MySQL` `FORMAT`.
+fn format_grouped(value: f64, digits: usize) -> String {
+    let formatted = format!("{value:.digits$}");
+    let (sign, rest) = formatted
+        .strip_prefix('-')
+        .map_or(("", formatted.as_str()), |rest| ("-", rest));
+    let (integer, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+    let mut grouped = String::with_capacity(integer.len() + integer.len() / 3);
+    for (index, digit) in integer.chars().enumerate() {
+        if index > 0 && (integer.len() - index) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    if fraction.is_empty() {
+        format!("{sign}{grouped}")
+    } else {
+        format!("{sign}{grouped}.{fraction}")
+    }
+}
+
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let mut word = 0_u32;
+        for (index, byte) in chunk.iter().enumerate() {
+            word |= u32::from(*byte) << (16 - 8 * index);
+        }
+        for position in 0..4 {
+            if position <= chunk.len() {
+                let index = usize::try_from((word >> (18 - 6 * position)) & 0x3F)
+                    .expect("six bits fit usize");
+                output.push(char::from(BASE64_ALPHABET[index]));
+            } else {
+                output.push('=');
+            }
+        }
+    }
+    output
+}
+
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let cleaned = text
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if cleaned.len() % 4 != 0 {
+        return None;
+    }
+    let value_of = |byte: u8| -> Option<u32> {
+        BASE64_ALPHABET
+            .iter()
+            .position(|candidate| *candidate == byte)
+            .and_then(|position| u32::try_from(position).ok())
+    };
+    let mut output = Vec::with_capacity(cleaned.len() / 4 * 3);
+    for chunk in cleaned.chunks(4) {
+        let padding = chunk.iter().rev().take_while(|byte| **byte == b'=').count();
+        if padding > 2 || chunk[..4 - padding].contains(&b'=') {
+            return None;
+        }
+        let mut word = 0_u32;
+        for (index, byte) in chunk.iter().enumerate() {
+            let bits = if *byte == b'=' { 0 } else { value_of(*byte)? };
+            word |= bits << (18 - 6 * index);
+        }
+        for position in 0..(3 - padding) {
+            output.push(
+                u8::try_from((word >> (16 - 8 * position)) & 0xFF).expect("eight bits fit u8"),
+            );
+        }
+    }
+    Some(output)
 }
 
 fn mysql_substring(value: &str, start: i64, length: i64) -> String {

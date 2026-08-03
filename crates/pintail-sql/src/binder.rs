@@ -1517,6 +1517,7 @@ fn bind_window_function(
     })
 }
 
+#[allow(clippy::too_many_lines)] // a flat name-dispatch table reads best unsplit
 fn bind_scalar_function(
     function: &Function,
     tables: &[BoundTable],
@@ -1598,6 +1599,23 @@ fn bind_scalar_function(
         "LOG2" if args.len() == 1 => ScalarFunction::Log2,
         "LOG10" if args.len() == 1 => ScalarFunction::Log10,
         "TRUNCATE" if args.len() == 2 => ScalarFunction::Truncate,
+        "CONCAT_WS" if args.len() >= 2 => ScalarFunction::ConcatWs,
+        "REVERSE" if args.len() == 1 => ScalarFunction::Reverse,
+        "REPEAT" if args.len() == 2 => ScalarFunction::Repeat,
+        "SPACE" if args.len() == 1 => ScalarFunction::Space,
+        "LPAD" if args.len() == 3 => ScalarFunction::Lpad,
+        "RPAD" if args.len() == 3 => ScalarFunction::Rpad,
+        "INSTR" if args.len() == 2 => ScalarFunction::Instr,
+        "FIND_IN_SET" if args.len() == 2 => ScalarFunction::FindInSet,
+        "ASCII" if args.len() == 1 => ScalarFunction::Ascii,
+        "ORD" if args.len() == 1 => ScalarFunction::Ord,
+        "HEX" if args.len() == 1 => ScalarFunction::Hex,
+        "UNHEX" if args.len() == 1 => ScalarFunction::Unhex,
+        "ELT" if args.len() >= 2 => ScalarFunction::Elt,
+        "FIELD" if args.len() >= 2 => ScalarFunction::Field,
+        "FORMAT" if args.len() == 2 => ScalarFunction::Format,
+        "TO_BASE64" if args.len() == 1 => ScalarFunction::ToBase64,
+        "FROM_BASE64" if args.len() == 1 => ScalarFunction::FromBase64,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
             decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
@@ -1943,6 +1961,7 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
     }
 }
 
+#[allow(clippy::too_many_lines)] // a flat type-dispatch table reads best unsplit
 fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundExpr, BindError> {
     let (data_type, nullable) = match function {
         ScalarFunction::Concat
@@ -2008,6 +2027,32 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         ),
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. } => (
             common_result_type(&args)?,
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::ConcatWs => (Some(DataType::Utf8), args[0].nullable),
+        ScalarFunction::Reverse
+        | ScalarFunction::Repeat
+        | ScalarFunction::Space
+        | ScalarFunction::Lpad
+        | ScalarFunction::Rpad
+        | ScalarFunction::Format
+        | ScalarFunction::ToBase64 => (
+            Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        // NULL out of range / on malformed input, like MySQL.
+        ScalarFunction::Elt => (Some(DataType::Utf8), true),
+        ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
+        ScalarFunction::Instr
+        | ScalarFunction::FindInSet
+        | ScalarFunction::Ascii
+        | ScalarFunction::Ord
+        | ScalarFunction::Field => (
+            Some(DataType::UInt64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::Hex => (
+            Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::TimestampDiff { .. } => (

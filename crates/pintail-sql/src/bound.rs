@@ -189,6 +189,41 @@ pub enum ScalarFunction {
         /// Whether operands unified to DECIMAL and compare numerically.
         decimal: bool,
     },
+    /// `CONCAT_WS(separator, ...)`: NULL arguments are skipped, a NULL
+    /// separator returns NULL.
+    ConcatWs,
+    /// `REVERSE(str)` by characters.
+    Reverse,
+    /// `REPEAT(str, count)`; results are capped at 4096 bytes.
+    Repeat,
+    /// `SPACE(n)`; capped like `REPEAT`.
+    Space,
+    /// `LPAD(str, len, pad)`; capped like `REPEAT`.
+    Lpad,
+    /// `RPAD(str, len, pad)`; capped like `REPEAT`.
+    Rpad,
+    /// `INSTR(str, substr)`: `LOCATE` with swapped arguments.
+    Instr,
+    /// `FIND_IN_SET(needle, comma_list)`.
+    FindInSet,
+    /// `ASCII(str)`: first byte, 0 for empty.
+    Ascii,
+    /// `ORD(str)`: numeric value of the leading character's bytes.
+    Ord,
+    /// `HEX(value)`: uppercase hex of string bytes or integer value.
+    Hex,
+    /// `UNHEX(str)`: binary from hex text, NULL when malformed.
+    Unhex,
+    /// `ELT(n, ...)`: 1-based pick, NULL out of range.
+    Elt,
+    /// `FIELD(needle, ...)`: 1-based position, 0 when absent.
+    Field,
+    /// `FORMAT(x, d)`: `en_US` grouping with `d` fraction digits.
+    Format,
+    /// `TO_BASE64(str)`.
+    ToBase64,
+    /// `FROM_BASE64(str)`: NULL when malformed.
+    FromBase64,
     /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
     /// `to`, truncated toward zero, matching `MySQL`.
     TimestampDiff {

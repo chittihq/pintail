@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 639;
+const EXPECTED_CASES: usize = 645;
 
 struct OracleCase {
     family: &'static str,
@@ -939,6 +939,38 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "numeric scalars",
             "SELECT id, IFNULL(note, 'none'), IFNULL(NULL, id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string scalars",
+            "SELECT id, CONCAT_WS('-', name, note, NULL), CONCAT_WS(NULL, name, note) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "string scalars",
+            "SELECT id, REVERSE(name), REPEAT(note, 2), SPACE(3), LPAD(id, 6, '0'), \
+             RPAD(name, 12, '.') FROM events ORDER BY id",
+        ),
+        ordered(
+            "string scalars",
+            "SELECT id, INSTR(name, 'event'), INSTR(name, 'zzz'), FIND_IN_SET('b', 'a,b,c'), \
+             FIND_IN_SET('d', 'a,b,c'), FIND_IN_SET(note, 'Alpha,beta') \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "string scalars",
+            "SELECT id, ASCII(name), ORD(name), HEX(name), HEX(id), UNHEX('414243'), \
+             UNHEX('zz') FROM events WHERE id <= 3 ORDER BY id",
+        ),
+        ordered(
+            "string scalars",
+            "SELECT id, ELT(2, 'a', 'b', 'c'), ELT(9, 'a'), FIELD('b', 'a', 'b'), \
+             FIELD('z', 'a', 'b'), FORMAT(1234567.8915, 2), FORMAT(score * 1000.4, 0) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "string scalars",
+            "SELECT id, TO_BASE64(name), FROM_BASE64(TO_BASE64(name)), FROM_BASE64('!!') \
+             FROM events ORDER BY id",
         ),
         ordered(
             "decimal ordering",
