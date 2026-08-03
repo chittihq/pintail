@@ -4703,23 +4703,24 @@ fn two_pass_lanes(
             };
             let column = expr.column_index()?;
             let storage = batch.column(column)?.data_type().storage_type();
-            // Exact decimal AVG accumulates i128 units in the generic state;
-            // the two-pass lanes finalize averages through f64 sums.
-            if decimal_average_scale(aggregate).is_some() {
-                return None;
-            }
             match aggregate.function {
                 AggregateFunction::Count | AggregateFunction::Sum | AggregateFunction::Average => {
                     match storage {
-                        // Integer sums stay on the exact integer branch.
+                        // Integer inputs stay on the exact integer branch;
+                        // the generic state accumulates exact decimal
+                        // averages from integer values too.
                         DataType::Int64 | DataType::UInt64 => Some(TwoPassLane::Int {
                             column,
                             data_type: storage,
                         }),
                         DataType::Float64 => Some(TwoPassLane::Float { column }),
                         _ => match batch.column(column)?.data_type() {
+                            // SUM and exact AVG both ride the packed-units
+                            // lane; the per-row apply branches on the
+                            // aggregate function.
                             DataType::Decimal { scale, .. }
-                                if aggregate.function == AggregateFunction::Sum =>
+                                if aggregate.function == AggregateFunction::Sum
+                                    || decimal_average_scale(aggregate).is_some() =>
                             {
                                 Some(TwoPassLane::DecimalUnits {
                                     column,
@@ -5672,8 +5673,15 @@ fn apply_two_pass_lane(
             float_output,
             ..
         } => {
-            let units = i64::from_ne_bytes(bits.to_ne_bytes());
-            state.update_decimal_sum_units(i128::from(units), *scale, *float_output)
+            let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
+            if let Some(result_scale) = decimal_average_scale(aggregate) {
+                let rescaled = (*scale <= result_scale)
+                    .then(|| decimal_units_from_int(units, result_scale - *scale))
+                    .flatten()
+                    .ok_or(ExecError::NumericOverflow)?;
+                return state.update_decimal_average_units(rescaled, result_scale);
+            }
+            state.update_decimal_sum_units(units, *scale, *float_output)
         }
         TwoPassLane::ExtremeDecimal { scale, .. } => {
             let units = i128::from(i64::from_ne_bytes(bits.to_ne_bytes()));
