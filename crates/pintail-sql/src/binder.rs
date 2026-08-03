@@ -660,6 +660,13 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
                 right.expr.data_type
             )));
         };
+        // A decimal-unified pair must coerce branch VALUES too: decimals
+        // execute as canonical text, so an integer branch reaching a
+        // decimal-typed consumer would surface as a raw integer.
+        if let Some(decimal @ DataType::Decimal { .. }) = unified {
+            wrap_in_decimal_cast(&mut left.expr, decimal);
+            wrap_in_decimal_cast(&mut right.expr, decimal);
+        }
         left.expr.data_type = unified;
         right.expr.data_type = unified;
         let nullable = left.expr.nullable || right.expr.nullable;
@@ -669,11 +676,38 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
     Ok(())
 }
 
+/// Wraps a UNION branch expression in a CAST to the unified decimal type
+/// unless it already has it (or is a bare NULL, which any type absorbs).
+fn wrap_in_decimal_cast(expr: &mut BoundExpr, unified: DataType) {
+    if expr.data_type == Some(unified) || matches!(expr.kind, BoundExprKind::Literal(Value::Null)) {
+        return;
+    }
+    let nullable = expr.nullable;
+    let inner = std::mem::replace(
+        expr,
+        BoundExpr {
+            kind: BoundExprKind::Literal(Value::Null),
+            data_type: None,
+            nullable: true,
+        },
+    );
+    *expr = BoundExpr {
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(unified),
+            args: vec![inner],
+        },
+        data_type: Some(unified),
+        nullable,
+    };
+}
+
 /// MySQL-style result type for a UNION column pair: equal types pass
 /// through; numeric families widen (values are already Int64/UInt64/Float64
 /// at execution, so widening only fixes the declared metadata). Mixed
-/// signed/UInt64 and cross-kind pairs (text vs number, temporal vs number)
-/// stay rejected.
+/// signed/UInt64 and integer/decimal pairs unify to a decimal wide enough
+/// for both sides, exactly as `MySQL` does (`BIGINT` with `BIGINT UNSIGNED`
+/// is `DECIMAL(20,0)`). Cross-kind pairs (text vs number, temporal vs
+/// number) stay rejected.
 // Outer None = incompatible pair; inner None = still untyped (NULL literals
 // on both branches). A dedicated enum would just restate Option twice.
 #[allow(clippy::option_option)]
@@ -698,6 +732,16 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
     }
     fn is_float(data_type: DataType) -> bool {
         matches!(data_type, DataType::Float32 | DataType::Float64)
+    }
+    fn integer_digits(data_type: DataType) -> Option<u8> {
+        match data_type {
+            DataType::Boolean | DataType::Int8 | DataType::UInt8 => Some(3),
+            DataType::Int16 | DataType::UInt16 => Some(5),
+            DataType::Int32 | DataType::UInt32 => Some(10),
+            DataType::Int64 => Some(19),
+            DataType::UInt64 => Some(20),
+            _ => None,
+        }
     }
     fn is_numeric(data_type: DataType) -> bool {
         unsigned_rank(data_type).is_some()
@@ -725,6 +769,34 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
     if mixed_sign {
         return Some(Some(DataType::Int64));
     }
+    // Signed with UInt64: neither integer type holds both ranges, so MySQL
+    // widens to DECIMAL(20,0); the caller casts both branch values.
+    if (signed_rank(left).is_some() && right == DataType::UInt64)
+        || (left == DataType::UInt64 && signed_rank(right).is_some())
+    {
+        return Some(Some(DataType::Decimal {
+            precision: 20,
+            scale: 0,
+        }));
+    }
+    // Integer with decimal: keep the decimal scale and widen the integer
+    // part to whichever side needs more digits, as MySQL does.
+    let int_decimal = match (left, right) {
+        (other, decimal @ DataType::Decimal { .. })
+        | (decimal @ DataType::Decimal { .. }, other) => {
+            integer_digits(other).map(|digits| (decimal, digits))
+        }
+        _ => None,
+    };
+    if let Some((DataType::Decimal { precision, scale }, digits)) = int_decimal {
+        return Some(Some(DataType::Decimal {
+            precision: (precision - scale)
+                .max(digits)
+                .saturating_add(scale)
+                .min(38),
+            scale,
+        }));
+    }
     if let (
         DataType::Decimal {
             precision: lp,
@@ -736,9 +808,12 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
         },
     ) = (left, right)
     {
+        // MySQL sizes the result to hold both sides' integer AND fraction
+        // digits: max integer part plus max scale.
+        let scale = ls.max(rs);
         return Some(Some(DataType::Decimal {
-            precision: lp.max(rp),
-            scale: ls.max(rs),
+            precision: (lp - ls).max(rp - rs).saturating_add(scale).min(38),
+            scale,
         }));
     }
     if is_numeric(left) && is_numeric(right) && (is_float(left) || is_float(right)) {
