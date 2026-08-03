@@ -2217,7 +2217,7 @@ fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
 /// Renders a JSON value the way `MySQL` prints JSON columns: `", "`
 /// between members, `": "` after object keys, and object keys ordered by
 /// length then bytes (the binary-JSON normalization order).
-fn mysql_json_text(value: &serde_json::Value) -> String {
+pub(crate) fn mysql_json_text(value: &serde_json::Value) -> String {
     fn write(value: &serde_json::Value, output: &mut String) {
         match value {
             serde_json::Value::Array(items) => {
@@ -2257,7 +2257,7 @@ fn mysql_json_text(value: &serde_json::Value) -> String {
 /// Maps a SQL value to the JSON value `MySQL` would store for it inside
 /// `JSON_OBJECT`/`JSON_ARRAY`: NULL becomes JSON null, numbers stay
 /// numbers, everything else is a JSON string.
-fn json_value_of(value: &Value) -> serde_json::Value {
+pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
     match value {
         Value::Null => serde_json::Value::Null,
         // BOOLEAN is TINYINT(1) in MySQL, which JSON renders numerically.

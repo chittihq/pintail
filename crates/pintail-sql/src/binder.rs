@@ -2744,6 +2744,10 @@ fn bind_aggregate(
         Some(DuplicateTreatment::Distinct) => true,
         None | Some(DuplicateTreatment::All) => false,
     };
+    // MySQL's grammar has no JSON_ARRAYAGG(DISTINCT ...).
+    if distinct && aggregate_function == AggregateFunction::JsonArrayAgg {
+        return Err(BindError::UnsupportedAggregate(function.to_string()));
+    }
     let expr = match &arguments.args[0] {
         FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
             Some(bind_expr(expr, tables, subqueries)?)
@@ -2795,6 +2799,7 @@ fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
         "MIN" => Some(AggregateFunction::Minimum),
         "MAX" => Some(AggregateFunction::Maximum),
         "GROUP_CONCAT" => Some(AggregateFunction::GroupConcat),
+        "JSON_ARRAYAGG" => Some(AggregateFunction::JsonArrayAgg),
         _ => None,
     }
 }
@@ -2856,7 +2861,9 @@ fn aggregate_result_type(
         AggregateFunction::Minimum | AggregateFunction::Maximum if is_mysql_scalar(input_type) => {
             Ok((input_type, true))
         }
-        AggregateFunction::GroupConcat if is_mysql_scalar(input_type) => {
+        AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg
+            if is_mysql_scalar(input_type) =>
+        {
             Ok((Some(DataType::Utf8), true))
         }
         _ => Err(BindError::InvalidAggregateType {

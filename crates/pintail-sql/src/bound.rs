@@ -388,6 +388,8 @@ pub enum AggregateFunction {
     Maximum,
     /// Concatenate non-NULL string values.
     GroupConcat,
+    /// Collect values (including NULLs) into a JSON array.
+    JsonArrayAgg,
 }
 
 /// One deduplicated aggregate computation.

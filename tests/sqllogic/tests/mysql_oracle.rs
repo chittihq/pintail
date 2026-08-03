@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 687;
+const EXPECTED_CASES: usize = 691;
 
 struct OracleCase {
     family: &'static str,
@@ -933,6 +933,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT JSON_OBJECT('bb', 1, 'a', 2, 'a', 3), JSON_OBJECT(), JSON_ARRAY(), \
              JSON_ARRAY(NULL, 'x')",
         ),
+        ordered(
+            "json aggregate",
+            "SELECT id, JSON_ARRAYAGG(score) FROM events GROUP BY id ORDER BY id",
+        ),
+        unordered(
+            "json aggregate",
+            "SELECT active, JSON_ARRAYAGG(note) FROM events GROUP BY active",
+        ),
+        ordered(
+            "json aggregate",
+            "SELECT JSON_ARRAYAGG(name) FROM events WHERE id > 100",
+        ),
+        ordered("json aggregate", "SELECT JSON_ARRAYAGG(note) FROM events"),
         ordered(
             "json",
             r#"SELECT JSON_EXTRACT('{"a": {"b": [10, 20], "c": "x"}}', '$.a'), JSON_EXTRACT('[{"k": 1}, {"k": 2}]', '$[1]')"#,

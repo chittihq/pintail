@@ -2433,6 +2433,10 @@ enum AggregateValue {
         /// Per-key `(ascending, decimal)` sort spec.
         order: Vec<(bool, bool)>,
     },
+    JsonArrayAgg {
+        /// Pre-rendered JSON fragments in input order (NULLs included).
+        items: Vec<String>,
+    },
 }
 
 impl AggregateState {
@@ -2459,6 +2463,7 @@ impl AggregateState {
                     .map(|(_, ascending, decimal)| (*ascending, *decimal))
                     .collect(),
             },
+            AggregateFunction::JsonArrayAgg => AggregateValue::JsonArrayAgg { items: Vec::new() },
         };
         Self {
             value,
@@ -2487,6 +2492,16 @@ impl AggregateState {
         number: Option<f64>,
         memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
+        // JSON_ARRAYAGG collects NULLs as JSON nulls, so it intercepts
+        // ahead of the NULL skip every other aggregate relies on.
+        if let AggregateValue::JsonArrayAgg { items } = &mut self.value {
+            let fragment =
+                crate::expression::mysql_json_text(&crate::expression::json_value_of(value));
+            reserve_vec_elements(items, 1, 64, memory)?;
+            memory.reserve(fragment.len())?;
+            items.push(fragment);
+            return Ok(());
+        }
         if matches!(value, Value::Null) {
             return Ok(());
         }
@@ -2614,6 +2629,12 @@ impl AggregateState {
                 memory.reserve(value_bytes)?;
                 let value = aggregate_string(value)?;
                 items.push((Vec::new(), value));
+            }
+            // Handled by the intercept above the NULL skip.
+            AggregateValue::JsonArrayAgg { .. } => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "json-array-agg update bypassed its intercept",
+                ));
             }
         }
         Ok(())
@@ -2962,6 +2983,15 @@ impl AggregateState {
                     .ok_or(ExecError::NumericOverflow)?;
                 Value::Utf8(pintail_types::format_decimal_scaled(average, scale))
             }
+            AggregateValue::JsonArrayAgg { items } if items.is_empty() => Value::Null,
+            AggregateValue::JsonArrayAgg { items } => {
+                let joined_bytes = items.iter().map(String::len).fold(
+                    items.len().saturating_mul(2).saturating_add(2),
+                    usize::saturating_add,
+                );
+                memory.reserve(joined_bytes)?;
+                Value::Utf8(format!("[{}]", items.join(", ")))
+            }
             AggregateValue::GroupConcat { items, .. } if items.is_empty() => Value::Null,
             AggregateValue::GroupConcat {
                 mut items,
@@ -3144,9 +3174,11 @@ fn merge_finished_value(
                 current
             },
         ),
-        AggregateFunction::Average | AggregateFunction::GroupConcat => Err(
-            ExecError::InvalidPhysicalPlan("unmergeable aggregate reached the delta merge"),
-        ),
+        AggregateFunction::Average
+        | AggregateFunction::GroupConcat
+        | AggregateFunction::JsonArrayAgg => Err(ExecError::InvalidPhysicalPlan(
+            "unmergeable aggregate reached the delta merge",
+        )),
     }
 }
 
@@ -3251,7 +3283,9 @@ fn build_hash_aggregate(
                         aggregate.data_type,
                         Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
                     ),
-                    AggregateFunction::Average | AggregateFunction::GroupConcat => false,
+                    AggregateFunction::Average
+                    | AggregateFunction::GroupConcat
+                    | AggregateFunction::JsonArrayAgg => false,
                 }
         })
     {
@@ -3608,7 +3642,9 @@ fn try_sma_fold(
                     }
                 }
             }
-            AggregateFunction::GroupConcat => return Ok(None),
+            AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg => {
+                return Ok(None);
+            }
         };
         if let Some(value) = synthetic {
             state.merge(
@@ -3698,10 +3734,12 @@ fn build_hash_aggregate_scan(
         {
             return Ok(rows);
         }
-        if aggregates
-            .iter()
-            .all(|aggregate| aggregate.function != AggregateFunction::GroupConcat)
-        {
+        if aggregates.iter().all(|aggregate| {
+            !matches!(
+                aggregate.function,
+                AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg
+            )
+        }) {
             return build_buffered_hash_aggregate(
                 input,
                 group_by,
@@ -4052,7 +4090,11 @@ fn build_fused_inner_join_aggregate(
             .iter()
             .any(|column| *column < left_width || *column >= column_types.len())
         || aggregates.iter().any(|aggregate| {
-            aggregate.distinct || aggregate.function == AggregateFunction::GroupConcat
+            aggregate.distinct
+                || matches!(
+                    aggregate.function,
+                    AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg
+                )
         })
         || aggregates.iter().any(|aggregate| {
             aggregate
@@ -4993,7 +5035,7 @@ fn two_pass_lanes(
                         data_type: storage,
                     })
                 }
-                AggregateFunction::GroupConcat => None,
+                AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg => None,
             }
         })
         .collect()
@@ -6315,7 +6357,9 @@ fn update_state_from_typed_column(
         return Ok(false);
     };
     if !validity.is_valid(row) {
-        return Ok(true);
+        // JSON_ARRAYAGG is the one aggregate that collects NULL inputs;
+        // its generic update encodes them as JSON nulls.
+        return Ok(aggregate.function != AggregateFunction::JsonArrayAgg);
     }
     if aggregate.distinct {
         // COUNT(DISTINCT int_col): dedup on the raw integer, no Value (e16).
@@ -6380,7 +6424,7 @@ fn update_state_from_typed_column(
                 return Ok(true);
             }
         }
-        AggregateFunction::GroupConcat => {}
+        AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg => {}
     }
     Ok(false)
 }
@@ -6401,7 +6445,10 @@ fn update_aggregate_states(
             .expr
             .as_ref()
             .is_none_or(|expression| expression.column_index().is_some())
-            && aggregate.function != AggregateFunction::GroupConcat;
+            && !matches!(
+                aggregate.function,
+                AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg
+            );
         if !direct_scalar {
             let update_memory = aggregate
                 .expr
