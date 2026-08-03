@@ -13,9 +13,9 @@ use sqlparser::ast::{
 
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
-    BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundTable,
-    BoundWindow, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, UnaryOp,
-    WindowFunction,
+    BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery,
+    BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart, IntervalUnit,
+    ScalarFunction, UnaryOp, WindowFunction,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -150,6 +150,23 @@ impl<'catalog> Binder<'catalog> {
                 left.union_all.push(right);
                 Ok(left)
             }
+            SetExpr::SetOperation {
+                left,
+                op: op @ (SetOperator::Intersect | SetOperator::Except),
+                set_quantifier: SetQuantifier::Distinct | SetQuantifier::None,
+                right,
+            } => {
+                let mut left = self.bind_set_expr(left, ctes)?;
+                let mut right = self.bind_set_expr(right, ctes)?;
+                unify_union_layout(&mut left, &mut right)?;
+                let kind = if matches!(op, SetOperator::Intersect) {
+                    BoundSetOpKind::Intersect
+                } else {
+                    BoundSetOpKind::Except
+                };
+                left.set_ops.push((kind, right));
+                Ok(left)
+            }
             _ => Err(BindError::UnsupportedQueryBody(expression.to_string())),
         }
     }
@@ -253,6 +270,7 @@ impl<'catalog> Binder<'catalog> {
             hidden_sort_columns: 0,
             union_all: Vec::new(),
             union_distinct: false,
+            set_ops: Vec::new(),
             windows,
             limit: None,
         })

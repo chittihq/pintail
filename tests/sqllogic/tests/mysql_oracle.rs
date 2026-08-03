@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 661;
+const EXPECTED_CASES: usize = 665;
 
 struct OracleCase {
     family: &'static str,
@@ -909,6 +909,22 @@ fn hand_written_cases() -> Vec<OracleCase> {
             // unrounded internal digits between the two divisions
             // (docs/limitations.md); single divisions are exact.
             "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        unordered(
+            "set operations",
+            "SELECT id FROM events WHERE id <= 6 INTERSECT SELECT id FROM events WHERE id >= 4",
+        ),
+        unordered(
+            "set operations",
+            "SELECT id FROM events WHERE id <= 6 EXCEPT SELECT id FROM events WHERE id >= 4",
+        ),
+        unordered(
+            "set operations",
+            "SELECT note FROM events INTERSECT SELECT note FROM events WHERE active = 1",
+        ),
+        unordered(
+            "set operations",
+            "SELECT note FROM events EXCEPT SELECT note FROM events WHERE active = 1",
         ),
         ordered(
             "regexp",

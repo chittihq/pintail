@@ -438,6 +438,15 @@ pub struct BoundWindow {
     pub nullable: bool,
 }
 
+/// Distinct set operations beyond UNION.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundSetOpKind {
+    /// Rows present in both inputs.
+    Intersect,
+    /// Rows of the left input absent from the right.
+    Except,
+}
+
 /// Supported unary scalar operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnaryOp {
@@ -581,6 +590,9 @@ pub struct BoundQuery {
     pub union_all: Vec<BoundQuery>,
     /// Whether the union chain deduplicates rows (`UNION [DISTINCT]`).
     pub union_distinct: bool,
+    /// `INTERSECT` / `EXCEPT` chain applied left-associatively after the
+    /// union chain (`MySQL` distinct set semantics).
+    pub set_ops: Vec<(BoundSetOpKind, BoundQuery)>,
     /// Optional normalized row limit.
     pub limit: Option<BoundLimit>,
 }

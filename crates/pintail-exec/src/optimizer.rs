@@ -90,6 +90,15 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
                 .map(push_aggregates_through_identity_joins)
                 .collect(),
         },
+        LogicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => LogicalPlan::SetOp {
+            keep_matching,
+            left: Box::new(push_aggregates_through_identity_joins(*left)),
+            right: Box::new(push_aggregates_through_identity_joins(*right)),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -201,6 +210,15 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(replace_metadata_counts).collect(),
         },
+        LogicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => LogicalPlan::SetOp {
+            keep_matching,
+            left: Box::new(replace_metadata_counts(*left)),
+            right: Box::new(replace_metadata_counts(*right)),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -266,6 +284,15 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(fold_constants).collect(),
+        },
+        LogicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => LogicalPlan::SetOp {
+            keep_matching,
+            left: Box::new(fold_constants(*left)),
+            right: Box::new(fold_constants(*right)),
         },
         LogicalPlan::Join {
             left,
@@ -494,6 +521,15 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(push_predicates).collect(),
         },
+        LogicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => LogicalPlan::SetOp {
+            keep_matching,
+            left: Box::new(push_predicates(*left)),
+            right: Box::new(push_predicates(*right)),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -653,7 +689,7 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
             inputs.iter().any(|input| contains_table(input, table))
         }
         LogicalPlan::UnionAll { inputs } => inputs.iter().any(|input| contains_table(input, table)),
-        LogicalPlan::Join { left, right, .. } => {
+        LogicalPlan::SetOp { left, right, .. } | LogicalPlan::Join { left, right, .. } => {
             contains_table(left, table) || contains_table(right, table)
         }
         LogicalPlan::Window { input, .. }
@@ -683,6 +719,15 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(reorder_cross_joins).collect(),
+        },
+        LogicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => LogicalPlan::SetOp {
+            keep_matching,
+            left: Box::new(reorder_cross_joins(*left)),
+            right: Box::new(reorder_cross_joins(*right)),
         },
         LogicalPlan::Join {
             left,
@@ -755,6 +800,10 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             for input in inputs {
                 collect_plan_columns(input, required);
             }
+        }
+        LogicalPlan::SetOp { left, right, .. } => {
+            collect_plan_columns(left, required);
+            collect_plan_columns(right, required);
         }
         LogicalPlan::Join {
             left,
@@ -837,7 +886,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
                 prune_scan_columns(input, required);
             }
         }
-        LogicalPlan::Join { left, right, .. } => {
+        LogicalPlan::SetOp { left, right, .. } | LogicalPlan::Join { left, right, .. } => {
             prune_scan_columns(left, required);
             prune_scan_columns(right, required);
         }
@@ -865,7 +914,7 @@ fn push_limits(plan: &mut LogicalPlan) {
                 push_limits(input);
             }
         }
-        LogicalPlan::Join { left, right, .. } => {
+        LogicalPlan::SetOp { left, right, .. } | LogicalPlan::Join { left, right, .. } => {
             push_limits(left);
             push_limits(right);
         }
@@ -891,6 +940,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::OneRow
         | LogicalPlan::CrossJoin { .. }
         | LogicalPlan::UnionAll { .. }
+        | LogicalPlan::SetOp { .. }
         | LogicalPlan::Join { .. }
         | LogicalPlan::Filter { .. }
         | LogicalPlan::Aggregate { .. }

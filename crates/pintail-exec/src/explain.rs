@@ -153,6 +153,23 @@ fn write_plan(
             writeln!(output, "UnionAll inputs={}", inputs.len())?;
             write_inputs(inputs, depth, output, provider)
         }
+        PhysicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => {
+            writeln!(
+                output,
+                "SetOp kind={}",
+                if *keep_matching {
+                    "intersect"
+                } else {
+                    "except"
+                }
+            )?;
+            write_plan(left, depth + 1, output, provider)?;
+            write_plan(right, depth + 1, output, provider)
+        }
         PhysicalPlan::HashJoin {
             left, right, kind, ..
         } => {

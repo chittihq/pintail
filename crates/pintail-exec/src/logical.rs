@@ -59,6 +59,16 @@ pub enum LogicalPlan {
         /// Inputs in SQL source order.
         inputs: Vec<LogicalPlan>,
     },
+    /// Distinct set operation (`INTERSECT` / `EXCEPT`).
+    SetOp {
+        /// Whether matching rows are kept (`INTERSECT`) or dropped
+        /// (`EXCEPT`).
+        keep_matching: bool,
+        /// Left input (deduplicated by the operator).
+        left: Box<LogicalPlan>,
+        /// Right membership input.
+        right: Box<LogicalPlan>,
+    },
     /// Predicate-constrained binary join.
     Join {
         /// Left input.
@@ -140,6 +150,7 @@ impl LogicalPlan {
             Self::CrossJoin { inputs } => inputs.iter().try_fold(1_u64, |rows, input| {
                 rows.checked_mul(input.estimated_rows()?)
             }),
+            Self::SetOp { left, .. } => left.estimated_rows(),
             Self::UnionAll { inputs } => inputs.iter().try_fold(0_u64, |rows, input| {
                 rows.checked_add(input.estimated_rows()?)
             }),
@@ -175,6 +186,7 @@ pub struct LogicalPlanner;
 impl LogicalPlanner {
     /// Builds an unoptimized logical plan.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // linear clause-to-operator assembly
     pub fn plan(query: BoundQuery) -> LogicalPlan {
         let BoundQuery {
             from,
@@ -189,6 +201,7 @@ impl LogicalPlanner {
             hidden_sort_columns,
             union_all,
             union_distinct,
+            set_ops,
             windows,
             limit,
         } = query;
@@ -263,6 +276,13 @@ impl LogicalPlanner {
                     input: Box::new(plan),
                 };
             }
+        }
+        for (kind, right) in set_ops {
+            plan = LogicalPlan::SetOp {
+                keep_matching: matches!(kind, pintail_sql::BoundSetOpKind::Intersect),
+                left: Box::new(plan),
+                right: Box::new(Self::plan(right)),
+            };
         }
         if !order_by.is_empty() {
             plan = LogicalPlan::Sort {

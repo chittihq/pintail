@@ -69,6 +69,16 @@ pub enum PhysicalPlan {
         /// Inputs in SQL source order.
         inputs: Vec<Self>,
     },
+    /// Distinct set operation: keep or drop left rows by membership in the
+    /// materialized right input.
+    SetOp {
+        /// `INTERSECT` keeps matches, `EXCEPT` drops them.
+        keep_matching: bool,
+        /// Deduplicated left input.
+        left: Box<Self>,
+        /// Membership input.
+        right: Box<Self>,
+    },
     /// Build-right equi hash join.
     HashJoin {
         /// Probe input.
@@ -154,9 +164,10 @@ impl PhysicalPlan {
                     nullable: expression.expr.nullable,
                 })
                 .collect(),
-            Self::Filter { input, .. } | Self::Distinct { input } | Self::Limit { input, .. } => {
-                input.output_fields()
-            }
+            Self::SetOp { left: input, .. }
+            | Self::Filter { input, .. }
+            | Self::Distinct { input }
+            | Self::Limit { input, .. } => input.output_fields(),
             Self::Sort { input, trim, .. } => {
                 let mut fields = input.output_fields();
                 fields.truncate(fields.len().saturating_sub(*trim));
@@ -295,6 +306,19 @@ impl PhysicalPlanner {
                     estimated_rows,
                 })
             }
+            LogicalPlan::SetOp {
+                keep_matching,
+                left,
+                right,
+            } => Ok(PhysicalPlan::SetOp {
+                keep_matching,
+                // The operator deduplicates its left side via an upstream
+                // Distinct, giving MySQL's distinct set semantics.
+                left: Box::new(PhysicalPlan::Distinct {
+                    input: Box::new(Self::plan(*left)?),
+                }),
+                right: Box::new(Self::plan(*right)?),
+            }),
             LogicalPlan::UnionAll { inputs } => Ok(PhysicalPlan::UnionAll {
                 inputs: inputs
                     .into_iter()
@@ -453,7 +477,7 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
                 collect_logical_tables(input, tables);
             }
         }
-        LogicalPlan::Join { left, right, .. } => {
+        LogicalPlan::SetOp { left, right, .. } | LogicalPlan::Join { left, right, .. } => {
             collect_logical_tables(left, tables);
             collect_logical_tables(right, tables);
         }
@@ -791,6 +815,10 @@ fn resolve_plan_subqueries(
         | PhysicalPlan::Limit { input, .. } => {
             resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
         }
+        PhysicalPlan::SetOp { left, right, .. } => {
+            resolve_plan_subqueries(left, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(right, provider, memory_limit, retained_bytes)?;
+        }
         PhysicalPlan::Window { input, windows, .. } => {
             for window in windows {
                 if let WindowFunction::Aggregate(aggregate) = &mut window.function
@@ -1053,6 +1081,12 @@ enum PullOperator {
         input: Box<Self>,
         seen: HashSet<Vec<Value>>,
     },
+    SetOp {
+        input: Box<Self>,
+        right: Option<Box<Self>>,
+        membership: HashSet<Vec<Value>>,
+        keep_matching: bool,
+    },
     Sort {
         input: Box<Self>,
         keys: Vec<BoundOrderKey>,
@@ -1305,6 +1339,53 @@ impl PullOperator {
                 output.set_selection(batch.selection().clone())?;
                 memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
                 Ok(Some(output))
+            }
+            Self::SetOp {
+                input,
+                right,
+                membership,
+                keep_matching,
+            } => {
+                // First call drains the membership side completely.
+                if let Some(mut side) = right.take() {
+                    while let Some(batch) = side.next_batch(memory)? {
+                        let batch_bytes = batch.estimated_bytes();
+                        reserve_hash_set_entries(
+                            membership,
+                            batch.visible_row_count(),
+                            size_of::<Vec<Value>>().saturating_add(HASH_ENTRY_OVERHEAD),
+                            batch_bytes,
+                            memory,
+                        )?;
+                        for row in 0..batch.row_count() {
+                            if !batch.selection().is_selected(row) {
+                                continue;
+                            }
+                            let key = normalized_batch_row(&batch, row)?;
+                            let row_bytes = estimated_row_payload_bytes(&key);
+                            memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+                            memory.reserve(row_bytes)?;
+                            membership.insert(key);
+                        }
+                    }
+                }
+                loop {
+                    let Some(mut batch) = input.next_batch(memory)? else {
+                        return Ok(None);
+                    };
+                    for row in 0..batch.row_count() {
+                        if !batch.selection().is_selected(row) {
+                            continue;
+                        }
+                        let key = normalized_batch_row(&batch, row)?;
+                        if membership.contains(&key) != *keep_matching {
+                            batch.selection_mut().set(row, false)?;
+                        }
+                    }
+                    if batch.visible_row_count() > 0 {
+                        return Ok(Some(batch));
+                    }
+                }
             }
             Self::Distinct { input, seen } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
@@ -1649,6 +1730,23 @@ fn build_operator(
                     expressions,
                 },
                 Vec::new(),
+            ))
+        }
+        PhysicalPlan::SetOp {
+            keep_matching,
+            left,
+            right,
+        } => {
+            let (left, columns) = build_operator(*left, provider, memory)?;
+            let (right, _) = build_operator(*right, provider, memory)?;
+            Ok((
+                PullOperator::SetOp {
+                    input: Box::new(left),
+                    right: Some(Box::new(right)),
+                    membership: HashSet::new(),
+                    keep_matching,
+                },
+                columns,
             ))
         }
         PhysicalPlan::Distinct { input } => {
@@ -7218,6 +7316,24 @@ fn estimated_batch_row_bytes(batch: &RecordBatch, row: usize) -> Result<usize, E
         .saturating_add(batch.columns().len().saturating_mul(size_of::<Value>()))
         .saturating_add(heap_bytes)
         .saturating_add(2 * size_of::<usize>()))
+}
+
+/// One selected row as normalized values (the same key the Distinct
+/// operator uses), for set-membership hashing.
+fn normalized_batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
+    batch
+        .columns()
+        .iter()
+        .map(|column| {
+            column
+                .value(row)
+                .cloned()
+                .map(normalized_collation_value)
+                .ok_or(ExecError::InvalidBatch(
+                    "set-operation row is outside an input column",
+                ))
+        })
+        .collect()
 }
 
 fn estimated_normalized_batch_row_bytes(
