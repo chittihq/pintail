@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 667;
+const EXPECTED_CASES: usize = 669;
 
 struct OracleCase {
     family: &'static str,
@@ -909,6 +909,14 @@ fn hand_written_cases() -> Vec<OracleCase> {
             // unrounded internal digits between the two divisions
             // (docs/limitations.md); single divisions are exact.
             "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        ordered(
+            "json",
+            r#"SELECT JSON_EXTRACT('{"a": {"b": [10, 20]}, "c": "x"}', '$.a.b[1]'), JSON_EXTRACT('{"c": "x"}', '$.c'), JSON_EXTRACT('{"c": "x"}', '$.missing'), JSON_UNQUOTE(JSON_EXTRACT('{"c": "x"}', '$.c'))"#,
+        ),
+        ordered(
+            "json",
+            r#"SELECT JSON_EXTRACT('[1, 2, 3]', '$[2]'), JSON_UNQUOTE(JSON_EXTRACT('{"b": "two"}', '$.b')), JSON_EXTRACT('{"a": {"deep key": true}}', '$.a."deep key"')"#,
         ),
         ordered(
             "right join",

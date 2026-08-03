@@ -1352,6 +1352,15 @@ fn bind_binary(
     }
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
+    // MySQL JSON path operators: `->` extracts, `->>` extracts and unquotes.
+    if matches!(operator, BinaryOperator::Arrow | BinaryOperator::LongArrow) {
+        return bind_scalar(
+            ScalarFunction::JsonExtract {
+                unquote: matches!(operator, BinaryOperator::LongArrow),
+            },
+            vec![left, right],
+        );
+    }
     let (op, data_type) = match operator {
         BinaryOperator::Plus
         | BinaryOperator::Minus
@@ -1757,6 +1766,8 @@ fn bind_scalar_function(
         "REGEXP_SUBSTR" if args.len() == 2 => ScalarFunction::RegexpSubstr,
         "REGEXP_INSTR" if args.len() == 2 => ScalarFunction::RegexpInstr,
         "REGEXP_REPLACE" if args.len() == 3 => ScalarFunction::RegexpReplace,
+        "JSON_EXTRACT" if args.len() == 2 => ScalarFunction::JsonExtract { unquote: false },
+        "JSON_UNQUOTE" if args.len() == 1 => ScalarFunction::JsonUnquote,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
             decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
@@ -2247,7 +2258,9 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             Some(DataType::Boolean),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::RegexpSubstr => (Some(DataType::Utf8), true),
+        ScalarFunction::RegexpSubstr
+        | ScalarFunction::JsonExtract { .. }
+        | ScalarFunction::JsonUnquote => (Some(DataType::Utf8), true),
         ScalarFunction::RegexpInstr => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),

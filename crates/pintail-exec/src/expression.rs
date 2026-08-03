@@ -654,6 +654,8 @@ impl CompiledExpr {
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
                     | ScalarFunction::RegexpSubstr
+                    | ScalarFunction::JsonExtract { .. }
+                    | ScalarFunction::JsonUnquote
                     | ScalarFunction::Cast(_) => first,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate => string_arguments.saturating_mul(12),
@@ -769,6 +771,8 @@ impl CompiledExpr {
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
                     | ScalarFunction::RegexpSubstr
+                    | ScalarFunction::JsonExtract { .. }
+                    | ScalarFunction::JsonUnquote
                     | ScalarFunction::Cast(_) => first,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
@@ -1568,6 +1572,27 @@ fn evaluate_eager_scalar(
                 .into_owned();
             Ok(Value::Utf8(replaced))
         }
+        ScalarFunction::JsonExtract { unquote } => {
+            let document = scalar_string(&values[0])?;
+            let path = scalar_string(&values[1])?;
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&document) else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            let Some(found) = json_path_lookup(&parsed, &path)? else {
+                return Ok(Value::Null);
+            };
+            Ok(Value::Utf8(match found {
+                serde_json::Value::String(text) if unquote => text.clone(),
+                other => other.to_string(),
+            }))
+        }
+        ScalarFunction::JsonUnquote => {
+            let text = scalar_string(&values[0])?;
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(serde_json::Value::String(inner)) => Ok(Value::Utf8(inner)),
+                _ => Ok(Value::Utf8(text)),
+            }
+        }
         ScalarFunction::UnixTimestamp => {
             let timestamp = if values.is_empty() {
                 Utc::now().timestamp()
@@ -2081,6 +2106,69 @@ fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
         }
         Ok(leaked)
     })
+}
+
+/// Resolves a `MySQL` JSON path of the `$.key.nested[0]` form. Wildcards
+/// and range selectors are unsupported and error explicitly.
+fn json_path_lookup<'a>(
+    document: &'a serde_json::Value,
+    path: &str,
+) -> Result<Option<&'a serde_json::Value>, ExecError> {
+    let rest = path
+        .strip_prefix('$')
+        .ok_or(ExecError::InvalidExpressionType)?;
+    let mut current = document;
+    let mut chars = rest.chars().peekable();
+    while let Some(step) = chars.next() {
+        match step {
+            '.' => {
+                let mut key = String::new();
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    for inner in chars.by_ref() {
+                        if inner == '"' {
+                            break;
+                        }
+                        key.push(inner);
+                    }
+                } else {
+                    while let Some(&next) = chars.peek() {
+                        if next == '.' || next == '[' {
+                            break;
+                        }
+                        key.push(next);
+                        chars.next();
+                    }
+                }
+                if key.is_empty() || key == "*" {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                match current.get(&key) {
+                    Some(next) => current = next,
+                    None => return Ok(None),
+                }
+            }
+            '[' => {
+                let mut digits = String::new();
+                for inner in chars.by_ref() {
+                    if inner == ']' {
+                        break;
+                    }
+                    digits.push(inner);
+                }
+                let index: usize = digits
+                    .trim()
+                    .parse()
+                    .map_err(|_| ExecError::InvalidExpressionType)?;
+                match current.get(index) {
+                    Some(next) => current = next,
+                    None => return Ok(None),
+                }
+            }
+            _ => return Err(ExecError::InvalidExpressionType),
+        }
+    }
+    Ok(Some(current))
 }
 
 fn mysql_substring(value: &str, start: i64, length: i64) -> String {

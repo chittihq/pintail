@@ -265,6 +265,14 @@ pub enum ScalarFunction {
     RegexpInstr,
     /// `REGEXP_REPLACE(expr, pattern, replacement)`.
     RegexpReplace,
+    /// `JSON_EXTRACT(json, path)` / the `->` operator; `unquote` marks the
+    /// `->>` / `JSON_UNQUOTE(JSON_EXTRACT(...))` form.
+    JsonExtract {
+        /// Whether a scalar string result is unquoted (`->>`).
+        unquote: bool,
+    },
+    /// `JSON_UNQUOTE(json)`.
+    JsonUnquote,
     /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
     /// `to`, truncated toward zero, matching `MySQL`.
     TimestampDiff {
