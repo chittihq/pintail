@@ -584,6 +584,16 @@ async function phaseDdl() {
       `(1, 'DHL', '2025-07-08'), (2, 'UPS', NULL), (3, 'FedEx', '2025-07-09')`,
   )
   await sql(`UPDATE shipments SET carrier = 'DHL Express' WHERE id = 1`)
+  // Storage-compatible MODIFY COLUMN evolves in place — no resync: an
+  // integer widening and a VARCHAR widening, with live writes after each.
+  await sql(`ALTER TABLE shipments MODIFY COLUMN carrier VARCHAR(64) NOT NULL`)
+  await sql(
+    `UPDATE shipments SET carrier = 'A Rather Long Carrier Name For Widths' WHERE id = 2`,
+  )
+  await sql(`ALTER TABLE orders MODIFY COLUMN customer_id BIGINT UNSIGNED NOT NULL`)
+  await sql(`UPDATE orders SET customer_id = 5000000001 WHERE id = 3`)
+  await sql(`ALTER TABLE customers MODIFY COLUMN balance DECIMAL(14,2) NOT NULL DEFAULT 0`)
+  await sql(`UPDATE customers SET balance = balance + 100000000000.25 WHERE id = 3`)
   // TRUNCATE and refill.
   await sql(`TRUNCATE TABLE audit_log`)
   await sql(`INSERT INTO audit_log VALUES ('after truncate')`)

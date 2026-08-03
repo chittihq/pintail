@@ -12,6 +12,10 @@ pub(crate) enum AlterKind {
     /// Pure column renames as `(old name, new name)` pairs: the stable
     /// column IDs carry across, so no resnapshot is needed.
     RenameColumns(Vec<(String, String)>),
+    /// Pure `MODIFY COLUMN` (or same-name `CHANGE COLUMN`) type changes.
+    /// The handler evolves in place only when every change is
+    /// storage-compatible; anything else quarantines for resync.
+    ModifyColumns(Vec<String>),
     RequiresResnapshot,
 }
 
@@ -23,6 +27,7 @@ pub(crate) enum DdlAction {
     Create { table: String },
 }
 
+#[allow(clippy::too_many_lines)] // linear DDL-statement classification table
 pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
     let normalized = statement.trim_start().to_ascii_uppercase();
     if ![
@@ -70,6 +75,32 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
                                         unreachable!("all operations matched RenameColumn");
                                     };
                                     (old_column_name.value.clone(), new_column_name.value.clone())
+                                })
+                                .collect(),
+                        )
+                    } else if alter.operations.iter().all(|operation| {
+                        matches!(operation, AlterTableOperation::ModifyColumn { .. })
+                            || matches!(
+                                operation,
+                                AlterTableOperation::ChangeColumn {
+                                    old_name,
+                                    new_name,
+                                    ..
+                                } if old_name.value.eq_ignore_ascii_case(&new_name.value)
+                            )
+                    }) {
+                        AlterKind::ModifyColumns(
+                            alter
+                                .operations
+                                .iter()
+                                .map(|operation| match operation {
+                                    AlterTableOperation::ModifyColumn { col_name, .. } => {
+                                        col_name.value.clone()
+                                    }
+                                    AlterTableOperation::ChangeColumn { old_name, .. } => {
+                                        old_name.value.clone()
+                                    }
+                                    _ => unreachable!("all operations matched modify/change"),
                                 })
                                 .collect(),
                         )
@@ -154,10 +185,26 @@ mod tests {
                 kind: AlterKind::RenameColumns(vec![("note".to_owned(), "memo".to_owned())]),
             }]
         );
+        // MODIFY and same-name CHANGE classify as in-place candidates; the
+        // handler still quarantines unless the change is storage-compatible.
+        assert_eq!(
+            parse_ddl("ALTER TABLE events MODIFY COLUMN note BIGINT").unwrap(),
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
+            }]
+        );
+        assert_eq!(
+            parse_ddl("ALTER TABLE events CHANGE COLUMN note note VARCHAR(200)").unwrap(),
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
+            }]
+        );
         for ddl in [
-            "ALTER TABLE events MODIFY COLUMN note BIGINT",
             "ALTER TABLE events CHANGE COLUMN note memo TEXT",
             "ALTER TABLE events ADD INDEX note_index(note)",
+            "ALTER TABLE events MODIFY COLUMN note BIGINT, ADD COLUMN extra INT",
         ] {
             assert_eq!(
                 parse_ddl(ddl).unwrap(),

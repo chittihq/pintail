@@ -921,6 +921,71 @@ async fn apply_ddl_actions(
             }
             DdlAction::Alter {
                 table,
+                kind: AlterKind::ModifyColumns(columns),
+            } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                let Some(source) = find_source_table(&refreshed, &table).cloned() else {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        statement,
+                        None,
+                    )?;
+                    continue;
+                };
+                // Storage-compatible type changes evolve in place; anything
+                // else fails stabilization (or the store's segment re-read)
+                // and quarantines for resync exactly like before.
+                let source =
+                    match stabilize_source_table_widening(&targets[index].source, source, &columns)
+                    {
+                        Ok(source) => source,
+                        Err(reason) => {
+                            quarantine_schema_change(
+                                metadata,
+                                database_id,
+                                &targets[index],
+                                index,
+                                blocked_targets,
+                                &format!("{statement}; {reason}"),
+                                None,
+                            )?;
+                            continue;
+                        }
+                    };
+                let version = next_schema_version(targets[index].store.schema().version())?;
+                let schema = source.table_schema_with_version(version)?;
+                if let Err(error) = targets[index].store.evolve_schema(schema) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {error}"),
+                        Some(&source),
+                    )?;
+                    continue;
+                }
+                let columns_json = serde_json::to_string(&source.columns)
+                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                metadata.record_schema_history(
+                    database_id,
+                    &table,
+                    version,
+                    Some(statement),
+                    &columns_json,
+                    &Utc::now().to_rfc3339(),
+                )?;
+                targets[index].source = source;
+            }
+            DdlAction::Alter {
+                table,
                 kind: AlterKind::RequiresResnapshot,
             } => {
                 if let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) {
@@ -1062,9 +1127,51 @@ fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a Sou
         .find(|source| source.name.eq_ignore_ascii_case(table))
 }
 
+/// Whether a column's declared type can change without touching stored
+/// values: integer families share one 64-bit storage lane per signedness,
+/// floats share the 64-bit carrier, string-typed columns are width-free
+/// canonical text, and decimals render identically while the scale holds.
+/// Temporal precisions are part of the type and must match exactly.
+fn widening_compatible(
+    previous: pintail_types::DataType,
+    refreshed: pintail_types::DataType,
+) -> bool {
+    use pintail_types::DataType::{
+        Boolean, Decimal, Float32, Float64, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
+        UInt64,
+    };
+    if previous == refreshed {
+        return true;
+    }
+    match (previous, refreshed) {
+        (Boolean | Int8 | Int16 | Int32 | Int64, Boolean | Int8 | Int16 | Int32 | Int64)
+        | (UInt8 | UInt16 | UInt32 | UInt64, UInt8 | UInt16 | UInt32 | UInt64)
+        | (Float32 | Float64, Float32 | Float64) => true,
+        (
+            Decimal {
+                precision: previous_precision,
+                scale: previous_scale,
+            },
+            Decimal {
+                precision: refreshed_precision,
+                scale: refreshed_scale,
+            },
+        ) => previous_scale == refreshed_scale && refreshed_precision >= previous_precision,
+        _ => false,
+    }
+}
+
 fn stabilize_source_table(
     previous: &SourceTable,
+    refreshed: SourceTable,
+) -> Result<SourceTable, String> {
+    stabilize_source_table_widening(previous, refreshed, &[])
+}
+
+fn stabilize_source_table_widening(
+    previous: &SourceTable,
     mut refreshed: SourceTable,
+    widenable: &[String],
 ) -> Result<SourceTable, String> {
     if previous.key.mode != refreshed.key.mode
         || previous.key.columns.len() != refreshed.key.columns.len()
@@ -1090,7 +1197,13 @@ fn stabilize_source_table(
             .find(|existing| existing.name.eq_ignore_ascii_case(&column.name))
         {
             if existing.pintail_type != column.pintail_type {
-                return Err(format!("column {} changed physical type", column.name));
+                let widening_allowed = widenable
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&column.name))
+                    && widening_compatible(existing.pintail_type, column.pintail_type);
+                if !widening_allowed {
+                    return Err(format!("column {} changed physical type", column.name));
+                }
             }
             column.id = existing.id;
         } else {
