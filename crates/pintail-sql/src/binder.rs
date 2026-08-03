@@ -128,12 +128,25 @@ impl<'catalog> Binder<'catalog> {
             SetExpr::SetOperation {
                 left,
                 op: SetOperator::Union,
-                set_quantifier: SetQuantifier::All,
+                set_quantifier:
+                    quantifier @ (SetQuantifier::All | SetQuantifier::Distinct | SetQuantifier::None),
                 right,
             } => {
                 let mut left = self.bind_set_expr(left, ctes)?;
                 let mut right = self.bind_set_expr(right, ctes)?;
+                // A distinct union followed by UNION ALL would need a nested
+                // plan the flat chain cannot express; MySQL evaluates
+                // left-associatively, so a later DISTINCT covering the whole
+                // chain is representable and everything else rejects.
+                if matches!(quantifier, SetQuantifier::All)
+                    && (left.union_distinct || right.union_distinct)
+                {
+                    return Err(BindError::UnsupportedQueryBody(expression.to_string()));
+                }
                 unify_union_layout(&mut left, &mut right)?;
+                if !matches!(quantifier, SetQuantifier::All) {
+                    left.union_distinct = true;
+                }
                 left.union_all.push(right);
                 Ok(left)
             }
@@ -239,6 +252,7 @@ impl<'catalog> Binder<'catalog> {
             order_by: Vec::new(),
             hidden_sort_columns: 0,
             union_all: Vec::new(),
+            union_distinct: false,
             windows,
             limit: None,
         })
@@ -3344,8 +3358,21 @@ mod tests {
         assert_eq!(query.order_by[0].index, 0);
         assert_eq!(query.limit.expect("limit").count, 2);
 
+        // Plain UNION deduplicates; the flag records it for the planner.
+        let distinct = bind(
+            "SELECT email FROM users UNION SELECT email FROM users \
+             UNION DISTINCT SELECT email FROM users",
+        )
+        .expect("union distinct");
+        assert!(distinct.union_distinct);
+        assert_eq!(distinct.union_all.len(), 2);
+        // A distinct union under a later UNION ALL has no flat
+        // representation and rejects explicitly.
         assert!(matches!(
-            bind("SELECT id FROM Events UNION SELECT id FROM users"),
+            bind(
+                "SELECT email FROM users UNION SELECT email FROM users \
+                 UNION ALL SELECT email FROM users"
+            ),
             Err(BindError::UnsupportedQueryBody(_))
         ));
         assert!(matches!(

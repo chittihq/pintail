@@ -188,6 +188,7 @@ impl LogicalPlanner {
             order_by,
             hidden_sort_columns,
             union_all,
+            union_distinct,
             windows,
             limit,
         } = query;
@@ -255,6 +256,13 @@ impl LogicalPlanner {
             inputs.push(plan);
             inputs.extend(union_all.into_iter().map(Self::plan));
             plan = LogicalPlan::UnionAll { inputs };
+            // MySQL's plain UNION deduplicates the whole left-associative
+            // chain; the existing Distinct node provides exactly that.
+            if union_distinct {
+                plan = LogicalPlan::Distinct {
+                    input: Box::new(plan),
+                };
+            }
         }
         if !order_by.is_empty() {
             plan = LogicalPlan::Sort {

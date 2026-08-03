@@ -567,6 +567,8 @@ pub struct BoundQuery {
     pub hidden_sort_columns: usize,
     /// Additional type-compatible SELECT branches concatenated in source order.
     pub union_all: Vec<BoundQuery>,
+    /// Whether the union chain deduplicates rows (`UNION [DISTINCT]`).
+    pub union_distinct: bool,
     /// Optional normalized row limit.
     pub limit: Option<BoundLimit>,
 }
