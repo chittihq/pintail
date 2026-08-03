@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-03T19:09:35.343Z.
+Measured 2026-08-03T19:35:24.917Z.
 
-**253 passed, 2 failed, 2 documented-gap warnings.**
+**255 passed, 0 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -200,12 +200,12 @@ Measured 2026-08-03T19:09:35.343Z.
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
-| control-plane | api:keyless policy: quarantine flags, auto_resync repairs | FAIL | Error: keyless inserts never replicated |
+| control-plane | api:keyless policy: quarantine flags, auto_resync repairs | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
-| control-plane | converge:keyless_log | FAIL | pintail query failed: Error: unknown table e2e_db.keyless_log |
+| control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |

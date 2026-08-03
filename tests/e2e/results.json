@@ -972,8 +972,7 @@
   {
     "phase": "control-plane",
     "check": "api:keyless policy: quarantine flags, auto_resync repairs",
-    "status": "FAIL",
-    "detail": "Error: keyless inserts never replicated"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -998,8 +997,7 @@
   {
     "phase": "control-plane",
     "check": "converge:keyless_log",
-    "status": "FAIL",
-    "detail": "pintail query failed: Error: unknown table e2e_db.keyless_log"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
