@@ -253,6 +253,18 @@ pub enum ScalarFunction {
     Curtime,
     /// `STR_TO_DATE(text, format)`: NULL when the text does not match.
     StrToDate,
+    /// `expr REGEXP pattern` / `REGEXP_LIKE`, case-insensitive by default
+    /// like the ci collations.
+    RegexpLike {
+        /// Whether the match is negated (`NOT REGEXP`).
+        negated: bool,
+    },
+    /// `REGEXP_SUBSTR(expr, pattern)`: first match or NULL.
+    RegexpSubstr,
+    /// `REGEXP_INSTR(expr, pattern)`: 1-based match position or 0.
+    RegexpInstr,
+    /// `REGEXP_REPLACE(expr, pattern, replacement)`.
+    RegexpReplace,
     /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
     /// `to`, truncated toward zero, matching `MySQL`.
     TimestampDiff {

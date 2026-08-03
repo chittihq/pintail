@@ -653,10 +653,11 @@ impl CompiledExpr {
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
+                    | ScalarFunction::RegexpSubstr
                     | ScalarFunction::Cast(_) => first,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate => string_arguments.saturating_mul(12),
-                    ScalarFunction::Replace => {
+                    ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(string(2)))
                     }
                     ScalarFunction::If => string(1).max(string(2)),
@@ -716,6 +717,8 @@ impl CompiledExpr {
                     | ScalarFunction::ToDays
                     | ScalarFunction::YearWeek
                     | ScalarFunction::TimeToSec
+                    | ScalarFunction::RegexpLike { .. }
+                    | ScalarFunction::RegexpInstr
                     | ScalarFunction::TimestampDiff { .. } => 0,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
@@ -765,9 +768,10 @@ impl CompiledExpr {
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
+                    | ScalarFunction::RegexpSubstr
                     | ScalarFunction::Cast(_) => first,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
-                    ScalarFunction::Replace => {
+                    ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(bound(2)))
                     }
                     ScalarFunction::If => bound(1).max(bound(2)),
@@ -823,6 +827,8 @@ impl CompiledExpr {
                     | ScalarFunction::ToDays
                     | ScalarFunction::YearWeek
                     | ScalarFunction::TimeToSec
+                    | ScalarFunction::RegexpLike { .. }
+                    | ScalarFunction::RegexpInstr
                     | ScalarFunction::TimestampDiff { .. } => 24,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
@@ -1535,6 +1541,33 @@ fn evaluate_eager_scalar(
             }
             Ok(Value::Null)
         }
+        ScalarFunction::RegexpLike { negated } => {
+            let text = scalar_string(&values[0])?;
+            let matched = compiled_regex(&scalar_string(&values[1])?)?.is_match(&text);
+            Ok(Value::Boolean(matched != negated))
+        }
+        ScalarFunction::RegexpSubstr => {
+            let text = scalar_string(&values[0])?;
+            let found = compiled_regex(&scalar_string(&values[1])?)?
+                .find(&text)
+                .map(|found| found.as_str().to_owned());
+            Ok(found.map_or(Value::Null, Value::Utf8))
+        }
+        ScalarFunction::RegexpInstr => {
+            let text = scalar_string(&values[0])?;
+            let position = compiled_regex(&scalar_string(&values[1])?)?
+                .find(&text)
+                .map_or(0, |found| text[..found.start()].chars().count() as u64 + 1);
+            Ok(Value::UInt64(position))
+        }
+        ScalarFunction::RegexpReplace => {
+            let text = scalar_string(&values[0])?;
+            let replacement = scalar_string(&values[2])?;
+            let replaced = compiled_regex(&scalar_string(&values[1])?)?
+                .replace_all(&text, replacement.as_str())
+                .into_owned();
+            Ok(Value::Utf8(replaced))
+        }
         ScalarFunction::UnixTimestamp => {
             let timestamp = if values.is_empty() {
                 Utc::now().timestamp()
@@ -2018,6 +2051,36 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
         }
     }
     Some(output)
+}
+
+// Compiled regex cache: patterns are almost always literals, so each
+// worker thread compiles a pattern once. Case-insensitive by default to
+// match the ci collations (docs/limitations.md).
+thread_local! {
+    static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, &'static regex::Regex>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
+    REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(compiled) = cache.get(pattern) {
+            return Ok(*compiled);
+        }
+        let compiled = regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .size_limit(1 << 20)
+            .build()
+            .map_err(|_| ExecError::InvalidExpressionType)?;
+        // Interned for the thread's lifetime: pattern cardinality is tiny
+        // (query literals), and a bounded cache would need eviction the
+        // &'static borrows could not survive.
+        let leaked: &'static regex::Regex = Box::leak(Box::new(compiled));
+        if cache.len() < 256 {
+            cache.insert(pattern.to_owned(), leaked);
+        }
+        Ok(leaked)
+    })
 }
 
 fn mysql_substring(value: &str, start: i64, length: i64) -> String {

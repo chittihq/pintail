@@ -977,6 +977,18 @@ fn bind_expr_inner(
                 expr, tables, aggregates, windows, subqueries,
             )?],
         ),
+        Expr::RLike {
+            negated,
+            expr: inner,
+            pattern,
+            ..
+        } => bind_scalar(
+            ScalarFunction::RegexpLike { negated: *negated },
+            vec![
+                bind_expr_inner(inner, tables, aggregates, windows, subqueries)?,
+                bind_expr_inner(pattern, tables, aggregates, windows, subqueries)?,
+            ],
+        ),
         Expr::Subquery(query) => bind_scalar_subquery(query, subqueries),
         Expr::Exists { subquery, negated } => {
             let resolver =
@@ -1704,6 +1716,10 @@ fn bind_scalar_function(
         "MAKEDATE" if args.len() == 2 => ScalarFunction::MakeDate,
         "CURTIME" | "CURRENT_TIME" if args.is_empty() => ScalarFunction::Curtime,
         "STR_TO_DATE" if args.len() == 2 => ScalarFunction::StrToDate,
+        "REGEXP_LIKE" if args.len() == 2 => ScalarFunction::RegexpLike { negated: false },
+        "REGEXP_SUBSTR" if args.len() == 2 => ScalarFunction::RegexpSubstr,
+        "REGEXP_INSTR" if args.len() == 2 => ScalarFunction::RegexpInstr,
+        "REGEXP_REPLACE" if args.len() == 3 => ScalarFunction::RegexpReplace,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
             decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
@@ -2188,6 +2204,19 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::ToDays
         | ScalarFunction::YearWeek => (
             Some(DataType::UInt64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::RegexpLike { .. } => (
+            Some(DataType::Boolean),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::RegexpSubstr => (Some(DataType::Utf8), true),
+        ScalarFunction::RegexpInstr => (
+            Some(DataType::UInt64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::RegexpReplace => (
+            Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::TimeToSec => (

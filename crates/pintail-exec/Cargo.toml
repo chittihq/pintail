@@ -13,6 +13,7 @@ pintail-catalog.workspace = true
 pintail-sql.workspace = true
 pintail-store.workspace = true
 pintail-types.workspace = true
+regex.workspace = true
 rayon.workspace = true
 
 [dev-dependencies]

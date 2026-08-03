@@ -2444,6 +2444,7 @@ dependencies = [
  "pintail-store",
  "pintail-types",
  "rayon",
+ "regex",
  "tempfile",
 ]
 
