@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 683;
+const EXPECTED_CASES: usize = 687;
 
 struct OracleCase {
     family: &'static str,
@@ -917,6 +917,25 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "json",
             r#"SELECT JSON_EXTRACT('[1, 2, 3]', '$[2]'), JSON_UNQUOTE(JSON_EXTRACT('{"b": "two"}', '$.b')), JSON_EXTRACT('{"a": {"deep key": true}}', '$.a."deep key"')"#,
+        ),
+        ordered(
+            "json",
+            "SELECT id, JSON_OBJECT('name', name, 'score', score, 'note', note) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "json",
+            "SELECT id, JSON_ARRAY(id, name, active, note, score + 5) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "json",
+            "SELECT JSON_OBJECT('bb', 1, 'a', 2, 'a', 3), JSON_OBJECT(), JSON_ARRAY(), \
+             JSON_ARRAY(NULL, 'x')",
+        ),
+        ordered(
+            "json",
+            r#"SELECT JSON_EXTRACT('{"a": {"b": [10, 20], "c": "x"}}', '$.a'), JSON_EXTRACT('[{"k": 1}, {"k": 2}]', '$[1]')"#,
         ),
         ordered(
             "right join",

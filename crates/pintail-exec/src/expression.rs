@@ -645,6 +645,12 @@ impl CompiledExpr {
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .fold(0_usize, usize::saturating_add),
+                    // Member text plus quotes/separators/braces per argument.
+                    ScalarFunction::JsonObject | ScalarFunction::JsonArray => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add)
+                        .saturating_add(args.len().saturating_mul(8).saturating_add(2)),
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
                     | ScalarFunction::Left
@@ -762,6 +768,12 @@ impl CompiledExpr {
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .fold(0_usize, usize::saturating_add),
+                    // Member text plus quotes/separators/braces per argument.
+                    ScalarFunction::JsonObject | ScalarFunction::JsonArray => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add)
+                        .saturating_add(args.len().saturating_mul(8).saturating_add(2)),
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
                     | ScalarFunction::Left
@@ -1043,10 +1055,13 @@ fn evaluate_eager_scalar(
             ScalarFunction::InList { .. }
                 | ScalarFunction::NullIf
                 // NULL arguments are data, not poison, for these: CONCAT_WS
-                // skips them, ELT/FIELD treat them positionally.
+                // skips them, ELT/FIELD treat them positionally, and the
+                // JSON constructors encode them as JSON null.
                 | ScalarFunction::ConcatWs
                 | ScalarFunction::Elt
                 | ScalarFunction::Field
+                | ScalarFunction::JsonObject
+                | ScalarFunction::JsonArray
         )
     {
         return Ok(Value::Null);
@@ -1583,9 +1598,27 @@ fn evaluate_eager_scalar(
             };
             Ok(Value::Utf8(match found {
                 serde_json::Value::String(text) if unquote => text.clone(),
-                other => other.to_string(),
+                other => mysql_json_text(other),
             }))
         }
+        ScalarFunction::JsonObject => {
+            let mut members = serde_json::Map::new();
+            for pair in values.chunks_exact(2) {
+                // MySQL rejects NULL member names, coerces other key types
+                // to text, and keeps the LAST occurrence of a duplicate key
+                // (verified against 8.4).
+                if matches!(pair[0], Value::Null) {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                members.insert(scalar_string(&pair[0])?, json_value_of(&pair[1]));
+            }
+            Ok(Value::Utf8(mysql_json_text(&serde_json::Value::Object(
+                members,
+            ))))
+        }
+        ScalarFunction::JsonArray => Ok(Value::Utf8(mysql_json_text(&serde_json::Value::Array(
+            values.iter().map(json_value_of).collect(),
+        )))),
         ScalarFunction::JsonUnquote => {
             let text = scalar_string(&values[0])?;
             match serde_json::from_str::<serde_json::Value>(&text) {
@@ -2179,6 +2212,64 @@ fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
         }
         Ok(leaked)
     })
+}
+
+/// Renders a JSON value the way `MySQL` prints JSON columns: `", "`
+/// between members, `": "` after object keys, and object keys ordered by
+/// length then bytes (the binary-JSON normalization order).
+fn mysql_json_text(value: &serde_json::Value) -> String {
+    fn write(value: &serde_json::Value, output: &mut String) {
+        match value {
+            serde_json::Value::Array(items) => {
+                output.push('[');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
+                    write(item, output);
+                }
+                output.push(']');
+            }
+            serde_json::Value::Object(members) => {
+                let mut keys: Vec<&String> = members.keys().collect();
+                keys.sort_by(|left, right| {
+                    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+                });
+                output.push('{');
+                for (index, key) in keys.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
+                    output.push_str(&serde_json::Value::String((*key).clone()).to_string());
+                    output.push_str(": ");
+                    write(&members[*key], output);
+                }
+                output.push('}');
+            }
+            other => output.push_str(&other.to_string()),
+        }
+    }
+    let mut output = String::new();
+    write(value, &mut output);
+    output
+}
+
+/// Maps a SQL value to the JSON value `MySQL` would store for it inside
+/// `JSON_OBJECT`/`JSON_ARRAY`: NULL becomes JSON null, numbers stay
+/// numbers, everything else is a JSON string.
+fn json_value_of(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Null => serde_json::Value::Null,
+        // BOOLEAN is TINYINT(1) in MySQL, which JSON renders numerically.
+        Value::Boolean(inner) => serde_json::Value::from(i64::from(*inner)),
+        Value::Int64(inner) => serde_json::Value::from(*inner),
+        Value::UInt64(inner) => serde_json::Value::from(*inner),
+        Value::Float64(inner) => serde_json::Value::from(inner.get()),
+        Value::Utf8(inner) => serde_json::Value::String(inner.clone()),
+        Value::Binary(inner) => {
+            serde_json::Value::String(String::from_utf8_lossy(inner).into_owned())
+        }
+    }
 }
 
 /// Resolves a `MySQL` JSON path of the `$.key.nested[0]` form. Wildcards

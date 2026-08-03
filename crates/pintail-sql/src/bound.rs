@@ -273,6 +273,10 @@ pub enum ScalarFunction {
     },
     /// `JSON_UNQUOTE(json)`.
     JsonUnquote,
+    /// `JSON_OBJECT(key, value, ...)`: alternating key/value arguments.
+    JsonObject,
+    /// `JSON_ARRAY(value, ...)`.
+    JsonArray,
     /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
     /// `to`, truncated toward zero, matching `MySQL`.
     TimestampDiff {

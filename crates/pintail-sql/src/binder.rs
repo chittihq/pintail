@@ -1997,6 +1997,8 @@ fn bind_scalar_function(
         "REGEXP_REPLACE" if args.len() == 3 => ScalarFunction::RegexpReplace,
         "JSON_EXTRACT" if args.len() == 2 => ScalarFunction::JsonExtract { unquote: false },
         "JSON_UNQUOTE" if args.len() == 1 => ScalarFunction::JsonUnquote,
+        "JSON_OBJECT" if args.len() % 2 == 0 => ScalarFunction::JsonObject,
+        "JSON_ARRAY" => ScalarFunction::JsonArray,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
             decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
@@ -2506,6 +2508,8 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         ScalarFunction::RegexpSubstr
         | ScalarFunction::JsonExtract { .. }
         | ScalarFunction::JsonUnquote => (Some(DataType::Utf8), true),
+        // NULL arguments become JSON nulls, never a NULL result.
+        ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Utf8), false),
         ScalarFunction::RegexpInstr => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),
