@@ -673,7 +673,15 @@ impl CompiledExpr {
                     | ScalarFunction::Abs { .. }
                     | ScalarFunction::Greatest { .. }
                     | ScalarFunction::Least { .. }
-                    | ScalarFunction::Format => 64,
+                    | ScalarFunction::Format
+                    | ScalarFunction::DayName
+                    | ScalarFunction::MonthName
+                    | ScalarFunction::LastDay
+                    | ScalarFunction::FromDays
+                    | ScalarFunction::SecToTime
+                    | ScalarFunction::MakeDate
+                    | ScalarFunction::Curtime
+                    | ScalarFunction::StrToDate => 64,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
                         .iter()
@@ -705,6 +713,9 @@ impl CompiledExpr {
                     | ScalarFunction::Ascii
                     | ScalarFunction::Ord
                     | ScalarFunction::Field
+                    | ScalarFunction::ToDays
+                    | ScalarFunction::YearWeek
+                    | ScalarFunction::TimeToSec
                     | ScalarFunction::TimestampDiff { .. } => 0,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
@@ -719,6 +730,7 @@ impl CompiledExpr {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // a flat per-function bound table reads best unsplit
     fn string_value_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
         match self {
             Self::Column(index) => batch
@@ -773,7 +785,15 @@ impl CompiledExpr {
                     | ScalarFunction::Abs { .. }
                     | ScalarFunction::Greatest { .. }
                     | ScalarFunction::Least { .. }
-                    | ScalarFunction::Format => 64,
+                    | ScalarFunction::Format
+                    | ScalarFunction::DayName
+                    | ScalarFunction::MonthName
+                    | ScalarFunction::LastDay
+                    | ScalarFunction::FromDays
+                    | ScalarFunction::SecToTime
+                    | ScalarFunction::MakeDate
+                    | ScalarFunction::Curtime
+                    | ScalarFunction::StrToDate => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::Locate
@@ -800,6 +820,9 @@ impl CompiledExpr {
                     | ScalarFunction::Ascii
                     | ScalarFunction::Ord
                     | ScalarFunction::Field
+                    | ScalarFunction::ToDays
+                    | ScalarFunction::YearWeek
+                    | ScalarFunction::TimeToSec
                     | ScalarFunction::TimestampDiff { .. } => 24,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
@@ -875,6 +898,13 @@ pub(crate) fn evaluate_units_date_part(
             };
             u64::try_from(value).unwrap_or(0)
         }
+        // Calendar-topology parts take the generic parse path.
+        DatePart::Quarter
+        | DatePart::DayOfWeek
+        | DatePart::WeekDay
+        | DatePart::DayOfYear
+        | DatePart::Week
+        | DatePart::IsoWeek => return None,
     };
     Some(Ok(Value::UInt64(value)))
 }
@@ -900,6 +930,12 @@ fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Val
         return Some(Err(ExecError::InvalidDateTime));
     }
     let date_value = match part {
+        DatePart::Quarter
+        | DatePart::DayOfWeek
+        | DatePart::WeekDay
+        | DatePart::DayOfYear
+        | DatePart::Week
+        | DatePart::IsoWeek => return None,
         DatePart::Year => u64::try_from(year).unwrap_or(0),
         DatePart::Month => u64::from(month),
         DatePart::Day => u64::from(day),
@@ -921,7 +957,7 @@ fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Val
                 DatePart::Hour => hour,
                 DatePart::Minute => minute,
                 DatePart::Second => second,
-                DatePart::Year | DatePart::Month | DatePart::Day => unreachable!(),
+                _ => unreachable!(),
             }
         }
     };
@@ -1387,6 +1423,118 @@ fn evaluate_eager_scalar(
                 left.date().signed_duration_since(right.date()).num_days(),
             ))
         }
+        ScalarFunction::DayName => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            Ok(Value::Utf8(value.format("%A").to_string()))
+        }
+        ScalarFunction::MonthName => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            Ok(Value::Utf8(value.format("%B").to_string()))
+        }
+        ScalarFunction::LastDay => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?.date();
+            let first_next = if value.month() == 12 {
+                chrono::NaiveDate::from_ymd_opt(value.year() + 1, 1, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(value.year(), value.month() + 1, 1)
+            }
+            .ok_or(ExecError::InvalidDateTime)?;
+            Ok(Value::Utf8(
+                first_next
+                    .pred_opt()
+                    .ok_or(ExecError::InvalidDateTime)?
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ))
+        }
+        ScalarFunction::ToDays => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?.date();
+            let days = value
+                .signed_duration_since(
+                    chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch is valid"),
+                )
+                .num_days()
+                + TO_DAYS_EPOCH_OFFSET;
+            Ok(Value::UInt64(u64::try_from(days).unwrap_or(0)))
+        }
+        ScalarFunction::FromDays => {
+            let days = mysql_i64(&values[0])? - TO_DAYS_EPOCH_OFFSET;
+            let date = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+                .expect("epoch is valid")
+                .checked_add_signed(chrono::Duration::days(days))
+                .ok_or(ExecError::InvalidDateTime)?;
+            Ok(Value::Utf8(date.format("%Y-%m-%d").to_string()))
+        }
+        ScalarFunction::YearWeek => {
+            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?.date();
+            Ok(Value::UInt64(mysql_yearweek(value)))
+        }
+        ScalarFunction::TimeToSec => {
+            let text = scalar_string(&values[0])?;
+            let (negative, rest) = text
+                .strip_prefix('-')
+                .map_or((false, text.as_str()), |rest| (true, rest));
+            let mut parts = rest.split(':');
+            let hours = parts
+                .next()
+                .and_then(|part| part.parse::<i64>().ok())
+                .ok_or(ExecError::InvalidDateTime)?;
+            let minutes = parts
+                .next()
+                .and_then(|part| part.parse::<i64>().ok())
+                .unwrap_or(0);
+            let seconds = parts
+                .next()
+                .and_then(|part| part.split('.').next())
+                .and_then(|part| part.parse::<i64>().ok())
+                .unwrap_or(0);
+            let total = hours * 3600 + minutes * 60 + seconds;
+            Ok(Value::Int64(if negative { -total } else { total }))
+        }
+        ScalarFunction::SecToTime => {
+            let seconds = mysql_i64(&values[0])?;
+            // MySQL clamps TIME to +/- 838:59:59.
+            let clamped = seconds.clamp(-3_020_399, 3_020_399);
+            let magnitude = clamped.unsigned_abs();
+            let sign = if clamped < 0 { "-" } else { "" };
+            Ok(Value::Utf8(format!(
+                "{sign}{:02}:{:02}:{:02}",
+                magnitude / 3600,
+                magnitude / 60 % 60,
+                magnitude % 60
+            )))
+        }
+        ScalarFunction::MakeDate => {
+            let year = mysql_i64(&values[0])?;
+            let day_of_year = mysql_i64(&values[1])?;
+            if day_of_year < 1 {
+                return Ok(Value::Null);
+            }
+            let Ok(year) = i32::try_from(year) else {
+                return Ok(Value::Null);
+            };
+            let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1);
+            let date = start.and_then(|start| {
+                start.checked_add_signed(chrono::Duration::days(day_of_year - 1))
+            });
+            Ok(date.map_or(Value::Null, |date| {
+                Value::Utf8(date.format("%Y-%m-%d").to_string())
+            }))
+        }
+        ScalarFunction::Curtime => Ok(Value::Utf8(
+            Local::now().naive_local().format("%H:%M:%S").to_string(),
+        )),
+        ScalarFunction::StrToDate => {
+            let text = scalar_string(&values[0])?;
+            let format = mysql_date_format(&scalar_string(&values[1])?);
+            if let Ok(value) = NaiveDateTime::parse_from_str(&text, &format) {
+                return Ok(Value::Utf8(value.format("%Y-%m-%d %H:%M:%S").to_string()));
+            }
+            if let Ok(value) = chrono::NaiveDate::parse_from_str(&text, &format) {
+                return Ok(Value::Utf8(value.format("%Y-%m-%d").to_string()));
+            }
+            Ok(Value::Null)
+        }
         ScalarFunction::UnixTimestamp => {
             let timestamp = if values.is_empty() {
                 Utc::now().timestamp()
@@ -1440,8 +1588,48 @@ fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {
         DatePart::Hour => u64::from(value.hour()),
         DatePart::Minute => u64::from(value.minute()),
         DatePart::Second => u64::from(value.second()),
+        DatePart::Quarter => u64::from((value.month() - 1) / 3 + 1),
+        // MySQL DAYOFWEEK: 1 = Sunday .. 7 = Saturday.
+        DatePart::DayOfWeek => u64::from(value.weekday().num_days_from_sunday() + 1),
+        // MySQL WEEKDAY: 0 = Monday .. 6 = Sunday.
+        DatePart::WeekDay => u64::from(value.weekday().num_days_from_monday()),
+        DatePart::DayOfYear => u64::from(value.ordinal()),
+        DatePart::Week => mysql_week_mode0(value.date()),
+        DatePart::IsoWeek => u64::from(value.date().iso_week().week()),
     }
 }
+
+/// `MySQL` `WEEK` default mode 0: Sunday-start weeks numbered 0-53. Week 1
+/// begins on the year's first Sunday; days before it are week 0, and a
+/// year that starts on Sunday starts in week 1.
+fn mysql_week_mode0(date: chrono::NaiveDate) -> u64 {
+    let january_first = date.with_ordinal(1).expect("ordinal 1 is valid");
+    let offset = u64::from(january_first.weekday().num_days_from_sunday());
+    let week = (u64::from(date.ordinal()) - 1 + offset) / 7;
+    if offset == 0 { week + 1 } else { week }
+}
+
+/// `MySQL` `YEARWEEK` default mode 0: `year * 100 + week`, where dates in
+/// week 0 report the final week of the previous year instead.
+fn mysql_yearweek(date: chrono::NaiveDate) -> u64 {
+    let week = mysql_week_mode0(date);
+    if week > 0 {
+        return u64::try_from(date.year()).unwrap_or(0) * 100 + week;
+    }
+    let previous_december =
+        chrono::NaiveDate::from_ymd_opt(date.year() - 1, 12, 31).expect("december 31 is valid");
+    let january_first = previous_december
+        .with_ordinal(1)
+        .expect("ordinal 1 is valid");
+    let offset = u64::from(january_first.weekday().num_days_from_sunday());
+    // Count the date as a continuation of the previous year's weeks.
+    let days = u64::from(previous_december.ordinal()) + u64::from(date.ordinal()) - 1;
+    let week = (days + offset) / 7 + u64::from(offset == 0);
+    u64::try_from(date.year() - 1).unwrap_or(0) * 100 + week
+}
+
+/// Days between year 0 and the Unix epoch in `MySQL`'s `TO_DAYS` calendar.
+const TO_DAYS_EPOCH_OFFSET: i64 = 719_528;
 
 /// `MySQL` `TIMESTAMPDIFF`: complete units from `from` to `to`, truncated
 /// toward zero (negative when `to` precedes `from`). `Chrono`'s duration

@@ -224,6 +224,28 @@ pub enum ScalarFunction {
     ToBase64,
     /// `FROM_BASE64(str)`: NULL when malformed.
     FromBase64,
+    /// `DAYNAME(date)`.
+    DayName,
+    /// `MONTHNAME(date)`.
+    MonthName,
+    /// `LAST_DAY(date)`: last day of the month.
+    LastDay,
+    /// `TO_DAYS(date)`: days since year 0.
+    ToDays,
+    /// `FROM_DAYS(n)`: inverse of `TO_DAYS`.
+    FromDays,
+    /// `YEARWEEK(date)` default mode 0.
+    YearWeek,
+    /// `TIME_TO_SEC(time)`.
+    TimeToSec,
+    /// `SEC_TO_TIME(seconds)`, clamped to `MySQL`'s TIME range.
+    SecToTime,
+    /// `MAKEDATE(year, dayofyear)`: NULL when day < 1.
+    MakeDate,
+    /// `CURTIME()`.
+    Curtime,
+    /// `STR_TO_DATE(text, format)`: NULL when the text does not match.
+    StrToDate,
     /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
     /// `to`, truncated toward zero, matching `MySQL`.
     TimestampDiff {
@@ -289,6 +311,18 @@ pub enum DatePart {
     Minute,
     /// Second.
     Second,
+    /// Quarter (1-4).
+    Quarter,
+    /// `DAYOFWEEK`: 1 = Sunday ... 7 = Saturday.
+    DayOfWeek,
+    /// `WEEKDAY`: 0 = Monday ... 6 = Sunday.
+    WeekDay,
+    /// Day of year (1-366).
+    DayOfYear,
+    /// `WEEK` default mode 0: Sunday-start weeks, range 0-53.
+    Week,
+    /// ISO 8601 week (`WEEK` mode 3 / `WEEKOFYEAR`).
+    IsoWeek,
 }
 
 /// Single-field `MySQL` interval units supported by date arithmetic.

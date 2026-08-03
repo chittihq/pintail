@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundProjection,
+    BoundProjection, ScalarFunction,
 };
 use pintail_types::{DataType, Value};
 
@@ -23,6 +23,12 @@ impl Optimizer {
     /// Applies semantics-preserving v1 logical rewrites.
     #[must_use]
     pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
+        // MySQL pins every current-time function in a statement to one
+        // timestamp; capture it once so folding sees a single instant.
+        STATEMENT_NOW.set(Some(StatementNow {
+            local: chrono::Local::now().naive_local(),
+            unix: chrono::Utc::now().timestamp(),
+        }));
         let plan = fold_constants(plan);
         let plan = push_predicates(plan);
         let plan = replace_metadata_counts(plan);
@@ -333,6 +339,31 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
     }
 }
 
+#[derive(Clone, Copy)]
+struct StatementNow {
+    local: chrono::NaiveDateTime,
+    unix: i64,
+}
+
+thread_local! {
+    static STATEMENT_NOW: std::cell::Cell<Option<StatementNow>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The literal a zero-argument current-time function folds to under the
+/// pinned statement timestamp.
+fn statement_time_literal(function: ScalarFunction, now: StatementNow) -> Option<Value> {
+    match function {
+        ScalarFunction::Now => Some(Value::Utf8(
+            now.local.format("%Y-%m-%d %H:%M:%S").to_string(),
+        )),
+        ScalarFunction::CurrentDate => Some(Value::Utf8(now.local.format("%Y-%m-%d").to_string())),
+        ScalarFunction::Curtime => Some(Value::Utf8(now.local.format("%H:%M:%S").to_string())),
+        ScalarFunction::UnixTimestamp => Some(Value::UInt64(u64::try_from(now.unix).unwrap_or(0))),
+        _ => None,
+    }
+}
+
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
     let folded = match expr.kind {
         BoundExprKind::Column(_)
@@ -382,14 +413,26 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             data_type: expr.data_type,
             nullable: expr.nullable,
         },
-        BoundExprKind::Scalar { function, args } => BoundExpr {
-            kind: BoundExprKind::Scalar {
-                function,
-                args: args.into_iter().map(fold_expr).collect(),
-            },
-            data_type: expr.data_type,
-            nullable: expr.nullable,
-        },
+        BoundExprKind::Scalar { function, args } => {
+            if args.is_empty()
+                && let Some(now) = STATEMENT_NOW.get()
+                && let Some(value) = statement_time_literal(function, now)
+            {
+                return BoundExpr {
+                    kind: BoundExprKind::Literal(value),
+                    data_type: expr.data_type,
+                    nullable: false,
+                };
+            }
+            BoundExpr {
+                kind: BoundExprKind::Scalar {
+                    function,
+                    args: args.into_iter().map(fold_expr).collect(),
+                },
+                data_type: expr.data_type,
+                nullable: expr.nullable,
+            }
+        }
     };
 
     evaluate_constant(&folded).map_or(folded, literal_expr)

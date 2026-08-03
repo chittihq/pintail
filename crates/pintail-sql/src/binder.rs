@@ -816,6 +816,27 @@ fn bind_expr_inner(
         Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates, windows, subqueries),
         // sqlparser gives CEIL/FLOOR dedicated nodes (for the `TO field`
         // form); only the plain numeric spelling is supported.
+        Expr::Extract {
+            field, expr: inner, ..
+        } => {
+            let part = match field {
+                DateTimeField::Year => DatePart::Year,
+                DateTimeField::Month => DatePart::Month,
+                DateTimeField::Day => DatePart::Day,
+                DateTimeField::Hour => DatePart::Hour,
+                DateTimeField::Minute => DatePart::Minute,
+                DateTimeField::Second => DatePart::Second,
+                DateTimeField::Quarter => DatePart::Quarter,
+                DateTimeField::Week(None) => DatePart::Week,
+                _ => return Err(BindError::UnsupportedExpression(expr.to_string())),
+            };
+            bind_scalar(
+                ScalarFunction::DatePart(part),
+                vec![bind_expr_inner(
+                    inner, tables, aggregates, windows, subqueries,
+                )?],
+            )
+        }
         Expr::Ceil { expr: inner, field } | Expr::Floor { expr: inner, field } => {
             if !matches!(
                 field,
@@ -1561,6 +1582,9 @@ fn bind_scalar_function(
     if function_name == "TIMESTAMPDIFF" {
         return bind_timestamp_diff(function, arguments, tables, aggregates, windows, subqueries);
     }
+    if function_name == "TIMESTAMPADD" {
+        return bind_timestamp_add(function, arguments, tables, aggregates, windows, subqueries);
+    }
     let mut args = Vec::with_capacity(arguments.args.len());
     for argument in &arguments.args {
         let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
@@ -1618,6 +1642,34 @@ fn bind_scalar_function(
         "FORMAT" if args.len() == 2 => ScalarFunction::Format,
         "TO_BASE64" if args.len() == 1 => ScalarFunction::ToBase64,
         "FROM_BASE64" if args.len() == 1 => ScalarFunction::FromBase64,
+        "QUARTER" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Quarter),
+        "DAYOFWEEK" if args.len() == 1 => ScalarFunction::DatePart(DatePart::DayOfWeek),
+        "WEEKDAY" if args.len() == 1 => ScalarFunction::DatePart(DatePart::WeekDay),
+        "DAYOFYEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::DayOfYear),
+        "WEEK" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Week),
+        "WEEK" if args.len() == 2 => {
+            // Only modes 0 (default) and 3 (ISO) are supported; the mode
+            // must be a literal so the semantics are static.
+            let mode = match &args[1].kind {
+                BoundExprKind::Literal(Value::Int64(0) | Value::UInt64(0)) => DatePart::Week,
+                BoundExprKind::Literal(Value::Int64(3) | Value::UInt64(3)) => DatePart::IsoWeek,
+                _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+            };
+            args.truncate(1);
+            ScalarFunction::DatePart(mode)
+        }
+        "WEEKOFYEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::IsoWeek),
+        "DAYNAME" if args.len() == 1 => ScalarFunction::DayName,
+        "MONTHNAME" if args.len() == 1 => ScalarFunction::MonthName,
+        "LAST_DAY" if args.len() == 1 => ScalarFunction::LastDay,
+        "TO_DAYS" if args.len() == 1 => ScalarFunction::ToDays,
+        "FROM_DAYS" if args.len() == 1 => ScalarFunction::FromDays,
+        "YEARWEEK" if args.len() == 1 => ScalarFunction::YearWeek,
+        "TIME_TO_SEC" if args.len() == 1 => ScalarFunction::TimeToSec,
+        "SEC_TO_TIME" if args.len() == 1 => ScalarFunction::SecToTime,
+        "MAKEDATE" if args.len() == 2 => ScalarFunction::MakeDate,
+        "CURTIME" | "CURRENT_TIME" if args.is_empty() => ScalarFunction::Curtime,
+        "STR_TO_DATE" if args.len() == 2 => ScalarFunction::StrToDate,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
             decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
@@ -1642,6 +1694,47 @@ fn bind_scalar_function(
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
     bind_scalar(scalar, args)
+}
+
+/// `TIMESTAMPADD(unit, amount, datetime)` is `DATE_ADD` with reordered
+/// arguments.
+fn bind_timestamp_add(
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let [
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(unit)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(amount)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(datetime)),
+    ] = arguments.args.as_slice()
+    else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    let Expr::Identifier(unit) = unit else {
+        return Err(BindError::UnsupportedExpression(function.to_string()));
+    };
+    let unit = match unit.value.to_ascii_uppercase().as_str() {
+        "YEAR" => IntervalUnit::Year,
+        "MONTH" => IntervalUnit::Month,
+        "DAY" => IntervalUnit::Day,
+        "HOUR" => IntervalUnit::Hour,
+        "MINUTE" => IntervalUnit::Minute,
+        "SECOND" => IntervalUnit::Second,
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    };
+    let datetime = bind_expr_inner(datetime, tables, aggregates, windows, subqueries)?;
+    let amount = bind_expr_inner(amount, tables, aggregates, windows, subqueries)?;
+    bind_scalar(
+        ScalarFunction::DateInterval {
+            unit,
+            subtract: false,
+        },
+        vec![datetime, amount],
+    )
 }
 
 fn bind_date_interval(
@@ -2038,23 +2131,33 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::Lpad
         | ScalarFunction::Rpad
         | ScalarFunction::Format
-        | ScalarFunction::ToBase64 => (
+        | ScalarFunction::ToBase64
+        | ScalarFunction::Hex
+        | ScalarFunction::DayName
+        | ScalarFunction::MonthName
+        | ScalarFunction::LastDay
+        | ScalarFunction::FromDays
+        | ScalarFunction::SecToTime => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
         // NULL out of range / on malformed input, like MySQL.
-        ScalarFunction::Elt => (Some(DataType::Utf8), true),
+        ScalarFunction::Elt | ScalarFunction::MakeDate | ScalarFunction::StrToDate => {
+            (Some(DataType::Utf8), true)
+        }
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         ScalarFunction::Instr
         | ScalarFunction::FindInSet
         | ScalarFunction::Ascii
         | ScalarFunction::Ord
-        | ScalarFunction::Field => (
+        | ScalarFunction::Field
+        | ScalarFunction::ToDays
+        | ScalarFunction::YearWeek => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::Hex => (
-            Some(DataType::Utf8),
+        ScalarFunction::TimeToSec => (
+            Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::TimestampDiff { .. } => (
@@ -2062,7 +2165,9 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
-        ScalarFunction::Now | ScalarFunction::CurrentDate => (Some(DataType::Utf8), false),
+        ScalarFunction::Now | ScalarFunction::CurrentDate | ScalarFunction::Curtime => {
+            (Some(DataType::Utf8), false)
+        }
         ScalarFunction::Date
         | ScalarFunction::DateFormat
         | ScalarFunction::DateInterval { .. }

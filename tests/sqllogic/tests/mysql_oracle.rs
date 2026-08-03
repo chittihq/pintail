@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 648;
+const EXPECTED_CASES: usize = 653;
 
 struct OracleCase {
     family: &'static str,
@@ -909,6 +909,36 @@ fn hand_written_cases() -> Vec<OracleCase> {
             // unrounded internal digits between the two divisions
             // (docs/limitations.md); single divisions are exact.
             "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        ordered(
+            "datetime calendar",
+            "SELECT QUARTER('2024-05-15'), DAYOFWEEK('2024-05-15'), WEEKDAY('2024-05-15'), \
+             DAYOFYEAR('2024-05-15'), WEEK('2024-01-01'), WEEK('2024-01-07'), \
+             WEEK('2024-12-31'), WEEKOFYEAR('2024-01-01'), WEEK('2024-06-15', 3)",
+        ),
+        ordered(
+            "datetime calendar",
+            "SELECT YEARWEEK('2024-01-01'), YEARWEEK('2023-01-01'), YEARWEEK('2024-06-15'), \
+             LAST_DAY('2024-02-10'), LAST_DAY('2023-02-10'), DAYNAME('2024-05-15'), \
+             MONTHNAME('2024-05-15')",
+        ),
+        ordered(
+            "datetime calendar",
+            "SELECT TO_DAYS('1970-01-01'), TO_DAYS('2024-05-15'), FROM_DAYS(719528), \
+             TIME_TO_SEC('01:01:01'), SEC_TO_TIME(3661), SEC_TO_TIME(0 - 3661), \
+             SEC_TO_TIME(9999999)",
+        ),
+        ordered(
+            "datetime calendar",
+            "SELECT MAKEDATE(2024, 60), MAKEDATE(2024, 0), MAKEDATE(2023, 365), \
+             EXTRACT(QUARTER FROM '2024-05-15'), EXTRACT(WEEK FROM '2024-01-07'), \
+             TIMESTAMPADD(DAY, 10, '2024-05-15'), TIMESTAMPADD(HOUR, 0 - 5, '2024-05-15 03:00:00')",
+        ),
+        ordered(
+            "datetime calendar",
+            "SELECT STR_TO_DATE('15,5,2024', '%d,%m,%Y'), \
+             STR_TO_DATE('2024-05-15 10:20:30', '%Y-%m-%d %H:%i:%s'), \
+             STR_TO_DATE('nope', '%Y-%m-%d')",
         ),
         ordered(
             "group concat",
