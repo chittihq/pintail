@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-03T19:35:24.917Z.
+Measured 2026-08-03T20:21:40.658Z.
 
-**255 passed, 0 failed, 2 documented-gap warnings.**
+**189 passed, 67 failed, 1 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -95,110 +95,110 @@ Measured 2026-08-03T19:35:24.917Z.
 | type-edges | query:window running total | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
-| ddl | converge:customers | PASS |  |
+| ddl | converge:customers | FAIL | row 0: |
 | ddl | converge:order_items | PASS |  |
-| ddl | converge:orders | PASS |  |
+| ddl | converge:orders | FAIL | row count 201 vs 200 |
 | ddl | converge:shipments | PASS |  |
 | ddl | query:point lookup by key | PASS |  |
-| ddl | query:range scan with compound predicate | PASS |  |
-| ddl | query:inner join with aggregation | PASS |  |
-| ddl | query:left join preserves unmatched rows | PASS |  |
+| ddl | query:range scan with compound predicate | FAIL | row 2: |
+| ddl | query:inner join with aggregation | FAIL | row 1: |
+| ddl | query:left join preserves unmatched rows | FAIL | row 16: |
 | ddl | query:three-way join through items | PASS |  |
 | ddl | query:union all across sources | PASS |  |
-| ddl | query:group by with having | PASS |  |
-| ddl | query:conditional decimal sum keeps the fraction | PASS |  |
-| ddl | query:distinct count and min max | PASS |  |
+| ddl | query:group by with having | FAIL | row 16: |
+| ddl | query:conditional decimal sum keeps the fraction | FAIL | row 4: |
+| ddl | query:distinct count and min max | FAIL | row 0: |
 | ddl | query:uncorrelated in-subquery | PASS |  |
 | ddl | query:scalar subquery threshold | PASS |  |
 | ddl | query:non-recursive cte | PASS |  |
-| ddl | query:date bucketing | PASS |  |
+| ddl | query:date bucketing | FAIL | row 14: |
 | ddl | query:string functions and like | PASS |  |
-| ddl | query:case expression buckets | PASS |  |
-| ddl | query:null handling | PASS |  |
+| ddl | query:case expression buckets | FAIL | row 1: |
+| ddl | query:null handling | FAIL | row 0: |
 | ddl | query:coalesce and ifnull | PASS |  |
 | ddl | query:enum and set filters | PASS |  |
 | ddl | query:unsigned boundary readback | PASS |  |
 | ddl | query:derived table | PASS |  |
-| ddl | query:group_concat single expression | PASS |  |
-| ddl | query:window ranking per group | PASS |  |
-| ddl | query:window share of total over grouped output | PASS |  |
+| ddl | query:group_concat single expression | FAIL | row 6: |
+| ddl | query:window ranking per group | FAIL | row 2: |
+| ddl | query:window share of total over grouped output | FAIL | row 0: |
 | ddl | query:window running total | PASS |  |
-| churn-live | live:point lookup by key | PASS |  |
-| churn-live | live:range scan with compound predicate | PASS |  |
-| churn-live | live:inner join with aggregation | PASS |  |
-| churn-live | live:left join preserves unmatched rows | PASS |  |
-| churn-live | live:three-way join through items | PASS |  |
-| churn-live | live:union all across sources | PASS |  |
+| churn-live | live:point lookup by key | FAIL | row 0: |
+| churn-live | live:range scan with compound predicate | FAIL | row 2: |
+| churn-live | live:inner join with aggregation | FAIL | row 0: |
+| churn-live | live:left join preserves unmatched rows | FAIL | row 0: |
+| churn-live | live:three-way join through items | FAIL | row 2: |
+| churn-live | live:union all across sources | FAIL | row count 38 vs 46 |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:counters | PASS |  |
-| churn | converge:customers | PASS |  |
+| churn | converge:customers | FAIL | row 0: |
 | churn | converge:order_items | PASS |  |
-| churn | converge:orders | PASS |  |
+| churn | converge:orders | FAIL | row count 306 vs 200 |
 | churn | converge:shipments | PASS |  |
-| churn | query:point lookup by key | PASS |  |
-| churn | query:range scan with compound predicate | PASS |  |
-| churn | query:inner join with aggregation | PASS |  |
-| churn | query:left join preserves unmatched rows | PASS |  |
-| churn | query:three-way join through items | PASS |  |
-| churn | query:union all across sources | PASS |  |
-| churn | query:group by with having | PASS |  |
-| churn | query:conditional decimal sum keeps the fraction | PASS |  |
-| churn | query:distinct count and min max | PASS |  |
-| churn | query:uncorrelated in-subquery | PASS |  |
-| churn | query:scalar subquery threshold | PASS |  |
-| churn | query:non-recursive cte | PASS |  |
-| churn | query:date bucketing | PASS |  |
+| churn | query:point lookup by key | FAIL | row 0: |
+| churn | query:range scan with compound predicate | FAIL | row 2: |
+| churn | query:inner join with aggregation | FAIL | row 0: |
+| churn | query:left join preserves unmatched rows | FAIL | row 0: |
+| churn | query:three-way join through items | FAIL | row 2: |
+| churn | query:union all across sources | FAIL | row count 38 vs 46 |
+| churn | query:group by with having | FAIL | row 0: |
+| churn | query:conditional decimal sum keeps the fraction | FAIL | row 0: |
+| churn | query:distinct count and min max | FAIL | row 0: |
+| churn | query:uncorrelated in-subquery | FAIL | row 8: |
+| churn | query:scalar subquery threshold | FAIL | row count 20 vs 1 |
+| churn | query:non-recursive cte | FAIL | row 0: |
+| churn | query:date bucketing | FAIL | row count 21 vs 15 |
 | churn | query:string functions and like | PASS |  |
-| churn | query:case expression buckets | PASS |  |
-| churn | query:null handling | PASS |  |
+| churn | query:case expression buckets | FAIL | row 0: |
+| churn | query:null handling | FAIL | row 0: |
 | churn | query:coalesce and ifnull | PASS |  |
 | churn | query:enum and set filters | PASS |  |
 | churn | query:unsigned boundary readback | PASS |  |
-| churn | query:derived table | PASS |  |
-| churn | query:group_concat single expression | PASS |  |
-| churn | query:window ranking per group | PASS |  |
-| churn | query:window share of total over grouped output | PASS |  |
-| churn | query:window running total | PASS |  |
+| churn | query:derived table | FAIL | row 0: |
+| churn | query:group_concat single expression | FAIL | row 0: |
+| churn | query:window ranking per group | FAIL | row 2: |
+| churn | query:window share of total over grouped output | FAIL | row 0: |
+| churn | query:window running total | FAIL | row 18: |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
-| restart | converge:customers | PASS |  |
+| restart | converge:customers | FAIL | row 0: |
 | restart | converge:order_items | PASS |  |
-| restart | converge:orders | PASS |  |
+| restart | converge:orders | FAIL | row count 307 vs 200 |
 | restart | converge:shipments | PASS |  |
-| restart | query:point lookup by key | PASS |  |
-| restart | query:range scan with compound predicate | PASS |  |
-| restart | query:inner join with aggregation | PASS |  |
-| restart | query:left join preserves unmatched rows | PASS |  |
-| restart | query:three-way join through items | PASS |  |
-| restart | query:union all across sources | PASS |  |
-| restart | query:group by with having | PASS |  |
-| restart | query:conditional decimal sum keeps the fraction | PASS |  |
-| restart | query:distinct count and min max | PASS |  |
-| restart | query:uncorrelated in-subquery | PASS |  |
-| restart | query:scalar subquery threshold | PASS |  |
-| restart | query:non-recursive cte | PASS |  |
-| restart | query:date bucketing | PASS |  |
+| restart | query:point lookup by key | FAIL | row 0: |
+| restart | query:range scan with compound predicate | FAIL | row 2: |
+| restart | query:inner join with aggregation | FAIL | row 0: |
+| restart | query:left join preserves unmatched rows | FAIL | row 0: |
+| restart | query:three-way join through items | FAIL | row 2: |
+| restart | query:union all across sources | FAIL | row count 39 vs 46 |
+| restart | query:group by with having | FAIL | row 0: |
+| restart | query:conditional decimal sum keeps the fraction | FAIL | row 0: |
+| restart | query:distinct count and min max | FAIL | row 0: |
+| restart | query:uncorrelated in-subquery | FAIL | row 8: |
+| restart | query:scalar subquery threshold | FAIL | row count 20 vs 1 |
+| restart | query:non-recursive cte | FAIL | row 0: |
+| restart | query:date bucketing | FAIL | row count 21 vs 15 |
 | restart | query:string functions and like | PASS |  |
-| restart | query:case expression buckets | PASS |  |
-| restart | query:null handling | PASS |  |
+| restart | query:case expression buckets | FAIL | row 0: |
+| restart | query:null handling | FAIL | row 0: |
 | restart | query:coalesce and ifnull | PASS |  |
-| restart | query:enum and set filters | PASS |  |
+| restart | query:enum and set filters | FAIL | row 5: |
 | restart | query:unsigned boundary readback | PASS |  |
-| restart | query:derived table | PASS |  |
-| restart | query:group_concat single expression | PASS |  |
-| restart | query:window ranking per group | PASS |  |
-| restart | query:window share of total over grouped output | PASS |  |
-| restart | query:window running total | PASS |  |
+| restart | query:derived table | FAIL | row 0: |
+| restart | query:group_concat single expression | FAIL | row 0: |
+| restart | query:window ranking per group | FAIL | row 2: |
+| restart | query:window share of total over grouped output | FAIL | row 0: |
+| restart | query:window running total | FAIL | row 18: |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
 | control-plane | api:databases list and detail agree | PASS |  |
 | control-plane | api:connection test succeeds | PASS |  |
 | control-plane | api:activity and dlq respond | PASS |  |
-| control-plane | api:table metadata routes match the source | PASS |  |
+| control-plane | api:table metadata routes match the source | FAIL | Error: count response {"count":200} does not contain MySQL's 307 |
 | control-plane | api:api key disable blocks the wire, enable restores it | PASS |  |
 | control-plane | api:sse event stream connects | PASS |  |
-| control-plane | api:mode switches to polling and back with exact counts | PASS |  |
+| control-plane | api:mode switches to polling and back with exact counts | FAIL | Error: polling never converged: 308 vs 310; status: {"database":{"id":"db_4214fed1e5ed0cce2bb138358508272a","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"polling","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-03T19:56:28.861789+00:00","updated_at":"2026-08-03T20:17:26.741571+00:00"},"tables":6,"rows":655}; activity: [{"id":"run_0324c377e723838b197f33d0680bb500","database_id":"db_4214fed1e5ed0cce2bb138358508272a","table":null,"kind":"polling","status":"completed","rows":0,"bytes":0,"duration_ms":5206,"error":null,"started_at":"2026-08-03T20:17:21.535803+00:00"},{"id":"run_1889e70fd56eec89166311c6dda26a19","database_id":"db_4214fed1e5ed0cce2bb138358508272a","table":null,"kind":"polling","status":"completed","rows":0,"bytes":0,"duration_ms":3546,"error":null,"started_at":"2026-08-03T20:17:16.537387+00:00"},{"id":"run_cf5c7abb10e2bd7152fa9e26caabcf51","database_id":"db_4214fed1e5ed0cce2bb138358508272a","table":null,"kind":"polling","status":"completed","rows":0,"bytes":0,"duration_ms":6943,"error":null,"started_at":"2026-08-03T20:17:06.538131+00:00"},{"id":"run_eb728ac22e57c73292321c0e9c1fad35","database_id":"db_4214fed1e5ed0cce2bb138358508272a","table":null,"kind":"polling","status":"completed","rows":0,"bytes":0,"duration_ms":5789,"error":null,"started_at":"2026-08-03T20:16:56.536851+00:00"},{"id":"run_d142fccdc1d6cd09e345ef7f83a80431","database_id":"db_4214fed1e5ed0cce2bb138358508272a","table":null,"kind":"polling","status":"completed","rows":0,"bytes":0,"duration_ms":4805,"error":null,"started_at":"2026-08-03T20:16:51.536518+00:00"}] |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:keyless policy: quarantine flags, auto_resync repairs | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
@@ -237,7 +237,7 @@ Measured 2026-08-03T19:35:24.917Z.
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
-| ddl-documented-gaps | converge:order_items | WARN | row 0: |
+| ddl-documented-gaps | converge:order_items | PASS |  |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | query:point lookup by key | PASS |  |

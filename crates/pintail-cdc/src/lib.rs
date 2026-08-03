@@ -921,7 +921,7 @@ async fn apply_ddl_actions(
             }
             DdlAction::Alter {
                 table,
-                kind: AlterKind::ModifyColumns(columns),
+                kind: AlterKind::ModifyColumns(_),
             } => {
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
                     continue;
@@ -941,23 +941,21 @@ async fn apply_ddl_actions(
                 // Storage-compatible type changes evolve in place; anything
                 // else fails stabilization (or the store's segment re-read)
                 // and quarantines for resync exactly like before.
-                let source =
-                    match stabilize_source_table_widening(&targets[index].source, source, &columns)
-                    {
-                        Ok(source) => source,
-                        Err(reason) => {
-                            quarantine_schema_change(
-                                metadata,
-                                database_id,
-                                &targets[index],
-                                index,
-                                blocked_targets,
-                                &format!("{statement}; {reason}"),
-                                None,
-                            )?;
-                            continue;
-                        }
-                    };
+                let source = match stabilize_source_table(&targets[index].source, source) {
+                    Ok(source) => source,
+                    Err(reason) => {
+                        quarantine_schema_change(
+                            metadata,
+                            database_id,
+                            &targets[index],
+                            index,
+                            blocked_targets,
+                            &format!("{statement}; {reason}"),
+                            None,
+                        )?;
+                        continue;
+                    }
+                };
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
                 if let Err(error) = targets[index].store.evolve_schema(schema) {
@@ -1163,15 +1161,7 @@ fn widening_compatible(
 
 fn stabilize_source_table(
     previous: &SourceTable,
-    refreshed: SourceTable,
-) -> Result<SourceTable, String> {
-    stabilize_source_table_widening(previous, refreshed, &[])
-}
-
-fn stabilize_source_table_widening(
-    previous: &SourceTable,
     mut refreshed: SourceTable,
-    widenable: &[String],
 ) -> Result<SourceTable, String> {
     if previous.key.mode != refreshed.key.mode
         || previous.key.columns.len() != refreshed.key.columns.len()
@@ -1196,14 +1186,15 @@ fn stabilize_source_table_widening(
             .iter()
             .find(|existing| existing.name.eq_ignore_ascii_case(&column.name))
         {
-            if existing.pintail_type != column.pintail_type {
-                let widening_allowed = widenable
-                    .iter()
-                    .any(|name| name.eq_ignore_ascii_case(&column.name))
-                    && widening_compatible(existing.pintail_type, column.pintail_type);
-                if !widening_allowed {
-                    return Err(format!("column {} changed physical type", column.name));
-                }
+            if existing.pintail_type != column.pintail_type
+                && !widening_compatible(existing.pintail_type, column.pintail_type)
+            {
+                // The probe reflects the source's CURRENT state, so an
+                // earlier DDL event can legitimately see a later
+                // storage-compatible widening; adopting the wider type
+                // early is value-identical because row decode reads the
+                // physical layout from the binlog table map.
+                return Err(format!("column {} changed physical type", column.name));
             }
             column.id = existing.id;
         } else {
