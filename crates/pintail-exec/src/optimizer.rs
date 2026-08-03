@@ -41,6 +41,7 @@ impl Optimizer {
     }
 }
 
+#[allow(clippy::too_many_lines)] // exhaustive plan-node recursion reads best unsplit
 fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::Aggregate {
@@ -92,10 +93,12 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => LogicalPlan::SetOp {
             keep_matching,
+            all,
             left: Box::new(push_aggregates_through_identity_joins(*left)),
             right: Box::new(push_aggregates_through_identity_joins(*right)),
         },
@@ -212,10 +215,12 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => LogicalPlan::SetOp {
             keep_matching,
+            all,
             left: Box::new(replace_metadata_counts(*left)),
             right: Box::new(replace_metadata_counts(*right)),
         },
@@ -287,10 +292,12 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => LogicalPlan::SetOp {
             keep_matching,
+            all,
             left: Box::new(fold_constants(*left)),
             right: Box::new(fold_constants(*right)),
         },
@@ -523,10 +530,12 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => LogicalPlan::SetOp {
             keep_matching,
+            all,
             left: Box::new(push_predicates(*left)),
             right: Box::new(push_predicates(*right)),
         },
@@ -722,10 +731,12 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => LogicalPlan::SetOp {
             keep_matching,
+            all,
             left: Box::new(reorder_cross_joins(*left)),
             right: Box::new(reorder_cross_joins(*right)),
         },

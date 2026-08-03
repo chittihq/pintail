@@ -69,12 +69,15 @@ pub enum PhysicalPlan {
         /// Inputs in SQL source order.
         inputs: Vec<Self>,
     },
-    /// Distinct set operation: keep or drop left rows by membership in the
+    /// Set operation: keep or drop left rows by membership in the
     /// materialized right input.
     SetOp {
         /// `INTERSECT` keeps matches, `EXCEPT` drops them.
         keep_matching: bool,
-        /// Deduplicated left input.
+        /// `ALL` multiset semantics: each match consumes one right-side
+        /// occurrence; the left input arrives without deduplication.
+        all: bool,
+        /// Left input (deduplicated upstream unless `all`).
         left: Box<Self>,
         /// Membership input.
         right: Box<Self>,
@@ -308,17 +311,28 @@ impl PhysicalPlanner {
             }
             LogicalPlan::SetOp {
                 keep_matching,
+                all,
                 left,
                 right,
-            } => Ok(PhysicalPlan::SetOp {
-                keep_matching,
-                // The operator deduplicates its left side via an upstream
-                // Distinct, giving MySQL's distinct set semantics.
-                left: Box::new(PhysicalPlan::Distinct {
-                    input: Box::new(Self::plan(*left)?),
-                }),
-                right: Box::new(Self::plan(*right)?),
-            }),
+            } => {
+                // Distinct semantics deduplicate the left side upstream;
+                // ALL semantics feed it through untouched and let the
+                // operator consume right-side occurrence counts.
+                let left = Self::plan(*left)?;
+                let left = if all {
+                    left
+                } else {
+                    PhysicalPlan::Distinct {
+                        input: Box::new(left),
+                    }
+                };
+                Ok(PhysicalPlan::SetOp {
+                    keep_matching,
+                    all,
+                    left: Box::new(left),
+                    right: Box::new(Self::plan(*right)?),
+                })
+            }
             LogicalPlan::UnionAll { inputs } => Ok(PhysicalPlan::UnionAll {
                 inputs: inputs
                     .into_iter()
@@ -1084,8 +1098,9 @@ enum PullOperator {
     SetOp {
         input: Box<Self>,
         right: Option<Box<Self>>,
-        membership: HashSet<Vec<Value>>,
+        membership: HashMap<Vec<Value>, u64>,
         keep_matching: bool,
+        all: bool,
     },
     Sort {
         input: Box<Self>,
@@ -1345,15 +1360,16 @@ impl PullOperator {
                 right,
                 membership,
                 keep_matching,
+                all,
             } => {
                 // First call drains the membership side completely.
                 if let Some(mut side) = right.take() {
                     while let Some(batch) = side.next_batch(memory)? {
                         let batch_bytes = batch.estimated_bytes();
-                        reserve_hash_set_entries(
+                        reserve_hash_map_entries(
                             membership,
                             batch.visible_row_count(),
-                            size_of::<Vec<Value>>().saturating_add(HASH_ENTRY_OVERHEAD),
+                            size_of::<(Vec<Value>, u64)>().saturating_add(HASH_ENTRY_OVERHEAD),
                             batch_bytes,
                             memory,
                         )?;
@@ -1365,7 +1381,7 @@ impl PullOperator {
                             let row_bytes = estimated_row_payload_bytes(&key);
                             memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
                             memory.reserve(row_bytes)?;
-                            membership.insert(key);
+                            *membership.entry(key).or_insert(0) += 1;
                         }
                     }
                 }
@@ -1378,7 +1394,21 @@ impl PullOperator {
                             continue;
                         }
                         let key = normalized_batch_row(&batch, row)?;
-                        if membership.contains(&key) != *keep_matching {
+                        // ALL consumes one right-side occurrence per match so
+                        // each row repeats min(l, r) (INTERSECT ALL) or
+                        // l - min(l, r) (EXCEPT ALL) times.
+                        let matched = if *all {
+                            match membership.get_mut(&key) {
+                                Some(count) if *count > 0 => {
+                                    *count -= 1;
+                                    true
+                                }
+                                _ => false,
+                            }
+                        } else {
+                            membership.contains_key(&key)
+                        };
+                        if matched != *keep_matching {
                             batch.selection_mut().set(row, false)?;
                         }
                     }
@@ -1734,6 +1764,7 @@ fn build_operator(
         }
         PhysicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => {
@@ -1743,8 +1774,9 @@ fn build_operator(
                 PullOperator::SetOp {
                     input: Box::new(left),
                     right: Some(Box::new(right)),
-                    membership: HashSet::new(),
+                    membership: HashMap::new(),
                     keep_matching,
+                    all,
                 },
                 columns,
             ))

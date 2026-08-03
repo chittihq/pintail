@@ -155,17 +155,19 @@ fn write_plan(
         }
         PhysicalPlan::SetOp {
             keep_matching,
+            all,
             left,
             right,
         } => {
             writeln!(
                 output,
-                "SetOp kind={}",
+                "SetOp kind={}{}",
                 if *keep_matching {
                     "intersect"
                 } else {
                     "except"
-                }
+                },
+                if *all { " all" } else { "" }
             )?;
             write_plan(left, depth + 1, output, provider)?;
             write_plan(right, depth + 1, output, provider)

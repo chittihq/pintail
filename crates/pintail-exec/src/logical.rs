@@ -59,12 +59,15 @@ pub enum LogicalPlan {
         /// Inputs in SQL source order.
         inputs: Vec<LogicalPlan>,
     },
-    /// Distinct set operation (`INTERSECT` / `EXCEPT`).
+    /// Set operation (`INTERSECT` / `EXCEPT`).
     SetOp {
         /// Whether matching rows are kept (`INTERSECT`) or dropped
         /// (`EXCEPT`).
         keep_matching: bool,
-        /// Left input (deduplicated by the operator).
+        /// `ALL` multiset semantics: each match consumes one right-side
+        /// occurrence instead of the left side being deduplicated.
+        all: bool,
+        /// Left input (deduplicated by the operator unless `all`).
         left: Box<LogicalPlan>,
         /// Right membership input.
         right: Box<LogicalPlan>,
@@ -278,8 +281,16 @@ impl LogicalPlanner {
             }
         }
         for (kind, right) in set_ops {
+            use pintail_sql::BoundSetOpKind;
             plan = LogicalPlan::SetOp {
-                keep_matching: matches!(kind, pintail_sql::BoundSetOpKind::Intersect),
+                keep_matching: matches!(
+                    kind,
+                    BoundSetOpKind::Intersect | BoundSetOpKind::IntersectAll
+                ),
+                all: matches!(
+                    kind,
+                    BoundSetOpKind::IntersectAll | BoundSetOpKind::ExceptAll
+                ),
                 left: Box::new(plan),
                 right: Box::new(Self::plan(right)),
             };

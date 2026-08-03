@@ -446,13 +446,17 @@ pub struct BoundWindow {
     pub nullable: bool,
 }
 
-/// Distinct set operations beyond UNION.
+/// Set operations beyond UNION.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoundSetOpKind {
-    /// Rows present in both inputs.
+    /// Distinct rows present in both inputs.
     Intersect,
-    /// Rows of the left input absent from the right.
+    /// Distinct rows of the left input absent from the right.
     Except,
+    /// Each row repeated `min(left_count, right_count)` times.
+    IntersectAll,
+    /// Each row repeated `max(0, left_count - right_count)` times.
+    ExceptAll,
 }
 
 /// Supported unary scalar operations.

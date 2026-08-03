@@ -153,16 +153,19 @@ impl<'catalog> Binder<'catalog> {
             SetExpr::SetOperation {
                 left,
                 op: op @ (SetOperator::Intersect | SetOperator::Except),
-                set_quantifier: SetQuantifier::Distinct | SetQuantifier::None,
+                set_quantifier:
+                    quantifier @ (SetQuantifier::All | SetQuantifier::Distinct | SetQuantifier::None),
                 right,
             } => {
                 let mut left = self.bind_set_expr(left, ctes)?;
                 let mut right = self.bind_set_expr(right, ctes)?;
                 unify_union_layout(&mut left, &mut right)?;
-                let kind = if matches!(op, SetOperator::Intersect) {
-                    BoundSetOpKind::Intersect
-                } else {
-                    BoundSetOpKind::Except
+                let all = matches!(quantifier, SetQuantifier::All);
+                let kind = match (op, all) {
+                    (SetOperator::Intersect, false) => BoundSetOpKind::Intersect,
+                    (SetOperator::Intersect, true) => BoundSetOpKind::IntersectAll,
+                    (_, false) => BoundSetOpKind::Except,
+                    (_, true) => BoundSetOpKind::ExceptAll,
                 };
                 left.set_ops.push((kind, right));
                 Ok(left)
