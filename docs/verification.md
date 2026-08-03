@@ -88,6 +88,16 @@ See the [`M9 release report`](docs/milestones/M9.md) for the recorded outcome.
 Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
 
+Locally, `bun run scripts/validate.ts` drives the full sequence as one
+detached process — preflighting the shared Docker host (reachability,
+free disk, leftover harness containers), running stages strictly in
+order (fmt+clippy, unit, oracle, e2e, benchmark, acceptance), retrying
+once on transient container-init races, aborting on host-level failures
+like a full disk, and capturing crashed-container logs before harness
+cleanup. Progress streams to `validate-out/validate-status.log`; the
+verdict lands in `validate-out/validate-report.md`. Use
+`--stages=fmt,unit,oracle` for the fast loop.
+
 CI runs these gates automatically on GitHub-hosted runners with no external
 infrastructure: `.github/workflows/e2e.yml` gives every push and pull
 request a three-phase e2e smoke and runs the full eight-phase gate nightly,
