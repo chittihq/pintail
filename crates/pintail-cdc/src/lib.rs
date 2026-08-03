@@ -10,7 +10,7 @@ mod decoder;
 mod gtid;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher},
+    collections::{BTreeMap, BTreeSet, HashMap, hash_map::DefaultHasher},
     fs::File,
     hash::{Hash as _, Hasher as _},
     io::{Seek as _, Write as _},
@@ -334,6 +334,12 @@ async fn run_cdc_inner(
         .map(|(index, target)| (target.source.name.to_ascii_lowercase(), index))
         .collect::<BTreeMap<_, _>>();
     let mut metadata = MetaStore::open(metadata_path)?;
+    // Tables auto-included mid-stream are snapshotted at a position AHEAD
+    // of the stream; row events at or before that position are already in
+    // the snapshot and must not replay (append-row-id tables would
+    // duplicate — keyed tables merely upsert, but the fence is exact for
+    // both).
+    let mut snapshot_fences: HashMap<usize, (String, u64)> = HashMap::new();
     let mut blocked_targets = metadata
         .tables_needing_resync(database_id)?
         .iter()
@@ -474,7 +480,14 @@ async fn run_cdc_inner(
                         .engine
                         .as_deref()
                         .is_some_and(|engine| !engine.eq_ignore_ascii_case("InnoDB"));
-                    if !blocked_targets.contains(&target_index)
+                    let fenced = snapshot_fences.get(&target_index).is_some_and(
+                        |(fence_file, fence_pos)| {
+                            position.file.as_str() < fence_file.as_str()
+                                || (position.file == *fence_file && event_position <= *fence_pos)
+                        },
+                    );
+                    if !fenced
+                        && !blocked_targets.contains(&target_index)
                         && decode_rows_event(
                             &rows_event,
                             table_map,
@@ -552,6 +565,7 @@ async fn run_cdc_inner(
                             &mut targets,
                             &mut target_indexes,
                             &mut blocked_targets,
+                            &mut snapshot_fences,
                             &mut metadata,
                             &options,
                             &statement,
@@ -742,6 +756,7 @@ async fn apply_ddl_actions(
     targets: &mut Vec<CdcTarget>,
     target_indexes: &mut BTreeMap<String, usize>,
     blocked_targets: &mut BTreeSet<usize>,
+    snapshot_fences: &mut HashMap<usize, (String, u64)>,
     metadata: &mut MetaStore,
     options: &CdcOptions,
     statement: &str,
@@ -974,6 +989,12 @@ async fn apply_ddl_actions(
                 let index = targets.len();
                 targets.push(target);
                 target_indexes.insert(table.to_ascii_lowercase(), index);
+                if let Some(checkpoint) = metadata.snapshot_checkpoint(database_id)?
+                    && let (Some(file), Some(fence_position)) =
+                        (checkpoint.binlog_file, checkpoint.binlog_pos)
+                {
+                    snapshot_fences.insert(index, (file, fence_position));
+                }
                 record_target_schema(metadata, database_id, &targets[index], 1, statement)?;
                 // The stored probe report is the table inventory for both the
                 // supervisor's next cycle and the query engine's catalog;

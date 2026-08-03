@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-03T16:47:38.081Z.
+Measured 2026-08-03T17:31:08.414Z.
 
-**252 passed, 0 failed, 2 documented-gap warnings.**
+**252 passed, 3 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -200,10 +200,12 @@ Measured 2026-08-03T16:47:38.081Z.
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
+| control-plane | api:keyless policy: quarantine flags, auto_resync repairs | FAIL | Error: keyless inserts never replicated |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
+| control-plane | converge:keyless_log | FAIL | row count 4 vs 8 |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
@@ -234,6 +236,7 @@ Measured 2026-08-03T16:47:38.081Z.
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
+| ddl-documented-gaps | converge:keyless_log | FAIL | row count 4 vs 8 |
 | ddl-documented-gaps | converge:order_items | WARN | row 0: |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |

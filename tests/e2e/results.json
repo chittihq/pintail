@@ -971,6 +971,12 @@
   },
   {
     "phase": "control-plane",
+    "check": "api:keyless policy: quarantine flags, auto_resync repairs",
+    "status": "FAIL",
+    "detail": "Error: keyless inserts never replicated"
+  },
+  {
+    "phase": "control-plane",
     "check": "api:throwaway database lifecycle: create, update, delete",
     "status": "PASS"
   },
@@ -988,6 +994,12 @@
     "phase": "control-plane",
     "check": "converge:customers",
     "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:keyless_log",
+    "status": "FAIL",
+    "detail": "row count 4 vs 8"
   },
   {
     "phase": "control-plane",
@@ -1139,6 +1151,12 @@
     "phase": "ddl-documented-gaps",
     "check": "converge:customers",
     "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:keyless_log",
+    "status": "FAIL",
+    "detail": "row count 4 vs 8"
   },
   {
     "phase": "ddl-documented-gaps",
