@@ -92,6 +92,9 @@ pub enum PhysicalPlan {
         kind: BoundJoinKind,
         /// Probe-side key.
         left_key: BoundExpr,
+        /// Additional equality key pairs beyond the primary; empty for the
+        /// common single-key join.
+        extra_keys: Vec<(BoundExpr, BoundExpr)>,
         /// Build-side key.
         right_key: BoundExpr,
     },
@@ -382,13 +385,15 @@ impl PhysicalPlanner {
                     });
                 }
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
-                let (left_key, right_key) = equi_join_keys(&condition, &left, &right)
+                let mut pairs = equi_join_key_pairs(&condition, &left, &right)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
+                let (left_key, right_key) = pairs.remove(0);
                 Ok(PhysicalPlan::HashJoin {
                     left: Box::new(Self::plan(*left)?),
                     right: Box::new(Self::plan(*right)?),
                     kind,
                     left_key,
+                    extra_keys: pairs,
                     right_key,
                 })
             }
@@ -413,31 +418,55 @@ fn plan_limit(input: LogicalPlan, offset: u64, count: u64) -> Result<PhysicalPla
     })
 }
 
-fn equi_join_keys(
+/// Splits a join condition into oriented equality key pairs. Every AND-ed
+/// conjunct must be a hashable equality spanning the two sides; anything
+/// else rejects the whole condition.
+fn equi_join_key_pairs(
     condition: &BoundExpr,
     left: &LogicalPlan,
     right: &LogicalPlan,
-) -> Option<(BoundExpr, BoundExpr)> {
-    let BoundExprKind::Binary {
-        op: BinaryOp::Equal,
-        left: first,
-        right: second,
-    } = &condition.kind
-    else {
-        return None;
-    };
-    hash_join_key_mode(first.data_type, second.data_type)?;
+) -> Option<Vec<(BoundExpr, BoundExpr)>> {
+    fn conjuncts_of(expr: &BoundExpr, out: &mut Vec<BoundExpr>) {
+        if let BoundExprKind::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } = &expr.kind
+        {
+            conjuncts_of(left, out);
+            conjuncts_of(right, out);
+        } else {
+            out.push(expr.clone());
+        }
+    }
     let left_tables = logical_tables(left);
     let right_tables = logical_tables(right);
-    if expression_belongs_to(first, &left_tables) && expression_belongs_to(second, &right_tables) {
-        Some(((**first).clone(), (**second).clone()))
-    } else if expression_belongs_to(first, &right_tables)
-        && expression_belongs_to(second, &left_tables)
-    {
-        Some(((**second).clone(), (**first).clone()))
-    } else {
-        None
+    let mut conjuncts = Vec::new();
+    conjuncts_of(condition, &mut conjuncts);
+    let mut pairs = Vec::with_capacity(conjuncts.len());
+    for conjunct in conjuncts {
+        let BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left: first,
+            right: second,
+        } = &conjunct.kind
+        else {
+            return None;
+        };
+        hash_join_key_mode(first.data_type, second.data_type)?;
+        if expression_belongs_to(first, &left_tables)
+            && expression_belongs_to(second, &right_tables)
+        {
+            pairs.push(((**first).clone(), (**second).clone()));
+        } else if expression_belongs_to(first, &right_tables)
+            && expression_belongs_to(second, &left_tables)
+        {
+            pairs.push(((**second).clone(), (**first).clone()));
+        } else {
+            return None;
+        }
     }
+    if pairs.is_empty() { None } else { Some(pairs) }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -859,12 +888,17 @@ fn resolve_plan_subqueries(
             right,
             left_key,
             right_key,
+            extra_keys,
             ..
         } => {
             resolve_plan_subqueries(left, provider, memory_limit, retained_bytes)?;
             resolve_plan_subqueries(right, provider, memory_limit, retained_bytes)?;
             resolve_expr_subqueries(left_key, provider, memory_limit, retained_bytes)?;
             resolve_expr_subqueries(right_key, provider, memory_limit, retained_bytes)?;
+            for (extra_left, extra_right) in extra_keys {
+                resolve_expr_subqueries(extra_left, provider, memory_limit, retained_bytes)?;
+                resolve_expr_subqueries(extra_right, provider, memory_limit, retained_bytes)?;
+            }
         }
         PhysicalPlan::Filter { input, predicate } => {
             resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
@@ -1071,6 +1105,7 @@ enum PullOperator {
         kind: BoundJoinKind,
         left_key: CompiledExpr,
         right_key: CompiledExpr,
+        extra_keys: Vec<(CompiledExpr, CompiledExpr, JoinKeyMode)>,
         key_mode: JoinKeyMode,
         column_types: Vec<DataType>,
         right_width: usize,
@@ -1219,13 +1254,15 @@ impl PullOperator {
                 kind,
                 left_key,
                 right_key,
+                extra_keys,
                 key_mode,
                 column_types,
                 right_width,
                 state,
             } => {
                 if state.is_none() {
-                    let built = build_hash_join_state(right, right_key, *key_mode, memory)?;
+                    let built =
+                        build_hash_join_state(right, right_key, *key_mode, extra_keys, memory)?;
                     // Inner and semi joins cannot match probe rows outside
                     // the build side's key range, so the probe scan can prune
                     // storage before decoding anything. Left/anti joins need
@@ -1243,6 +1280,7 @@ impl PullOperator {
                     *kind,
                     left_key,
                     *key_mode,
+                    extra_keys,
                     *right_width,
                     column_types,
                     state.as_mut().expect("initialized above"),
@@ -1641,12 +1679,27 @@ fn build_operator(
             kind,
             left_key,
             right_key,
+            extra_keys,
         } => {
             let (left, left_columns) = build_operator(*left, provider, memory)?;
             let (right, right_columns) = build_operator(*right, provider, memory)?;
             let key_mode = hash_join_key_mode(left_key.data_type, right_key.data_type).ok_or(
                 ExecError::InvalidPhysicalPlan("hash join keys have incompatible scalar types"),
             )?;
+            let extra_keys = extra_keys
+                .into_iter()
+                .map(|(extra_left, extra_right)| {
+                    let mode = hash_join_key_mode(extra_left.data_type, extra_right.data_type)
+                        .ok_or(ExecError::InvalidPhysicalPlan(
+                            "hash join keys have incompatible scalar types",
+                        ))?;
+                    Ok((
+                        CompiledExpr::compile(&extra_left, &left_columns)?,
+                        CompiledExpr::compile(&extra_right, &right_columns)?,
+                        mode,
+                    ))
+                })
+                .collect::<Result<Vec<_>, ExecError>>()?;
             let left_key = CompiledExpr::compile(&left_key, &left_columns)?;
             let right_key = CompiledExpr::compile(&right_key, &right_columns)?;
             let right_width = right_columns.len();
@@ -1665,6 +1718,7 @@ fn build_operator(
                     kind,
                     left_key,
                     right_key,
+                    extra_keys,
                     key_mode,
                     column_types,
                     right_width,
@@ -1976,6 +2030,7 @@ fn build_hash_join_state(
     right: &mut PullOperator,
     right_key: &CompiledExpr,
     key_mode: JoinKeyMode,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     memory: &MemoryTracker,
 ) -> Result<HashJoinState, ExecError> {
     let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
@@ -2027,6 +2082,10 @@ fn build_hash_join_state(
             let Some(key) = normalized_join_key(value, key_mode)? else {
                 continue;
             };
+            let Some(key) = composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)?
+            else {
+                continue;
+            };
             let key_bytes = if build.contains_key(&key) {
                 0
             } else {
@@ -2067,6 +2126,7 @@ fn next_hash_join_batch(
     kind: BoundJoinKind,
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     right_width: usize,
     column_types: &[DataType],
     state: &mut HashJoinState,
@@ -2076,7 +2136,7 @@ fn next_hash_join_batch(
     let mut buffered_bytes = 0_usize;
     while rows.len() < DEFAULT_BATCH_ROWS {
         if state.left_values.is_none()
-            && !prepare_hash_join_left(left, left_key, key_mode, state, memory)?
+            && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory)?
         {
             break;
         }
@@ -2151,6 +2211,7 @@ fn prepare_hash_join_left(
     left: &mut PullOperator,
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     state: &mut HashJoinState,
     memory: &MemoryTracker,
 ) -> Result<bool, ExecError> {
@@ -2180,7 +2241,10 @@ fn prepare_hash_join_left(
             .allocation_upper_bound(batch, row)
             .saturating_mul(12);
         memory.ensure_transient(row_bytes.saturating_add(key_memory))?;
-        state.left_key = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)?;
+        state.left_key = match normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? {
+            Some(primary) => composite_join_key(primary, batch, row, extra_keys, JoinSide::Probe)?,
+            None => None,
+        };
         state.left_reserved = row_bytes.saturating_sub(size_of::<Vec<Value>>());
         memory.reserve(state.left_reserved)?;
         state.left_values = Some(batch_row(batch, row)?);
@@ -4074,6 +4138,7 @@ fn build_fused_inner_join_aggregate(
         kind,
         left_key,
         right_key,
+        extra_keys,
         key_mode,
         column_types,
         right_width,
@@ -4083,7 +4148,10 @@ fn build_fused_inner_join_aggregate(
         return Ok(None);
     };
     let left_width = column_types.len().saturating_sub(*right_width);
-    if *kind != BoundJoinKind::Inner
+    // The fused spine probes on the primary key alone; composite-key joins
+    // stay on the general operator.
+    if !extra_keys.is_empty()
+        || *kind != BoundJoinKind::Inner
         || state.is_some()
         || *right_width > column_types.len()
         || group_columns
@@ -4111,7 +4179,7 @@ fn build_fused_inner_join_aggregate(
         .map(|column| column - left_width)
         .collect::<Vec<_>>();
     let build_start = memory.used();
-    let join = build_hash_join_state(right, right_key, *key_mode, memory)?;
+    let join = build_hash_join_state(right, right_key, *key_mode, extra_keys, memory)?;
     let build_reserved = memory.used().saturating_sub(build_start);
     // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
     // Integer-mode build keys occupying a small dense range trade the
@@ -6731,6 +6799,8 @@ enum JoinHashKey {
     NonNegativeInteger(u64),
     MysqlNumber(pintail_types::Float64),
     Scalar(Value),
+    /// Multi-key equality: primary key first, extras in declaration order.
+    Composite(Vec<JoinHashKey>),
 }
 
 impl JoinHashKey {
@@ -6738,8 +6808,46 @@ impl JoinHashKey {
         match self {
             Self::Scalar(value) => value.heap_bytes(),
             Self::NegativeInteger(_) | Self::NonNegativeInteger(_) | Self::MysqlNumber(_) => 0,
+            Self::Composite(parts) => parts
+                .iter()
+                .map(|part| size_of::<Self>().saturating_add(part.heap_bytes()))
+                .fold(0, usize::saturating_add),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum JoinSide {
+    Build,
+    Probe,
+}
+
+/// Extends a primary join key with the extra equality keys, or returns
+/// `None` when any component is NULL (the row can never match). Single-key
+/// joins pass through untouched, keeping their hash shape identical.
+fn composite_join_key(
+    primary: JoinHashKey,
+    batch: &RecordBatch,
+    row: usize,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    side: JoinSide,
+) -> Result<Option<JoinHashKey>, ExecError> {
+    if extra_keys.is_empty() {
+        return Ok(Some(primary));
+    }
+    let mut parts = Vec::with_capacity(1 + extra_keys.len());
+    parts.push(primary);
+    for (probe_key, build_key, mode) in extra_keys {
+        let expr = match side {
+            JoinSide::Probe => probe_key,
+            JoinSide::Build => build_key,
+        };
+        let Some(part) = normalized_join_key(expr.evaluate(batch, row)?, *mode)? else {
+            return Ok(None);
+        };
+        parts.push(part);
+    }
+    Ok(Some(JoinHashKey::Composite(parts)))
 }
 
 fn normalized_join_key(value: Value, mode: JoinKeyMode) -> Result<Option<JoinHashKey>, ExecError> {

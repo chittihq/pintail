@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 695;
+const EXPECTED_CASES: usize = 703;
 
 struct OracleCase {
     family: &'static str,
@@ -1078,6 +1078,51 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT e.id FROM events e \
              WHERE EXISTS (SELECT 1 FROM users u WHERE u.name <> 'user-05' AND e.id = u.id) \
              ORDER BY e.id",
+        ),
+        ordered(
+            "exists subqueries",
+            "SELECT e.id, e.name FROM events e \
+             WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = e.id AND u.id = e.score DIV 10) \
+             ORDER BY e.id",
+        ),
+        ordered(
+            "exists subqueries",
+            "SELECT e.id FROM events e \
+             WHERE NOT EXISTS (SELECT 1 FROM users u \
+             WHERE u.id = e.id AND u.id = e.score DIV 10 AND u.name <> 'user-03') \
+             ORDER BY e.id",
+        ),
+        ordered(
+            "in subqueries",
+            "SELECT u.id, u.name FROM users u \
+             WHERE u.id IN (SELECT e.id FROM events e WHERE e.score = u.id * 10) \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "in subqueries",
+            "SELECT u.id FROM users u \
+             WHERE u.id IN (SELECT e.id FROM events e \
+             WHERE e.score = u.id * 10 AND e.active = 1) ORDER BY u.id",
+        ),
+        ordered(
+            "in subqueries",
+            "SELECT u.id FROM users u \
+             WHERE u.id NOT IN (SELECT e.id FROM events e \
+             WHERE e.score = u.id * 10 AND e.active = 1) ORDER BY u.id",
+        ),
+        ordered(
+            "div precedence",
+            "SELECT id, id DIV 2 + 1, id DIV 3 IS NULL, score DIV 10 AND active \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "div precedence",
+            "SELECT id FROM events WHERE id = score DIV 10 AND active = 1 ORDER BY id",
+        ),
+        ordered(
+            "multi-key join",
+            "SELECT e.id, u.name FROM events e \
+             JOIN users u ON u.id = e.id AND u.id = e.score DIV 10 ORDER BY e.id",
         ),
         ordered(
             "exists subqueries",

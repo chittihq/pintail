@@ -190,6 +190,15 @@ impl<'catalog> Binder<'catalog> {
                 {
                     self.decorrelate_exists(subquery, *negated, &mut from, &mut tables, ctes)?;
                     continue;
+                } else if let Expr::InSubquery {
+                    expr,
+                    subquery,
+                    negated,
+                } = conjunct
+                    && self.bind_query(subquery, ctes).is_err()
+                {
+                    self.decorrelate_in(expr, subquery, *negated, &mut from, &mut tables, ctes)?;
+                    continue;
                 } else {
                     bind_expr(conjunct, &tables, Some(&resolve_subquery))?
                 };
@@ -351,9 +360,9 @@ impl<'catalog> Binder<'catalog> {
                 correlated.push(conjunct);
             }
         }
-        let [correlation] = correlated.as_slice() else {
+        if correlated.is_empty() {
             return Err(unsupported());
-        };
+        }
         let inner_table = if inner_only.is_empty() {
             probe_table
         } else {
@@ -361,28 +370,148 @@ impl<'catalog> Binder<'catalog> {
                 .ok_or_else(unsupported)?
         };
         tables.push(inner_table.clone());
-        let condition = bind_expr(correlation, tables, None).map_err(|_| {
-            tables.pop();
-            unsupported()
-        })?;
-        // The equality must span exactly the inner table and the outer scope.
-        let BoundExprKind::Binary {
-            op: BinaryOp::Equal,
-            left,
-            right,
-        } = &condition.kind
-        else {
+        // Every correlated conjunct must be an equality spanning exactly
+        // the inner table and the outer scope; together they become the
+        // (possibly multi-key) join condition.
+        let inner_key = (inner_table.database_id, inner_table.table_id);
+        let mut condition: Option<BoundExpr> = None;
+        for conjunct in correlated {
+            let bound = bind_expr(conjunct, tables, None).map_err(|_| {
+                tables.pop();
+                unsupported()
+            })?;
+            if !is_correlation_equality(&bound, inner_key) {
+                tables.pop();
+                return Err(unsupported());
+            }
+            condition = Some(match condition {
+                None => bound,
+                Some(existing) => and_bound(existing, bound),
+            });
+        }
+        let condition = condition.expect("correlated conjuncts are non-empty");
+        let Some(last) = from.last_mut() else {
             tables.pop();
             return Err(unsupported());
         };
+        last.joins.push(BoundJoin {
+            kind: if negated {
+                BoundJoinKind::Anti
+            } else {
+                BoundJoinKind::Semi
+            },
+            table: inner_table,
+            condition: Some(condition),
+        });
+        Ok(())
+    }
+
+    /// Rewrites a correlated `IN`/`NOT IN` conjunct as a semi/anti join.
+    /// The projected inner expression pairs with the outer operand as one
+    /// join equality; correlated inner conjuncts add further equalities and
+    /// inner-only conjuncts stay in a derived filtered input. `NOT IN`
+    /// additionally requires both membership sides to be non-nullable —
+    /// with a possible NULL on either side, `MySQL`'s three-valued `NOT IN`
+    /// diverges from an anti join.
+    #[allow(clippy::too_many_lines)] // linear canonical-shape validation reads best unsplit
+    fn decorrelate_in(
+        &self,
+        outer: &Expr,
+        subquery: &Query,
+        negated: bool,
+        from: &mut [BoundFrom],
+        tables: &mut Vec<BoundTable>,
+        ctes: &[BoundCte],
+    ) -> Result<(), BindError> {
+        let unsupported = || BindError::UnsupportedSubquery(subquery.to_string());
+        let SetExpr::Select(inner) = subquery.body.as_ref() else {
+            return Err(unsupported());
+        };
+        let simple = inner.from.len() == 1
+            && inner.from[0].joins.is_empty()
+            && matches!(inner.group_by, GroupByExpr::Expressions(ref exprs, _) if exprs.is_empty())
+            && inner.having.is_none()
+            && subquery.limit_clause.is_none()
+            && subquery.order_by.is_none();
+        if !simple {
+            return Err(unsupported());
+        }
+        let [
+            SelectItem::UnnamedExpr(projected)
+            | SelectItem::ExprWithAlias {
+                expr: projected, ..
+            },
+        ] = inner.projection.as_slice()
+        else {
+            return Err(unsupported());
+        };
+        let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        if tables.iter().any(|existing| {
+            existing
+                .relation_name
+                .eq_ignore_ascii_case(&probe_table.relation_name)
+        }) {
+            return Err(unsupported());
+        }
+        let probe_scope = vec![probe_table.clone()];
+        let mut inner_only: Vec<&Expr> = Vec::new();
+        let mut correlated: Vec<&Expr> = Vec::new();
+        if let Some(selection) = &inner.selection {
+            for conjunct in split_and_conjuncts(selection) {
+                if bind_expr(conjunct, &probe_scope, None).is_ok() {
+                    inner_only.push(conjunct);
+                } else {
+                    correlated.push(conjunct);
+                }
+            }
+        }
+        let inner_table = if inner_only.is_empty() {
+            probe_table
+        } else {
+            self.filtered_join_input(subquery, &probe_table, &inner_only, ctes)
+                .ok_or_else(unsupported)?
+        };
         let inner_key = (inner_table.database_id, inner_table.table_id);
-        let sides_split = (expr_tables(left).iter().all(|key| *key == inner_key)
-            && expr_tables(right).iter().all(|key| *key != inner_key))
-            || (expr_tables(right).iter().all(|key| *key == inner_key)
-                && expr_tables(left).iter().all(|key| *key != inner_key));
-        if !sides_split || expr_tables(left).is_empty() || expr_tables(right).is_empty() {
+        // The outer operand must not reference the inner relation; the
+        // projected expression must reference only the inner relation.
+        let outer_value = bind_expr(outer, tables, None)?;
+        if expr_tables(&outer_value).contains(&inner_key) {
+            return Err(unsupported());
+        }
+        tables.push(inner_table.clone());
+        let projected_value = bind_expr(projected, tables, None).map_err(|_| {
+            tables.pop();
+            unsupported()
+        })?;
+        let projected_tables = expr_tables(&projected_value);
+        if projected_tables.is_empty() || projected_tables.iter().any(|key| *key != inner_key) {
             tables.pop();
             return Err(unsupported());
+        }
+        if negated && (outer_value.nullable || projected_value.nullable) {
+            tables.pop();
+            return Err(unsupported());
+        }
+        let membership = BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: outer_value.nullable || projected_value.nullable,
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::Equal,
+                left: Box::new(outer_value),
+                right: Box::new(projected_value),
+            },
+        };
+        let mut condition = membership;
+        for conjunct in correlated {
+            let bound = bind_expr(conjunct, tables, None).map_err(|_| {
+                tables.pop();
+                unsupported()
+            })?;
+            if !is_correlation_equality(&bound, inner_key) {
+                tables.pop();
+                return Err(unsupported());
+            }
+            condition = and_bound(condition, bound);
         }
         let Some(last) = from.last_mut() else {
             tables.pop();
@@ -1685,6 +1814,40 @@ fn split_and_conjuncts(expr: &Expr) -> Vec<&Expr> {
 }
 
 /// Distinct (database, table) pairs referenced by a bound expression.
+/// Whether a bound conjunct is an equality spanning exactly the inner
+/// relation and the outer scope (a decorrelation join key).
+fn is_correlation_equality(
+    expr: &BoundExpr,
+    inner_key: (pintail_catalog::DatabaseId, pintail_catalog::TableId),
+) -> bool {
+    let BoundExprKind::Binary {
+        op: BinaryOp::Equal,
+        left,
+        right,
+    } = &expr.kind
+    else {
+        return false;
+    };
+    let sides_split = (expr_tables(left).iter().all(|key| *key == inner_key)
+        && expr_tables(right).iter().all(|key| *key != inner_key))
+        || (expr_tables(right).iter().all(|key| *key == inner_key)
+            && expr_tables(left).iter().all(|key| *key != inner_key));
+    sides_split && !expr_tables(left).is_empty() && !expr_tables(right).is_empty()
+}
+
+/// Boolean conjunction of two bound predicates.
+fn and_bound(left: BoundExpr, right: BoundExpr) -> BoundExpr {
+    BoundExpr {
+        data_type: Some(DataType::Boolean),
+        nullable: left.nullable || right.nullable,
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::And,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    }
+}
+
 fn expr_tables(expr: &BoundExpr) -> Vec<(pintail_catalog::DatabaseId, pintail_catalog::TableId)> {
     fn walk(
         expr: &BoundExpr,
@@ -3552,6 +3715,17 @@ mod tests {
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         Binder::new(&catalog, Some("analytics")).bind(&statement)
+    }
+
+    #[test]
+    fn decorrelates_exists_with_derived_filter_and_two_equalities() {
+        let query = bind(
+            "SELECT e.id FROM Events e WHERE NOT EXISTS (\
+             SELECT 1 FROM users u WHERE u.id = e.id AND u.id = e.id DIV 10 AND u.email <> 'x')",
+        )
+        .expect("bind");
+        assert_eq!(query.from.len(), 1);
+        assert_eq!(query.from[0].joins.len(), 1);
     }
 
     #[test]
