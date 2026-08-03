@@ -844,7 +844,17 @@ async function phaseControlPlane() {
     }
   })
   await check('resync and reconcile are accepted', async () => {
-    await api(`/api/databases/${databaseId}/tables/orders/resync`, { method: 'POST' })
+    // A supervisor cycle may hold the job lock at this instant; the 409 is
+    // correct API behavior, so retry briefly instead of failing the check.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await api(`/api/databases/${databaseId}/tables/orders/resync`, { method: 'POST' })
+        break
+      } catch (error) {
+        if (!String(error).includes('409') || attempt >= 20) throw error
+        await Bun.sleep(2_000)
+      }
+    }
     // The resync schedules a snapshot job; reconcile is correctly refused
     // (409) while that job runs, so wait for streaming state first.
     const deadline = Date.now() + 120_000
