@@ -15,6 +15,7 @@ pub struct BackupConfigRecord {
     pub encrypted_secret_access_key: Option<Vec<u8>>,
     pub schedule_minutes: u64,
     pub enabled: bool,
+    pub retain_count: u64,
     pub updated_at: String,
 }
 
@@ -29,6 +30,7 @@ pub struct NewBackupConfig<'a> {
     pub encrypted_secret_access_key: Option<&'a [u8]>,
     pub schedule_minutes: u64,
     pub enabled: bool,
+    pub retain_count: u64,
     pub now: &'a str,
 }
 
@@ -107,15 +109,17 @@ impl MetaStore {
                 "INSERT INTO backup_configs (\
                    db_id, bucket, prefix, endpoint, region, \
                    access_key_id_encrypted, secret_access_key_encrypted, \
-                   schedule_minutes, enabled, updated_at\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+                   schedule_minutes, enabled, retain_count, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
                  ON CONFLICT(db_id) DO UPDATE SET \
                    bucket = excluded.bucket, prefix = excluded.prefix, \
                    endpoint = excluded.endpoint, region = excluded.region, \
                    access_key_id_encrypted = excluded.access_key_id_encrypted, \
                    secret_access_key_encrypted = excluded.secret_access_key_encrypted, \
                    schedule_minutes = excluded.schedule_minutes, \
-                   enabled = excluded.enabled, updated_at = excluded.updated_at",
+                   enabled = excluded.enabled, \
+                   retain_count = excluded.retain_count, \
+                   updated_at = excluded.updated_at",
                 params![
                     config.database_id,
                     config.bucket,
@@ -126,6 +130,8 @@ impl MetaStore {
                     config.encrypted_secret_access_key,
                     schedule,
                     config.enabled,
+                    i64::try_from(config.retain_count)
+                        .context("backup retention exceeds SQLite range")?,
                     config.now,
                 ],
             )
@@ -143,7 +149,7 @@ impl MetaStore {
             .query_row(
                 "SELECT db_id, bucket, prefix, endpoint, region, \
                         access_key_id_encrypted, secret_access_key_encrypted, \
-                        schedule_minutes, enabled, updated_at \
+                        schedule_minutes, enabled, retain_count, updated_at \
                  FROM backup_configs WHERE db_id = ?1",
                 [database_id],
                 decode_backup_config,
@@ -236,6 +242,23 @@ impl MetaStore {
             .context("failed to list backups")?
             .collect::<rusqlite::Result<Vec<_>>>()
             .context("failed to decode backups")
+    }
+
+    /// Deletes one non-running backup's audit record (retention pruning).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the delete fails; deleting a parent still
+    /// referenced by another backup fails on the foreign key, so prune
+    /// children before parents.
+    pub fn delete_backup_record(&self, backup_id: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM backups WHERE id = ?1 AND status != 'running'",
+                [backup_id],
+            )
+            .context("failed to delete backup record")?;
+        Ok(())
     }
 
     /// Returns the newest completed backup for incremental chaining.
@@ -353,6 +376,16 @@ fn decode_backup_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackupConfi
         region: row.get(4)?,
         encrypted_access_key_id: row.get(5)?,
         encrypted_secret_access_key: row.get(6)?,
+        retain_count: {
+            let retain: i64 = row.get(9)?;
+            u64::try_from(retain).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    9,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?
+        },
         schedule_minutes: u64::try_from(schedule).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
                 7,
@@ -361,7 +394,7 @@ fn decode_backup_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackupConfi
             )
         })?,
         enabled: row.get(8)?,
-        updated_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 

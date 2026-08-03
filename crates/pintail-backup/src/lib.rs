@@ -307,6 +307,57 @@ pub async fn load_manifest(
     Ok(manifest)
 }
 
+/// Object keys a manifest references (table manifests and segments).
+/// Incremental manifests reuse ancestor objects, so retention must keep any
+/// key referenced by a retained manifest.
+#[must_use]
+pub fn manifest_object_keys(manifest: &BackupManifest) -> Vec<String> {
+    manifest
+        .tables
+        .iter()
+        .flat_map(|table| {
+            std::iter::once(table.manifest.key.clone())
+                .chain(table.segments.iter().map(|segment| segment.key.clone()))
+        })
+        .collect()
+}
+
+/// Deletes a pruned backup: every object it references that no retained
+/// manifest still needs, then its own manifest. Returns deleted objects.
+///
+/// # Errors
+///
+/// Returns an error when the manifest cannot be loaded or a delete fails.
+pub async fn delete_backup(
+    store: &dyn ObjectStore,
+    prefix: &str,
+    database_id: &str,
+    backup_id: &str,
+    retained_keys: &std::collections::HashSet<String, impl std::hash::BuildHasher>,
+) -> Result<u64> {
+    let manifest = load_manifest(store, prefix, database_id, backup_id).await?;
+    let mut deleted = 0_u64;
+    for key in manifest_object_keys(&manifest) {
+        if retained_keys.contains(&key) {
+            continue;
+        }
+        store
+            .delete(&Path::from(key.as_str()))
+            .await
+            .with_context(|| format!("failed to delete backup object {key}"))?;
+        deleted += 1;
+    }
+    let manifest_key = format!(
+        "{}/backup.json",
+        backup_root(prefix, database_id, backup_id)
+    );
+    store
+        .delete(&Path::from(manifest_key.as_str()))
+        .await
+        .with_context(|| format!("failed to delete backup manifest {manifest_key}"))?;
+    Ok(deleted + 1)
+}
+
 /// Restores a manifest into a new side-by-side database directory.
 ///
 /// Objects are downloaded into a staging directory and checksummed before the

@@ -20,7 +20,7 @@ pub use control::{
     UserRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 8;
+const CURRENT_SCHEMA_VERSION: u32 = 9;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1300,6 +1300,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 8 {
         migration_v8(connection)?;
     }
+    if found < 9 {
+        migration_v9(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1393,4 +1396,13 @@ fn migration_v8(connection: &mut Connection) -> Result<()> {
         bail!("metadata migration 8 left {violations} foreign key violations");
     }
     Ok(())
+}
+
+fn migration_v9(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/009_backup_retention.sql"))
+        .context("failed to apply metadata migration 9")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 9")
 }

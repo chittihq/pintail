@@ -195,6 +195,7 @@ fn backup_configuration_and_runs_round_trip() {
             region: "us-east-1",
             encrypted_access_key_id: Some(b"encrypted-access"),
             encrypted_secret_access_key: Some(b"encrypted-secret"),
+            retain_count: 0,
             schedule_minutes: 60,
             enabled: true,
             now: "2026-07-30T00:01:00Z",

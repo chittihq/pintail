@@ -33,6 +33,7 @@ pub(crate) struct BackupConfigResponse {
     region: String,
     schedule_minutes: u64,
     enabled: bool,
+    retain_count: u64,
     credentials_configured: bool,
     updated_at: String,
 }
@@ -52,6 +53,9 @@ pub(crate) struct BackupConfigRequest {
     schedule_minutes: u64,
     #[serde(default = "enabled")]
     enabled: bool,
+    /// Completed backups to keep; zero keeps everything.
+    #[serde(default)]
+    retain_count: u64,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +188,7 @@ pub(crate) async fn put_config(
             encrypted_secret_access_key: secret.as_deref(),
             schedule_minutes: request.schedule_minutes,
             enabled: request.enabled,
+            retain_count: request.retain_count,
             now: &now,
         })
         .map_err(bad_request)?;
@@ -429,10 +434,98 @@ async fn complete_backup_job(
                     elapsed_ms(started)
                 ),
             ));
+            if let Err(error) = apply_backup_retention(&state, &database_id).await {
+                state.publish(ApiEvent::database(
+                    "backup.retention.error",
+                    &database_id,
+                    error,
+                ));
+            }
         }
         Err(error) => finish_backup_error(&state, &database_id, &backup_id, &error),
     }
     state.release_job(&database_id);
+}
+
+/// Prunes completed backups beyond the configured retention, keeping every
+/// ancestor a retained incremental depends on and every object a retained
+/// manifest still references. Children delete before parents so the
+/// `parent_id` foreign key never blocks the sweep.
+async fn apply_backup_retention(state: &ApiState, database_id: &str) -> Result<(), String> {
+    fn display(error: impl std::fmt::Display) -> String {
+        error.to_string()
+    }
+    let metadata = state.metadata().map_err(display)?;
+    let Some(config) = metadata.backup_config(database_id).map_err(display)? else {
+        return Ok(());
+    };
+    if config.retain_count == 0 {
+        return Ok(());
+    }
+    let mut completed: Vec<_> = metadata
+        .backups(database_id, 100_000)
+        .map_err(display)?
+        .into_iter()
+        .filter(|backup| backup.status == "completed")
+        .collect();
+    // backups() already orders newest first.
+    let retain = usize::try_from(config.retain_count).unwrap_or(usize::MAX);
+    if completed.len() <= retain {
+        return Ok(());
+    }
+    let by_id: std::collections::HashMap<String, Option<String>> = completed
+        .iter()
+        .map(|backup| (backup.id.clone(), backup.parent_id.clone()))
+        .collect();
+    let mut keep: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for backup in completed.iter().take(retain) {
+        let mut cursor = Some(backup.id.clone());
+        while let Some(id) = cursor {
+            if !keep.insert(id.clone()) {
+                break;
+            }
+            cursor = by_id.get(&id).cloned().flatten();
+        }
+    }
+    completed.retain(|backup| !keep.contains(&backup.id));
+    if completed.is_empty() {
+        return Ok(());
+    }
+    let destination = destination(state, &config).map_err(|error| error.to_string())?;
+    let store = pintail_backup::build_s3(&destination).map_err(display)?;
+    let mut retained_keys = std::collections::HashSet::new();
+    for id in &keep {
+        let manifest =
+            pintail_backup::load_manifest(store.as_ref(), &config.prefix, database_id, id)
+                .await
+                .map_err(display)?;
+        retained_keys.extend(pintail_backup::manifest_object_keys(&manifest));
+    }
+    // Newest pruned first: a pruned child always deletes before its pruned
+    // parent.
+    let mut pruned = 0_usize;
+    for backup in &completed {
+        pintail_backup::delete_backup(
+            store.as_ref(),
+            &config.prefix,
+            database_id,
+            &backup.id,
+            &retained_keys,
+        )
+        .await
+        .map_err(display)?;
+        metadata.delete_backup_record(&backup.id).map_err(display)?;
+        pruned += 1;
+    }
+    state.publish(ApiEvent::database(
+        "backup.retention",
+        database_id,
+        format!(
+            "retention pruned {pruned} backups, keeping {} completed",
+            keep.len()
+        ),
+    ));
+    Ok(())
 }
 
 async fn run_backup_job(
@@ -726,6 +819,7 @@ impl From<BackupConfigRecord> for BackupConfigResponse {
             region: config.region,
             schedule_minutes: config.schedule_minutes,
             enabled: config.enabled,
+            retain_count: config.retain_count,
             updated_at: config.updated_at,
         }
     }
@@ -741,6 +835,7 @@ impl Default for BackupConfigResponse {
             region: default_region(),
             schedule_minutes: default_schedule(),
             enabled: false,
+            retain_count: 0,
             credentials_configured: false,
             updated_at: String::new(),
         }
