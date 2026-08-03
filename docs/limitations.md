@@ -8,26 +8,43 @@ plausible but incorrect result.
 
 ### SQL surface
 
-- Scalar and `IN` subqueries may read tables, derived tables, and
-  non-recursive CTEs, but they must be uncorrelated. `EXISTS` and
-  `NOT EXISTS` support the canonical correlated form — a single-table
-  subquery whose `WHERE` is one equality against the outer scope — by
-  rewriting to semi/anti joins; other correlated shapes are rejected
-  during binding.
+- Scalar subqueries may read tables, derived tables, and non-recursive
+  CTEs, but they must be uncorrelated. `EXISTS`/`NOT EXISTS` and
+  `IN`/`NOT IN` support the canonical correlated form — a single-table
+  subquery whose `WHERE` combines any number of equalities against the
+  outer scope with inner-only filters — by rewriting to (multi-key)
+  semi/anti joins with the inner-only filters kept in a derived input.
+  Correlated `NOT IN` additionally requires both membership sides to be
+  provably non-nullable: with a possible NULL, MySQL's three-valued
+  `NOT IN` diverges from an anti join, so those shapes reject instead.
+  Other correlated shapes are rejected during binding. Join `ON`
+  conditions may be an `AND` of equality pairs (multi-key hash joins);
+  non-equality join conditions remain rejected.
 - Window functions cover `ROW_NUMBER`, `RANK`, `DENSE_RANK`, and
   `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` over `PARTITION BY` / `ORDER BY` with
   MySQL's default frames, nested anywhere in projection expressions and
   over grouped output. Explicit frames (`ROWS`/`RANGE BETWEEN`), named
   windows, `LAG`/`LEAD`/`NTILE`/`FIRST_VALUE`/`LAST_VALUE`, and windows
   combined with `DISTINCT` are not implemented. `UNION [ALL | DISTINCT]`,
-  `INTERSECT`, and `EXCEPT` follow MySQL's left-associative distinct set
-  semantics (a distinct union under a later `UNION ALL`, and the `ALL`
-  variants of `INTERSECT`/`EXCEPT`, reject explicitly). Recursive CTEs are
+  `INTERSECT [ALL]`, and `EXCEPT [ALL]` follow MySQL's left-associative
+  set semantics, including exact `ALL` multiset counts (a distinct union
+  under a later `UNION ALL` rejects explicitly). UNION branches unify
+  numeric types the way MySQL does: signed with `BIGINT UNSIGNED`
+  becomes `DECIMAL(20,0)` and integer with `DECIMAL` widens the integer
+  part, with branch values cast to the unified type. Recursive CTEs are
   not implemented. `RIGHT JOIN` supports the two-table form.
 - `GROUP_CONCAT` accepts one expression with optional `DISTINCT`,
   aggregate-local `ORDER BY`, and `SEPARATOR`, truncating at MySQL's
   default `group_concat_max_len` of 1024 bytes (the session variable is
   not configurable).
+- `JSON_OBJECT`, `JSON_ARRAY`, and `JSON_ARRAYAGG` render MySQL-shaped
+  JSON text (`", "`/`": "` separators, object keys ordered by length
+  then bytes, last duplicate key wins). Values map by execution type:
+  NULL becomes JSON null and integers/floats stay numbers, but DECIMAL
+  and temporal values encode as JSON strings where MySQL would emit
+  numbers or datetime scalars — there is no JSON column type in the
+  executor. `JSON_ARRAYAGG` collects in input order; MySQL does not
+  guarantee an order either.
 - `CONVERT(value, type)` supports Pintail's scalar target types.
   `CONVERT(value USING charset)` distinguishes binary from character output,
   but does not perform byte-level transcoding among MySQL character sets.
