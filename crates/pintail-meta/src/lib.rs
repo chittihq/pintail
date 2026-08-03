@@ -208,6 +208,48 @@ impl MetaStore {
             .context("failed to read metadata schema version")
     }
 
+    /// Reads one setting value, when present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the settings table cannot be queried.
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()
+            .with_context(|| format!("failed to read metadata setting {key}"))
+    }
+
+    /// Writes or replaces one setting value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the settings row cannot be written.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            .with_context(|| format!("failed to write metadata setting {key}"))?;
+        Ok(())
+    }
+
+    /// Deletes one setting when present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the settings row cannot be removed.
+    pub fn delete_setting(&self, key: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM settings WHERE key = ?1", [key])
+            .with_context(|| format!("failed to delete metadata setting {key}"))?;
+        Ok(())
+    }
+
     /// Inserts a setting when absent and returns its durable value.
     ///
     /// An existing setting always wins over the supplied candidate. This

@@ -340,6 +340,14 @@ async fn run_cdc_inner(
     // duplicate — keyed tables merely upsert, but the fence is exact for
     // both).
     let mut snapshot_fences: HashMap<usize, (String, u64)> = HashMap::new();
+    for (name, &index) in &target_indexes {
+        if let Some(stored) = metadata.setting(&fence_key(database_id, name))?
+            && let Some((file, position_text)) = stored.rsplit_once(':')
+            && let Ok(fence_position) = position_text.parse::<u64>()
+        {
+            snapshot_fences.insert(index, (file.to_owned(), fence_position));
+        }
+    }
     let mut blocked_targets = metadata
         .tables_needing_resync(database_id)?
         .iter()
@@ -486,6 +494,14 @@ async fn run_cdc_inner(
                                 || (position.file == *fence_file && event_position <= *fence_pos)
                         },
                     );
+                    if !fenced && snapshot_fences.remove(&target_index).is_some() {
+                        // The stream passed the snapshot position; the fence
+                        // has done its job across however many cycles it took.
+                        metadata.delete_setting(&fence_key(
+                            database_id,
+                            &targets[target_index].source.name.to_ascii_lowercase(),
+                        ))?;
+                    }
                     if !fenced
                         && !blocked_targets.contains(&target_index)
                         && decode_rows_event(
@@ -993,6 +1009,12 @@ async fn apply_ddl_actions(
                     && let (Some(file), Some(fence_position)) =
                         (checkpoint.binlog_file, checkpoint.binlog_pos)
                 {
+                    // Durable: each supervisor cadence is a fresh runner, so
+                    // an in-memory fence alone would replay next cycle.
+                    metadata.set_setting(
+                        &fence_key(database_id, &table.to_ascii_lowercase()),
+                        &format!("{file}:{fence_position}"),
+                    )?;
                     snapshot_fences.insert(index, (file, fence_position));
                 }
                 record_target_schema(metadata, database_id, &targets[index], 1, statement)?;
@@ -1011,6 +1033,11 @@ async fn apply_ddl_actions(
         }
     }
     Ok(())
+}
+
+/// Settings key persisting a mid-stream snapshot fence across runner cycles.
+fn fence_key(database_id: &str, table: &str) -> String {
+    format!("cdc_snapshot_fence:{database_id}:{table}")
 }
 
 fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a SourceTable> {
