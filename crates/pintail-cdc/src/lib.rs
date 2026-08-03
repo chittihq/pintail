@@ -1018,8 +1018,8 @@ async fn apply_ddl_actions(
                         file: Some(file),
                         position: Some(fence_position),
                         ..
-                    } => Some((file.clone(), *fence_position)),
-                    SnapshotPosition::FilePosition {
+                    }
+                    | SnapshotPosition::FilePosition {
                         file,
                         position: fence_position,
                     } => Some((file.clone(), *fence_position)),
