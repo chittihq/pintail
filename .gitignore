@@ -11,3 +11,4 @@ GOAL.md
 /benchmark/target/
 /tests/browser/artifacts/
 /tests/browser/node_modules/
+/benchmark/workloads/commerce-production-v1/results/diffs/
