@@ -144,6 +144,32 @@ export function stripSecondaryIndexes(schema: string): { stripped: string; alter
   return { stripped, alters }
 }
 
+/// Moves the decompressed dataset into the container's secure_file_priv
+/// directory. Against a local daemon this is a plain `docker cp`. Against an
+/// ssh:// context, `docker cp` streams hundreds of megabytes of tar through
+/// the docker API connection and reliably wedges it, so the tar is gzipped
+/// locally and piped over plain ssh to a `docker cp -` running against the
+/// remote host's own socket instead.
+async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise<void> {
+  const context = (await o.docker('context', 'show')).trim()
+  const endpoint = (
+    await o.docker('context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}')
+  ).trim()
+  if (!endpoint.startsWith('ssh://')) {
+    await o.docker('cp', `${txtDir}/.`, `${o.mysqlName}:/var/lib/mysql-files/ds`)
+    return
+  }
+  const target = endpoint.slice('ssh://'.length).split(':')[0]
+  o.log('copying dataset over ssh (gzipped tar into remote docker cp)')
+  // --no-xattrs/--no-mac-metadata: macOS tar embeds Apple extended
+  // attributes that a Linux daemon cannot restore (lsetxattr fails).
+  const pipeline = `set -o pipefail; tar --no-xattrs --no-mac-metadata -C ${JSON.stringify(txtDir)} -cf - . | gzip -1 | ssh ${JSON.stringify(target)} 'gzip -dc | docker cp - ${JSON.stringify(`${o.mysqlName}:/var/lib/mysql-files/ds`)}'`
+  const child = Bun.spawn(['bash', '-c', pipeline], { stdout: 'ignore', stderr: 'pipe' })
+  if ((await child.exited) !== 0) {
+    throw new Error(`ssh dataset copy failed: ${await new Response(child.stderr).text()}`)
+  }
+}
+
 export async function loadDataset(conn: mysql.Connection, o: LoadOptions): Promise<SeedResult> {
   const started = performance.now()
   const { manifest, dir } = await resolveDataset(o)
@@ -166,7 +192,7 @@ export async function loadDataset(conn: mysql.Connection, o: LoadOptions): Promi
   }
   await o.docker('exec', o.mysqlName, 'mkdir', '-p', '/var/lib/mysql-files/ds')
   await o.docker('exec', o.mysqlName, 'chown', 'mysql:mysql', '/var/lib/mysql-files/ds')
-  await o.docker('cp', `${txtDir}/.`, `${o.mysqlName}:/var/lib/mysql-files/ds`)
+  await copyDatasetIntoContainer(txtDir, o)
 
   const schema = readFileSync(join(o.workloadDir, 'schema.mysql.sql'), 'utf8')
   const { stripped, alters } = stripSecondaryIndexes(schema)
