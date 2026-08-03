@@ -156,6 +156,8 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
                     distinct: false,
                     data_type: Some(DataType::UInt64),
                     nullable: false,
+                    separator: None,
+                    order_within: Vec::new(),
                 }] =>
         {
             match *input {
@@ -758,6 +760,9 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             for aggregate in aggregates {
                 if let Some(expression) = &aggregate.expr {
                     collect_expr_columns(expression, required);
+                }
+                for (key, _) in &aggregate.order_within {
+                    collect_expr_columns(key, required);
                 }
             }
             collect_plan_columns(input, required);

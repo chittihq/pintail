@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 645;
+const EXPECTED_CASES: usize = 648;
 
 struct OracleCase {
     family: &'static str,
@@ -909,6 +909,22 @@ fn hand_written_cases() -> Vec<OracleCase> {
             // unrounded internal digits between the two divisions
             // (docs/limitations.md); single divisions are exact.
             "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        ordered(
+            "group concat",
+            "SELECT active, GROUP_CONCAT(name ORDER BY id DESC SEPARATOR '|') \
+             FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "group concat",
+            "SELECT GROUP_CONCAT(DISTINCT note ORDER BY note), \
+             GROUP_CONCAT(score ORDER BY score DESC SEPARATOR ';') FROM events",
+        ),
+        ordered(
+            "group concat",
+            // MySQL truncates at group_concat_max_len (default 1024 bytes).
+            "SELECT active, LENGTH(GROUP_CONCAT(REPEAT(name, 40) ORDER BY id)) \
+             FROM events GROUP BY active ORDER BY active",
         ),
         ordered(
             "numeric scalars",

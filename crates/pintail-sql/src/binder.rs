@@ -1466,6 +1466,8 @@ fn bind_window_function(
                     distinct: false,
                     data_type,
                     nullable,
+                    separator: None,
+                    order_within: Vec::new(),
                 }),
                 data_type,
                 nullable,
@@ -2240,8 +2242,36 @@ fn bind_aggregate(
     let FunctionArguments::List(arguments) = &function.args else {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     };
-    if !arguments.clauses.is_empty() || arguments.args.len() != 1 {
+    if arguments.args.len() != 1 {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
+    }
+    // GROUP_CONCAT owns SEPARATOR and an aggregate-local ORDER BY; every
+    // other aggregate rejects clauses.
+    let mut separator = None;
+    let mut order_within = Vec::new();
+    for clause in &arguments.clauses {
+        if aggregate_function != AggregateFunction::GroupConcat {
+            return Err(BindError::UnsupportedAggregate(function.to_string()));
+        }
+        match clause {
+            sqlparser::ast::FunctionArgumentClause::Separator(value) => {
+                let sqlparser::ast::ValueWithSpan {
+                    value: SqlValue::SingleQuotedString(text),
+                    ..
+                } = value
+                else {
+                    return Err(BindError::UnsupportedAggregate(function.to_string()));
+                };
+                separator = Some(text.clone());
+            }
+            sqlparser::ast::FunctionArgumentClause::OrderBy(keys) => {
+                for key in keys {
+                    let bound = bind_expr(&key.expr, tables, subqueries)?;
+                    order_within.push((bound, key.options.asc.unwrap_or(true)));
+                }
+            }
+            _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
+        }
     }
     let distinct = match arguments.duplicate_treatment {
         Some(DuplicateTreatment::Distinct) => true,
@@ -2265,6 +2295,8 @@ fn bind_aggregate(
         distinct,
         data_type,
         nullable,
+        separator,
+        order_within,
     };
     let aggregate_list = aggregates
         .as_deref_mut()

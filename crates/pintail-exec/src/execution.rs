@@ -840,6 +840,9 @@ fn resolve_plan_subqueries(
                 if let Some(expression) = &mut aggregate.expr {
                     resolve_expr_subqueries(expression, provider, memory_limit, retained_bytes)?;
                 }
+                for (key, _) in &mut aggregate.order_within {
+                    resolve_expr_subqueries(key, provider, memory_limit, retained_bytes)?;
+                }
             }
         }
         PhysicalPlan::Project { input, expressions } => {
@@ -2051,6 +2054,10 @@ struct CompiledAggregate {
     expr: Option<CompiledExpr>,
     distinct: bool,
     data_type: Option<DataType>,
+    /// `GROUP_CONCAT` separator (`MySQL` defaults to a comma).
+    separator: String,
+    /// `GROUP_CONCAT ... ORDER BY` keys as `(expr, ascending, decimal)`.
+    order_within: Vec<(CompiledExpr, bool, bool)>,
 }
 
 impl CompiledAggregate {
@@ -2064,6 +2071,21 @@ impl CompiledAggregate {
                 .transpose()?,
             distinct: aggregate.distinct,
             data_type: aggregate.data_type,
+            separator: aggregate
+                .separator
+                .clone()
+                .unwrap_or_else(|| ",".to_owned()),
+            order_within: aggregate
+                .order_within
+                .iter()
+                .map(|(expression, ascending)| {
+                    Ok::<_, ExecError>((
+                        CompiledExpr::compile(expression, columns)?,
+                        *ascending,
+                        matches!(expression.data_type, Some(DataType::Decimal { .. })),
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 }
@@ -2263,7 +2285,14 @@ enum AggregateValue {
     },
     Minimum(Option<Value>),
     Maximum(Option<Value>),
-    GroupConcat(Vec<String>),
+    GroupConcat {
+        /// Collected `(order keys, rendered value)` rows.
+        items: Vec<(Vec<Value>, String)>,
+        /// Join separator resolved at state creation.
+        separator: String,
+        /// Per-key `(ascending, decimal)` sort spec.
+        order: Vec<(bool, bool)>,
+    },
 }
 
 impl AggregateState {
@@ -2281,7 +2310,15 @@ impl AggregateState {
             },
             AggregateFunction::Minimum => AggregateValue::Minimum(None),
             AggregateFunction::Maximum => AggregateValue::Maximum(None),
-            AggregateFunction::GroupConcat => AggregateValue::GroupConcat(Vec::new()),
+            AggregateFunction::GroupConcat => AggregateValue::GroupConcat {
+                items: Vec::new(),
+                separator: aggregate.separator.clone(),
+                order: aggregate
+                    .order_within
+                    .iter()
+                    .map(|(_, ascending, decimal)| (*ascending, *decimal))
+                    .collect(),
+            },
         };
         Self {
             value,
@@ -2431,12 +2468,12 @@ impl AggregateState {
                     self.extreme_number = number;
                 }
             }
-            AggregateValue::GroupConcat(values) => {
+            AggregateValue::GroupConcat { items, .. } => {
                 let value_bytes = scalar_string_memory_upper_bound(value);
-                reserve_vec_elements(values, 1, 64, memory)?;
+                reserve_vec_elements(items, 1, 64, memory)?;
                 memory.reserve(value_bytes)?;
                 let value = aggregate_string(value)?;
-                values.push(value);
+                items.push((Vec::new(), value));
             }
         }
         Ok(())
@@ -2621,6 +2658,34 @@ impl AggregateState {
         }
     }
 
+    /// `GROUP_CONCAT` update carrying the aggregate-local ORDER BY keys
+    /// evaluated for this row.
+    fn update_group_concat(
+        &mut self,
+        value: &Value,
+        keys: Vec<Value>,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if matches!(value, Value::Null) {
+            return Ok(());
+        }
+        if let Some(seen) = &mut self.seen
+            && !seen.insert_value(value, memory)?
+        {
+            return Ok(());
+        }
+        let AggregateValue::GroupConcat { items, .. } = &mut self.value else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "group-concat update applied to an incompatible aggregate state",
+            ));
+        };
+        let key_bytes = keys.iter().map(Value::heap_bytes).sum::<usize>();
+        reserve_vec_elements(items, 1, 64, memory)?;
+        memory.reserve(scalar_string_memory_upper_bound(value).saturating_add(key_bytes))?;
+        items.push((keys, aggregate_string(value)?));
+        Ok(())
+    }
+
     /// Exact decimal AVG on scaled integer units already widened to the
     /// result scale.
     fn update_decimal_average_units(&mut self, units: i128, scale: u8) -> Result<(), ExecError> {
@@ -2757,14 +2822,56 @@ impl AggregateState {
                     .ok_or(ExecError::NumericOverflow)?;
                 Value::Utf8(pintail_types::format_decimal_scaled(average, scale))
             }
-            AggregateValue::GroupConcat(values) if values.is_empty() => Value::Null,
-            AggregateValue::GroupConcat(values) => {
-                let joined_bytes = values
-                    .iter()
-                    .map(String::len)
-                    .fold(values.len().saturating_sub(1), usize::saturating_add);
+            AggregateValue::GroupConcat { items, .. } if items.is_empty() => Value::Null,
+            AggregateValue::GroupConcat {
+                mut items,
+                separator,
+                order,
+            } => {
+                if !order.is_empty() {
+                    items.sort_by(|left, right| {
+                        for (position, (ascending, decimal)) in order.iter().enumerate() {
+                            let ordering = compare_sort_values(
+                                left.0.get(position).unwrap_or(&Value::Null),
+                                right.0.get(position).unwrap_or(&Value::Null),
+                                BoundOrderKey {
+                                    index: 0,
+                                    ascending: *ascending,
+                                    // MySQL sorts NULL keys first ascending.
+                                    nulls_first: *ascending,
+                                    decimal: *decimal,
+                                },
+                            );
+                            if ordering != Ordering::Equal {
+                                return ordering;
+                            }
+                        }
+                        Ordering::Equal
+                    });
+                }
+                let joined_bytes = items.iter().map(|(_, text)| text.len()).fold(
+                    items
+                        .len()
+                        .saturating_sub(1)
+                        .saturating_mul(separator.len()),
+                    usize::saturating_add,
+                );
                 memory.reserve(joined_bytes)?;
-                Value::Utf8(values.join(","))
+                let mut joined = items
+                    .iter()
+                    .map(|(_, text)| text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(&separator);
+                // MySQL truncates at group_concat_max_len (default 1024
+                // bytes) on a character boundary.
+                if joined.len() > 1024 {
+                    let mut cut = 1024;
+                    while !joined.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    joined.truncate(cut);
+                }
+                Value::Utf8(joined)
             }
         })
     }
@@ -6170,6 +6277,25 @@ fn update_aggregate_states(
                         .saturating_add(256),
                 );
             memory.ensure_transient(batch_bytes.saturating_add(update_memory))?;
+        }
+        // GROUP_CONCAT with an aggregate-local ORDER BY evaluates its key
+        // expressions alongside the argument so finish can sort.
+        if aggregate.function == AggregateFunction::GroupConcat
+            && !aggregate.order_within.is_empty()
+        {
+            let Some(expression) = &aggregate.expr else {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "group-concat requires an argument expression",
+                ));
+            };
+            let value = expression.evaluate(batch, row)?;
+            let keys = aggregate
+                .order_within
+                .iter()
+                .map(|(key, _, _)| key.evaluate(batch, row))
+                .collect::<Result<Vec<_>, _>>()?;
+            state.update_group_concat(&value, keys, memory)?;
+            continue;
         }
         match &aggregate.expr {
             None => state.update(aggregate, &Value::Boolean(true), memory)?,

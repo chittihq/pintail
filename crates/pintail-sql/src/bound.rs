@@ -338,6 +338,10 @@ pub struct BoundAggregate {
     pub data_type: Option<DataType>,
     /// Whether an empty input can produce `NULL`.
     pub nullable: bool,
+    /// `GROUP_CONCAT` separator; `None` is `MySQL`'s default comma.
+    pub separator: Option<String>,
+    /// `GROUP_CONCAT ... ORDER BY` keys as `(expression, ascending)`.
+    pub order_within: Vec<(BoundExpr, bool)>,
 }
 
 /// One window ordering key evaluated against source rows.
