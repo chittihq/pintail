@@ -61,6 +61,8 @@ jobs:
           sudo apt-get install -y mysql-client
           cd tests/integration/wire-clients
           bun install --frozen-lockfile
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.suite == 'wire'
       - name: Run suite
         run: ${{ matrix.command }}
         env:

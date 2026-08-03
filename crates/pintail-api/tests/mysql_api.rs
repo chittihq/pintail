@@ -75,13 +75,22 @@ impl MysqlContainer {
             .and_then(|port| port.parse().ok())
             .ok_or_else(|| "Docker did not report a numeric MySQL port".to_owned())?;
         let container = Self { name, host, port };
-        for _ in 0..120 {
+        // The official images run a temporary server during initialization
+        // and then restart; require consecutive successes so a probe cannot
+        // land in that window.
+        let mut consecutive = 0;
+        for _ in 0..240 {
             if container.query_batch("SELECT 1;").is_ok() {
-                return Ok(container);
+                consecutive += 1;
+                if consecutive >= 3 {
+                    return Ok(container);
+                }
+            } else {
+                consecutive = 0;
             }
             std::thread::sleep(Duration::from_millis(500));
         }
-        Err("API MySQL source did not become ready within 60 seconds".to_owned())
+        Err("API MySQL source did not become ready within 120 seconds".to_owned())
     }
 
     fn stop(&self) -> Result<(), String> {

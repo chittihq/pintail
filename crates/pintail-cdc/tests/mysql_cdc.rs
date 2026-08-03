@@ -260,13 +260,24 @@ impl MysqlContainer {
             port,
             client: client.to_owned(),
         };
-        for _ in 0..120 {
+        // The official images run a temporary server during initialization
+        // and then restart; one successful probe can land in that window and
+        // the next statement hits a stopped socket. Require consecutive
+        // successes so the container is only handed out once the real
+        // server is up for good.
+        let mut consecutive = 0;
+        for _ in 0..240 {
             if container.query_batch("SELECT 1;").is_ok() {
-                return Ok(container);
+                consecutive += 1;
+                if consecutive >= 3 {
+                    return Ok(container);
+                }
+            } else {
+                consecutive = 0;
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        Err("MySQL 8.4 did not become ready within 60 seconds".to_owned())
+        Err("MySQL 8.4 did not become ready within 120 seconds".to_owned())
     }
 
     fn dsn(&self) -> String {
