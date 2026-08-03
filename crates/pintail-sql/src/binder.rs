@@ -3317,8 +3317,17 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_join_directions_and_constraints() {
+        // Two-table RIGHT JOIN flips into a LEFT JOIN with swapped inputs.
+        let query = bind("SELECT * FROM Events RIGHT JOIN users ON Events.id = users.id")
+            .expect("right join flips");
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+        assert_eq!(query.from[0].base.table_name, "users");
+        // RIGHT JOIN inside a longer chain still rejects.
         assert!(matches!(
-            bind("SELECT * FROM Events RIGHT JOIN users ON Events.id = users.id"),
+            bind(
+                "SELECT * FROM Events e JOIN users u ON e.id = u.id \
+                 RIGHT JOIN users x ON x.id = e.id"
+            ),
             Err(BindError::UnsupportedJoinOperator(_))
         ));
         assert!(matches!(
