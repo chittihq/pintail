@@ -964,6 +964,26 @@ fn bind_expr_inner(
             )?],
         ),
         Expr::Subquery(query) => bind_scalar_subquery(query, subqueries),
+        Expr::Exists { subquery, negated } => {
+            let resolver =
+                subqueries.ok_or_else(|| BindError::UnsupportedSubquery(subquery.to_string()))?;
+            let mut query = resolver(subquery)?;
+            // Row presence is all that matters; one row decides EXISTS.
+            if query.limit.is_none() {
+                query.limit = Some(BoundLimit {
+                    offset: 0,
+                    count: 1,
+                });
+            }
+            Ok(BoundExpr {
+                kind: BoundExprKind::ExistsSubquery {
+                    query: Box::new(query),
+                    negated: *negated,
+                },
+                data_type: Some(DataType::Boolean),
+                nullable: false,
+            })
+        }
         Expr::InSubquery {
             expr,
             subquery,
@@ -2536,6 +2556,7 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
         // internals are rewritten separately by the caller.
         BoundExprKind::Window(_)
         | BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. }
         | BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_) => Ok(()),
     }

@@ -76,6 +76,13 @@ pub enum BoundExprKind {
     Literal(Value),
     /// One-column, at-most-one-row uncorrelated query.
     ScalarSubquery(Box<BoundQuery>),
+    /// Uncorrelated `EXISTS` / `NOT EXISTS` test.
+    ExistsSubquery {
+        /// Query whose row presence is tested.
+        query: Box<BoundQuery>,
+        /// Whether the test is `NOT EXISTS`.
+        negated: bool,
+    },
     /// Uncorrelated one-column query used for SQL membership.
     InSubquery {
         /// Outer value tested against the materialized result.

@@ -498,6 +498,7 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(Data
         }
         BoundExprKind::InSubquery { expr, .. } => collect_expression_tables(expr, tables),
         BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. }
         | BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
@@ -883,6 +884,15 @@ fn resolve_expr_subqueries(
             };
             reserve_subquery_values(std::slice::from_ref(&value), memory_limit, retained_bytes)?;
             expression.kind = BoundExprKind::Literal(value);
+        }
+        BoundExprKind::ExistsSubquery { query, negated } => {
+            let values = materialize_subquery(
+                (**query).clone(),
+                provider,
+                memory_limit.saturating_sub(*retained_bytes),
+            )?;
+            let exists = !values.is_empty();
+            expression.kind = BoundExprKind::Literal(Value::Boolean(exists != *negated));
         }
         BoundExprKind::InSubquery {
             expr,

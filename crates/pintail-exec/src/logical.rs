@@ -299,7 +299,8 @@ fn rewrite_window_references(expr: &mut BoundExpr, outputs: &[BoundColumn]) {
         | BoundExprKind::Aggregate(_)
         | BoundExprKind::Window(_)
         | BoundExprKind::Literal(_)
-        | BoundExprKind::ScalarSubquery(_) => {}
+        | BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. } => {}
     }
 }
 
