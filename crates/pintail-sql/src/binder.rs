@@ -284,6 +284,25 @@ impl<'catalog> Binder<'catalog> {
         let mut from = Vec::with_capacity(select.from.len());
         let mut tables = Vec::new();
         for table_with_joins in &select.from {
+            // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs; the linear
+            // join chain expresses the two-table form directly. RIGHT JOINs
+            // inside longer chains keep rejecting in bind_join_operator.
+            let flipped = if let [join] = table_with_joins.joins.as_slice()
+                && let JoinOperator::Right(constraint) | JoinOperator::RightOuter(constraint) =
+                    &join.join_operator
+            {
+                Some(sqlparser::ast::TableWithJoins {
+                    relation: join.relation.clone(),
+                    joins: vec![sqlparser::ast::Join {
+                        relation: table_with_joins.relation.clone(),
+                        global: false,
+                        join_operator: JoinOperator::LeftOuter(constraint.clone()),
+                    }],
+                })
+            } else {
+                None
+            };
+            let table_with_joins = flipped.as_ref().unwrap_or(table_with_joins);
             let base = self.bind_table(&table_with_joins.relation, ctes)?;
             reject_duplicate_relation(&tables, &base)?;
             tables.push(base.clone());
