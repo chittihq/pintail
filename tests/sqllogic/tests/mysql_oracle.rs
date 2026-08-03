@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 703;
+const EXPECTED_CASES: usize = 707;
 
 struct OracleCase {
     family: &'static str,
@@ -1109,6 +1109,32 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT u.id FROM users u \
              WHERE u.id NOT IN (SELECT e.id FROM events e \
              WHERE e.score = u.id * 10 AND e.active = 1) ORDER BY u.id",
+        ),
+        ordered(
+            "recursive cte",
+            "WITH RECURSIVE seq (n) AS (\
+             SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10) \
+             SELECT n FROM seq ORDER BY n",
+        ),
+        unordered(
+            "recursive cte",
+            "WITH RECURSIVE r (n) AS (\
+             SELECT 1 UNION SELECT n * 2 % 7 FROM r) SELECT n FROM r",
+        ),
+        ordered(
+            "recursive cte",
+            "WITH RECURSIVE chain (id) AS (\
+             SELECT id FROM events WHERE id = 1 \
+             UNION ALL SELECT e.id FROM events e JOIN chain c ON e.id = c.id + 1 \
+             WHERE e.id <= 5) \
+             SELECT c.id, e.name FROM chain c JOIN events e ON e.id = c.id ORDER BY c.id",
+        ),
+        ordered(
+            "recursive cte",
+            "WITH RECURSIVE t (n, s) AS (\
+             SELECT 1, CAST('x' AS CHAR(20)) \
+             UNION ALL SELECT n + 1, CONCAT(s, 'y') FROM t WHERE n < 5) \
+             SELECT n, s FROM t ORDER BY n",
         ),
         ordered(
             "div precedence",

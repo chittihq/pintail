@@ -82,6 +82,17 @@ pub enum PhysicalPlan {
         /// Membership input.
         right: Box<Self>,
     },
+    /// Recursive-CTE fixpoint materialized eagerly at operator build.
+    Recursive {
+        /// Synthetic working-table identity recursive scans reference.
+        working: (DatabaseId, TableId),
+        /// `UNION [DISTINCT]` recursion deduplicates accumulated rows.
+        distinct: bool,
+        /// Anchor plan; also fixes the output layout.
+        anchor: Box<Self>,
+        /// Recursive member template, rebuilt per iteration over the delta.
+        member: Box<Self>,
+    },
     /// Build-right equi hash join.
     HashJoin {
         /// Probe input.
@@ -171,6 +182,7 @@ impl PhysicalPlan {
                 })
                 .collect(),
             Self::SetOp { left: input, .. }
+            | Self::Recursive { anchor: input, .. }
             | Self::Filter { input, .. }
             | Self::Distinct { input }
             | Self::Limit { input, .. } => input.output_fields(),
@@ -336,6 +348,18 @@ impl PhysicalPlanner {
                     right: Box::new(Self::plan(*right)?),
                 })
             }
+            LogicalPlan::Recursive {
+                working_database,
+                working_table,
+                distinct,
+                anchor,
+                member,
+            } => Ok(PhysicalPlan::Recursive {
+                working: (working_database, working_table),
+                distinct,
+                anchor: Box::new(Self::plan(*anchor)?),
+                member: Box::new(Self::plan(*member)?),
+            }),
             LogicalPlan::UnionAll { inputs } => Ok(PhysicalPlan::UnionAll {
                 inputs: inputs
                     .into_iter()
@@ -512,6 +536,10 @@ fn logical_tables(plan: &LogicalPlan) -> BTreeSet<(DatabaseId, TableId)> {
 
 fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId, TableId)>) {
     match plan {
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            collect_logical_tables(anchor, tables);
+            collect_logical_tables(member, tables);
+        }
         LogicalPlan::Scan(scan) => {
             tables.insert((scan.table.database_id, scan.table.table_id));
         }
@@ -847,6 +875,10 @@ fn resolve_plan_subqueries(
     retained_bytes: &mut usize,
 ) -> Result<(), ExecError> {
     match plan {
+        PhysicalPlan::Recursive { anchor, member, .. } => {
+            resolve_plan_subqueries(anchor, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(member, provider, memory_limit, retained_bytes)?;
+        }
         PhysicalPlan::Scan(scan) => {
             for predicate in &mut scan.predicates {
                 resolve_expr_subqueries(predicate, provider, memory_limit, retained_bytes)?;
@@ -1137,6 +1169,12 @@ enum PullOperator {
         keep_matching: bool,
         all: bool,
     },
+    /// Pre-materialized rows (recursive-CTE fixpoint output).
+    Rows {
+        rows: Vec<Vec<Value>>,
+        cursor: usize,
+        column_types: Vec<DataType>,
+    },
     Sort {
         input: Box<Self>,
         keys: Vec<BoundOrderKey>,
@@ -1392,6 +1430,25 @@ impl PullOperator {
                 output.set_selection(batch.selection().clone())?;
                 memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
                 Ok(Some(output))
+            }
+            Self::Rows {
+                rows,
+                cursor,
+                column_types,
+            } => {
+                if *cursor >= rows.len() {
+                    return Ok(None);
+                }
+                let end = (*cursor + DEFAULT_BATCH_ROWS).min(rows.len());
+                let chunk = &rows[*cursor..end];
+                *cursor = end;
+                let chunk_bytes = chunk
+                    .iter()
+                    .map(|row| estimated_row_payload_bytes(row))
+                    .fold(0_usize, usize::saturating_add);
+                memory.ensure_transient(chunk_bytes)?;
+                let columns = rows_to_columns(chunk, column_types)?;
+                Ok(Some(RecordBatch::new(chunk.len(), columns)?))
             }
             Self::SetOp {
                 input,
@@ -1814,6 +1871,51 @@ fn build_operator(
                     expressions,
                 },
                 Vec::new(),
+            ))
+        }
+        PhysicalPlan::Recursive {
+            working,
+            distinct,
+            anchor,
+            member,
+        } => {
+            // Project operators intentionally return no column metadata, so
+            // the working-table layout comes from the anchor's output fields.
+            let column_types: Vec<DataType> = anchor
+                .output_fields()
+                .iter()
+                .map(|field| field.data_type.unwrap_or(DataType::Utf8))
+                .collect();
+            let (mut anchor_op, columns) = build_operator(*anchor, provider, memory)?;
+            let mut seen: HashSet<Vec<Value>> = HashSet::new();
+            let mut rows: Vec<Vec<Value>> = Vec::new();
+            let mut delta =
+                drain_recursive_rows(&mut anchor_op, distinct, &mut seen, &mut rows, memory)?;
+            let mut iterations: u64 = 0;
+            while !delta.is_empty() {
+                iterations += 1;
+                if iterations > CTE_MAX_RECURSION_DEPTH {
+                    return Err(ExecError::RecursionDepthExceeded {
+                        limit: CTE_MAX_RECURSION_DEPTH,
+                    });
+                }
+                let overlay = RecursiveWorkingProvider {
+                    base: provider,
+                    working,
+                    column_types: &column_types,
+                    delta: &delta,
+                };
+                let (mut member_op, _) = build_operator((*member).clone(), &overlay, memory)?;
+                delta =
+                    drain_recursive_rows(&mut member_op, distinct, &mut seen, &mut rows, memory)?;
+            }
+            Ok((
+                PullOperator::Rows {
+                    rows,
+                    cursor: 0,
+                    column_types,
+                },
+                columns,
             ))
         }
         PhysicalPlan::SetOp {
@@ -7507,6 +7609,137 @@ fn estimated_batch_row_bytes(batch: &RecordBatch, row: usize) -> Result<usize, E
 
 /// One selected row as normalized values (the same key the Distinct
 /// operator uses), for set-membership hashing.
+/// `MySQL`'s default `cte_max_recursion_depth`.
+const CTE_MAX_RECURSION_DEPTH: u64 = 1000;
+
+/// Drains an operator into the recursive accumulator, returning the fresh
+/// delta. `UNION DISTINCT` recursion dedups on collation-normalized rows
+/// while accumulating the original values.
+fn drain_recursive_rows(
+    operator: &mut PullOperator,
+    distinct: bool,
+    seen: &mut HashSet<Vec<Value>>,
+    rows: &mut Vec<Vec<Value>>,
+    memory: &MemoryTracker,
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    let mut delta = Vec::new();
+    while let Some(batch) = operator.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
+        for row in batch.selection().selected_rows() {
+            let values = batch_row(&batch, row)?;
+            let row_bytes = estimated_row_payload_bytes(&values);
+            memory.ensure_transient(batch_bytes.saturating_add(row_bytes.saturating_mul(3)))?;
+            if distinct {
+                let key: Vec<Value> = values
+                    .iter()
+                    .cloned()
+                    .map(normalized_collation_value)
+                    .collect();
+                if seen.contains(&key) {
+                    continue;
+                }
+                memory.reserve(row_bytes)?;
+                seen.insert(key);
+            }
+            // Retained twice: once in the accumulator, once in the delta the
+            // next iteration replays.
+            memory.reserve(row_bytes.saturating_mul(2))?;
+            rows.push(values.clone());
+            delta.push(values);
+        }
+    }
+    Ok(delta)
+}
+
+/// Serves the recursive working table from the current iteration's delta
+/// and delegates every other scan to the base provider.
+struct RecursiveWorkingProvider<'provider> {
+    base: &'provider dyn ScanProvider,
+    working: (DatabaseId, TableId),
+    column_types: &'provider [DataType],
+    delta: &'provider [Vec<Value>],
+}
+
+impl ScanProvider for RecursiveWorkingProvider<'_> {
+    fn open_scan(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
+        if (scan.table.database_id, scan.table.table_id) != self.working {
+            return self.base.open_scan(scan, memory_limit);
+        }
+        // Working scans never carry storage predicates (the optimizer keeps
+        // their filters as Filter nodes); the projection maps 1-based
+        // synthetic column IDs onto delta positions.
+        let mut projected_types = Vec::with_capacity(scan.projected_column_ids.len());
+        let mut positions = Vec::with_capacity(scan.projected_column_ids.len());
+        for id in &scan.projected_column_ids {
+            let position = usize::try_from(id.saturating_sub(1)).unwrap_or(usize::MAX);
+            let data_type =
+                self.column_types
+                    .get(position)
+                    .copied()
+                    .ok_or(ExecError::InvalidPhysicalPlan(
+                        "recursive working scan projects an unknown column",
+                    ))?;
+            positions.push(position);
+            projected_types.push(data_type);
+        }
+        let rows: Vec<Vec<Value>> = self
+            .delta
+            .iter()
+            .map(|row| {
+                positions
+                    .iter()
+                    .map(|&position| row[position].clone())
+                    .collect()
+            })
+            .collect();
+        Ok(Box::new(RowsBatchStream {
+            rows,
+            cursor: 0,
+            column_types: projected_types,
+        }))
+    }
+}
+
+/// In-memory batch stream over pre-materialized rows.
+struct RowsBatchStream {
+    rows: Vec<Vec<Value>>,
+    cursor: usize,
+    column_types: Vec<DataType>,
+}
+
+impl BatchStream for RowsBatchStream {
+    fn next_batch(&mut self, _available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        if self.cursor >= self.rows.len() {
+            return Ok(None);
+        }
+        let end = (self.cursor + DEFAULT_BATCH_ROWS).min(self.rows.len());
+        let chunk = &self.rows[self.cursor..end];
+        self.cursor = end;
+        let columns = rows_to_columns(chunk, &self.column_types)?;
+        Ok(Some(RecordBatch::new(chunk.len(), columns)?))
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.rows[self.cursor..]
+            .iter()
+            .map(|row| estimated_row_payload_bytes(row))
+            .fold(0, usize::saturating_add)
+    }
+
+    fn next_batch_memory_upper_bound(&self) -> usize {
+        let end = (self.cursor + DEFAULT_BATCH_ROWS).min(self.rows.len());
+        self.rows[self.cursor..end]
+            .iter()
+            .map(|row| estimated_row_payload_bytes(row))
+            .fold(0, usize::saturating_add)
+            .saturating_mul(2)
+    }
+}
+
 fn normalized_batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
     batch
         .columns()
@@ -7741,6 +7974,11 @@ pub enum ExecError {
     InvalidUtf8Number,
     /// A date/time value or operation is outside the supported `MySQL` range.
     InvalidDateTime,
+    /// A recursive CTE did not converge within the iteration cap.
+    RecursionDepthExceeded {
+        /// Iteration cap (`MySQL`'s `cte_max_recursion_depth` default).
+        limit: u64,
+    },
     /// A source-specific failure.
     Source(String),
     /// The scan provider was configured twice for one stable table.
@@ -7803,6 +8041,11 @@ impl fmt::Display for ExecError {
             Self::ScalarSubqueryRows { rows } => {
                 write!(formatter, "scalar subquery produced {rows} rows")
             }
+            Self::RecursionDepthExceeded { limit } => write!(
+                formatter,
+                "recursive query aborted after {} iterations (cte_max_recursion_depth = {limit})",
+                limit + 1
+            ),
             Self::InvalidPhysicalPlan(message) => {
                 write!(formatter, "invalid physical plan: {message}")
             }

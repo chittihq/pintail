@@ -102,6 +102,19 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
             left: Box::new(push_aggregates_through_identity_joins(*left)),
             right: Box::new(push_aggregates_through_identity_joins(*right)),
         },
+        LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor,
+            member,
+        } => LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor: Box::new(push_aggregates_through_identity_joins(*anchor)),
+            member: Box::new(push_aggregates_through_identity_joins(*member)),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -224,6 +237,19 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
             left: Box::new(replace_metadata_counts(*left)),
             right: Box::new(replace_metadata_counts(*right)),
         },
+        LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor,
+            member,
+        } => LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor: Box::new(replace_metadata_counts(*anchor)),
+            member: Box::new(replace_metadata_counts(*member)),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -277,6 +303,7 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
     }
 }
 
+#[allow(clippy::too_many_lines)] // exhaustive plan-node recursion reads best unsplit
 fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
@@ -300,6 +327,19 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
             all,
             left: Box::new(fold_constants(*left)),
             right: Box::new(fold_constants(*right)),
+        },
+        LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor,
+            member,
+        } => LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor: Box::new(fold_constants(*anchor)),
+            member: Box::new(fold_constants(*member)),
         },
         LogicalPlan::Join {
             left,
@@ -539,6 +579,19 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             left: Box::new(push_predicates(*left)),
             right: Box::new(push_predicates(*right)),
         },
+        LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor,
+            member,
+        } => LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor: Box::new(push_predicates(*anchor)),
+            member: Box::new(push_predicates(*member)),
+        },
         LogicalPlan::Join {
             left,
             right,
@@ -651,6 +704,14 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
 
     match plan {
         LogicalPlan::Scan(scan) if table_key(&scan.table) == table => {
+            // Recursive working tables are virtual: their scans replay
+            // in-memory deltas that never see storage predicates, so
+            // filters must stay above as Filter nodes.
+            if scan.table.database_id == pintail_catalog::DatabaseId::new(u64::MAX)
+                && scan.table.input.is_none()
+            {
+                return false;
+            }
             scan.predicates.push(predicate.clone());
             true
         }
@@ -688,6 +749,9 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
 fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
     match plan {
         LogicalPlan::Scan(scan) => table_key(&scan.table) == table,
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            contains_table(anchor, table) || contains_table(member, table)
+        }
         LogicalPlan::Derived { input, columns } => {
             columns
                 .iter()
@@ -739,6 +803,19 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             all,
             left: Box::new(reorder_cross_joins(*left)),
             right: Box::new(reorder_cross_joins(*right)),
+        },
+        LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor,
+            member,
+        } => LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor: Box::new(reorder_cross_joins(*anchor)),
+            member: Box::new(reorder_cross_joins(*member)),
         },
         LogicalPlan::Join {
             left,
@@ -801,6 +878,10 @@ fn prune_projections(plan: &mut LogicalPlan) {
 
 fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) {
     match plan {
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            collect_plan_columns(anchor, required);
+            collect_plan_columns(member, required);
+        }
         LogicalPlan::Scan(scan) => {
             for predicate in &scan.predicates {
                 collect_expr_columns(predicate, required);
@@ -883,6 +964,10 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
 
 fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
     match plan {
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            prune_scan_columns(anchor, required);
+            prune_scan_columns(member, required);
+        }
         LogicalPlan::Scan(scan) => {
             scan.projected_column_ids = scan
                 .table
@@ -929,6 +1014,10 @@ fn push_limits(plan: &mut LogicalPlan) {
             push_limits(left);
             push_limits(right);
         }
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            push_limits(anchor);
+            push_limits(member);
+        }
         LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
@@ -946,7 +1035,9 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
             scan.limit = Some(scan.limit.map_or(rows, |existing| existing.min(rows)));
         }
         LogicalPlan::Project { input, .. } => set_input_limit(input, rows),
-        LogicalPlan::Scan(_)
+        // A row cap cannot cross the fixpoint boundary.
+        LogicalPlan::Recursive { .. }
+        | LogicalPlan::Scan(_)
         | LogicalPlan::Empty
         | LogicalPlan::OneRow
         | LogicalPlan::CrossJoin { .. }

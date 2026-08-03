@@ -153,6 +153,20 @@ fn write_plan(
             writeln!(output, "UnionAll inputs={}", inputs.len())?;
             write_inputs(inputs, depth, output, provider)
         }
+        PhysicalPlan::Recursive {
+            distinct,
+            anchor,
+            member,
+            ..
+        } => {
+            writeln!(
+                output,
+                "Recursive union={}",
+                if *distinct { "distinct" } else { "all" }
+            )?;
+            write_plan(anchor, depth + 1, output, provider)?;
+            write_plan(member, depth + 1, output, provider)
+        }
         PhysicalPlan::SetOp {
             keep_matching,
             all,

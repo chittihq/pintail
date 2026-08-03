@@ -16,8 +16,8 @@ pub use binder::{BindError, Binder};
 pub use bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery,
-    BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart, IntervalUnit,
-    ScalarFunction, UnaryOp, WindowFunction,
+    BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart,
+    IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
 pub use metadata::{MetadataError, MetadataField, MetadataResult, execute_metadata};
 

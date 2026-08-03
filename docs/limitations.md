@@ -31,8 +31,14 @@ plausible but incorrect result.
   under a later `UNION ALL` rejects explicitly). UNION branches unify
   numeric types the way MySQL does: signed with `BIGINT UNSIGNED`
   becomes `DECIMAL(20,0)` and integer with `DECIMAL` widens the integer
-  part, with branch values cast to the unified type. Recursive CTEs are
-  not implemented. `RIGHT JOIN` supports the two-table form.
+  part, with branch values cast to the unified type. `WITH RECURSIVE`
+  supports the canonical `anchor UNION [ALL] member` form: one recursive
+  member that scans the CTE exactly once in its `FROM`, no aggregates,
+  windows, `DISTINCT`, `GROUP BY`, `ORDER BY`, or `LIMIT` inside the
+  member, member column storage types matching the anchor's, and MySQL's
+  default `cte_max_recursion_depth` of 1000 (not configurable; a
+  non-converging recursion aborts with an explicit error). `RIGHT JOIN`
+  supports the two-table form.
 - `GROUP_CONCAT` accepts one expression with optional `DISTINCT`,
   aggregate-local `ORDER BY`, and `SEPARATOR`, truncating at MySQL's
   default `group_concat_max_len` of 1024 bytes (the session variable is

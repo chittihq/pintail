@@ -14,8 +14,8 @@ use sqlparser::ast::{
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
     BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery,
-    BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart, IntervalUnit,
-    ScalarFunction, UnaryOp, WindowFunction,
+    BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart,
+    IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -30,6 +30,9 @@ struct BoundCte {
     name: String,
     column_names: Vec<String>,
     query: BoundQuery,
+    /// Recursive self-reference target: scans of this table read the
+    /// working delta instead of inlining the CTE body.
+    working: Option<BoundTable>,
 }
 
 type SubqueryResolver<'resolver> = dyn Fn(&Query) -> Result<BoundQuery, BindError> + 'resolver;
@@ -74,9 +77,6 @@ impl<'catalog> Binder<'catalog> {
 
         let mut ctes = outer_ctes.to_vec();
         if let Some(with) = &query.with {
-            if with.recursive {
-                return Err(BindError::UnsupportedQueryClause(with.to_string()));
-            }
             for cte in &with.cte_tables {
                 if cte.from.is_some() || cte.materialized.is_some() {
                     return Err(BindError::UnsupportedQueryClause(cte.to_string()));
@@ -87,7 +87,16 @@ impl<'catalog> Binder<'catalog> {
                 {
                     return Err(BindError::DuplicateRelation(cte.alias.name.value.clone()));
                 }
-                let bound = self.bind_query(&cte.query, &ctes)?;
+                // Under WITH RECURSIVE, a CTE that fails to bind normally
+                // (its body references itself) binds as a recursive
+                // fixpoint instead.
+                let bound = match self.bind_query(&cte.query, &ctes) {
+                    Ok(bound) => bound,
+                    Err(error) if with.recursive => {
+                        self.bind_recursive_cte(cte, &ctes).map_err(|_| error)?
+                    }
+                    Err(error) => return Err(error),
+                };
                 if !cte.alias.columns.is_empty()
                     && cte.alias.columns.len() != bound.projection.len()
                 {
@@ -107,6 +116,7 @@ impl<'catalog> Binder<'catalog> {
                         .map(|column| column.name.value.clone())
                         .collect(),
                     query: bound,
+                    working: None,
                 });
             }
         }
@@ -115,6 +125,139 @@ impl<'catalog> Binder<'catalog> {
         bind_order_by(query, &mut bound)?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         Ok(bound)
+    }
+
+    /// Binds one `WITH RECURSIVE` CTE whose body is `anchor UNION [ALL]
+    /// member`. The anchor binds without the CTE in scope and fixes the
+    /// column layout; the member binds against a synthetic working table
+    /// and re-executes per iteration. Canonical restrictions apply —
+    /// aggregates, windows, DISTINCT, GROUP BY, ORDER BY, LIMIT, and
+    /// nested set chains reject, and the member must scan the working
+    /// table exactly once.
+    #[allow(clippy::too_many_lines)] // linear anchor->working->member validation sequence
+    fn bind_recursive_cte(
+        &self,
+        cte: &sqlparser::ast::Cte,
+        ctes: &[BoundCte],
+    ) -> Result<BoundQuery, BindError> {
+        let unsupported = || BindError::UnsupportedQueryClause(cte.to_string());
+        let query = &cte.query;
+        if query.order_by.is_some()
+            || query.limit_clause.is_some()
+            || query.with.is_some()
+            || query.fetch.is_some()
+        {
+            return Err(unsupported());
+        }
+        let SetExpr::SetOperation {
+            op: SetOperator::Union,
+            set_quantifier:
+                quantifier @ (SetQuantifier::All | SetQuantifier::Distinct | SetQuantifier::None),
+            left,
+            right,
+        } = query.body.as_ref()
+        else {
+            return Err(unsupported());
+        };
+        let mut anchor = self.bind_set_expr(left, ctes)?;
+        if !cte.alias.columns.is_empty() && cte.alias.columns.len() != anchor.projection.len() {
+            return Err(unsupported());
+        }
+
+        // The working table carries the anchor's layout under the CTE name;
+        // recursive scans of it read the previous iteration's delta.
+        let table_id = self.next_derived_id.get();
+        self.next_derived_id.set(table_id.saturating_sub(1));
+        let table_id = pintail_catalog::TableId::new(table_id);
+        let database_id = pintail_catalog::DatabaseId::new(u64::MAX);
+        let columns = anchor
+            .projection
+            .iter()
+            .enumerate()
+            .map(|(index, projection)| BoundColumn {
+                database_id,
+                table_id,
+                column_id: u32::try_from(index + 1).unwrap_or(u32::MAX - 3),
+                relation_name: cte.alias.name.value.clone(),
+                name: cte.alias.columns.get(index).map_or_else(
+                    || projection.name.clone(),
+                    |column| column.name.value.clone(),
+                ),
+                data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
+                nullable: true,
+            })
+            .collect();
+        let working = BoundTable {
+            database_id,
+            table_id,
+            database_name: String::new(),
+            table_name: cte.alias.name.value.clone(),
+            relation_name: cte.alias.name.value.clone(),
+            schema_version: 0,
+            columns,
+            row_count: None,
+            estimated_rows: None,
+            key_column_ids: Vec::new(),
+            input: None,
+        };
+        let mut scope = ctes.to_vec();
+        scope.push(BoundCte {
+            name: cte.alias.name.value.clone(),
+            column_names: cte
+                .alias
+                .columns
+                .iter()
+                .map(|column| column.name.value.clone())
+                .collect(),
+            query: anchor.clone(),
+            working: Some(working.clone()),
+        });
+
+        let member = self.bind_set_expr(right, &scope)?;
+        let canonical = member.recursive.is_none()
+            && member.union_all.is_empty()
+            && member.set_ops.is_empty()
+            && !member.union_distinct
+            && member.aggregates.is_empty()
+            && member.windows.is_empty()
+            && !member.distinct
+            && member.group_by.is_empty()
+            && member.having.is_none()
+            && member.order_by.is_empty()
+            && member.limit.is_none()
+            && member.projection.len() == anchor.projection.len();
+        if !canonical {
+            return Err(unsupported());
+        }
+        let references = member
+            .tables
+            .iter()
+            .filter(|table| table.table_id == table_id && table.database_id == database_id)
+            .count();
+        if references != 1 {
+            return Err(unsupported());
+        }
+        // Iteration deltas append to batches typed by the anchor layout, so
+        // member columns must already execute as the same storage type.
+        for (anchor_item, member_item) in anchor.projection.iter().zip(&member.projection) {
+            let compatible = match (anchor_item.expr.data_type, member_item.expr.data_type) {
+                (Some(anchor_type), Some(member_type)) => {
+                    anchor_type.storage_type() == member_type.storage_type()
+                }
+                (Some(_) | None, None) => true,
+                (None, Some(_)) => false,
+            };
+            if !compatible {
+                return Err(unsupported());
+            }
+        }
+        anchor.recursive = Some(Box::new(BoundRecursive {
+            database_id,
+            table_id,
+            member,
+            distinct: !matches!(quantifier, SetQuantifier::All),
+        }));
+        Ok(anchor)
     }
 
     fn bind_set_expr(
@@ -307,6 +450,7 @@ impl<'catalog> Binder<'catalog> {
             union_all: Vec::new(),
             union_distinct: false,
             set_ops: Vec::new(),
+            recursive: None,
             windows,
             limit: None,
         })
@@ -703,6 +847,16 @@ impl<'catalog> Binder<'catalog> {
             let relation_name = alias
                 .as_ref()
                 .map_or_else(|| cte.name.clone(), |alias| alias.name.value.clone());
+            // A recursive self-reference scans the working table rather
+            // than inlining the CTE body.
+            if let Some(working) = &cte.working {
+                let mut table = working.clone();
+                table.relation_name.clone_from(&relation_name);
+                for column in &mut table.columns {
+                    column.relation_name.clone_from(&relation_name);
+                }
+                return Ok(table);
+            }
             return Ok(self.bind_derived_table(
                 cte.name.clone(),
                 relation_name,
@@ -4045,10 +4199,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["id", "label"]
         );
-        assert!(matches!(
-            bind("WITH RECURSIVE numbers AS (SELECT 1) SELECT * FROM numbers"),
-            Err(BindError::UnsupportedQueryClause(_))
-        ));
+        // A non-recursive CTE under the RECURSIVE keyword binds normally.
+        bind("WITH RECURSIVE numbers AS (SELECT 1) SELECT * FROM numbers")
+            .expect("non-recursive CTE under RECURSIVE");
+    }
+
+    #[test]
+    fn binds_recursive_ctes_as_fixpoints() {
+        let query = bind(
+            "WITH RECURSIVE seq (n) AS (\
+               SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10\
+             ) SELECT n FROM seq ORDER BY n",
+        )
+        .expect("recursive CTE");
+        let input = query.tables[0].input.as_ref().expect("derived input");
+        let recursive = input.recursive.as_ref().expect("recursive spec");
+        assert!(!recursive.distinct);
+        assert_eq!(recursive.member.projection.len(), 1);
+        // Aggregates in the recursive member reject (surfaced as the
+        // original bind error by the recursive fallback).
+        assert!(
+            bind(
+                "WITH RECURSIVE bad (n) AS (\
+                   SELECT 1 UNION ALL SELECT MAX(n) FROM bad\
+                 ) SELECT n FROM bad"
+            )
+            .is_err()
+        );
     }
 
     #[test]

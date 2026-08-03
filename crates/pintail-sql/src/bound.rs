@@ -613,4 +613,21 @@ pub struct BoundQuery {
     pub set_ops: Vec<(BoundSetOpKind, BoundQuery)>,
     /// Optional normalized row limit.
     pub limit: Option<BoundLimit>,
+    /// Recursive-CTE fixpoint: this query is the anchor and `member`
+    /// re-executes against the working table until no new rows appear.
+    pub recursive: Option<Box<BoundRecursive>>,
+}
+
+/// The recursive half of a `WITH RECURSIVE` common table expression.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundRecursive {
+    /// Synthetic database identity of the working table.
+    pub database_id: DatabaseId,
+    /// Synthetic table identity of the working table.
+    pub table_id: TableId,
+    /// Recursive member; scans of the working identity read the previous
+    /// iteration's delta.
+    pub member: BoundQuery,
+    /// `UNION [DISTINCT]` recursion deduplicates against all produced rows.
+    pub distinct: bool,
 }

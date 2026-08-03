@@ -72,6 +72,20 @@ pub enum LogicalPlan {
         /// Right membership input.
         right: Box<LogicalPlan>,
     },
+    /// Recursive-CTE fixpoint: anchor rows seed a working table and the
+    /// member re-executes against each iteration's delta until empty.
+    Recursive {
+        /// Synthetic database identity of the working table.
+        working_database: pintail_catalog::DatabaseId,
+        /// Synthetic table identity of the working table.
+        working_table: pintail_catalog::TableId,
+        /// `UNION [DISTINCT]` recursion deduplicates accumulated rows.
+        distinct: bool,
+        /// Anchor producing the initial rows and the output layout.
+        anchor: Box<LogicalPlan>,
+        /// Recursive member; its working-table scans read the delta.
+        member: Box<LogicalPlan>,
+    },
     /// Predicate-constrained binary join.
     Join {
         /// Left input.
@@ -154,6 +168,7 @@ impl LogicalPlan {
                 rows.checked_mul(input.estimated_rows()?)
             }),
             Self::SetOp { left, .. } => left.estimated_rows(),
+            Self::Recursive { .. } => None,
             Self::UnionAll { inputs } => inputs.iter().try_fold(0_u64, |rows, input| {
                 rows.checked_add(input.estimated_rows()?)
             }),
@@ -207,6 +222,7 @@ impl LogicalPlanner {
             set_ops,
             windows,
             limit,
+            recursive,
         } = query;
 
         debug_assert_eq!(
@@ -306,6 +322,15 @@ impl LogicalPlanner {
             plan = LogicalPlan::Limit {
                 input: Box::new(plan),
                 limit,
+            };
+        }
+        if let Some(recursive) = recursive {
+            plan = LogicalPlan::Recursive {
+                working_database: recursive.database_id,
+                working_table: recursive.table_id,
+                distinct: recursive.distinct,
+                anchor: Box::new(plan),
+                member: Box::new(Self::plan(recursive.member)),
             };
         }
         plan

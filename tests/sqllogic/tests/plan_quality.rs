@@ -58,6 +58,47 @@ fn explain_analyze_proves_segment_and_block_pruning() {
     assert!(explanation.contains("decoded_blocks=5"));
 }
 
+#[test]
+fn recursive_cte_depth_guard_aborts_non_converging_queries() {
+    let directory = tempfile::tempdir().expect("temporary table");
+    let schema = schema();
+    let table =
+        TableStore::open(directory.path(), schema.clone(), StoreOptions::default()).expect("open");
+    let snapshot = table.snapshot();
+    let entry = TableEntry::new(
+        TABLE_ID,
+        "events",
+        schema,
+        TableStatistics::with_row_count(0),
+    )
+    .expect("table entry")
+    .with_key_columns([1])
+    .expect("key columns");
+    let database = DatabaseEntry::new(DATABASE_ID, "app", [entry]).expect("database");
+    let catalog = CatalogSnapshot::new([database]).expect("catalog");
+    let provider =
+        SnapshotScanProvider::new([(DATABASE_ID, TABLE_ID, &snapshot)]).expect("provider");
+    // UNION ALL with a self-copying member never converges; the fixpoint
+    // must abort at MySQL's default cte_max_recursion_depth.
+    let statement = parse_statement(
+        "EXPLAIN ANALYZE WITH RECURSIVE r (n) AS (\
+         SELECT 1 UNION ALL SELECT n FROM r) SELECT n FROM r",
+    )
+    .expect("parse");
+    let error = explain_analyze_statement(
+        &statement,
+        &catalog,
+        Some("app"),
+        &provider,
+        64 * 1024 * 1024,
+    )
+    .expect_err("depth guard");
+    assert!(
+        error.to_string().contains("recursive query aborted"),
+        "unexpected error: {error}"
+    );
+}
+
 fn schema() -> TableSchema {
     TableSchema::new(
         1,
