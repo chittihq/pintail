@@ -706,8 +706,8 @@ impl CompiledExpr {
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
                     | ScalarFunction::Round { .. }
-                    | ScalarFunction::Ceil
-                    | ScalarFunction::Floor
+                    | ScalarFunction::Ceil { .. }
+                    | ScalarFunction::Floor { .. }
                     | ScalarFunction::Sign
                     | ScalarFunction::Power
                     | ScalarFunction::Sqrt
@@ -716,7 +716,7 @@ impl CompiledExpr {
                     | ScalarFunction::LogBase
                     | ScalarFunction::Log2
                     | ScalarFunction::Log10
-                    | ScalarFunction::Truncate
+                    | ScalarFunction::Truncate { .. }
                     | ScalarFunction::Instr
                     | ScalarFunction::FindInSet
                     | ScalarFunction::Ascii
@@ -824,8 +824,8 @@ impl CompiledExpr {
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
                     | ScalarFunction::Round { .. }
-                    | ScalarFunction::Ceil
-                    | ScalarFunction::Floor
+                    | ScalarFunction::Ceil { .. }
+                    | ScalarFunction::Floor { .. }
                     | ScalarFunction::Sign
                     | ScalarFunction::Power
                     | ScalarFunction::Sqrt
@@ -834,7 +834,7 @@ impl CompiledExpr {
                     | ScalarFunction::LogBase
                     | ScalarFunction::Log2
                     | ScalarFunction::Log10
-                    | ScalarFunction::Truncate
+                    | ScalarFunction::Truncate { .. }
                     | ScalarFunction::Instr
                     | ScalarFunction::FindInSet
                     | ScalarFunction::Ascii
@@ -1192,7 +1192,41 @@ fn evaluate_eager_scalar(
             }
             Ok(Value::float64(value.log(base)))
         }
-        ScalarFunction::Truncate => {
+        ScalarFunction::Truncate { decimal } => {
+            if decimal && let Value::Utf8(text) = &values[0] {
+                let digits = mysql_i64(&values[1])?;
+                let input_scale = i64::try_from(
+                    text.rsplit_once('.')
+                        .map_or(0, |(_, fraction)| fraction.len()),
+                )
+                .map_err(|_| ExecError::NumericOverflow)?;
+                let render_scale = u8::try_from(digits.clamp(0, input_scale))
+                    .map_err(|_| ExecError::NumericOverflow)?;
+                let units = pintail_types::parse_decimal_rounded(
+                    text,
+                    u8::try_from(input_scale).unwrap_or(30),
+                )
+                .ok_or(ExecError::NumericOverflow)?;
+                let drop = u32::try_from(i64::from(input_scale) - i64::from(render_scale))
+                    .unwrap_or(0)
+                    .min(38);
+                let factor = 10_i128
+                    .checked_pow(drop)
+                    .ok_or(ExecError::NumericOverflow)?;
+                // i128 division truncates toward zero — TRUNCATE's contract.
+                let mut units = units / factor;
+                if digits < 0 {
+                    let zeroed = u32::try_from((-digits).min(38)).unwrap_or(38);
+                    let zero_factor = 10_i128
+                        .checked_pow(zeroed)
+                        .ok_or(ExecError::NumericOverflow)?;
+                    units = units / zero_factor * zero_factor;
+                }
+                return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                    units,
+                    render_scale,
+                )));
+            }
             let value = mysql_f64(&values[0])?;
             let digits = mysql_i64(&values[1])?.clamp(-30, 30);
             let factor = 10_f64.powi(i32::try_from(digits).expect("clamped to i32 range"));
@@ -1414,7 +1448,10 @@ fn evaluate_eager_scalar(
                 Err(ExecError::NumericOverflow)
             }
         }
-        ScalarFunction::Ceil => {
+        ScalarFunction::Ceil { decimal } => {
+            if decimal && let Value::Utf8(text) = &values[0] {
+                return decimal_integer_bound(text, true);
+            }
             let value = mysql_f64(&values[0])?.ceil();
             if value.is_finite() {
                 Ok(Value::float64(value))
@@ -1422,7 +1459,10 @@ fn evaluate_eager_scalar(
                 Err(ExecError::NumericOverflow)
             }
         }
-        ScalarFunction::Floor => {
+        ScalarFunction::Floor { decimal } => {
+            if decimal && let Value::Utf8(text) = &values[0] {
+                return decimal_integer_bound(text, false);
+            }
             let value = mysql_f64(&values[0])?.floor();
             if value.is_finite() {
                 Ok(Value::float64(value))
@@ -2248,6 +2288,24 @@ fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
         }
         Ok(leaked)
     })
+}
+
+/// Exact CEIL/FLOOR of canonical decimal text: the integer part, adjusted
+/// by one when a fractional remainder exists in the rounding direction.
+fn decimal_integer_bound(text: &str, ceiling: bool) -> Result<Value, ExecError> {
+    let (whole, fraction) = text.rsplit_once('.').unwrap_or((text, ""));
+    let has_fraction = fraction.bytes().any(|byte| byte != b'0');
+    let mut integer: i64 = whole.parse().map_err(|_| ExecError::NumericOverflow)?;
+    if has_fraction {
+        let negative = text.starts_with('-');
+        if ceiling && !negative {
+            integer = integer.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+        }
+        if !ceiling && negative {
+            integer = integer.checked_sub(1).ok_or(ExecError::NumericOverflow)?;
+        }
+    }
+    Ok(Value::Int64(integer))
 }
 
 /// Renders a JSON value the way `MySQL` prints JSON columns: `", "`

@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 710;
+const EXPECTED_CASES: usize = 712;
 
 struct OracleCase {
     family: &'static str,
@@ -1153,6 +1153,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "decimal round",
             "SELECT active, ROUND(AVG(score), 2), ROUND(AVG(id) / 7, 2) \
              FROM events GROUP BY active",
+        ),
+        ordered(
+            "decimal round",
+            "SELECT CEIL(CAST(2.5 AS DECIMAL(4,1))), CEIL(CAST(-2.5 AS DECIMAL(4,1))), \
+             FLOOR(CAST(2.5 AS DECIMAL(4,1))), FLOOR(CAST(-2.5 AS DECIMAL(4,1))), \
+             CEIL(CAST(3.0 AS DECIMAL(4,1))), FLOOR(CAST(-3.0 AS DECIMAL(4,1)))",
+        ),
+        ordered(
+            "decimal round",
+            "SELECT TRUNCATE(CAST(322.905 AS DECIMAL(9,3)), 2), \
+             TRUNCATE(CAST(-322.905 AS DECIMAL(9,3)), 2), \
+             TRUNCATE(CAST(1234.567 AS DECIMAL(10,3)), -2), \
+             TRUNCATE(CAST(9.99 AS DECIMAL(4,2)), 5), TRUNCATE(CAST(1.005 AS DECIMAL(6,3)), 2)",
         ),
         ordered(
             "div precedence",

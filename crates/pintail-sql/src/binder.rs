@@ -1412,9 +1412,9 @@ fn bind_expr_inner(
                 return Err(BindError::UnsupportedExpression(expr.to_string()));
             }
             let function = if matches!(expr, Expr::Ceil { .. }) {
-                ScalarFunction::Ceil
+                ScalarFunction::Ceil { decimal: false }
             } else {
-                ScalarFunction::Floor
+                ScalarFunction::Floor { decimal: false }
             };
             bind_scalar(
                 function,
@@ -2310,8 +2310,8 @@ fn bind_scalar_function(
                     matches!(digits.kind, BoundExprKind::Literal(Value::Int64(_)))
                 }),
         },
-        "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil,
-        "FLOOR" if args.len() == 1 => ScalarFunction::Floor,
+        "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil { decimal: false },
+        "FLOOR" if args.len() == 1 => ScalarFunction::Floor { decimal: false },
         "ABS" if args.len() == 1 => ScalarFunction::Abs {
             decimal: matches!(args[0].data_type, Some(DataType::Decimal { .. })),
         },
@@ -2323,7 +2323,7 @@ fn bind_scalar_function(
         "LOG" if args.len() == 2 => ScalarFunction::LogBase,
         "LOG2" if args.len() == 1 => ScalarFunction::Log2,
         "LOG10" if args.len() == 1 => ScalarFunction::Log10,
-        "TRUNCATE" if args.len() == 2 => ScalarFunction::Truncate,
+        "TRUNCATE" if args.len() == 2 => ScalarFunction::Truncate { decimal: false },
         "CONCAT_WS" if args.len() >= 2 => ScalarFunction::ConcatWs,
         "REVERSE" if args.len() == 1 => ScalarFunction::Reverse,
         "REPEAT" if args.len() == 2 => ScalarFunction::Repeat,
@@ -2781,6 +2781,28 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
 
 #[allow(clippy::too_many_lines)] // a flat type-dispatch table reads best unsplit
 fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundExpr, BindError> {
+    // Exact-decimal math flags resolve here, once the operand types are
+    // known, so every construction site stays oblivious.
+    let arg0_decimal = matches!(
+        args.first().and_then(|argument| argument.data_type),
+        Some(DataType::Decimal { .. })
+    );
+    let function = match function {
+        ScalarFunction::Ceil { .. } => ScalarFunction::Ceil {
+            decimal: arg0_decimal,
+        },
+        ScalarFunction::Floor { .. } => ScalarFunction::Floor {
+            decimal: arg0_decimal,
+        },
+        ScalarFunction::Truncate { .. } => ScalarFunction::Truncate {
+            decimal: arg0_decimal
+                && matches!(
+                    args.get(1).map(|digits| &digits.kind),
+                    Some(BoundExprKind::Literal(Value::Int64(_)))
+                ),
+        },
+        other => other,
+    };
     let (data_type, nullable) = match function {
         ScalarFunction::Concat
         | ScalarFunction::Substring
@@ -2837,12 +2859,37 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
                 args.iter().any(|argument| argument.nullable),
             )
         }
-        ScalarFunction::Round { decimal: false } | ScalarFunction::Ceil | ScalarFunction::Floor => {
+        // MySQL's CEIL/FLOOR of an exact numeric is an exact integer value.
+        ScalarFunction::Ceil { decimal: true } | ScalarFunction::Floor { decimal: true } => {
+            (Some(DataType::Int64), args[0].nullable)
+        }
+        ScalarFunction::Truncate { decimal: true } => {
+            let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
+                return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned()));
+            };
+            let digits = match args.get(1).map(|argument| &argument.kind) {
+                Some(BoundExprKind::Literal(Value::Int64(digits))) => *digits,
+                _ => return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned())),
+            };
+            let result_scale = u8::try_from(digits.clamp(0, i64::from(scale))).unwrap_or(scale);
             (
-                Some(DataType::Float64),
-                args.iter().any(|argument| argument.nullable),
+                Some(DataType::Decimal {
+                    precision: precision
+                        .saturating_sub(scale)
+                        .saturating_add(result_scale)
+                        .max(result_scale.saturating_add(1))
+                        .min(38),
+                    scale: result_scale,
+                }),
+                args[0].nullable,
             )
         }
+        ScalarFunction::Round { decimal: false }
+        | ScalarFunction::Ceil { decimal: false }
+        | ScalarFunction::Floor { decimal: false } => (
+            Some(DataType::Float64),
+            args.iter().any(|argument| argument.nullable),
+        ),
         ScalarFunction::Abs { .. } => (
             // Exact numerics keep their type; everything else takes the f64
             // carrier like the other math scalars.
@@ -2864,7 +2911,7 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::LogBase
         | ScalarFunction::Log2
         | ScalarFunction::Log10
-        | ScalarFunction::Truncate => (
+        | ScalarFunction::Truncate { decimal: false } => (
             // MySQL returns NULL outside a function's domain (SQRT of a
             // negative, logs of non-positives), so these stay nullable.
             Some(DataType::Float64),

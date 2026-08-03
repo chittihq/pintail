@@ -162,10 +162,17 @@ pub enum ScalarFunction {
         /// Whether the operand is DECIMAL-typed canonical text.
         decimal: bool,
     },
-    /// `CEIL(x)` / `CEILING(x)`.
-    Ceil,
-    /// `FLOOR(x)`.
-    Floor,
+    /// `CEIL(x)` / `CEILING(x)`; `decimal` marks canonical-decimal-text
+    /// operands that resolve exactly to an integer.
+    Ceil {
+        /// Whether the operand is DECIMAL-typed canonical text.
+        decimal: bool,
+    },
+    /// `FLOOR(x)`; see [`ScalarFunction::Ceil`].
+    Floor {
+        /// Whether the operand is DECIMAL-typed canonical text.
+        decimal: bool,
+    },
     /// `ABS(x)`: exact for integers and decimals, f64 otherwise. `decimal`
     /// marks a canonical-decimal-text operand whose sign strips exactly.
     Abs {
@@ -189,7 +196,12 @@ pub enum ScalarFunction {
     /// `LOG10(x)`.
     Log10,
     /// `TRUNCATE(x, digits)`: toward zero at the given precision.
-    Truncate,
+    /// `decimal` marks a canonical-decimal-text operand with a bind-time
+    /// digit count, truncated exactly on scaled units.
+    Truncate {
+        /// Whether the operand is DECIMAL-typed canonical text.
+        decimal: bool,
+    },
     /// `GREATEST(...)`; `decimal` selects numeric comparison for canonical
     /// decimal text operands.
     Greatest {
