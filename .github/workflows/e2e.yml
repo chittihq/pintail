@@ -51,8 +51,8 @@ jobs:
         with:
           name: e2e-smoke-results
           path: |
-            tests/e2e/results.md
-            tests/e2e/results.json
+            tests/e2e/results-partial.md
+            tests/e2e/results-partial.json
 
   full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
