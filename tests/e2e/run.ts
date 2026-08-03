@@ -594,6 +594,13 @@ async function phaseDdl() {
   await sql(`UPDATE orders SET customer_id = 5000000001 WHERE id = 3`)
   await sql(`ALTER TABLE customers MODIFY COLUMN balance DECIMAL(14,2) NOT NULL DEFAULT 0`)
   await sql(`UPDATE customers SET balance = balance + 100000000000.25 WHERE id = 3`)
+  // Index-only changes replicate rows straight through — no resync.
+  await sql(`ALTER TABLE orders ADD INDEX status_idx (status)`)
+  await sql(
+    `INSERT INTO orders (customer_id, status, total, placed_on) VALUES (9, 'processing', 12.34, '2025-07-10')`,
+  )
+  await sql(`ALTER TABLE orders DROP INDEX status_idx`)
+  await sql(`UPDATE orders SET status = 'shipped' WHERE customer_id = 9 AND status = 'processing'`)
   // TRUNCATE and refill.
   await sql(`TRUNCATE TABLE audit_log`)
   await sql(`INSERT INTO audit_log VALUES ('after truncate')`)

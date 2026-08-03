@@ -984,6 +984,53 @@ async fn apply_ddl_actions(
             }
             DdlAction::Alter {
                 table,
+                kind: AlterKind::IndexOnly,
+            } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                let Some(source) = find_source_table(&refreshed, &table).cloned() else {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        statement,
+                        None,
+                    )?;
+                    continue;
+                };
+                // Indexes have no storage representation here; adopt the
+                // refreshed key metadata (unique keys, reconciliation flag)
+                // without a schema generation. A changed key strategy fails
+                // stabilization and quarantines like any other reshape.
+                match stabilize_source_table(&targets[index].source, source) {
+                    Ok(source) => {
+                        targets[index].source = source;
+                        let probe_json = serde_json::to_string(&refreshed)
+                            .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                        metadata.refresh_database_probe_json(
+                            database_id,
+                            &probe_json,
+                            &Utc::now().to_rfc3339(),
+                        )?;
+                    }
+                    Err(reason) => {
+                        quarantine_schema_change(
+                            metadata,
+                            database_id,
+                            &targets[index],
+                            index,
+                            blocked_targets,
+                            &format!("{statement}; {reason}"),
+                            None,
+                        )?;
+                    }
+                }
+            }
+            DdlAction::Alter {
+                table,
                 kind: AlterKind::RequiresResnapshot,
             } => {
                 if let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) {

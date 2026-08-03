@@ -1,5 +1,5 @@
 use sqlparser::{
-    ast::{AlterTableOperation, ObjectName, ObjectType, Statement},
+    ast::{AlterTableOperation, ObjectName, ObjectType, Statement, TableConstraint},
     dialect::MySqlDialect,
     parser::Parser,
 };
@@ -16,6 +16,10 @@ pub(crate) enum AlterKind {
     /// The handler evolves in place only when every change is
     /// storage-compatible; anything else quarantines for resync.
     ModifyColumns(Vec<String>),
+    /// Index/constraint-only changes with no storage impact. The handler
+    /// adopts the refreshed key metadata; a changed key strategy still
+    /// quarantines.
+    IndexOnly,
     RequiresResnapshot,
 }
 
@@ -104,6 +108,22 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
                                 })
                                 .collect(),
                         )
+                    } else if alter.operations.iter().all(|operation| {
+                        matches!(
+                            operation,
+                            AlterTableOperation::AddConstraint {
+                                constraint: TableConstraint::Unique(_)
+                                    | TableConstraint::ForeignKey(_)
+                                    | TableConstraint::Check(_)
+                                    | TableConstraint::Index(_)
+                                    | TableConstraint::FulltextOrSpatial(_),
+                                ..
+                            } | AlterTableOperation::DropIndex { .. }
+                                | AlterTableOperation::DropConstraint { .. }
+                                | AlterTableOperation::DropForeignKey { .. }
+                        )
+                    }) {
+                        AlterKind::IndexOnly
                     } else {
                         AlterKind::RequiresResnapshot
                     };
@@ -202,8 +222,22 @@ mod tests {
             }]
         );
         for ddl in [
-            "ALTER TABLE events CHANGE COLUMN note memo TEXT",
             "ALTER TABLE events ADD INDEX note_index(note)",
+            "ALTER TABLE events DROP INDEX note_index",
+            "ALTER TABLE events ADD UNIQUE KEY unique_note (note)",
+        ] {
+            assert_eq!(
+                parse_ddl(ddl).unwrap(),
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::IndexOnly,
+                }],
+                "{ddl}"
+            );
+        }
+        for ddl in [
+            "ALTER TABLE events CHANGE COLUMN note memo TEXT",
+            "ALTER TABLE events ADD PRIMARY KEY (id)",
             "ALTER TABLE events MODIFY COLUMN note BIGINT, ADD COLUMN extra INT",
         ] {
             assert_eq!(
