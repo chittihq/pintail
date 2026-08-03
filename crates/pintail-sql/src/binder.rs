@@ -171,16 +171,40 @@ impl<'catalog> Binder<'catalog> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // linear clause-binding sequence reads best unsplit
     fn bind_select(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
         validate_select_shape(select)?;
 
-        let (from, tables) = self.bind_from(select, ctes)?;
+        let (mut from, mut tables) = self.bind_from(select, ctes)?;
         let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
-        let filter = select
-            .selection
-            .as_ref()
-            .map(|expr| bind_expr(expr, &tables, Some(&resolve_subquery)))
-            .transpose()?;
+        // Correlated EXISTS conjuncts decorrelate into semi/anti joins
+        // before general binding; everything else re-ANDs below.
+        let mut residual_filter: Option<BoundExpr> = None;
+        if let Some(selection) = &select.selection {
+            for conjunct in split_and_conjuncts(selection) {
+                let bound = if let Expr::Exists { subquery, negated } = conjunct
+                    && self.bind_query(subquery, ctes).is_err()
+                {
+                    self.decorrelate_exists(subquery, *negated, &mut from, &mut tables, ctes)?;
+                    continue;
+                } else {
+                    bind_expr(conjunct, &tables, Some(&resolve_subquery))?
+                };
+                residual_filter = Some(match residual_filter {
+                    None => bound,
+                    Some(existing) => BoundExpr {
+                        data_type: Some(DataType::Boolean),
+                        nullable: existing.nullable || bound.nullable,
+                        kind: BoundExprKind::Binary {
+                            op: BinaryOp::And,
+                            left: Box::new(existing),
+                            right: Box::new(bound),
+                        },
+                    },
+                });
+            }
+        }
+        let filter = residual_filter;
         if let Some(filter) = &filter
             && !is_truth_value(filter.data_type)
         {
@@ -274,6 +298,82 @@ impl<'catalog> Binder<'catalog> {
             windows,
             limit: None,
         })
+    }
+
+    /// Rewrites a correlated `[NOT] EXISTS` conjunct into a semi/anti join
+    /// when the subquery is the canonical single-table, single-equality
+    /// form; anything else keeps the original unsupported-subquery error.
+    fn decorrelate_exists(
+        &self,
+        subquery: &Query,
+        negated: bool,
+        from: &mut [BoundFrom],
+        tables: &mut Vec<BoundTable>,
+        ctes: &[BoundCte],
+    ) -> Result<(), BindError> {
+        let unsupported = || BindError::UnsupportedSubquery(subquery.to_string());
+        let SetExpr::Select(inner) = subquery.body.as_ref() else {
+            return Err(unsupported());
+        };
+        let simple = inner.from.len() == 1
+            && inner.from[0].joins.is_empty()
+            && matches!(inner.group_by, GroupByExpr::Expressions(ref exprs, _) if exprs.is_empty())
+            && inner.having.is_none()
+            && subquery.limit_clause.is_none()
+            && subquery.order_by.is_none();
+        if !simple {
+            return Err(unsupported());
+        }
+        let inner_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        if tables.iter().any(|existing| {
+            existing
+                .relation_name
+                .eq_ignore_ascii_case(&inner_table.relation_name)
+        }) {
+            return Err(unsupported());
+        }
+        tables.push(inner_table.clone());
+        let Some(selection) = &inner.selection else {
+            tables.pop();
+            return Err(unsupported());
+        };
+        let condition = bind_expr(selection, tables, None).map_err(|_| {
+            tables.pop();
+            unsupported()
+        })?;
+        // The equality must span exactly the inner table and the outer scope.
+        let BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left,
+            right,
+        } = &condition.kind
+        else {
+            tables.pop();
+            return Err(unsupported());
+        };
+        let inner_key = (inner_table.database_id, inner_table.table_id);
+        let sides_split = (expr_tables(left).iter().all(|key| *key == inner_key)
+            && expr_tables(right).iter().all(|key| *key != inner_key))
+            || (expr_tables(right).iter().all(|key| *key == inner_key)
+                && expr_tables(left).iter().all(|key| *key != inner_key));
+        if !sides_split || expr_tables(left).is_empty() || expr_tables(right).is_empty() {
+            tables.pop();
+            return Err(unsupported());
+        }
+        let Some(last) = from.last_mut() else {
+            tables.pop();
+            return Err(unsupported());
+        };
+        last.joins.push(BoundJoin {
+            kind: if negated {
+                BoundJoinKind::Anti
+            } else {
+                BoundJoinKind::Semi
+            },
+            table: inner_table,
+            condition: Some(condition),
+        });
+        Ok(())
     }
 
     fn bind_from(
@@ -1432,6 +1532,57 @@ fn bind_binary(
             right: Box::new(right),
         },
     })
+}
+
+/// Top-level AND conjuncts of a predicate expression.
+fn split_and_conjuncts(expr: &Expr) -> Vec<&Expr> {
+    match expr {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => {
+            let mut conjuncts = split_and_conjuncts(left);
+            conjuncts.extend(split_and_conjuncts(right));
+            conjuncts
+        }
+        Expr::Nested(inner) => split_and_conjuncts(inner),
+        other => vec![other],
+    }
+}
+
+/// Distinct (database, table) pairs referenced by a bound expression.
+fn expr_tables(expr: &BoundExpr) -> Vec<(pintail_catalog::DatabaseId, pintail_catalog::TableId)> {
+    fn walk(
+        expr: &BoundExpr,
+        out: &mut Vec<(pintail_catalog::DatabaseId, pintail_catalog::TableId)>,
+    ) {
+        match &expr.kind {
+            BoundExprKind::Column(column) => {
+                let key = (column.database_id, column.table_id);
+                if !out.contains(&key) {
+                    out.push(key);
+                }
+            }
+            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+                walk(expr, out);
+            }
+            BoundExprKind::Binary { left, right, .. } => {
+                walk(left, out);
+                walk(right, out);
+            }
+            BoundExprKind::Scalar { args, .. } => {
+                for argument in args {
+                    walk(argument, out);
+                }
+            }
+            BoundExprKind::InSubquery { expr, .. } => walk(expr, out),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(expr, &mut out);
+    out
 }
 
 /// `MOD(a, b)` is the `%` operator spelled as a function.
