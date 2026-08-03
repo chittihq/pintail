@@ -9,18 +9,25 @@ plausible but incorrect result.
 ### SQL surface
 
 - Scalar and `IN` subqueries may read tables, derived tables, and
-  non-recursive CTEs, but they must be uncorrelated. An inner reference that
-  depends on an outer query scope is rejected during binding.
+  non-recursive CTEs, but they must be uncorrelated. `EXISTS` and
+  `NOT EXISTS` support the canonical correlated form — a single-table
+  subquery whose `WHERE` is one equality against the outer scope — by
+  rewriting to semi/anti joins; other correlated shapes are rejected
+  during binding.
 - Window functions cover `ROW_NUMBER`, `RANK`, `DENSE_RANK`, and
   `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` over `PARTITION BY` / `ORDER BY` with
   MySQL's default frames, nested anywhere in projection expressions and
   over grouped output. Explicit frames (`ROWS`/`RANGE BETWEEN`), named
   windows, `LAG`/`LEAD`/`NTILE`/`FIRST_VALUE`/`LAST_VALUE`, and windows
-  combined with `DISTINCT` are not implemented. Recursive CTEs and set
-  operations other than `UNION ALL` are not implemented.
-- `GROUP_CONCAT` accepts one expression with optional `DISTINCT`. MySQL's
-  aggregate-local `ORDER BY`, custom `SEPARATOR`, and session
-  `group_concat_max_len` behavior are not implemented.
+  combined with `DISTINCT` are not implemented. `UNION [ALL | DISTINCT]`,
+  `INTERSECT`, and `EXCEPT` follow MySQL's left-associative distinct set
+  semantics (a distinct union under a later `UNION ALL`, and the `ALL`
+  variants of `INTERSECT`/`EXCEPT`, reject explicitly). Recursive CTEs are
+  not implemented. `RIGHT JOIN` supports the two-table form.
+- `GROUP_CONCAT` accepts one expression with optional `DISTINCT`,
+  aggregate-local `ORDER BY`, and `SEPARATOR`, truncating at MySQL's
+  default `group_concat_max_len` of 1024 bytes (the session variable is
+  not configurable).
 - `CONVERT(value, type)` supports Pintail's scalar target types.
   `CONVERT(value USING charset)` distinguishes binary from character output,
   but does not perform byte-level transcoding among MySQL character sets.
@@ -41,10 +48,10 @@ plausible but incorrect result.
   implement MySQL's complete collation matrix, accent weights, locale
   tailoring, coercibility rules, or pad-space behavior. Binary values remain
   bytewise.
-- `NOW()`, `CURDATE()`, and no-argument `UNIX_TIMESTAMP()` read the host clock
-  and timezone when evaluated. Pintail does not yet expose a MySQL session
-  timezone, and multiple evaluations in a long query are not pinned to one
-  statement timestamp.
+- `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are
+  pinned to one timestamp per statement, read from the host clock and
+  timezone at plan time. Pintail does not yet expose a MySQL session
+  timezone or `CONVERT_TZ`.
 - Date parsing accepts the canonical date and date-time forms implemented by
   the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a
   time; compound intervals and the full `DATE_FORMAT` directive inventory are
@@ -59,10 +66,13 @@ plausible but incorrect result.
   division (`/`) and `AVG` produce a DECIMAL widened by four fraction digits
   with half-away-from-zero rounding, `SUM` accumulates scaled integers, and
   CASE/IF/COALESCE branches that mix decimals with integers unify to a
-  decimal instead of truncating. Remaining gaps: `+`, `-`, `*` over decimals
-  still pass through `Float64`, and chained division (`a / b / c`) rounds
-  each step to its own result scale while MySQL carries extra unrounded
-  digits between steps. Numeric overflow returns an error.
+  decimal instead of truncating, `+`/`-`/`*` over decimal columns, casts,
+  and literals compute exactly on scaled units, and `CAST(x AS
+  DECIMAL(p, s))` rounds half away from zero. Remaining gap: chained
+  expressions whose intermediates are division results (`a / b / c`,
+  `(a / b) * c`) round each step to its own result scale while MySQL
+  carries extra unrounded digits between steps. Numeric overflow returns
+  an error.
 
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and
   error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses
@@ -117,7 +127,8 @@ plausible but incorrect result.
   values, `Float32` uses the 64-bit float carrier, and decimal/temporal/JSON
   values use canonical UTF-8. DECIMAL values are lossless in storage, but M2
   query arithmetic still coerces them through the existing numeric executor
-  and is not exact decimal arithmetic.
+  and follows the exactness
+  boundaries recorded in the M2 section above.
 - `DECIMAL` precision above 38 maps to text with a probe warning. ENUM and SET
   snapshot values are textual. Virtual generated columns are skipped, while
   stored generated columns are included.

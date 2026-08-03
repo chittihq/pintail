@@ -1857,6 +1857,79 @@ fn divide_decimal(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
     cast_decimal(&Value::float64(dividend / divisor), target)
 }
 
+/// Exact decimal addition, subtraction, and multiplication on scaled i128
+/// units; falls back to the f64 carrier formatted at the target scale when
+/// a value cannot carry exact units or the units overflow.
+fn decimal_add_sub_mul(
+    op: BinaryOp,
+    left: &Value,
+    right: &Value,
+    target: u8,
+) -> Result<Value, ExecError> {
+    if let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_units_of(left), decimal_units_of(right))
+    {
+        let exact = if op == BinaryOp::Multiply {
+            // Product scale is the sum of operand scales; the binder set
+            // target accordingly (capped), so rescale when it saturated.
+            let natural = left_scale.saturating_add(right_scale);
+            left_units.checked_mul(right_units).and_then(|product| {
+                if natural <= target {
+                    10_i128
+                        .checked_pow(u32::from(target - natural))
+                        .and_then(|factor| product.checked_mul(factor))
+                } else {
+                    // Cap hit: round down to the target scale.
+                    10_i128
+                        .checked_pow(u32::from(natural - target))
+                        .and_then(|factor| {
+                            pintail_types::div_decimal_round_half_up(product, factor)
+                        })
+                }
+            })
+        } else {
+            let rescale = |units: i128, scale: u8| {
+                (scale <= target)
+                    .then(|| {
+                        10_i128
+                            .checked_pow(u32::from(target - scale))
+                            .and_then(|factor| units.checked_mul(factor))
+                    })
+                    .flatten()
+            };
+            match (
+                rescale(left_units, left_scale),
+                rescale(right_units, right_scale),
+            ) {
+                (Some(left), Some(right)) => {
+                    if op == BinaryOp::Add {
+                        left.checked_add(right)
+                    } else {
+                        left.checked_sub(right)
+                    }
+                }
+                _ => None,
+            }
+        };
+        if let Some(units) = exact {
+            return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                units, target,
+            )));
+        }
+    }
+    let left = mysql_f64(left)?;
+    let right = mysql_f64(right)?;
+    let value = match op {
+        BinaryOp::Add => left + right,
+        BinaryOp::Subtract => left - right,
+        _ => left * right,
+    };
+    if !value.is_finite() {
+        return Err(ExecError::NumericOverflow);
+    }
+    cast_decimal(&Value::float64(value), target)
+}
+
 /// Coerces a value to canonical decimal text at `scale`, rounding half away
 /// from zero like `MySQL`. Floats format at the target scale first (their
 /// tie-rounding is the platform's, an accepted v1 edge).
@@ -2444,10 +2517,14 @@ fn evaluate_arithmetic(
     if matches!(left, Value::Null) || matches!(right, Value::Null) {
         return Ok(Value::Null);
     }
-    if let Some(DataType::Decimal { scale: target, .. }) = data_type
-        && op == BinaryOp::Divide
-    {
-        return divide_decimal(left, right, target);
+    if let Some(DataType::Decimal { scale: target, .. }) = data_type {
+        match op {
+            BinaryOp::Divide => return divide_decimal(left, right, target),
+            BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
+                return decimal_add_sub_mul(op, left, right, target);
+            }
+            _ => {}
+        }
     }
     match data_type.map(DataType::storage_type) {
         Some(DataType::Float64) => {

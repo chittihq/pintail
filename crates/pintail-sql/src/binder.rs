@@ -2283,6 +2283,22 @@ fn bind_convert(
 }
 
 fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
+    // CAST AS DECIMAL is exact: the executor coerces onto scaled i128
+    // units with MySQL's half-away-from-zero rounding.
+    if let SqlDataType::Decimal(info) | SqlDataType::Numeric(info) | SqlDataType::Dec(info) =
+        data_type
+    {
+        let (precision, scale) = match info {
+            sqlparser::ast::ExactNumberInfo::None => (10, 0),
+            sqlparser::ast::ExactNumberInfo::Precision(precision) => (*precision, 0),
+            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(precision, scale) => {
+                (*precision, *scale)
+            }
+        };
+        let precision = u8::try_from(precision).ok()?.clamp(1, 38);
+        let scale = u8::try_from(scale).ok()?.min(30).min(precision);
+        return Some(DataType::Decimal { precision, scale });
+    }
     let name = data_type.to_string().to_ascii_uppercase();
     if name.contains("BINARY") || name.contains("BLOB") {
         Some(DataType::Binary)
@@ -2855,15 +2871,38 @@ fn arithmetic_type(
     let (Some(left), Some(right)) = (left, right) else {
         return None;
     };
-    // Division over exact numerics follows MySQL decimal semantics: the
-    // result is a DECIMAL widened by div_precision_increment, evaluated
-    // exactly. Everything else with a decimal operand still passes through
-    // Float64 (limitations.md); routing it to an integer arm would truncate
-    // the fraction.
+    // Arithmetic over exact numerics with a DECIMAL operand follows MySQL
+    // decimal semantics and evaluates exactly on scaled units. Integer-only
+    // expressions keep their integer fast paths untouched.
     if op == BinaryOp::Divide
         && let Some(result) = division_result_type(left, right)
     {
         return Some(result);
+    }
+    if matches!(op, BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply)
+        && (matches!(left, DataType::Decimal { .. }) || matches!(right, DataType::Decimal { .. }))
+        && let (Some((left_scale, left_integer)), Some((right_scale, right_integer))) =
+            (exact_numeric_digits(left), exact_numeric_digits(right))
+    {
+        let (scale, integer_digits) = if op == BinaryOp::Multiply {
+            (
+                left_scale
+                    .saturating_add(right_scale)
+                    .min(MAX_DECIMAL_SCALE),
+                left_integer.saturating_add(right_integer),
+            )
+        } else {
+            (
+                left_scale.max(right_scale),
+                left_integer.max(right_integer).saturating_add(1),
+            )
+        };
+        return Some(DataType::Decimal {
+            precision: integer_digits
+                .saturating_add(scale)
+                .min(MAX_DECIMAL_PRECISION),
+            scale,
+        });
     }
     if op == BinaryOp::Divide
         || left == DataType::Float64
