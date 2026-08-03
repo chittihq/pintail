@@ -25,6 +25,7 @@ use crate::{
 type EncryptedCredentials = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 #[derive(Serialize)]
+#[allow(clippy::struct_excessive_bools)] // serialization DTO mirrors the API contract
 pub(crate) struct BackupConfigResponse {
     configured: bool,
     bucket: String,
@@ -34,6 +35,7 @@ pub(crate) struct BackupConfigResponse {
     schedule_minutes: u64,
     enabled: bool,
     retain_count: u64,
+    verify_restore: bool,
     credentials_configured: bool,
     updated_at: String,
 }
@@ -53,6 +55,10 @@ pub(crate) struct BackupConfigRequest {
     schedule_minutes: u64,
     #[serde(default = "enabled")]
     enabled: bool,
+    /// Restore each completed backup into a scratch directory and record
+    /// the checksum-verified outcome on the backup row.
+    #[serde(default)]
+    verify_restore: bool,
     /// Completed backups to keep; zero keeps everything.
     #[serde(default)]
     retain_count: u64,
@@ -84,6 +90,8 @@ pub(crate) struct BackupResponse {
     error: Option<String>,
     started_at: String,
     completed_at: Option<String>,
+    verified_at: Option<String>,
+    verify_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -189,6 +197,7 @@ pub(crate) async fn put_config(
             schedule_minutes: request.schedule_minutes,
             enabled: request.enabled,
             retain_count: request.retain_count,
+            verify_restore: request.verify_restore,
             now: &now,
         })
         .map_err(bad_request)?;
@@ -441,10 +450,85 @@ async fn complete_backup_job(
                     error,
                 ));
             }
+            verify_backup_if_configured(&state, &database_id, &backup_id).await;
         }
         Err(error) => finish_backup_error(&state, &database_id, &backup_id, &error),
     }
     state.release_job(&database_id);
+}
+
+/// Restores a just-completed backup into a scratch directory when the
+/// configuration asks for validation — a full download with every object
+/// checksummed — recording the outcome on the backup row. Failures never
+/// fail the backup itself.
+async fn verify_backup_if_configured(state: &ApiState, database_id: &str, backup_id: &str) {
+    let outcome = run_backup_verification(state, database_id, backup_id).await;
+    match outcome {
+        Ok(false) => {}
+        Ok(true) => {
+            if let Ok(metadata) = state.metadata() {
+                let _ =
+                    metadata.record_backup_verification(backup_id, None, &Utc::now().to_rfc3339());
+            }
+            state.publish(ApiEvent::database(
+                "backup.verified",
+                database_id,
+                format!("backup {backup_id} restore-validated"),
+            ));
+        }
+        Err(error) => {
+            if let Ok(metadata) = state.metadata() {
+                let _ = metadata.record_backup_verification(
+                    backup_id,
+                    Some(&error),
+                    &Utc::now().to_rfc3339(),
+                );
+            }
+            state.publish(ApiEvent::database(
+                "backup.verify.error",
+                database_id,
+                error,
+            ));
+        }
+    }
+}
+
+/// Returns Ok(false) when validation is not configured, Ok(true) on a
+/// checksum-clean scratch restore.
+async fn run_backup_verification(
+    state: &ApiState,
+    database_id: &str,
+    backup_id: &str,
+) -> Result<bool, String> {
+    fn display(error: impl std::fmt::Display) -> String {
+        error.to_string()
+    }
+    let metadata = state.metadata().map_err(display)?;
+    let Some(config) = metadata
+        .backup_config(database_id)
+        .map_err(display)?
+        .filter(|config| config.verify_restore)
+    else {
+        return Ok(false);
+    };
+    let destination = destination(state, &config).map_err(display)?;
+    let store = build_s3(&destination).map_err(display)?;
+    let manifest = load_manifest(store.as_ref(), &config.prefix, database_id, backup_id)
+        .await
+        .map_err(display)?;
+    let scratch = state
+        .data_dir()
+        .map_err(display)?
+        .join("verify")
+        .join(backup_id);
+    if scratch.exists() {
+        std::fs::remove_dir_all(&scratch).map_err(display)?;
+    }
+    let result = restore_backup(store.as_ref(), manifest, &scratch)
+        .await
+        .map_err(display);
+    let _cleanup = std::fs::remove_dir_all(&scratch);
+    result.map(|_| true)
 }
 
 /// Prunes completed backups beyond the configured retention, keeping every
@@ -820,6 +904,7 @@ impl From<BackupConfigRecord> for BackupConfigResponse {
             schedule_minutes: config.schedule_minutes,
             enabled: config.enabled,
             retain_count: config.retain_count,
+            verify_restore: config.verify_restore,
             updated_at: config.updated_at,
         }
     }
@@ -836,6 +921,7 @@ impl Default for BackupConfigResponse {
             schedule_minutes: default_schedule(),
             enabled: false,
             retain_count: 0,
+            verify_restore: false,
             credentials_configured: false,
             updated_at: String::new(),
         }
@@ -856,6 +942,8 @@ impl From<BackupRecord> for BackupResponse {
             error: backup.error,
             started_at: backup.started_at,
             completed_at: backup.completed_at,
+            verified_at: backup.verified_at,
+            verify_error: backup.verify_error,
         }
     }
 }

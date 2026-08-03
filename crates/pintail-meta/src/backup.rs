@@ -16,6 +16,9 @@ pub struct BackupConfigRecord {
     pub schedule_minutes: u64,
     pub enabled: bool,
     pub retain_count: u64,
+    /// Restore each completed backup into a scratch directory and record
+    /// the checksum-verified outcome.
+    pub verify_restore: bool,
     pub updated_at: String,
 }
 
@@ -31,6 +34,7 @@ pub struct NewBackupConfig<'a> {
     pub schedule_minutes: u64,
     pub enabled: bool,
     pub retain_count: u64,
+    pub verify_restore: bool,
     pub now: &'a str,
 }
 
@@ -48,6 +52,10 @@ pub struct BackupRecord {
     pub error: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
+    /// When a post-backup restore validation succeeded.
+    pub verified_at: Option<String>,
+    /// Why the last restore validation failed, when it did.
+    pub verify_error: Option<String>,
 }
 
 /// Values required to start a durable backup run.
@@ -109,8 +117,9 @@ impl MetaStore {
                 "INSERT INTO backup_configs (\
                    db_id, bucket, prefix, endpoint, region, \
                    access_key_id_encrypted, secret_access_key_encrypted, \
-                   schedule_minutes, enabled, retain_count, updated_at\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+                   schedule_minutes, enabled, retain_count, verify_restore, \
+                   updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
                  ON CONFLICT(db_id) DO UPDATE SET \
                    bucket = excluded.bucket, prefix = excluded.prefix, \
                    endpoint = excluded.endpoint, region = excluded.region, \
@@ -119,6 +128,7 @@ impl MetaStore {
                    schedule_minutes = excluded.schedule_minutes, \
                    enabled = excluded.enabled, \
                    retain_count = excluded.retain_count, \
+                   verify_restore = excluded.verify_restore, \
                    updated_at = excluded.updated_at",
                 params![
                     config.database_id,
@@ -132,6 +142,7 @@ impl MetaStore {
                     config.enabled,
                     i64::try_from(config.retain_count)
                         .context("backup retention exceeds SQLite range")?,
+                    config.verify_restore,
                     config.now,
                 ],
             )
@@ -149,7 +160,8 @@ impl MetaStore {
             .query_row(
                 "SELECT db_id, bucket, prefix, endpoint, region, \
                         access_key_id_encrypted, secret_access_key_encrypted, \
-                        schedule_minutes, enabled, retain_count, updated_at \
+                        schedule_minutes, enabled, retain_count, updated_at, \
+                        verify_restore \
                  FROM backup_configs WHERE db_id = ?1",
                 [database_id],
                 decode_backup_config,
@@ -221,6 +233,27 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Records the outcome of a post-backup restore validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backup row cannot be updated.
+    pub fn record_backup_verification(
+        &self,
+        backup_id: &str,
+        error: Option<&str>,
+        now: &str,
+    ) -> Result<()> {
+        let verified_at = if error.is_none() { Some(now) } else { None };
+        self.connection
+            .execute(
+                "UPDATE backups SET verified_at = ?2, verify_error = ?3 WHERE id = ?1",
+                (backup_id, verified_at, error),
+            )
+            .context("failed to record backup verification")?;
+        Ok(())
+    }
+
     /// Lists recent backup runs for one database.
     ///
     /// # Errors
@@ -232,7 +265,8 @@ impl MetaStore {
             .connection
             .prepare(
                 "SELECT id, db_id, kind, parent_id, object_prefix, status, \
-                        bytes, object_count, error, started_at, completed_at \
+                        bytes, object_count, error, started_at, completed_at, \
+                        verified_at, verify_error \
                  FROM backups WHERE db_id = ?1 \
                  ORDER BY started_at DESC, id LIMIT ?2",
             )
@@ -270,7 +304,8 @@ impl MetaStore {
         self.connection
             .query_row(
                 "SELECT id, db_id, kind, parent_id, object_prefix, status, \
-                        bytes, object_count, error, started_at, completed_at \
+                        bytes, object_count, error, started_at, completed_at, \
+                        verified_at, verify_error \
                  FROM backups WHERE db_id = ?1 AND status = 'completed' \
                  ORDER BY started_at DESC, id DESC LIMIT 1",
                 [database_id],
@@ -394,6 +429,7 @@ fn decode_backup_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackupConfi
             )
         })?,
         enabled: row.get(8)?,
+        verify_restore: row.get(11)?,
         updated_at: row.get(10)?,
     })
 }
@@ -425,5 +461,7 @@ fn decode_backup(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackupRecord> {
         error: row.get(8)?,
         started_at: row.get(9)?,
         completed_at: row.get(10)?,
+        verified_at: row.get(11)?,
+        verify_error: row.get(12)?,
     })
 }
