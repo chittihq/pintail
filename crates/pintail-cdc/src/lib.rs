@@ -812,6 +812,82 @@ async fn apply_ddl_actions(
             }
             DdlAction::Alter {
                 table,
+                kind: AlterKind::RenameColumns(renames),
+            } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                let Some(source) = find_source_table(&refreshed, &table).cloned() else {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        statement,
+                        None,
+                    )?;
+                    continue;
+                };
+                // Apply the renames to the tracked source first so
+                // name-matching carries each stable column ID to its new
+                // spelling instead of treating the rename as drop-and-add.
+                let mut previous = targets[index].source.clone();
+                for (old_name, new_name) in &renames {
+                    for column in &mut previous.columns {
+                        if column.name.eq_ignore_ascii_case(old_name) {
+                            column.name.clone_from(new_name);
+                        }
+                    }
+                    for key in &mut previous.key.columns {
+                        if key.eq_ignore_ascii_case(old_name) {
+                            key.clone_from(new_name);
+                        }
+                    }
+                }
+                let source = match stabilize_source_table(&previous, source) {
+                    Ok(source) => source,
+                    Err(reason) => {
+                        quarantine_schema_change(
+                            metadata,
+                            database_id,
+                            &targets[index],
+                            index,
+                            blocked_targets,
+                            &format!("{statement}; {reason}"),
+                            None,
+                        )?;
+                        continue;
+                    }
+                };
+                let version = next_schema_version(targets[index].store.schema().version())?;
+                let schema = source.table_schema_with_version(version)?;
+                if let Err(error) = targets[index].store.evolve_schema(schema) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {error}"),
+                        Some(&source),
+                    )?;
+                    continue;
+                }
+                let columns_json = serde_json::to_string(&source.columns)
+                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                metadata.record_schema_history(
+                    database_id,
+                    &table,
+                    version,
+                    Some(statement),
+                    &columns_json,
+                    &Utc::now().to_rfc3339(),
+                )?;
+                targets[index].source = source;
+            }
+            DdlAction::Alter {
+                table,
                 kind: AlterKind::RequiresResnapshot,
             } => {
                 if let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) {

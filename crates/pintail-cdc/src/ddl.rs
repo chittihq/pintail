@@ -6,9 +6,12 @@ use sqlparser::{
 
 use crate::CdcError;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AlterKind {
     AddOrDropColumns,
+    /// Pure column renames as `(old name, new name)` pairs: the stable
+    /// column IDs carry across, so no resnapshot is needed.
+    RenameColumns(Vec<(String, String)>),
     RequiresResnapshot,
 }
 
@@ -42,17 +45,37 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
         match statement {
             Statement::AlterTable(alter) => {
                 let table = table_name(&alter.name)?;
-                let kind = if alter.operations.iter().all(|operation| {
-                    matches!(
-                        operation,
-                        AlterTableOperation::AddColumn { .. }
-                            | AlterTableOperation::DropColumn { .. }
-                    )
-                }) {
-                    AlterKind::AddOrDropColumns
-                } else {
-                    AlterKind::RequiresResnapshot
-                };
+                let kind =
+                    if alter.operations.iter().all(|operation| {
+                        matches!(
+                            operation,
+                            AlterTableOperation::AddColumn { .. }
+                                | AlterTableOperation::DropColumn { .. }
+                        )
+                    }) {
+                        AlterKind::AddOrDropColumns
+                    } else if alter.operations.iter().all(|operation| {
+                        matches!(operation, AlterTableOperation::RenameColumn { .. })
+                    }) {
+                        AlterKind::RenameColumns(
+                            alter
+                                .operations
+                                .iter()
+                                .map(|operation| {
+                                    let AlterTableOperation::RenameColumn {
+                                        old_column_name,
+                                        new_column_name,
+                                    } = operation
+                                    else {
+                                        unreachable!("all operations matched RenameColumn");
+                                    };
+                                    (old_column_name.value.clone(), new_column_name.value.clone())
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        AlterKind::RequiresResnapshot
+                    };
                 actions.push(DdlAction::Alter { table, kind });
             }
             Statement::Truncate(truncate) => {
@@ -124,8 +147,14 @@ mod tests {
                 kind: AlterKind::AddOrDropColumns,
             }]
         );
+        assert_eq!(
+            parse_ddl("ALTER TABLE events RENAME COLUMN note TO memo").unwrap(),
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::RenameColumns(vec![("note".to_owned(), "memo".to_owned())]),
+            }]
+        );
         for ddl in [
-            "ALTER TABLE events RENAME COLUMN note TO memo",
             "ALTER TABLE events MODIFY COLUMN note BIGINT",
             "ALTER TABLE events CHANGE COLUMN note memo TEXT",
             "ALTER TABLE events ADD INDEX note_index(note)",
