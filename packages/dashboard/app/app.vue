@@ -31,7 +31,8 @@ import {
   X,
 } from '@lucide/vue'
 import { useIntervalFn } from '@vueuse/core'
-import { Badge } from '@/components/ui/badge'
+import { toast } from 'vue-sonner'
+import 'vue-sonner/style.css'
 import type {
   ActivityRecord,
   ApiKeyRecord,
@@ -90,7 +91,6 @@ const authenticating = ref(false)
 const booting = ref(true)
 const loading = ref(false)
 const error = ref('')
-const notice = ref('')
 const dark = ref(false)
 const session = ref<Session | null>(null)
 const nodeStatus = ref<NodeStatus | null>(null)
@@ -771,11 +771,23 @@ async function copy(value: string) {
   toast('Copied to clipboard')
 }
 
-function toast(message: string) {
-  notice.value = message
-  window.setTimeout(() => {
-    if (notice.value === message) notice.value = ''
-  }, 3_000)
+function toggleScope(scope: string, on: boolean) {
+  keyForm.scopes = on
+    ? [...new Set([...keyForm.scopes, scope])]
+    : keyForm.scopes.filter((existing) => existing !== scope)
+}
+
+function toggleInclude(name: string, on: boolean) {
+  wizard.includes = on
+    ? [...new Set([...wizard.includes, name])]
+    : wizard.includes.filter((existing) => existing !== name)
+}
+
+function closeDeleteDialog(open: boolean) {
+  if (!open) {
+    deleteCandidate.value = null
+    deleteText.value = ''
+  }
 }
 
 function modeOf(database: DatabaseRecord) {
@@ -881,6 +893,8 @@ function describeTable(table: TableSummary) {
 </script>
 
 <template>
+  <Toaster position="top-right" />
+
   <div v-if="booting" class="boot-screen" aria-live="polite">
     <div class="brand-mark">PT</div>
     <LoaderCircle class="spin" :size="20" />
@@ -905,27 +919,28 @@ function describeTable(table: TableSummary) {
         </p>
       </div>
       <form class="stack" @submit.prevent="submitAuth">
-        <label>
-          <span>Email</span>
-          <input v-model="authForm.email" type="email" autocomplete="email" required placeholder="operator@example.com">
-        </label>
-        <label>
-          <span>Password</span>
-          <input
+        <div class="grid gap-1.5">
+          <Label for="auth-email">Email</Label>
+          <Input id="auth-email" v-model="authForm.email" type="email" autocomplete="email" required placeholder="operator@example.com" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="auth-password">Password</Label>
+          <Input
+            id="auth-password"
             v-model="authForm.password"
             type="password"
             :autocomplete="authMode === 'setup' ? 'new-password' : 'current-password'"
             minlength="12"
             required
             placeholder="At least 12 characters"
-          >
-        </label>
+          />
+        </div>
         <p v-if="error" class="inline-error">{{ error }}</p>
-        <button class="button primary wide" :disabled="authenticating">
-          <LoaderCircle v-if="authenticating" class="spin" :size="16" />
+        <Button type="submit" size="lg" class="w-full" :disabled="authenticating">
+          <LoaderCircle v-if="authenticating" class="spin" />
           {{ authMode === 'setup' ? 'Initialize Pintail' : 'Sign in' }}
-          <ArrowRight v-if="!authenticating" :size="16" />
-        </button>
+          <ArrowRight v-if="!authenticating" />
+        </Button>
       </form>
       <p class="auth-foot">Credentials stay on this Pintail node · Argon2id protected</p>
     </section>
@@ -940,65 +955,99 @@ function describeTable(table: TableSummary) {
     </aside>
   </main>
 
-  <div v-else class="app-shell">
-    <aside class="sidebar">
-      <button class="brand" @click="go('overview')">
-        <span class="brand-mark">PT</span>
-        <span>Pintail</span>
-      </button>
-      <nav aria-label="Primary navigation">
-        <button
-          v-for="item in nav"
-          :key="item.id"
-          :class="{ active: page === item.id || (item.id === 'databases' && page === 'database') }"
-          @click="go(item.id)"
-        >
-          <component :is="item.icon" :size="17" />
-          <span>{{ item.label }}</span>
-          <span v-if="item.id === 'activity' && alertCount" class="nav-count">{{ alertCount }}</span>
-        </button>
-      </nav>
-      <div class="sidebar-foot">
-        <div class="node-status">
-          <span class="health-dot" :class="{ stale: error }" />
-          <div>
-            <strong>{{ error ? 'Attention' : 'Node healthy' }}</strong>
-            <span>v0.1.0 · local</span>
+  <SidebarProvider v-else>
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" class="font-heading text-base font-extrabold tracking-tight" @click="go('overview')">
+              <span class="brand-mark shrink-0">PT</span>
+              <span>Pintail</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem v-for="item in nav" :key="item.id">
+                <SidebarMenuButton
+                  :is-active="page === item.id || (item.id === 'databases' && page === 'database')"
+                  :tooltip="item.label"
+                  @click="go(item.id)"
+                >
+                  <component :is="item.icon" />
+                  <span>{{ item.label }}</span>
+                </SidebarMenuButton>
+                <SidebarMenuBadge
+                  v-if="item.id === 'activity' && alertCount"
+                  class="bg-red rounded-full font-mono text-[0.6rem] text-white"
+                >
+                  {{ alertCount }}
+                </SidebarMenuBadge>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <div class="border-sidebar-border flex items-center justify-between gap-2 border-t pt-2 group-data-[collapsible=icon]:justify-center">
+          <div class="node-status group-data-[collapsible=icon]:hidden">
+            <span class="health-dot" :class="{ stale: error }" />
+            <div>
+              <strong>{{ error ? 'Attention' : 'Node healthy' }}</strong>
+              <span>v0.1.0 · local</span>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            title="Sign out"
+            @click="logout"
+          >
+            <LogOut />
+          </Button>
+        </div>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
+
+    <SidebarInset class="min-w-0 bg-transparent">
+      <header class="topbar">
+        <div class="flex items-center gap-2">
+          <SidebarTrigger />
+          <Separator orientation="vertical" class="!h-4" />
+          <div class="breadcrumbs">
+            <span>Control plane</span>
+            <ChevronRight :size="14" />
+            <strong>{{ nav.find((item) => item.id === page)?.label || selectedDatabase?.name }}</strong>
           </div>
         </div>
-        <button class="icon-button" title="Sign out" @click="logout"><LogOut :size="16" /></button>
-      </div>
-    </aside>
-
-    <div class="workspace">
-      <header class="topbar">
-        <div class="breadcrumbs">
-          <span>Control plane</span>
-          <ChevronRight :size="14" />
-          <strong>{{ nav.find((item) => item.id === page)?.label || selectedDatabase?.name }}</strong>
-        </div>
         <div class="top-actions">
-          <button class="icon-button" :title="dark ? 'Use light theme' : 'Use dark theme'" @click="toggleTheme">
-            <Sun v-if="dark" :size="17" />
-            <Moon v-else :size="17" />
-          </button>
-          <button class="button primary compact" @click="beginWizard"><Plus :size="15" /> Add database</button>
+          <Button variant="ghost" size="icon" :title="dark ? 'Use light theme' : 'Use dark theme'" @click="toggleTheme">
+            <Sun v-if="dark" />
+            <Moon v-else />
+          </Button>
+          <Button @click="beginWizard"><Plus /> <span>Add database</span></Button>
         </div>
       </header>
 
-      <div v-if="notice" class="toast" role="status"><Check :size="16" />{{ notice }}</div>
-      <div v-if="error" class="alert-strip negative">
-        <AlertTriangle :size="17" />
-        <span>{{ error }}</span>
-        <button @click="error = ''"><X :size="15" /></button>
-      </div>
+      <Alert v-if="error" variant="destructive" class="rounded-none border-x-0">
+        <AlertTriangle />
+        <AlertDescription class="flex w-full items-center justify-between gap-3">
+          <span>{{ error }}</span>
+          <Button variant="ghost" size="icon-xs" class="text-destructive shrink-0" @click="error = ''"><X /></Button>
+        </AlertDescription>
+      </Alert>
 
-      <section v-if="loading && !databases.length" class="content skeleton-page" aria-label="Loading">
-        <div class="skeleton title-skeleton" />
+      <section v-if="loading && !databases.length" class="content" aria-label="Loading">
+        <Skeleton class="mb-8 h-16 w-80" />
         <div class="metric-grid">
-          <div v-for="index in 4" :key="index" class="skeleton metric-skeleton" />
+          <Skeleton v-for="index in 4" :key="index" class="h-36" />
         </div>
-        <div class="skeleton table-skeleton" />
+        <Skeleton class="h-96" />
       </section>
 
       <section v-else-if="page === 'overview'" class="content">
@@ -1008,17 +1057,19 @@ function describeTable(table: TableSummary) {
             <h1>Operations at a glance</h1>
             <p class="muted">Durable source progress, query visibility, and faults on this node.</p>
           </div>
-          <button class="button" @click="loadControlPlane"><RefreshCw :size="15" /> Refresh</button>
+          <Button variant="outline" @click="loadControlPlane"><RefreshCw /> Refresh</Button>
         </header>
 
-        <div v-if="alertCount" class="alert-strip warning">
-          <AlertTriangle :size="17" />
-          <span>
-            {{ deadLetters.length }} dead-letter event{{ deadLetters.length === 1 ? '' : 's' }};
-            {{ databases.filter((item) => item.state === 'needs_resync').length }} mirror{{ databases.filter((item) => item.state === 'needs_resync').length === 1 ? '' : 's' }} need resync.
-          </span>
-          <button @click="go('activity')">Inspect</button>
-        </div>
+        <Alert v-if="alertCount" class="border-amber/40 bg-amber-soft text-amber [&>svg]:text-amber mb-4">
+          <AlertTriangle />
+          <AlertDescription class="text-amber flex w-full items-center justify-between gap-3">
+            <span>
+              {{ deadLetters.length }} dead-letter event{{ deadLetters.length === 1 ? '' : 's' }};
+              {{ databases.filter((item) => item.state === 'needs_resync').length }} mirror{{ databases.filter((item) => item.state === 'needs_resync').length === 1 ? '' : 's' }} need resync.
+            </span>
+            <Button variant="outline" size="xs" class="border-amber/40 text-amber hover:text-amber shrink-0 bg-transparent" @click="go('activity')">Inspect</Button>
+          </AlertDescription>
+        </Alert>
 
         <div class="metric-grid">
           <article class="metric-card">
@@ -1051,10 +1102,10 @@ function describeTable(table: TableSummary) {
 
         <div class="two-column">
           <article class="panel">
-            <div class="panel-heading"><h2>Database lag posture</h2><button class="text-button" @click="go('databases')">View all</button></div>
+            <div class="panel-heading"><h2>Database lag posture</h2><Button variant="link" size="sm" @click="go('databases')">View all</Button></div>
             <div v-if="!databases.length" class="empty-state compact-empty">
               <Database :size="24" /><strong>No source connected</strong><span>Add MySQL to begin the first mirror.</span>
-              <button class="button primary" @click="beginWizard">Add database</button>
+              <Button @click="beginWizard">Add database</Button>
             </div>
             <div v-else class="database-stack">
               <button v-for="database in databases" :key="database.id" @click="openDatabase(database)">
@@ -1066,7 +1117,7 @@ function describeTable(table: TableSummary) {
             </div>
           </article>
           <article class="panel">
-            <div class="panel-heading"><h2>Latest activity</h2><button class="text-button" @click="go('activity')">Open log</button></div>
+            <div class="panel-heading"><h2>Latest activity</h2><Button variant="link" size="sm" @click="go('activity')">Open log</Button></div>
             <div v-if="!activity.length" class="empty-state compact-empty"><Activity :size="24" /><strong>No sync runs yet</strong><span>Snapshot and replication work appears here.</span></div>
             <ol v-else class="activity-feed">
               <li v-for="record in activity.slice(0, 6)" :key="record.id">
@@ -1082,42 +1133,49 @@ function describeTable(table: TableSummary) {
       <section v-else-if="page === 'databases'" class="content">
         <header class="page-heading split">
           <div><p class="kicker">Source registry</p><h1>Databases</h1><p class="muted">Every mirror has its own state, checkpoint, and failure boundary.</p></div>
-          <button class="button primary" @click="beginWizard"><Plus :size="16" /> Add database</button>
+          <Button @click="beginWizard"><Plus /> Add database</Button>
         </header>
         <article class="panel table-panel">
           <div v-if="!databases.length" class="empty-state">
             <Database :size="30" /><h2>No databases yet</h2><p>Connect a source, inspect its capabilities, and choose the tables to mirror.</p>
-            <button class="button primary" @click="beginWizard">Start the connection wizard</button>
+            <Button @click="beginWizard">Start the connection wizard</Button>
           </div>
-          <div v-else class="table-scroll">
-            <table>
-              <thead><tr><th>Name</th><th>Mode</th><th>State</th><th>Rows</th><th>Last event</th><th><span class="sr-only">Actions</span></th></tr></thead>
-              <tbody>
-                <tr v-for="database in databases" :key="database.id">
-                  <td><button class="table-link" @click="openDatabase(database)"><span class="database-glyph">{{ database.name.slice(0, 2).toUpperCase() }}</span><strong>{{ database.name }}</strong></button></td>
-                  <td><Badge :class="`tone-${modeOf(database) === 'cdc' ? 'positive' : modeOf(database) === 'polling' ? 'warning' : 'neutral'}`">{{ modeOf(database) }}</Badge></td>
-                  <td><span class="state-label"><span class="event-dot" :class="stateTone(database.state)" />{{ database.state }}</span></td>
-                  <td class="mono">{{ statuses[database.id]?.rows.toLocaleString() || 0 }}</td>
-                  <td class="muted">{{ formatDate(database.updated_at) }}</td>
-                  <td>
-                    <div class="row-actions">
-                      <button class="icon-button" :title="database.mode === 'paused' ? 'Resume' : 'Pause'" @click="setMode(database, database.mode === 'paused' ? 'auto' : 'paused')">
-                        <Play v-if="database.mode === 'paused'" :size="15" /><Pause v-else :size="15" />
-                      </button>
-                      <button class="icon-button danger" title="Delete" @click="deleteCandidate = database; deleteText = ''"><Trash2 :size="15" /></button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <Table v-else>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Mode</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead>Rows</TableHead>
+                <TableHead>Last event</TableHead>
+                <TableHead><span class="sr-only">Actions</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="database in databases" :key="database.id">
+                <TableCell><button class="table-link" @click="openDatabase(database)"><span class="database-glyph">{{ database.name.slice(0, 2).toUpperCase() }}</span><strong>{{ database.name }}</strong></button></TableCell>
+                <TableCell><Badge :class="`tone-${modeOf(database) === 'cdc' ? 'positive' : modeOf(database) === 'polling' ? 'warning' : 'neutral'}`">{{ modeOf(database) }}</Badge></TableCell>
+                <TableCell><span class="state-label"><span class="event-dot" :class="stateTone(database.state)" />{{ database.state }}</span></TableCell>
+                <TableCell class="mono">{{ statuses[database.id]?.rows.toLocaleString() || 0 }}</TableCell>
+                <TableCell class="muted">{{ formatDate(database.updated_at) }}</TableCell>
+                <TableCell>
+                  <div class="row-actions">
+                    <Button variant="ghost" size="icon-sm" :title="database.mode === 'paused' ? 'Resume' : 'Pause'" @click="setMode(database, database.mode === 'paused' ? 'auto' : 'paused')">
+                      <Play v-if="database.mode === 'paused'" /><Pause v-else />
+                    </Button>
+                    <Button variant="ghost" size="icon-sm" class="text-destructive hover:text-destructive" title="Delete" @click="deleteCandidate = database; deleteText = ''"><Trash2 /></Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </article>
       </section>
 
       <section v-else-if="page === 'database' && selectedDatabase" class="content">
         <header class="page-heading split database-heading">
           <div>
-            <button class="back-link" @click="go('databases')">Databases /</button>
+            <Button variant="link" size="sm" class="mb-2 px-0" @click="go('databases')">Databases /</Button>
             <h1>{{ selectedDatabase.name }}</h1>
             <div class="heading-badges">
               <Badge :class="`tone-${stateTone(selectedDatabase.state)}`">{{ selectedDatabase.state }}</Badge>
@@ -1126,88 +1184,128 @@ function describeTable(table: TableSummary) {
             </div>
           </div>
           <div class="top-actions">
-            <button class="button" @click="setMode(selectedDatabase, selectedDatabase.mode === 'paused' ? 'auto' : 'paused')">
-              <Play v-if="selectedDatabase.mode === 'paused'" :size="15" /><Pause v-else :size="15" />
+            <Button variant="outline" @click="setMode(selectedDatabase, selectedDatabase.mode === 'paused' ? 'auto' : 'paused')">
+              <Play v-if="selectedDatabase.mode === 'paused'" /><Pause v-else />
               {{ selectedDatabase.mode === 'paused' ? 'Resume' : 'Pause' }}
-            </button>
-            <button class="button primary" @click="forceSnapshot"><RefreshCw :size="15" /> Resnapshot</button>
+            </Button>
+            <Button @click="forceSnapshot"><RefreshCw /> Resnapshot</Button>
           </div>
         </header>
 
-        <div v-if="modeOf(selectedDatabase) === 'polling'" class="alert-strip warning">
-          <AlertTriangle :size="17" />
-          <span>Polling mode converges deletes during reconciliation and can miss intermediate states between polls.</span>
-        </div>
+        <Alert v-if="modeOf(selectedDatabase) === 'polling'" class="border-amber/40 bg-amber-soft text-amber [&>svg]:text-amber mb-4">
+          <AlertTriangle />
+          <AlertDescription class="text-amber">Polling mode converges deletes during reconciliation and can miss intermediate states between polls.</AlertDescription>
+        </Alert>
 
-        <nav class="tabs" aria-label="Database detail">
-          <button v-for="tab in ['tables', 'snapshot', 'replication', 'schema', 'storage', 'settings']" :key="tab" :class="{ active: detailTab === tab }" @click="detailTab = tab">{{ tab }}</button>
-        </nav>
+        <Tabs v-model="detailTab">
+          <TabsList class="mb-4" aria-label="Database detail">
+            <TabsTrigger v-for="tab in ['tables', 'snapshot', 'replication', 'schema', 'storage', 'settings']" :key="tab" :value="tab" class="capitalize">{{ tab }}</TabsTrigger>
+          </TabsList>
 
-        <article v-if="detailTab === 'tables'" class="panel table-panel">
-          <div v-if="!tables.length" class="empty-state compact-empty"><Table2 :size="26" /><strong>No mirrored tables</strong><span>Run a snapshot or revise the include list.</span></div>
-          <div v-else class="table-scroll">
-            <table><thead><tr><th>Table</th><th>State</th><th>Rows</th><th>Schema</th><th>Fault</th><th>Action</th></tr></thead>
-              <tbody><tr v-for="table in tables" :key="table.name">
-                <td><strong>{{ table.name }}</strong></td><td><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></td>
-                <td class="mono">{{ table.rows.toLocaleString() }}</td><td class="mono">v{{ table.schema_version }}</td><td class="muted">{{ table.last_error || '—' }}</td>
-                <td><div class="row-actions">
-                  <button class="text-button" :disabled="Boolean(tableAction)" @click="runTableAction(table, 'reconcile')">
-                    <LoaderCircle v-if="tableAction === `${table.name}:reconcile`" class="spin" :size="13" /> Reconcile
-                  </button>
-                  <button class="text-button" :disabled="Boolean(tableAction)" title="Starts a mirror-wide resnapshot because all tables share one source checkpoint" @click="runTableAction(table, 'resync')">
-                    <LoaderCircle v-if="tableAction === `${table.name}:resync`" class="spin" :size="13" /> Resync
-                  </button>
-                </div></td>
-              </tr></tbody>
-            </table>
-          </div>
-        </article>
+          <TabsContent value="tables">
+            <article class="panel table-panel">
+              <div v-if="!tables.length" class="empty-state compact-empty"><Table2 :size="26" /><strong>No mirrored tables</strong><span>Run a snapshot or revise the include list.</span></div>
+              <Table v-else>
+                <TableHeader>
+                  <TableRow><TableHead>Table</TableHead><TableHead>State</TableHead><TableHead>Rows</TableHead><TableHead>Schema</TableHead><TableHead>Fault</TableHead><TableHead>Action</TableHead></TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="table in tables" :key="table.name">
+                    <TableCell><strong>{{ table.name }}</strong></TableCell>
+                    <TableCell><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></TableCell>
+                    <TableCell class="mono">{{ table.rows.toLocaleString() }}</TableCell>
+                    <TableCell class="mono">v{{ table.schema_version }}</TableCell>
+                    <TableCell class="muted">{{ table.last_error || '—' }}</TableCell>
+                    <TableCell>
+                      <div class="row-actions">
+                        <Button variant="link" size="sm" :disabled="Boolean(tableAction)" @click="runTableAction(table, 'reconcile')">
+                          <LoaderCircle v-if="tableAction === `${table.name}:reconcile`" class="spin" /> Reconcile
+                        </Button>
+                        <Button variant="link" size="sm" :disabled="Boolean(tableAction)" title="Starts a mirror-wide resnapshot because all tables share one source checkpoint" @click="runTableAction(table, 'resync')">
+                          <LoaderCircle v-if="tableAction === `${table.name}:resync`" class="spin" /> Resync
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </article>
+          </TabsContent>
 
-        <div v-else-if="detailTab === 'snapshot'" class="stack">
-          <article class="panel progress-overview">
-            <div><p class="kicker">Durable publication</p><h2>{{ snapshot?.state || selectedDatabase.state }}</h2><p class="muted">Progress advances only after a chunk and its control-plane checkpoint are durable.</p></div>
-            <div class="progress-stat"><strong>{{ snapshot?.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString() || 0 }}</strong><span>rows published</span></div>
-          </article>
-          <article class="panel">
-            <div v-if="!snapshot?.tables.length" class="empty-state compact-empty"><HardDrive :size="26" /><strong>No snapshot journal</strong><span>Start a snapshot to see per-table progress.</span></div>
-            <div v-else class="progress-list">
-              <div v-for="table in snapshot.tables" :key="table.name" class="progress-row">
-                <div><strong>{{ table.name }}</strong><span>{{ table.completed_chunks }}/{{ table.total_chunks }} chunks · {{ table.rows.toLocaleString() }} rows</span></div>
-                <div class="progress-track"><span :style="{ width: `${snapshotPercent(table)}%` }" /></div>
-                <strong class="mono">{{ snapshotPercent(table) }}%</strong>
-              </div>
+          <TabsContent value="snapshot">
+            <div class="stack">
+              <article class="panel progress-overview">
+                <div><p class="kicker">Durable publication</p><h2>{{ snapshot?.state || selectedDatabase.state }}</h2><p class="muted">Progress advances only after a chunk and its control-plane checkpoint are durable.</p></div>
+                <div class="progress-stat"><strong>{{ snapshot?.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString() || 0 }}</strong><span>rows published</span></div>
+              </article>
+              <article class="panel">
+                <div v-if="!snapshot?.tables.length" class="empty-state compact-empty"><HardDrive :size="26" /><strong>No snapshot journal</strong><span>Start a snapshot to see per-table progress.</span></div>
+                <div v-else class="progress-list">
+                  <div v-for="table in snapshot.tables" :key="table.name" class="progress-row">
+                    <div><strong>{{ table.name }}</strong><span>{{ table.completed_chunks }}/{{ table.total_chunks }} chunks · {{ table.rows.toLocaleString() }} rows</span></div>
+                    <Progress :model-value="snapshotPercent(table)" />
+                    <strong class="mono">{{ snapshotPercent(table) }}%</strong>
+                  </div>
+                </div>
+              </article>
             </div>
-          </article>
-        </div>
+          </TabsContent>
 
-        <div v-else-if="detailTab === 'replication'" class="two-column">
-          <article class="panel">
-            <div class="panel-heading"><div><p class="kicker">Checkpoint</p><h2>{{ modeOf(selectedDatabase) }}</h2></div><Radio :size="20" /></div>
-            <dl class="definition-grid"><div><dt>State</dt><dd>{{ selectedDatabase.state }}</dd></div><div><dt>Poll cadence</dt><dd>{{ selectedDatabase.poll_interval_seconds }}s</dd></div><div><dt>Reconcile</dt><dd>{{ selectedDatabase.reconcile_interval_seconds }}s</dd></div><div><dt>Updated</dt><dd>{{ formatDate(selectedDatabase.updated_at) }}</dd></div></dl>
-          </article>
-          <article class="panel">
-            <div class="panel-heading"><h2>Dead-letter queue</h2><Badge :class="deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length ? 'tone-negative' : 'tone-positive'">{{ deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length }}</Badge></div>
-            <div v-if="!deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length" class="empty-state compact-empty"><Check :size="24" /><strong>No rejected events</strong><span>Decoder and storage errors appear here.</span></div>
-            <div v-for="record in deadLetters.filter((item) => item.database_id === selectedDatabase?.id)" :key="record.id" class="dlq-card"><strong>{{ record.table || 'database' }}</strong><p>{{ record.error }}</p><div class="row-actions"><button class="button compact primary" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw :size="13" /> Retry safely</button><button class="text-button danger" @click="discardDlq(record)">Discard</button></div></div>
-          </article>
-        </div>
+          <TabsContent value="replication">
+            <div class="two-column">
+              <article class="panel">
+                <div class="panel-heading"><div><p class="kicker">Checkpoint</p><h2>{{ modeOf(selectedDatabase) }}</h2></div><Radio :size="20" /></div>
+                <dl class="definition-grid"><div><dt>State</dt><dd>{{ selectedDatabase.state }}</dd></div><div><dt>Poll cadence</dt><dd>{{ selectedDatabase.poll_interval_seconds }}s</dd></div><div><dt>Reconcile</dt><dd>{{ selectedDatabase.reconcile_interval_seconds }}s</dd></div><div><dt>Updated</dt><dd>{{ formatDate(selectedDatabase.updated_at) }}</dd></div></dl>
+              </article>
+              <article class="panel">
+                <div class="panel-heading"><h2>Dead-letter queue</h2><Badge :class="deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length ? 'tone-negative' : 'tone-positive'">{{ deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length }}</Badge></div>
+                <div v-if="!deadLetters.filter((item) => item.database_id === selectedDatabase?.id).length" class="empty-state compact-empty"><Check :size="24" /><strong>No rejected events</strong><span>Decoder and storage errors appear here.</span></div>
+                <div v-for="record in deadLetters.filter((item) => item.database_id === selectedDatabase?.id)" :key="record.id" class="dlq-card">
+                  <strong>{{ record.table || 'database' }}</strong>
+                  <p>{{ record.error }}</p>
+                  <div class="row-actions">
+                    <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
+                    <Button variant="link" size="sm" class="text-destructive" @click="discardDlq(record)">Discard</Button>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </TabsContent>
 
-        <article v-else-if="detailTab === 'schema'" class="panel">
-          <div class="panel-heading"><div><p class="kicker">Replica catalog</p><h2>Schema generations</h2></div><Badge variant="outline">{{ tables.length }} tables</Badge></div>
-          <div class="schema-grid"><button v-for="table in tables" :key="table.name" @click="describeTable(table)"><Table2 :size="16" /><span><strong>{{ table.name }}</strong><small>Generation {{ table.schema_version }}</small></span><ChevronRight :size="15" /></button></div>
-        </article>
+          <TabsContent value="schema">
+            <article class="panel">
+              <div class="panel-heading"><div><p class="kicker">Replica catalog</p><h2>Schema generations</h2></div><Badge variant="outline">{{ tables.length }} tables</Badge></div>
+              <div class="schema-grid"><button v-for="table in tables" :key="table.name" @click="describeTable(table)"><Table2 :size="16" /><span><strong>{{ table.name }}</strong><small>Generation {{ table.schema_version }}</small></span><ChevronRight :size="15" /></button></div>
+            </article>
+          </TabsContent>
 
-        <article v-else-if="detailTab === 'storage'" class="panel">
-          <div class="panel-heading"><div><p class="kicker">Columnar footprint</p><h2>Storage posture</h2></div><HardDrive :size="20" /></div>
-          <div class="metric-grid three"><div class="metric-card"><span>Visible rows</span><strong>{{ formatNumber(statuses[selectedDatabase.id]?.rows || 0) }}</strong><small>Merge-on-read deduplicated</small></div><div class="metric-card"><span>Schema generations</span><strong>{{ tables.reduce((sum, table) => sum + table.schema_version, 0) }}</strong><small>Stable column IDs</small></div><div class="metric-card"><span>Compaction</span><strong>Auto</strong><small>Bounded size-tier passes</small></div></div>
-          <p class="muted panel-note">Exact segment bytes and compression ratios are exported by the operations metrics surface in M8.</p>
-        </article>
+          <TabsContent value="storage">
+            <article class="panel">
+              <div class="panel-heading"><div><p class="kicker">Columnar footprint</p><h2>Storage posture</h2></div><HardDrive :size="20" /></div>
+              <div class="metric-grid three"><div class="metric-card"><span>Visible rows</span><strong>{{ formatNumber(statuses[selectedDatabase.id]?.rows || 0) }}</strong><small>Merge-on-read deduplicated</small></div><div class="metric-card"><span>Schema generations</span><strong>{{ tables.reduce((sum, table) => sum + table.schema_version, 0) }}</strong><small>Stable column IDs</small></div><div class="metric-card"><span>Compaction</span><strong>Auto</strong><small>Bounded size-tier passes</small></div></div>
+              <p class="muted panel-note">Exact segment bytes and compression ratios are exported by the operations metrics surface in M8.</p>
+            </article>
+          </TabsContent>
 
-        <article v-else class="panel settings-form">
-          <div class="panel-heading"><div><p class="kicker">Replication controls</p><h2>Database settings</h2></div></div>
-          <label><span>Requested mode</span><select :value="selectedDatabase.mode" @change="setMode(selectedDatabase, ($event.target as HTMLSelectElement).value as DatabaseRecord['mode'])"><option value="auto">Auto</option><option value="cdc">CDC</option><option value="polling">Polling</option><option value="paused">Paused</option></select></label>
-          <div class="definition-grid"><div><dt>Poll cadence</dt><dd>{{ selectedDatabase.poll_interval_seconds }} seconds</dd></div><div><dt>Reconciliation</dt><dd>{{ selectedDatabase.reconcile_interval_seconds }} seconds</dd></div><div><dt>Included</dt><dd>{{ selectedDatabase.include_tables.length || 'All tables' }}</dd></div><div><dt>Excluded</dt><dd>{{ selectedDatabase.exclude_tables.length || 'None' }}</dd></div></div>
-        </article>
+          <TabsContent value="settings">
+            <article class="panel settings-form">
+              <div class="panel-heading"><div><p class="kicker">Replication controls</p><h2>Database settings</h2></div></div>
+              <div class="grid max-w-xs gap-1.5">
+                <Label>Requested mode</Label>
+                <Select :model-value="selectedDatabase.mode" @update:model-value="(value) => setMode(selectedDatabase!, value as DatabaseRecord['mode'])">
+                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="cdc">CDC</SelectItem>
+                    <SelectItem value="polling">Polling</SelectItem>
+                    <SelectItem value="paused">Paused</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="definition-grid"><div><dt>Poll cadence</dt><dd>{{ selectedDatabase.poll_interval_seconds }} seconds</dd></div><div><dt>Reconciliation</dt><dd>{{ selectedDatabase.reconcile_interval_seconds }} seconds</dd></div><div><dt>Included</dt><dd>{{ selectedDatabase.include_tables.length || 'All tables' }}</dd></div><div><dt>Excluded</dt><dd>{{ selectedDatabase.exclude_tables.length || 'None' }}</dd></div></div>
+            </article>
+          </TabsContent>
+        </Tabs>
       </section>
 
       <section v-else-if="page === 'wizard'" class="content wizard-page">
@@ -1218,9 +1316,22 @@ function describeTable(table: TableSummary) {
         <article class="panel wizard-panel">
           <form v-if="wizard.step === 1" class="wizard-form" @submit.prevent="wizardConnection">
             <div><p class="kicker">01 / Connection</p><h2>Where is MySQL?</h2><p class="muted">The DSN is encrypted before it enters the control-plane database.</p></div>
-            <div class="form-grid"><label><span>MySQL schema</span><input v-model="wizard.name" required placeholder="analytics"><small>Exact source schema name and case.</small></label><label class="full"><span>MySQL DSN</span><input v-model="wizard.dsn" required type="password" placeholder="mysql://pintail:secret@db.internal/analytics"></label></div>
+            <div class="form-grid">
+              <div class="grid content-start gap-1.5">
+                <Label for="wizard-name">MySQL schema</Label>
+                <Input id="wizard-name" v-model="wizard.name" required placeholder="analytics" />
+                <small class="text-muted-foreground text-xs">Exact source schema name and case.</small>
+              </div>
+              <div class="full grid content-start gap-1.5">
+                <Label for="wizard-dsn">MySQL DSN</Label>
+                <Input id="wizard-dsn" v-model="wizard.dsn" required type="password" placeholder="mysql://pintail:secret@db.internal/analytics" />
+              </div>
+            </div>
             <p v-if="wizard.error" class="inline-error">{{ wizard.error }}</p>
-            <div class="wizard-actions"><button type="button" class="button" @click="go('databases')">Cancel</button><button class="button primary" :disabled="wizard.working"><LoaderCircle v-if="wizard.working" class="spin" :size="15" /> Test connection <ArrowRight v-if="!wizard.working" :size="15" /></button></div>
+            <div class="wizard-actions">
+              <Button type="button" variant="outline" @click="go('databases')">Cancel</Button>
+              <Button type="submit" :disabled="wizard.working"><LoaderCircle v-if="wizard.working" class="spin" /> Test connection <ArrowRight v-if="!wizard.working" /></Button>
+            </div>
           </form>
           <div v-else-if="wizard.step === 2" class="wizard-form">
             <div><p class="kicker">02 / Capability probe</p><h2>{{ wizard.serverVersion }}</h2><p class="muted">Pintail checks every invariant required for safe snapshot and stream ownership.</p></div>
@@ -1228,68 +1339,282 @@ function describeTable(table: TableSummary) {
               <div v-for="(value, key) in wizard.probe.capabilities" v-show="typeof value === 'boolean'" :key="key"><span :class="value ? 'check-positive' : 'check-negative'"><Check v-if="value" :size="14" /><X v-else :size="14" /></span><strong>{{ String(key).replaceAll('_', ' ') }}</strong><small>{{ value ? 'Pass' : 'Requires remediation' }}</small></div>
             </div>
             <div class="recommendation"><Radio :size="18" /><div><strong>Recommended: {{ wizard.probe?.capabilities.recommended_mode.toUpperCase() }}</strong><span>{{ wizard.probe?.capabilities.reasons.join(' · ') || 'All native replication requirements passed.' }}</span></div></div>
-            <fieldset class="mode-choice"><legend>Replication mode</legend><label><input v-model="wizard.mode" type="radio" value="cdc"> CDC</label><label><input v-model="wizard.mode" type="radio" value="polling"> Polling</label></fieldset>
-            <div class="wizard-actions"><button class="button" @click="wizard.step = 1">Back</button><button class="button primary" @click="wizard.step = 3">Choose tables <ArrowRight :size="15" /></button></div>
+            <div class="grid gap-2">
+              <Label>Replication mode</Label>
+              <RadioGroup v-model="wizard.mode" class="flex gap-5">
+                <div class="flex items-center gap-2"><RadioGroupItem id="wizard-mode-cdc" value="cdc" /><Label for="wizard-mode-cdc">CDC</Label></div>
+                <div class="flex items-center gap-2"><RadioGroupItem id="wizard-mode-polling" value="polling" /><Label for="wizard-mode-polling">Polling</Label></div>
+              </RadioGroup>
+            </div>
+            <div class="wizard-actions"><Button variant="outline" @click="wizard.step = 1">Back</Button><Button @click="wizard.step = 3">Choose tables <ArrowRight /></Button></div>
           </div>
           <div v-else-if="wizard.step === 3 && wizard.probe" class="wizard-form">
             <div><p class="kicker">03 / Table selection</p><h2>Choose the analytical surface</h2><p class="muted">PK-less append tables preserve rows but cannot model source updates or deletes.</p></div>
             <div class="table-picker">
-              <label v-for="table in wizard.probe.tables" :key="table.name"><input v-model="wizard.includes" type="checkbox" :value="table.name"><span><strong>{{ table.name }}</strong><small>{{ table.estimated_rows?.toLocaleString() || 'Unknown' }} rows · {{ table.engine || 'Unknown engine' }}</small></span><Badge :class="table.key.mode === 'append_row_id' ? 'tone-warning' : 'tone-positive'">{{ table.key.mode.replace('_', ' ') }}</Badge><AlertTriangle v-if="table.warnings.length" :size="16" /></label>
+              <div v-for="table in wizard.probe.tables" :key="table.name" class="table-picker-row">
+                <Checkbox
+                  :id="`wizard-pick-${table.name}`"
+                  :model-value="wizard.includes.includes(table.name)"
+                  @update:model-value="(checked) => toggleInclude(table.name, checked === true)"
+                />
+                <Label :for="`wizard-pick-${table.name}`" class="grid gap-0"><strong>{{ table.name }}</strong><small>{{ table.estimated_rows?.toLocaleString() || 'Unknown' }} rows · {{ table.engine || 'Unknown engine' }}</small></Label>
+                <Badge :class="table.key.mode === 'append_row_id' ? 'tone-warning' : 'tone-positive'">{{ table.key.mode.replace('_', ' ') }}</Badge>
+                <AlertTriangle v-if="table.warnings.length" :size="16" />
+              </div>
             </div>
             <p v-if="wizard.error" class="inline-error">{{ wizard.error }}</p>
-            <div class="wizard-actions"><button class="button" @click="wizard.step = 2">Back</button><button class="button primary" :disabled="wizard.working || !wizard.includes.length" @click="finishWizard"><LoaderCircle v-if="wizard.working" class="spin" :size="15" /> Review & start <ArrowRight v-if="!wizard.working" :size="15" /></button></div>
+            <div class="wizard-actions"><Button variant="outline" @click="wizard.step = 2">Back</Button><Button :disabled="wizard.working || !wizard.includes.length" @click="finishWizard"><LoaderCircle v-if="wizard.working" class="spin" /> Review & start <ArrowRight v-if="!wizard.working" /></Button></div>
           </div>
           <div v-else class="empty-state"><LoaderCircle class="spin" :size="28" /><h2>Starting the mirror</h2><p>Capturing the source position and establishing resumable chunks.</p></div>
         </article>
       </section>
 
       <section v-else-if="page === 'sql'" class="content sql-page">
-        <header class="page-heading split"><div><p class="kicker">Native query engine</p><h1>SQL Console</h1><p class="muted">MySQL dialect over reader-pinned columnar snapshots.</p></div><div class="select-wrap"><Database :size="15" /><select v-model="sqlDatabaseId"><option disabled value="">Choose database</option><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></div></header>
-        <div v-if="!databases.length" class="panel empty-state"><SquareTerminal :size="30" /><h2>No queryable mirror</h2><p>Add and snapshot a database before opening the console.</p><button class="button primary" @click="beginWizard">Add database</button></div>
+        <header class="page-heading split">
+          <div><p class="kicker">Native query engine</p><h1>SQL Console</h1><p class="muted">MySQL dialect over reader-pinned columnar snapshots.</p></div>
+          <Select v-model="sqlDatabaseId">
+            <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="Choose database" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </header>
+        <div v-if="!databases.length" class="panel empty-state"><SquareTerminal :size="30" /><h2>No queryable mirror</h2><p>Add and snapshot a database before opening the console.</p><Button @click="beginWizard">Add database</Button></div>
         <template v-else>
           <article class="panel editor-panel">
-            <div class="editor-toolbar"><span>query.sql</span><div><span class="shortcut">⌘ Enter</span><button class="button primary compact" :disabled="sqlRunning" @click="runSql"><LoaderCircle v-if="sqlRunning" class="spin" :size="14" /><Play v-else :size="14" /> Run</button></div></div>
+            <div class="editor-toolbar"><span>query.sql</span><div><span class="shortcut">⌘ Enter</span><Button size="sm" :disabled="sqlRunning" @click="runSql"><LoaderCircle v-if="sqlRunning" class="spin" /><Play v-else /> Run</Button></div></div>
             <LazySqlEditor v-model="sqlText" @run="runSql" />
           </article>
           <p v-if="sqlError" class="inline-error sql-error">{{ sqlError }}</p>
           <article class="panel result-panel">
-            <div class="panel-heading"><div><h2>Results</h2><p v-if="sqlResult" class="muted">{{ sqlResult.stats.rows }} rows · {{ sqlResult.stats.duration_ms }} ms · {{ sqlResult.stats.blocks_read }} blocks read / {{ sqlResult.stats.blocks_pruned }} pruned</p></div><div v-if="sqlResult" class="row-actions"><button class="button compact" @click="exportResult('csv')">CSV</button><button class="button compact" @click="exportResult('json')">JSON</button></div></div>
+            <div class="panel-heading">
+              <div><h2>Results</h2><p v-if="sqlResult" class="muted">{{ sqlResult.stats.rows }} rows · {{ sqlResult.stats.duration_ms }} ms · {{ sqlResult.stats.blocks_read }} blocks read / {{ sqlResult.stats.blocks_pruned }} pruned</p></div>
+              <div v-if="sqlResult" class="row-actions">
+                <Button variant="outline" size="sm" @click="exportResult('csv')">CSV</Button>
+                <Button variant="outline" size="sm" @click="exportResult('json')">JSON</Button>
+              </div>
+            </div>
             <div v-if="!sqlResult" class="empty-state compact-empty"><Search :size="24" /><strong>Run a query</strong><span>Typed fields and physical scan counters appear here.</span></div>
-            <div v-else class="table-scroll result-scroll"><table><thead><tr><th v-for="field in sqlResult.fields" :key="field.name"><span>{{ field.name }}</span><small>{{ typeof field.data_type === 'string' ? field.data_type : 'typed' }}</small></th></tr></thead><tbody><tr v-for="(row, rowIndex) in sqlResult.rows" :key="rowIndex"><td v-for="(value, valueIndex) in row" :key="valueIndex" :class="{ null: value === null }">{{ displayValue(value) }}</td></tr></tbody></table></div>
+            <Table v-else class="result-scroll">
+              <TableHeader>
+                <TableRow>
+                  <TableHead v-for="field in sqlResult.fields" :key="field.name"><span>{{ field.name }}</span><small>{{ typeof field.data_type === 'string' ? field.data_type : 'typed' }}</small></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow v-for="(row, rowIndex) in sqlResult.rows" :key="rowIndex">
+                  <TableCell v-for="(value, valueIndex) in row" :key="valueIndex" :class="{ null: value === null }">{{ displayValue(value) }}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           </article>
         </template>
       </section>
 
       <section v-else-if="page === 'activity'" class="content">
-        <header class="page-heading split"><div><p class="kicker">Durable work log</p><h1>Activity</h1><p class="muted">Snapshot, stream, poll, and repair outcomes from control-plane records.</p></div><div class="select-wrap"><Database :size="15" /><select v-model="activityDatabase"><option value="">All databases</option><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></div></header>
+        <header class="page-heading split">
+          <div><p class="kicker">Durable work log</p><h1>Activity</h1><p class="muted">Snapshot, stream, poll, and repair outcomes from control-plane records.</p></div>
+          <Select
+            :model-value="activityDatabase || 'all'"
+            @update:model-value="(value) => activityDatabase = value === 'all' ? '' : String(value)"
+          >
+            <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="All databases" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All databases</SelectItem>
+              <SelectItem v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </header>
         <article class="panel table-panel">
           <div v-if="!filteredActivity.length" class="empty-state"><Activity :size="28" /><h2>No matching activity</h2><p>Completed and failed replication work appears after the first snapshot.</p></div>
-          <div v-else class="table-scroll"><table><thead><tr><th>Started</th><th>Database</th><th>Kind</th><th>Status</th><th>Rows</th><th>Bytes</th><th>Duration</th></tr></thead><tbody><tr v-for="record in filteredActivity" :key="record.id"><td class="muted">{{ formatDate(record.started_at) }}</td><td><strong>{{ databases.find((item) => item.id === record.database_id)?.name || record.database_id }}</strong><small v-if="record.table">{{ record.table }}</small></td><td>{{ record.kind }}</td><td><Badge :class="`tone-${stateTone(record.status)}`">{{ record.status }}</Badge></td><td class="mono">{{ record.rows.toLocaleString() }}</td><td class="mono">{{ formatBytes(record.bytes) }}</td><td class="mono">{{ record.duration_ms === null ? '—' : `${record.duration_ms} ms` }}</td></tr></tbody></table></div>
+          <Table v-else>
+            <TableHeader>
+              <TableRow><TableHead>Started</TableHead><TableHead>Database</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Rows</TableHead><TableHead>Bytes</TableHead><TableHead>Duration</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="record in filteredActivity" :key="record.id">
+                <TableCell class="muted">{{ formatDate(record.started_at) }}</TableCell>
+                <TableCell><strong>{{ databases.find((item) => item.id === record.database_id)?.name || record.database_id }}</strong><small v-if="record.table">{{ record.table }}</small></TableCell>
+                <TableCell>{{ record.kind }}</TableCell>
+                <TableCell><Badge :class="`tone-${stateTone(record.status)}`">{{ record.status }}</Badge></TableCell>
+                <TableCell class="mono">{{ record.rows.toLocaleString() }}</TableCell>
+                <TableCell class="mono">{{ formatBytes(record.bytes) }}</TableCell>
+                <TableCell class="mono">{{ record.duration_ms === null ? '—' : `${record.duration_ms} ms` }}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </article>
-        <article v-if="deadLetters.length" class="panel dlq-panel"><div class="panel-heading"><div><p class="kicker">Requires judgment</p><h2>Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div><div class="dlq-grid"><div v-for="record in deadLetters" :key="record.id" class="dlq-card"><div><strong>{{ record.table || 'Database event' }}</strong><span>{{ formatDate(record.created_at) }}</span></div><p>{{ record.error }}</p><pre>{{ JSON.stringify(record.event, null, 2) }}</pre><div class="row-actions"><button class="button compact primary" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw :size="13" /> Retry safely</button><button class="button compact danger" @click="discardDlq(record)">Discard</button></div></div></div></article>
+        <article v-if="deadLetters.length" class="panel dlq-panel">
+          <div class="panel-heading"><div><p class="kicker">Requires judgment</p><h2>Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div>
+          <div class="dlq-grid">
+            <div v-for="record in deadLetters" :key="record.id" class="dlq-card">
+              <div><strong>{{ record.table || 'Database event' }}</strong><span>{{ formatDate(record.created_at) }}</span></div>
+              <p>{{ record.error }}</p>
+              <pre>{{ JSON.stringify(record.event, null, 2) }}</pre>
+              <div class="row-actions">
+                <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
+                <Button variant="destructive" size="sm" @click="discardDlq(record)">Discard</Button>
+              </div>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section v-else-if="page === 'keys'" class="content">
-        <header class="page-heading split"><div><p class="kicker">Database-scoped access</p><h1>API Keys</h1><p class="muted">Secrets are SHA-256 hash-only and shown once.</p></div><div class="select-wrap"><Database :size="15" /><select v-model="keyDatabaseId" @change="loadKeys"><option disabled value="">Choose database</option><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></div></header>
-        <article class="panel key-create"><div><h2>Create a key</h2><p class="muted">Use a narrow scope for each application.</p></div><label><span>Name</span><input v-model="keyForm.name" placeholder="Metabase production"></label><fieldset><legend>Scopes</legend><label><input v-model="keyForm.scopes" type="checkbox" value="read"> Read metadata</label><label><input v-model="keyForm.scopes" type="checkbox" value="query"> Run queries</label></fieldset><button class="button primary" :disabled="!keyDatabaseId || !keyForm.name || !keyForm.scopes.length" @click="createKey"><Plus :size="15" /> Create</button></article>
-        <div v-if="revealedSecret" class="secret-banner"><AlertTriangle :size="18" /><div><strong>Copy this secret now. It cannot be recovered.</strong><code>{{ revealedSecret }}</code></div><button class="icon-button" @click="copy(revealedSecret)"><Copy :size="16" /></button><button class="icon-button" @click="revealedSecret = ''"><X :size="16" /></button></div>
-        <article class="panel table-panel"><div v-if="!keys.length" class="empty-state"><KeyRound :size="28" /><h2>No keys for this database</h2><p>Create one for the HTTP API or MySQL wire clients.</p></div><div v-else class="table-scroll"><table><thead><tr><th>Name</th><th>Scopes</th><th>Status</th><th>Last used</th><th>Created</th><th></th></tr></thead><tbody><tr v-for="key in keys" :key="key.id"><td><strong>{{ key.name }}</strong><small>{{ key.id }}</small></td><td><Badge v-for="scope in key.scopes" :key="scope" variant="outline">{{ scope }}</Badge></td><td><Badge :class="key.enabled ? 'tone-positive' : 'tone-neutral'">{{ key.enabled ? 'enabled' : 'disabled' }}</Badge></td><td class="muted">{{ formatDate(key.last_used_at) }}</td><td class="muted">{{ formatDate(key.created_at) }}</td><td><div class="row-actions"><button class="text-button" @click="toggleKey(key)">{{ key.enabled ? 'Disable' : 'Enable' }}</button><button class="icon-button danger" @click="deleteKey(key)"><Trash2 :size="14" /></button></div></td></tr></tbody></table></div></article>
+        <header class="page-heading split">
+          <div><p class="kicker">Database-scoped access</p><h1>API Keys</h1><p class="muted">Secrets are SHA-256 hash-only and shown once.</p></div>
+          <Select v-model="keyDatabaseId" @update:model-value="loadKeys">
+            <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="Choose database" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </header>
+        <article class="panel key-create">
+          <div><h2>Create a key</h2><p class="muted">Use a narrow scope for each application.</p></div>
+          <div class="grid content-start gap-1.5">
+            <Label for="key-name">Name</Label>
+            <Input id="key-name" v-model="keyForm.name" placeholder="Metabase production" />
+          </div>
+          <div class="grid content-start gap-2">
+            <Label>Scopes</Label>
+            <div class="flex flex-wrap gap-4 pt-1.5">
+              <div class="flex items-center gap-2"><Checkbox id="scope-read" :model-value="keyForm.scopes.includes('read')" @update:model-value="(checked) => toggleScope('read', checked === true)" /><Label for="scope-read">Read metadata</Label></div>
+              <div class="flex items-center gap-2"><Checkbox id="scope-query" :model-value="keyForm.scopes.includes('query')" @update:model-value="(checked) => toggleScope('query', checked === true)" /><Label for="scope-query">Run queries</Label></div>
+            </div>
+          </div>
+          <Button :disabled="!keyDatabaseId || !keyForm.name || !keyForm.scopes.length" @click="createKey"><Plus /> Create</Button>
+        </article>
+        <div v-if="revealedSecret" class="secret-banner">
+          <AlertTriangle :size="18" />
+          <div><strong>Copy this secret now. It cannot be recovered.</strong><code>{{ revealedSecret }}</code></div>
+          <Button variant="ghost" size="icon-sm" class="text-amber hover:text-amber shrink-0" @click="copy(revealedSecret)"><Copy /></Button>
+          <Button variant="ghost" size="icon-sm" class="text-amber hover:text-amber shrink-0" @click="revealedSecret = ''"><X /></Button>
+        </div>
+        <article class="panel table-panel">
+          <div v-if="!keys.length" class="empty-state"><KeyRound :size="28" /><h2>No keys for this database</h2><p>Create one for the HTTP API or MySQL wire clients.</p></div>
+          <Table v-else>
+            <TableHeader>
+              <TableRow><TableHead>Name</TableHead><TableHead>Scopes</TableHead><TableHead>Status</TableHead><TableHead>Last used</TableHead><TableHead>Created</TableHead><TableHead><span class="sr-only">Actions</span></TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="key in keys" :key="key.id">
+                <TableCell><strong>{{ key.name }}</strong><small>{{ key.id }}</small></TableCell>
+                <TableCell><Badge v-for="scope in key.scopes" :key="scope" variant="outline" class="mr-1">{{ scope }}</Badge></TableCell>
+                <TableCell><Badge :class="key.enabled ? 'tone-positive' : 'tone-neutral'">{{ key.enabled ? 'enabled' : 'disabled' }}</Badge></TableCell>
+                <TableCell class="muted">{{ formatDate(key.last_used_at) }}</TableCell>
+                <TableCell class="muted">{{ formatDate(key.created_at) }}</TableCell>
+                <TableCell>
+                  <div class="row-actions">
+                    <Button variant="link" size="sm" @click="toggleKey(key)">{{ key.enabled ? 'Disable' : 'Enable' }}</Button>
+                    <Button variant="ghost" size="icon-sm" class="text-destructive hover:text-destructive" @click="deleteKey(key)"><Trash2 /></Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </article>
       </section>
 
       <section v-else-if="page === 'backups'" class="content">
-        <header class="page-heading split"><div><p class="kicker">Recovery plane</p><h1>Backups</h1><p class="muted">Checksum-verified manifests, immutable segments, and control-plane state restore side-by-side.</p></div><div class="select-wrap"><Database :size="15" /><select v-model="backupDatabaseId" @change="loadBackups()"><option disabled value="">Choose database</option><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></div></header>
+        <header class="page-heading split">
+          <div><p class="kicker">Recovery plane</p><h1>Backups</h1><p class="muted">Checksum-verified manifests, immutable segments, and control-plane state restore side-by-side.</p></div>
+          <Select v-model="backupDatabaseId" @update:model-value="() => loadBackups()">
+            <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="Choose database" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </header>
         <div class="two-column">
-          <article class="panel settings-form"><div class="panel-heading"><div><p class="kicker">S3-compatible destination</p><h2>Backup configuration</h2></div><Badge :class="backupConfigLoaded ? 'tone-positive' : 'tone-neutral'">{{ backupConfigLoaded ? 'Configured' : 'Not configured' }}</Badge></div><div class="form-grid"><label><span>Bucket</span><input v-model="backupForm.bucket" autocomplete="off" placeholder="analytics-backups"></label><label><span>Object prefix</span><input v-model="backupForm.prefix" autocomplete="off" placeholder="pintail/production"></label><label class="full"><span>Endpoint <small>optional for AWS</small></span><input v-model="backupForm.endpoint" autocomplete="url" placeholder="http://minio.internal:9000"></label><label><span>Region</span><input v-model="backupForm.region" autocomplete="off" placeholder="us-east-1"></label><label><span>Schedule cadence</span><select v-model.number="backupForm.scheduleMinutes"><option :value="60">Hourly</option><option :value="360">Every 6 hours</option><option :value="1440">Daily</option><option :value="10080">Weekly</option></select></label><label><span>Access key ID</span><input v-model="backupForm.accessKeyId" autocomplete="off" placeholder="Leave blank to preserve"></label><label><span>Secret access key</span><input v-model="backupForm.secretAccessKey" type="password" autocomplete="new-password" placeholder="Leave blank to preserve"></label></div><button type="button" class="setting-row" @click="backupForm.enabled = !backupForm.enabled"><span><strong>Scheduled backups</strong><small>Runs after the next healthy supervised cycle when due.</small></span><span class="switch" :class="{ on: backupForm.enabled }"><span /></span></button><button class="button primary" :disabled="backupLoading || !backupDatabaseId || !backupForm.bucket.trim() || !backupForm.prefix.trim()" @click="saveBackupConfig"><LoaderCircle v-if="backupLoading" class="spin" :size="15" /><HardDrive v-else :size="15" /> Save destination</button><p class="muted panel-note">Prefix validation prevents accidental broad writes; it is not a tenant-isolation boundary. Use bucket IAM for isolation.</p></article>
-          <article class="panel backup-operations"><div class="panel-heading"><div><p class="kicker">Manual recovery point</p><h2>Backup now</h2></div><Archive :size="19" /></div><p class="muted">The first run is full. Later runs reuse unchanged immutable segment objects unless you force a new full chain.</p><div class="row-actions"><button class="button primary" :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(false)"><Play :size="14" /> Backup now</button><button class="button" :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(true)"><RefreshCw :size="14" /> Force full</button></div><hr><div><p class="kicker">Side-by-side restore</p><h2>Restore as new database</h2></div><label><span>Completed backup</span><select v-model="restoreBackupId"><option disabled value="">Choose recovery point</option><option v-for="backup in backups.filter((item) => item.status === 'completed')" :key="backup.id" :value="backup.id">{{ formatDate(backup.completed_at) }} · {{ backup.kind }}</option></select></label><label><span>New database name</span><input v-model="restoreName" placeholder="analytics recovery"></label><button class="button" :disabled="backupLoading || !restoreBackupId || !restoreName.trim()" @click="restoreSelectedBackup"><HardDrive :size="14" /> Verify and restore</button><p class="muted panel-note">Restore never overwrites a live mirror. The new database is detached from ingestion until new source credentials are supplied.</p></article>
+          <article class="panel settings-form">
+            <div class="panel-heading"><div><p class="kicker">S3-compatible destination</p><h2>Backup configuration</h2></div><Badge :class="backupConfigLoaded ? 'tone-positive' : 'tone-neutral'">{{ backupConfigLoaded ? 'Configured' : 'Not configured' }}</Badge></div>
+            <div class="form-grid">
+              <div class="grid content-start gap-1.5"><Label for="backup-bucket">Bucket</Label><Input id="backup-bucket" v-model="backupForm.bucket" autocomplete="off" placeholder="analytics-backups" /></div>
+              <div class="grid content-start gap-1.5"><Label for="backup-prefix">Object prefix</Label><Input id="backup-prefix" v-model="backupForm.prefix" autocomplete="off" placeholder="pintail/production" /></div>
+              <div class="full grid content-start gap-1.5"><Label for="backup-endpoint">Endpoint <small class="text-muted-foreground font-normal">optional for AWS</small></Label><Input id="backup-endpoint" v-model="backupForm.endpoint" autocomplete="url" placeholder="http://minio.internal:9000" /></div>
+              <div class="grid content-start gap-1.5"><Label for="backup-region">Region</Label><Input id="backup-region" v-model="backupForm.region" autocomplete="off" placeholder="us-east-1" /></div>
+              <div class="grid content-start gap-1.5">
+                <Label>Schedule cadence</Label>
+                <Select :model-value="backupForm.scheduleMinutes" @update:model-value="(value) => backupForm.scheduleMinutes = Number(value)">
+                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="60">Hourly</SelectItem>
+                    <SelectItem :value="360">Every 6 hours</SelectItem>
+                    <SelectItem :value="1440">Daily</SelectItem>
+                    <SelectItem :value="10080">Weekly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="grid content-start gap-1.5"><Label for="backup-access-key">Access key ID</Label><Input id="backup-access-key" v-model="backupForm.accessKeyId" autocomplete="off" placeholder="Leave blank to preserve" /></div>
+              <div class="grid content-start gap-1.5"><Label for="backup-secret-key">Secret access key</Label><Input id="backup-secret-key" v-model="backupForm.secretAccessKey" type="password" autocomplete="new-password" placeholder="Leave blank to preserve" /></div>
+            </div>
+            <div class="setting-row">
+              <span><strong>Scheduled backups</strong><small>Runs after the next healthy supervised cycle when due.</small></span>
+              <Switch :model-value="backupForm.enabled" @update:model-value="(value) => backupForm.enabled = value === true" />
+            </div>
+            <Button :disabled="backupLoading || !backupDatabaseId || !backupForm.bucket.trim() || !backupForm.prefix.trim()" @click="saveBackupConfig"><LoaderCircle v-if="backupLoading" class="spin" /><HardDrive v-else /> Save destination</Button>
+            <p class="muted panel-note">Prefix validation prevents accidental broad writes; it is not a tenant-isolation boundary. Use bucket IAM for isolation.</p>
+          </article>
+          <article class="panel backup-operations">
+            <div class="panel-heading"><div><p class="kicker">Manual recovery point</p><h2>Backup now</h2></div><Archive :size="19" /></div>
+            <p class="muted">The first run is full. Later runs reuse unchanged immutable segment objects unless you force a new full chain.</p>
+            <div class="row-actions">
+              <Button :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(false)"><Play /> Backup now</Button>
+              <Button variant="outline" :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(true)"><RefreshCw /> Force full</Button>
+            </div>
+            <Separator />
+            <div><p class="kicker">Side-by-side restore</p><h2>Restore as new database</h2></div>
+            <div class="grid gap-1.5">
+              <Label>Completed backup</Label>
+              <Select v-model="restoreBackupId">
+                <SelectTrigger class="w-full"><SelectValue placeholder="Choose recovery point" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="backup in backups.filter((item) => item.status === 'completed')" :key="backup.id" :value="backup.id">{{ formatDate(backup.completed_at) }} · {{ backup.kind }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="restore-name">New database name</Label>
+              <Input id="restore-name" v-model="restoreName" placeholder="analytics recovery" />
+            </div>
+            <Button variant="outline" :disabled="backupLoading || !restoreBackupId || !restoreName.trim()" @click="restoreSelectedBackup"><HardDrive /> Verify and restore</Button>
+            <p class="muted panel-note">Restore never overwrites a live mirror. The new database is detached from ingestion until new source credentials are supplied.</p>
+          </article>
         </div>
-        <article class="panel table-panel backup-history"><div class="panel-heading"><div><p class="kicker">Durable audit</p><h2>Backup history</h2></div><button class="icon-button" :disabled="backupLoading" aria-label="Refresh backup history" @click="loadBackups()"><RefreshCw :size="15" /></button></div><div v-if="!backups.length" class="empty-state compact-empty"><Archive :size="26" /><strong>No backup artifacts</strong><span>Save a destination, then create the first full recovery point.</span></div><div v-else class="table-scroll"><table><thead><tr><th>Started</th><th>Kind</th><th>Status</th><th>Objects</th><th>Uploaded</th><th>Chain</th><th>Error</th></tr></thead><tbody><tr v-for="backup in backups" :key="backup.id"><td><strong>{{ formatDate(backup.started_at) }}</strong><small class="mono">{{ backup.id }}</small></td><td><Badge :class="backup.kind === 'full' ? 'tone-positive' : 'tone-neutral'">{{ backup.kind }}</Badge></td><td><Badge :class="`tone-${stateTone(backup.status)}`">{{ backup.status }}</Badge></td><td class="mono">{{ backup.object_count }}</td><td class="mono">{{ formatBytes(backup.bytes) }}</td><td><span v-if="backup.parent_id" class="mono">{{ backup.parent_id }}</span><span v-else class="muted">root</span></td><td class="backup-error">{{ backup.error || '—' }}</td></tr></tbody></table></div></article>
+        <article class="panel table-panel backup-history">
+          <div class="panel-heading p-4 pb-0"><div><p class="kicker">Durable audit</p><h2>Backup history</h2></div><Button variant="ghost" size="icon" :disabled="backupLoading" aria-label="Refresh backup history" @click="loadBackups()"><RefreshCw /></Button></div>
+          <div v-if="!backups.length" class="empty-state compact-empty"><Archive :size="26" /><strong>No backup artifacts</strong><span>Save a destination, then create the first full recovery point.</span></div>
+          <Table v-else>
+            <TableHeader>
+              <TableRow><TableHead>Started</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Objects</TableHead><TableHead>Uploaded</TableHead><TableHead>Chain</TableHead><TableHead>Error</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="backup in backups" :key="backup.id">
+                <TableCell><strong>{{ formatDate(backup.started_at) }}</strong><small class="mono">{{ backup.id }}</small></TableCell>
+                <TableCell><Badge :class="backup.kind === 'full' ? 'tone-positive' : 'tone-neutral'">{{ backup.kind }}</Badge></TableCell>
+                <TableCell><Badge :class="`tone-${stateTone(backup.status)}`">{{ backup.status }}</Badge></TableCell>
+                <TableCell class="mono">{{ backup.object_count }}</TableCell>
+                <TableCell class="mono">{{ formatBytes(backup.bytes) }}</TableCell>
+                <TableCell><span v-if="backup.parent_id" class="mono">{{ backup.parent_id }}</span><span v-else class="muted">root</span></TableCell>
+                <TableCell class="backup-error">{{ backup.error || '—' }}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </article>
       </section>
 
       <section v-else-if="page === 'settings'" class="content">
         <header class="page-heading"><p class="kicker">Node policy</p><h1>Settings</h1><p class="muted">Operator identity, network surfaces, and local presentation.</p></header>
         <div class="settings-grid">
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Operator</p><h2>Current session</h2></div><Server :size="19" /></div><dl class="definition-grid"><div><dt>Subject</dt><dd class="mono">{{ session.subject }}</dd></div><div><dt>Role</dt><dd>{{ session.role }}</dd></div><div><dt>Scopes</dt><dd>{{ session.scopes.join(', ') }}</dd></div><div><dt>Session</dt><dd>12-hour signed JWT</dd></div></dl></article>
-          <article class="panel"><div class="panel-heading"><div><p class="kicker">Appearance</p><h2>Interface</h2></div><button class="icon-button" @click="toggleTheme"><Sun v-if="dark" :size="16" /><Moon v-else :size="16" /></button></div><button class="setting-row" @click="toggleTheme"><span><strong>Dark instrument panel</strong><small>Stored only in this browser.</small></span><span class="switch" :class="{ on: dark }"><span /></span></button></article>
+          <article class="panel">
+            <div class="panel-heading"><div><p class="kicker">Appearance</p><h2>Interface</h2></div><Button variant="ghost" size="icon" @click="toggleTheme"><Sun v-if="dark" /><Moon v-else /></Button></div>
+            <div class="setting-row">
+              <span><strong>Dark instrument panel</strong><small>Stored only in this browser.</small></span>
+              <Switch :model-value="dark" @update:model-value="() => toggleTheme()" />
+            </div>
+          </article>
           <article class="panel wire-status"><div class="panel-heading"><div><p class="kicker">MySQL wire</p><h2>Client endpoint</h2></div><Badge :class="nodeStatus?.wire.enabled ? 'tone-positive' : 'tone-negative'">{{ nodeStatus?.wire.enabled ? 'Live' : 'Unavailable' }}</Badge></div><div class="endpoint-line"><span class="endpoint-pulse" :class="{ live: nodeStatus?.wire.enabled }" /><code>{{ nodeStatus?.wire.bind || 'Endpoint unavailable' }}</code></div><dl class="definition-grid"><div><dt>Mode</dt><dd>Read-only</dd></div><div><dt>Authentication</dt><dd>Database API key</dd></div><div><dt>Username</dt><dd>Database name</dd></div><div><dt>Protocol</dt><dd>MySQL native</dd></div></dl></article>
           <article class="panel"><div class="panel-heading"><div><p class="kicker">Telemetry</p><h2>Operations</h2></div><Badge class="tone-positive">Live</Badge></div><dl class="definition-grid"><div><dt>Metrics</dt><dd><a href="/metrics" target="_blank">/metrics</a></dd></div><div><dt>Format</dt><dd>Prometheus text</dd></div><div><dt>Supervisor</dt><dd>Isolated per database</dd></div><div><dt>Recovery</dt><dd>Scheduled + manual</dd></div></dl></article>
         </div>
@@ -1297,19 +1622,51 @@ function describeTable(table: TableSummary) {
 
       <section v-else-if="page === 'connect'" class="content">
         <header class="page-heading"><p class="kicker">Client handoff</p><h1>Connect to Pintail</h1><p class="muted">The database name is the username; its scoped API key is the password.</p></header>
-        <form class="panel connect-controls" @submit.prevent><label><span>Database</span><select v-model="keyDatabaseId"><option v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</option></select></label><label><span>Client host</span><input v-model="connectHost" autocomplete="url"></label><label><span>Wire port</span><input v-model="connectPort" inputmode="numeric"></label><label><span>Query-scoped API key</span><input v-model="connectKey" type="password" autocomplete="off"></label></form>
-        <div class="protocol-note"><Radio :size="17" /><div><strong>Native challenge, no stored plaintext.</strong><span>Use MySQL 8.4, mysql2, PyMySQL, DBeaver, or Metabase. Oracle's MySQL 9.x CLI removed its native-password client plugin.</span></div><button class="text-button" @click="go('keys')">Create or rotate key <ArrowRight :size="13" /></button></div>
+        <form class="panel connect-controls" @submit.prevent>
+          <div class="grid content-start gap-1.5">
+            <Label>Database</Label>
+            <Select v-model="keyDatabaseId">
+              <SelectTrigger class="w-full"><SelectValue placeholder="Choose database" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="database in databases" :key="database.id" :value="database.id">{{ database.name }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div class="grid content-start gap-1.5"><Label for="connect-host">Client host</Label><Input id="connect-host" v-model="connectHost" autocomplete="url" /></div>
+          <div class="grid content-start gap-1.5"><Label for="connect-port">Wire port</Label><Input id="connect-port" v-model="connectPort" inputmode="numeric" /></div>
+          <div class="grid content-start gap-1.5"><Label for="connect-key">Query-scoped API key</Label><Input id="connect-key" v-model="connectKey" type="password" autocomplete="off" /></div>
+        </form>
+        <div class="protocol-note">
+          <Radio :size="17" />
+          <div><strong>Native challenge, no stored plaintext.</strong><span>Use MySQL 8.4, mysql2, PyMySQL, DBeaver, or Metabase. Oracle's MySQL 9.x CLI removed its native-password client plugin.</span></div>
+          <Button variant="link" size="sm" class="whitespace-nowrap" @click="go('keys')">Create or rotate key <ArrowRight /></Button>
+        </div>
         <div class="snippet-grid">
-          <article v-for="kind in (['mysql', 'node', 'python'] as const)" :key="kind" class="panel snippet"><div class="panel-heading"><h2>{{ kind === 'mysql' ? 'MySQL CLI' : kind === 'node' ? 'Node.js' : 'Python' }}</h2><button class="icon-button" @click="copy(connectSnippet(kind))"><Copy :size="15" /></button></div><pre>{{ connectSnippet(kind) }}</pre></article>
+          <article v-for="kind in (['mysql', 'node', 'python'] as const)" :key="kind" class="panel snippet">
+            <div class="panel-heading"><h2>{{ kind === 'mysql' ? 'MySQL CLI' : kind === 'node' ? 'Node.js' : 'Python' }}</h2><Button variant="ghost" size="icon" @click="copy(connectSnippet(kind))"><Copy /></Button></div>
+            <pre>{{ connectSnippet(kind) }}</pre>
+          </article>
           <article class="panel snippet"><div class="panel-heading"><h2>DBeaver / Metabase</h2><CircleHelp :size="17" /></div><dl class="definition-grid"><div><dt>Driver</dt><dd>MySQL 8</dd></div><div><dt>Host / port</dt><dd>{{ connectHost }}:{{ connectPort }}</dd></div><div><dt>Database / user</dt><dd>{{ selectedConnectDatabase?.name || 'analytics' }}</dd></div><div><dt>Password</dt><dd>Query-scoped API key</dd></div></dl><p class="muted panel-note">Keep SSL disabled for a loopback endpoint. Terminate TLS at your private ingress when clients connect across a network.</p></article>
         </div>
       </section>
-    </div>
+    </SidebarInset>
 
-    <div v-if="deleteCandidate" class="modal-backdrop" @click.self="deleteCandidate = null">
-      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
-        <div class="modal-icon"><Trash2 :size="20" /></div><h2 id="delete-title">Remove {{ deleteCandidate.name }}?</h2><p>The source configuration is deleted. Mirrored storage is retained for manual recovery.</p><label><span>Type <strong>{{ deleteCandidate.name }}</strong> to confirm</span><input v-model="deleteText" autofocus></label><div class="wizard-actions"><button class="button" @click="deleteCandidate = null">Cancel</button><button class="button danger-button" :disabled="deleteText !== deleteCandidate.name" @click="removeDatabase">Remove database</button></div>
-      </section>
-    </div>
-  </div>
+    <Dialog :open="Boolean(deleteCandidate)" @update:open="closeDeleteDialog">
+      <DialogContent>
+        <DialogHeader>
+          <div class="bg-red-soft text-red mb-2 flex size-11 items-center justify-center rounded-md"><Trash2 :size="20" /></div>
+          <DialogTitle>Remove {{ deleteCandidate?.name }}?</DialogTitle>
+          <DialogDescription>The source configuration is deleted. Mirrored storage is retained for manual recovery.</DialogDescription>
+        </DialogHeader>
+        <div class="grid gap-1.5">
+          <Label for="delete-confirm">Type <strong>{{ deleteCandidate?.name }}</strong> to confirm</Label>
+          <Input id="delete-confirm" v-model="deleteText" autocomplete="off" />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="closeDeleteDialog(false)">Cancel</Button>
+          <Button variant="destructive" :disabled="deleteText !== deleteCandidate?.name" @click="removeDatabase">Remove database</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </SidebarProvider>
 </template>
