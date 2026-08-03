@@ -705,7 +705,7 @@ impl CompiledExpr {
                     | ScalarFunction::DatePart(_)
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
-                    | ScalarFunction::Round
+                    | ScalarFunction::Round { .. }
                     | ScalarFunction::Ceil
                     | ScalarFunction::Floor
                     | ScalarFunction::Sign
@@ -823,7 +823,7 @@ impl CompiledExpr {
                     | ScalarFunction::DatePart(_)
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
-                    | ScalarFunction::Round
+                    | ScalarFunction::Round { .. }
                     | ScalarFunction::Ceil
                     | ScalarFunction::Floor
                     | ScalarFunction::Sign
@@ -1355,7 +1355,43 @@ fn evaluate_eager_scalar(
             let text = scalar_string(&values[0])?;
             Ok(base64_decode(&text).map_or(Value::Null, Value::Binary))
         }
-        ScalarFunction::Round => {
+        ScalarFunction::Round { decimal } => {
+            if decimal && let Value::Utf8(text) = &values[0] {
+                let digits = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
+                let input_scale = i64::try_from(
+                    text.rsplit_once('.')
+                        .map_or(0, |(_, fraction)| fraction.len()),
+                )
+                .map_err(|_| ExecError::NumericOverflow)?;
+                // MySQL keeps min(input scale, digit count) fraction digits;
+                // negative digit counts zero whole-number positions.
+                let render_scale = u8::try_from(digits.clamp(0, input_scale))
+                    .map_err(|_| ExecError::NumericOverflow)?;
+                let units = pintail_types::parse_decimal_rounded(text, render_scale)
+                    .ok_or(ExecError::NumericOverflow)?;
+                let units = if digits < 0 {
+                    let zeroed = u32::try_from((-digits).min(38)).unwrap_or(38);
+                    let factor = 10_i128
+                        .checked_pow(zeroed)
+                        .ok_or(ExecError::NumericOverflow)?;
+                    let half = factor / 2;
+                    let magnitude = units
+                        .unsigned_abs()
+                        .checked_add(half.unsigned_abs())
+                        .ok_or(ExecError::NumericOverflow)?
+                        / factor.unsigned_abs()
+                        * factor.unsigned_abs();
+                    let magnitude =
+                        i128::try_from(magnitude).map_err(|_| ExecError::NumericOverflow)?;
+                    if units < 0 { -magnitude } else { magnitude }
+                } else {
+                    units
+                };
+                return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                    units,
+                    render_scale,
+                )));
+            }
             let value = mysql_f64(&values[0])?;
             let decimals = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
             let decimals =

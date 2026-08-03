@@ -677,7 +677,8 @@
   {
     "phase": "churn",
     "check": "query:group by with having",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 24:\n  mysql   16.0000 | 6.0000 | 322.9100\n  pintail 16.0000 | 6.0000 | 322.9000"
   },
   {
     "phase": "churn",
@@ -827,7 +828,8 @@
   {
     "phase": "restart",
     "check": "query:group by with having",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 24:\n  mysql   16.0000 | 6.0000 | 322.9100\n  pintail 16.0000 | 6.0000 | 322.9000"
   },
   {
     "phase": "restart",
@@ -1047,7 +1049,8 @@
   {
     "phase": "control-plane",
     "check": "query:group by with having",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 24:\n  mysql   16.0000 | 6.0000 | 322.9100\n  pintail 16.0000 | 6.0000 | 322.9000"
   },
   {
     "phase": "control-plane",
@@ -1203,7 +1206,8 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:group by with having",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 24:\n  mysql   16.0000 | 6.0000 | 322.9100\n  pintail 16.0000 | 6.0000 | 322.9000"
   },
   {
     "phase": "ddl-documented-gaps",

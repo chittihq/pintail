@@ -155,8 +155,13 @@ pub enum ScalarFunction {
     Coalesce,
     /// Return NULL when two arguments compare equal.
     NullIf,
-    /// Round a numeric value to an optional decimal precision.
-    Round,
+    /// Round a numeric value to an optional decimal precision. `decimal`
+    /// marks a canonical-decimal-text operand with a bind-time digit count,
+    /// which rounds exactly on scaled units instead of the f64 carrier.
+    Round {
+        /// Whether the operand is DECIMAL-typed canonical text.
+        decimal: bool,
+    },
     /// `CEIL(x)` / `CEILING(x)`.
     Ceil,
     /// `FLOOR(x)`.

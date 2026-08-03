@@ -2303,7 +2303,13 @@ fn bind_scalar_function(
         "IFNULL" if args.len() == 2 => ScalarFunction::Coalesce,
         "COALESCE" if !args.is_empty() => ScalarFunction::Coalesce,
         "NULLIF" if args.len() == 2 => ScalarFunction::NullIf,
-        "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round,
+        "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round {
+            // Exact only when the digit count is knowable at bind time.
+            decimal: matches!(args[0].data_type, Some(DataType::Decimal { .. }))
+                && args.get(1).is_none_or(|digits| {
+                    matches!(digits.kind, BoundExprKind::Literal(Value::Int64(_)))
+                }),
+        },
         "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil,
         "FLOOR" if args.len() == 1 => ScalarFunction::Floor,
         "ABS" if args.len() == 1 => ScalarFunction::Abs {
@@ -2806,10 +2812,37 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             args.iter().all(|argument| argument.nullable),
         ),
         ScalarFunction::NullIf => (args[0].data_type, true),
-        ScalarFunction::Round | ScalarFunction::Ceil | ScalarFunction::Floor => (
-            Some(DataType::Float64),
-            args.iter().any(|argument| argument.nullable),
-        ),
+        ScalarFunction::Round { decimal: true } => {
+            let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
+                return Err(BindError::UnsupportedExpression("ROUND".to_owned()));
+            };
+            let digits = match args.get(1).map(|argument| &argument.kind) {
+                Some(BoundExprKind::Literal(Value::Int64(digits))) => *digits,
+                None => 0,
+                _ => return Err(BindError::UnsupportedExpression("ROUND".to_owned())),
+            };
+            // MySQL keeps min(input scale, digit count) fraction digits and
+            // one extra integer digit for the carry.
+            let result_scale = u8::try_from(digits.clamp(0, i64::from(scale))).unwrap_or(scale);
+            let result_precision = precision
+                .saturating_sub(scale)
+                .saturating_add(result_scale)
+                .saturating_add(1)
+                .min(38);
+            (
+                Some(DataType::Decimal {
+                    precision: result_precision.max(result_scale.saturating_add(1)),
+                    scale: result_scale,
+                }),
+                args.iter().any(|argument| argument.nullable),
+            )
+        }
+        ScalarFunction::Round { decimal: false } | ScalarFunction::Ceil | ScalarFunction::Floor => {
+            (
+                Some(DataType::Float64),
+                args.iter().any(|argument| argument.nullable),
+            )
+        }
         ScalarFunction::Abs { .. } => (
             // Exact numerics keep their type; everything else takes the f64
             // carrier like the other math scalars.
