@@ -95,4 +95,9 @@ and `.github/workflows/compat.yml` runs the Docker-gated compatibility
 suites (CDC against MySQL 8.4 GTID/file-position/MINIMAL-metadata and
 MariaDB 11, snapshot and polling sources, the control-plane API suite,
 MinIO backup restore, and the wire-protocol client matrix) every night.
+The nightly e2e workflow also runs the browser smoke suite
+(`tests/browser`): headless Chromium walks the embedded dashboard through
+first-boot operator setup, the add-database wizard against a live MySQL
+source, replication reaching streaming, the SQL console returning typed
+results, and a 390-pixel login render, capturing screenshots on failure.
 

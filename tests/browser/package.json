@@ -1,0 +1,12 @@
+{
+  "name": "pintail-browser-smoke",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "bun run run.ts"
+  },
+  "dependencies": {
+    "mysql2": "^3.15.3",
+    "playwright": "^1.58.2"
+  }
+}
