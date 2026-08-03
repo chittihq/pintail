@@ -96,6 +96,7 @@ fn test_source_table() -> SourceTable {
                 collation: None,
                 generated_stored: false,
                 auto_increment: true,
+                default_value: None,
             },
             SourceColumn {
                 id: 2,
@@ -108,6 +109,7 @@ fn test_source_table() -> SourceTable {
                 collation: Some("utf8mb4_0900_ai_ci".to_owned()),
                 generated_stored: false,
                 auto_increment: false,
+                default_value: None,
             },
         ],
         key: SourceKey {

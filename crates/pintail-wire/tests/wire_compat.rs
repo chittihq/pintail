@@ -372,6 +372,7 @@ fn source_table() -> SourceTable {
                 collation: None,
                 generated_stored: false,
                 auto_increment: true,
+                default_value: None,
             },
             SourceColumn {
                 id: 2,
@@ -384,6 +385,7 @@ fn source_table() -> SourceTable {
                 collation: Some("utf8mb4_0900_ai_ci".to_owned()),
                 generated_stored: false,
                 auto_increment: false,
+                default_value: None,
             },
         ],
         key: SourceKey {
@@ -453,6 +455,7 @@ fn type_table() -> SourceTable {
         collation: None,
         generated_stored: false,
         auto_increment: false,
+        default_value: None,
     }];
     columns.extend(definitions.into_iter().enumerate().map(
         |(index, (name, mysql_data_type, mysql_column_type, pintail_type, nullable))| {
@@ -469,6 +472,7 @@ fn type_table() -> SourceTable {
                     .then(|| "utf8mb4_0900_ai_ci".to_owned()),
                 generated_stored: false,
                 auto_increment: false,
+                default_value: None,
             }
         },
     ));

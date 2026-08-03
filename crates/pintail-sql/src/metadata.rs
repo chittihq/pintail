@@ -28,6 +28,27 @@ pub struct MetadataResult {
     pub rows: Vec<Vec<Value>>,
 }
 
+/// Source-derived column facts the catalog schema does not carry:
+/// defaults, auto-increment/generated markers, and single-column UNIQUE
+/// membership. Callers without probe data pass an empty slice.
+#[derive(Clone, Debug, Default)]
+pub struct ColumnFacts {
+    /// Source database name.
+    pub database: String,
+    /// Source table name.
+    pub table: String,
+    /// Source column name.
+    pub column: String,
+    /// Raw `COLUMN_DEFAULT`, absent when the column has no default.
+    pub default_value: Option<String>,
+    /// Whether the source declares `AUTO_INCREMENT`.
+    pub auto_increment: bool,
+    /// Whether the column is a stored generated column.
+    pub generated_stored: bool,
+    /// Whether a single-column non-null UNIQUE constraint covers it.
+    pub unique_single: bool,
+}
+
 /// Executes one supported `MySQL` metadata statement against an immutable catalog.
 ///
 /// # Errors
@@ -37,6 +58,7 @@ pub fn execute_metadata(
     statement: &Statement,
     catalog: &CatalogSnapshot,
     current_database: Option<&str>,
+    facts: &[ColumnFacts],
 ) -> Result<MetadataResult, MetadataError> {
     match statement {
         Statement::ShowDatabases {
@@ -82,7 +104,7 @@ pub fn execute_metadata(
             let (_, table) = resolve_table(table_name, catalog, current_database)?;
             Ok(describe_table(table))
         }
-        Statement::Query(query) => execute_information_schema(query, catalog),
+        Statement::Query(query) => execute_information_schema(query, catalog, facts),
         _ => Err(MetadataError::Unsupported(statement.to_string())),
     }
 }
@@ -90,6 +112,7 @@ pub fn execute_metadata(
 fn execute_information_schema(
     query: &Query,
     catalog: &CatalogSnapshot,
+    facts: &[ColumnFacts],
 ) -> Result<MetadataResult, MetadataError> {
     let SetExpr::Select(select) = query.body.as_ref() else {
         return Err(MetadataError::Unsupported(query.to_string()));
@@ -120,7 +143,7 @@ fn execute_information_schema(
         return Err(MetadataError::Unsupported(query.to_string()));
     }
 
-    let mut result = information_schema_table(name, catalog)?;
+    let mut result = information_schema_table(name, catalog, facts)?;
     if let Some(predicate) = &select.selection {
         let mut filtered = Vec::with_capacity(result.rows.len());
         for row in result.rows {
@@ -175,6 +198,7 @@ fn select_has_unsupported_clauses(select: &Select) -> bool {
 fn information_schema_table(
     name: &ObjectName,
     catalog: &CatalogSnapshot,
+    facts: &[ColumnFacts],
 ) -> Result<MetadataResult, MetadataError> {
     let parts = object_name_parts(name)?;
     let [database, table] = parts.as_slice() else {
@@ -188,7 +212,7 @@ fn information_schema_table(
     } else if table.eq_ignore_ascii_case("tables") {
         Ok(information_tables(catalog))
     } else if table.eq_ignore_ascii_case("columns") {
-        Ok(information_columns(catalog))
+        Ok(information_columns(catalog, facts))
     } else {
         Err(MetadataError::UnknownTable((*table).to_owned()))
     }
@@ -247,7 +271,7 @@ fn information_tables(catalog: &CatalogSnapshot) -> MetadataResult {
     MetadataResult { fields, rows }
 }
 
-fn information_columns(catalog: &CatalogSnapshot) -> MetadataResult {
+fn information_columns(catalog: &CatalogSnapshot, facts: &[ColumnFacts]) -> MetadataResult {
     let fields = metadata_fields(&[
         ("TABLE_CATALOG", DataType::Utf8, false),
         ("TABLE_SCHEMA", DataType::Utf8, false),
@@ -269,23 +293,40 @@ fn information_columns(catalog: &CatalogSnapshot) -> MetadataResult {
                 // PRI marks physical key membership the way DBeaver-class
                 // tools expect; auto_increment and secondary indexes are
                 // not in the catalog yet.
+                let fact = facts.iter().find(|fact| {
+                    fact.database.eq_ignore_ascii_case(database.name())
+                        && fact.table.eq_ignore_ascii_case(table.name())
+                        && fact.column.eq_ignore_ascii_case(column.name())
+                });
                 let key = if table.key_column_ids().contains(&column.id()) {
                     "PRI"
+                } else if fact.is_some_and(|fact| fact.unique_single) {
+                    "UNI"
                 } else {
                     ""
                 };
+                let extra = fact.map_or("", |fact| {
+                    if fact.auto_increment {
+                        "auto_increment"
+                    } else if fact.generated_stored {
+                        "STORED GENERATED"
+                    } else {
+                        ""
+                    }
+                });
                 rows.push(vec![
                     utf8("def"),
                     utf8(database.name()),
                     utf8(table.name()),
                     utf8(column.name()),
                     Value::UInt64(u64::try_from(index + 1).expect("column ordinal fits u64")),
-                    Value::Null,
+                    fact.and_then(|fact| fact.default_value.as_deref())
+                        .map_or(Value::Null, utf8),
                     utf8(if column.is_nullable() { "YES" } else { "NO" }),
                     utf8(mysql_data_type(column.data_type())),
                     utf8(&column_type),
                     utf8(key),
-                    utf8(""),
+                    utf8(extra),
                 ]);
             }
         }
@@ -832,6 +873,7 @@ mod tests {
             &parse_statement("SHOW DATABASES").expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("databases");
         assert_eq!(databases.rows, [vec![Value::Utf8("Analytics".to_owned())]]);
@@ -840,6 +882,7 @@ mod tests {
             &parse_statement("SHOW TABLES FROM Analytics").expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("tables");
         assert_eq!(tables.rows, [vec![Value::Utf8("Events".to_owned())]]);
@@ -848,6 +891,7 @@ mod tests {
             &parse_statement("DESCRIBE Analytics.Events").expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("columns");
         assert_eq!(columns.fields[0].name, "Field");
@@ -870,6 +914,7 @@ mod tests {
             .expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("schemata");
         assert_eq!(schemata.rows, [vec![Value::Utf8("Analytics".to_owned())]]);
@@ -882,6 +927,7 @@ mod tests {
             .expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("tables");
         assert_eq!(
@@ -899,6 +945,7 @@ mod tests {
             .expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("columns");
         assert_eq!(columns.fields[0].name, "name");
@@ -926,6 +973,7 @@ mod tests {
             .expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("count");
         assert_eq!(count.rows, [vec![Value::UInt64(2)]]);
@@ -942,8 +990,9 @@ mod tests {
             "column_default NOT LIKE '%'",
         ] {
             let sql = format!("SELECT COUNT(*) FROM information_schema.columns WHERE {predicate}");
-            let result = execute_metadata(&parse_statement(&sql).expect("parse"), &catalog, None)
-                .expect("metadata query");
+            let result =
+                execute_metadata(&parse_statement(&sql).expect("parse"), &catalog, None, &[])
+                    .expect("metadata query");
             assert_eq!(
                 result.rows,
                 [vec![Value::UInt64(0)]],
@@ -959,6 +1008,7 @@ mod tests {
             .expect("parse"),
             &catalog,
             None,
+            &[],
         )
         .expect("metadata query");
         assert_eq!(result.rows, [vec![Value::Utf8("id".to_owned())]]);

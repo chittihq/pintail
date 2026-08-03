@@ -181,6 +181,10 @@ pub struct SourceColumn {
     pub generated_stored: bool,
     /// Whether the source declares this column `AUTO_INCREMENT`.
     pub auto_increment: bool,
+    /// Raw `INFORMATION_SCHEMA.COLUMNS.COLUMN_DEFAULT`, absent when the
+    /// column has no default (older stored probes decode to `None` too).
+    #[serde(default)]
+    pub default_value: Option<String>,
 }
 
 /// Physical key selected from source indexes.
@@ -219,6 +223,7 @@ struct RawColumn {
     collation: Option<String>,
     extra: String,
     generation_expression: String,
+    default_value: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -312,26 +317,13 @@ async fn probe_table(
     engine: Option<String>,
     estimated_rows: Option<u64>,
 ) -> Result<SourceTable, ProbeError> {
-    type ColumnRow = (
-        String,
-        u32,
-        String,
-        String,
-        String,
-        Option<u8>,
-        Option<u8>,
-        Option<u8>,
-        Option<String>,
-        Option<String>,
-        String,
-        Option<String>,
-    );
     type IndexRow = (String, u8, u32, Option<String>, Option<u64>);
-    let column_rows: Vec<ColumnRow> = connection
+    let column_rows: Vec<mysql_async::Row> = connection
         .exec(
             "SELECT COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, DATA_TYPE, COLUMN_TYPE, \
                     NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, \
-                    CHARACTER_SET_NAME, COLLATION_NAME, EXTRA, GENERATION_EXPRESSION \
+                    CHARACTER_SET_NAME, COLLATION_NAME, EXTRA, GENERATION_EXPRESSION, \
+                    COLUMN_DEFAULT \
              FROM information_schema.COLUMNS \
              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
              ORDER BY ORDINAL_POSITION",
@@ -340,21 +332,38 @@ async fn probe_table(
         .await?;
     let raw_columns = column_rows
         .into_iter()
-        .map(
-            |(
-                name,
-                ordinal,
-                nullable,
-                data_type,
-                column_type,
-                numeric_precision,
-                numeric_scale,
-                datetime_precision,
-                character_set,
-                collation,
-                extra,
-                generation_expression,
-            )| RawColumn {
+        .map(|mut row| {
+            fn take<T>(
+                row: &mut mysql_async::Row,
+                index: usize,
+                what: &str,
+            ) -> Result<T, ProbeError>
+            where
+                T: mysql_async::prelude::FromValue,
+            {
+                row.take_opt(index)
+                    .ok_or_else(|| {
+                        ProbeError::InvalidMetadata(format!("column row is missing {what}"))
+                    })?
+                    .map_err(|error| {
+                        ProbeError::InvalidMetadata(format!("column row {what}: {error:?}"))
+                    })
+            }
+            let name: String = take(&mut row, 0, "COLUMN_NAME")?;
+            let ordinal: u32 = take(&mut row, 1, "ORDINAL_POSITION")?;
+            let nullable: String = take(&mut row, 2, "IS_NULLABLE")?;
+            let data_type: String = take(&mut row, 3, "DATA_TYPE")?;
+            let column_type: String = take(&mut row, 4, "COLUMN_TYPE")?;
+            let numeric_precision: Option<u8> = take(&mut row, 5, "NUMERIC_PRECISION")?;
+            let numeric_scale: Option<u8> = take(&mut row, 6, "NUMERIC_SCALE")?;
+            let datetime_precision: Option<u8> = take(&mut row, 7, "DATETIME_PRECISION")?;
+            let character_set: Option<String> = take(&mut row, 8, "CHARACTER_SET_NAME")?;
+            let collation: Option<String> = take(&mut row, 9, "COLLATION_NAME")?;
+            let extra: String = take(&mut row, 10, "EXTRA")?;
+            let generation_expression: Option<String> =
+                take(&mut row, 11, "GENERATION_EXPRESSION")?;
+            let default_value: Option<String> = take(&mut row, 12, "COLUMN_DEFAULT")?;
+            Ok(RawColumn {
                 ordinal,
                 name,
                 nullable: nullable.eq_ignore_ascii_case("YES"),
@@ -367,9 +376,10 @@ async fn probe_table(
                 collation,
                 extra,
                 generation_expression: generation_expression.unwrap_or_default(),
-            },
-        )
-        .collect::<Vec<_>>();
+                default_value,
+            })
+        })
+        .collect::<Result<Vec<_>, ProbeError>>()?;
     if raw_columns.is_empty() {
         return Err(ProbeError::InvalidMetadata(format!(
             "table {table} has no columns"
@@ -445,6 +455,7 @@ async fn probe_table(
             collation: raw.collation,
             generated_stored,
             auto_increment,
+            default_value: raw.default_value,
         });
     }
     if columns.is_empty() {
@@ -782,6 +793,7 @@ mod tests {
             collation: None,
             extra: String::new(),
             generation_expression: String::new(),
+            default_value: None,
         }
     }
 
@@ -909,6 +921,7 @@ mod tests {
                     collation: None,
                     generated_stored: false,
                     auto_increment: true,
+                    default_value: None,
                 },
                 SourceColumn {
                     id: 2,
@@ -921,6 +934,7 @@ mod tests {
                     collation: None,
                     generated_stored: false,
                     auto_increment: false,
+                    default_value: None,
                 },
             ],
             key: SourceKey {

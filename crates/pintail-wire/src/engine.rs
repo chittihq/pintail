@@ -14,7 +14,9 @@ use pintail_exec::{
 };
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_probe::{ProbeReport, SourceTable};
-use pintail_sql::{Binder, MetadataError, Statement, execute_metadata, parse_statement};
+use pintail_sql::{
+    Binder, ColumnFacts, MetadataError, Statement, execute_metadata, parse_statement,
+};
 use pintail_store::TableSnapshot;
 use pintail_types::{DataType, Value};
 use thiserror::Error;
@@ -215,7 +217,8 @@ impl ReplicaEngine {
         let table_count = replica.targets.len();
         let statement =
             parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
-        match execute_metadata(&statement, &catalog, Some(&replica.database.name)) {
+        let facts = column_facts(&replica);
+        match execute_metadata(&statement, &catalog, Some(&replica.database.name), &facts) {
             Ok(result) => return Ok(metadata_output(result, started)),
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
@@ -424,6 +427,30 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
         rows: result.rows,
         truncated: false,
     }
+}
+
+/// Probe-derived facts the catalog schema does not carry, for
+/// `information_schema.columns` fidelity.
+fn column_facts(replica: &LoadedReplica) -> Vec<ColumnFacts> {
+    let mut facts = Vec::new();
+    for target in &replica.targets {
+        let source = &target.source;
+        for column in &source.columns {
+            facts.push(ColumnFacts {
+                database: replica.database.name.clone(),
+                table: source.name.clone(),
+                column: column.name.clone(),
+                default_value: column.default_value.clone(),
+                auto_increment: column.auto_increment,
+                generated_stored: column.generated_stored,
+                unique_single: source
+                    .unique_keys
+                    .iter()
+                    .any(|key| key.len() == 1 && key[0].eq_ignore_ascii_case(&column.name)),
+            });
+        }
+    }
+    facts
 }
 
 fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError> {
