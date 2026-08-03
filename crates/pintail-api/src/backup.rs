@@ -36,6 +36,7 @@ pub(crate) struct BackupConfigResponse {
     enabled: bool,
     retain_count: u64,
     verify_restore: bool,
+    full_every: u64,
     credentials_configured: bool,
     updated_at: String,
 }
@@ -59,6 +60,10 @@ pub(crate) struct BackupConfigRequest {
     /// the checksum-verified outcome on the backup row.
     #[serde(default)]
     verify_restore: bool,
+    /// Force a full backup every Nth scheduled run; zero chains
+    /// incrementals after the first full indefinitely.
+    #[serde(default)]
+    full_every: u64,
     /// Completed backups to keep; zero keeps everything.
     #[serde(default)]
     retain_count: u64,
@@ -198,6 +203,7 @@ pub(crate) async fn put_config(
             enabled: request.enabled,
             retain_count: request.retain_count,
             verify_restore: request.verify_restore,
+            full_every: request.full_every,
             now: &now,
         })
         .map_err(bad_request)?;
@@ -262,11 +268,31 @@ pub(crate) fn start_scheduled_if_due(
         Utc::now().signed_duration_since(started).num_minutes()
             >= i64::try_from(config.schedule_minutes).unwrap_or(i64::MAX)
     });
-    drop(metadata);
     if !due {
         return Ok(false);
     }
-    start_job(state, database_id, false).map(|_| true)
+    // Force a full every Nth scheduled run: the completed chain since (and
+    // including) the last full reaching the cadence resets it.
+    let force_full = config.full_every > 0 && {
+        let mut chain = 0_u64;
+        let mut saw_full = false;
+        for backup in metadata
+            .backups(database_id, 1_000)
+            .map_err(ApiError::internal)?
+        {
+            if backup.status != "completed" {
+                continue;
+            }
+            chain += 1;
+            if backup.kind == "full" {
+                saw_full = true;
+                break;
+            }
+        }
+        saw_full && chain >= config.full_every
+    };
+    drop(metadata);
+    start_job(state, database_id, force_full).map(|_| true)
 }
 
 fn start_job(
@@ -905,6 +931,7 @@ impl From<BackupConfigRecord> for BackupConfigResponse {
             enabled: config.enabled,
             retain_count: config.retain_count,
             verify_restore: config.verify_restore,
+            full_every: config.full_every,
             updated_at: config.updated_at,
         }
     }
@@ -922,6 +949,7 @@ impl Default for BackupConfigResponse {
             enabled: false,
             retain_count: 0,
             verify_restore: false,
+            full_every: 0,
             credentials_configured: false,
             updated_at: String::new(),
         }

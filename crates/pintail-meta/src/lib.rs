@@ -20,7 +20,7 @@ pub use control::{
     UserRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 11;
+const CURRENT_SCHEMA_VERSION: u32 = 12;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1351,6 +1351,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 11 {
         migration_v11(connection.transaction()?)?;
     }
+    if found < 12 {
+        migration_v12(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1471,4 +1474,13 @@ fn migration_v11(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 11")
+}
+
+fn migration_v12(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/012_backup_full_cadence.sql"))
+        .context("failed to apply metadata migration 12")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 12")
 }

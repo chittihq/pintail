@@ -19,6 +19,9 @@ pub struct BackupConfigRecord {
     /// Restore each completed backup into a scratch directory and record
     /// the checksum-verified outcome.
     pub verify_restore: bool,
+    /// Force a full backup every Nth scheduled run; zero chains
+    /// incrementals after the first full indefinitely.
+    pub full_every: u64,
     pub updated_at: String,
 }
 
@@ -35,6 +38,7 @@ pub struct NewBackupConfig<'a> {
     pub enabled: bool,
     pub retain_count: u64,
     pub verify_restore: bool,
+    pub full_every: u64,
     pub now: &'a str,
 }
 
@@ -118,8 +122,8 @@ impl MetaStore {
                    db_id, bucket, prefix, endpoint, region, \
                    access_key_id_encrypted, secret_access_key_encrypted, \
                    schedule_minutes, enabled, retain_count, verify_restore, \
-                   updated_at\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                   full_every, updated_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
                  ON CONFLICT(db_id) DO UPDATE SET \
                    bucket = excluded.bucket, prefix = excluded.prefix, \
                    endpoint = excluded.endpoint, region = excluded.region, \
@@ -129,6 +133,7 @@ impl MetaStore {
                    enabled = excluded.enabled, \
                    retain_count = excluded.retain_count, \
                    verify_restore = excluded.verify_restore, \
+                   full_every = excluded.full_every, \
                    updated_at = excluded.updated_at",
                 params![
                     config.database_id,
@@ -143,6 +148,8 @@ impl MetaStore {
                     i64::try_from(config.retain_count)
                         .context("backup retention exceeds SQLite range")?,
                     config.verify_restore,
+                    i64::try_from(config.full_every)
+                        .context("backup full cadence exceeds SQLite range")?,
                     config.now,
                 ],
             )
@@ -161,7 +168,7 @@ impl MetaStore {
                 "SELECT db_id, bucket, prefix, endpoint, region, \
                         access_key_id_encrypted, secret_access_key_encrypted, \
                         schedule_minutes, enabled, retain_count, updated_at, \
-                        verify_restore \
+                        verify_restore, full_every \
                  FROM backup_configs WHERE db_id = ?1",
                 [database_id],
                 decode_backup_config,
@@ -430,6 +437,16 @@ fn decode_backup_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackupConfi
         })?,
         enabled: row.get(8)?,
         verify_restore: row.get(11)?,
+        full_every: {
+            let full_every: i64 = row.get(12)?;
+            u64::try_from(full_every).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    12,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?
+        },
         updated_at: row.get(10)?,
     })
 }

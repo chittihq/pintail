@@ -199,6 +199,7 @@ fn backup_configuration_and_runs_round_trip() {
             encrypted_secret_access_key: Some(b"encrypted-secret"),
             retain_count: 0,
             verify_restore: true,
+            full_every: 4,
             schedule_minutes: 60,
             enabled: true,
             now: "2026-07-30T00:01:00Z",
@@ -212,6 +213,7 @@ fn backup_configuration_and_runs_round_trip() {
     assert_eq!(config.schedule_minutes, 60);
     assert!(config.enabled);
     assert!(config.verify_restore);
+    assert_eq!(config.full_every, 4);
 
     metadata
         .start_backup(&NewBackup {
