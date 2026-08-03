@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-02T23:15:25.292Z.
+Measured 2026-08-03T06:15:39.141Z.
 
-**240 passed, 0 failed, 6 documented-gap warnings.**
+**252 passed, 0 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -18,6 +18,7 @@ Measured 2026-08-02T23:15:25.292Z.
 | snapshot | query:three-way join through items | PASS |  |
 | snapshot | query:union all across sources | PASS |  |
 | snapshot | query:group by with having | PASS |  |
+| snapshot | query:conditional decimal sum keeps the fraction | PASS |  |
 | snapshot | query:distinct count and min max | PASS |  |
 | snapshot | query:uncorrelated in-subquery | PASS |  |
 | snapshot | query:scalar subquery threshold | PASS |  |
@@ -46,6 +47,7 @@ Measured 2026-08-02T23:15:25.292Z.
 | crud | query:three-way join through items | PASS |  |
 | crud | query:union all across sources | PASS |  |
 | crud | query:group by with having | PASS |  |
+| crud | query:conditional decimal sum keeps the fraction | PASS |  |
 | crud | query:distinct count and min max | PASS |  |
 | crud | query:uncorrelated in-subquery | PASS |  |
 | crud | query:scalar subquery threshold | PASS |  |
@@ -74,6 +76,7 @@ Measured 2026-08-02T23:15:25.292Z.
 | type-edges | query:three-way join through items | PASS |  |
 | type-edges | query:union all across sources | PASS |  |
 | type-edges | query:group by with having | PASS |  |
+| type-edges | query:conditional decimal sum keeps the fraction | PASS |  |
 | type-edges | query:distinct count and min max | PASS |  |
 | type-edges | query:uncorrelated in-subquery | PASS |  |
 | type-edges | query:scalar subquery threshold | PASS |  |
@@ -103,6 +106,7 @@ Measured 2026-08-02T23:15:25.292Z.
 | ddl | query:three-way join through items | PASS |  |
 | ddl | query:union all across sources | PASS |  |
 | ddl | query:group by with having | PASS |  |
+| ddl | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl | query:distinct count and min max | PASS |  |
 | ddl | query:uncorrelated in-subquery | PASS |  |
 | ddl | query:scalar subquery threshold | PASS |  |
@@ -137,7 +141,8 @@ Measured 2026-08-02T23:15:25.292Z.
 | churn | query:left join preserves unmatched rows | PASS |  |
 | churn | query:three-way join through items | PASS |  |
 | churn | query:union all across sources | PASS |  |
-| churn | query:group by with having | WARN | DECIMAL AVG passes through Float64; exact half-cent averages can round differently |
+| churn | query:group by with having | PASS |  |
+| churn | query:conditional decimal sum keeps the fraction | PASS |  |
 | churn | query:distinct count and min max | PASS |  |
 | churn | query:uncorrelated in-subquery | PASS |  |
 | churn | query:scalar subquery threshold | PASS |  |
@@ -166,7 +171,8 @@ Measured 2026-08-02T23:15:25.292Z.
 | restart | query:left join preserves unmatched rows | PASS |  |
 | restart | query:three-way join through items | PASS |  |
 | restart | query:union all across sources | PASS |  |
-| restart | query:group by with having | WARN | DECIMAL AVG passes through Float64; exact half-cent averages can round differently |
+| restart | query:group by with having | PASS |  |
+| restart | query:conditional decimal sum keeps the fraction | PASS |  |
 | restart | query:distinct count and min max | PASS |  |
 | restart | query:uncorrelated in-subquery | PASS |  |
 | restart | query:scalar subquery threshold | PASS |  |
@@ -207,7 +213,8 @@ Measured 2026-08-02T23:15:25.292Z.
 | control-plane | query:left join preserves unmatched rows | PASS |  |
 | control-plane | query:three-way join through items | PASS |  |
 | control-plane | query:union all across sources | PASS |  |
-| control-plane | query:group by with having | WARN | DECIMAL AVG passes through Float64; exact half-cent averages can round differently |
+| control-plane | query:group by with having | PASS |  |
+| control-plane | query:conditional decimal sum keeps the fraction | PASS |  |
 | control-plane | query:distinct count and min max | PASS |  |
 | control-plane | query:uncorrelated in-subquery | PASS |  |
 | control-plane | query:scalar subquery threshold | PASS |  |
@@ -236,7 +243,8 @@ Measured 2026-08-02T23:15:25.292Z.
 | ddl-documented-gaps | query:left join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:three-way join through items | SKIP |  |
 | ddl-documented-gaps | query:union all across sources | PASS |  |
-| ddl-documented-gaps | query:group by with having | WARN | DECIMAL AVG passes through Float64; exact half-cent averages can round differently |
+| ddl-documented-gaps | query:group by with having | PASS |  |
+| ddl-documented-gaps | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl-documented-gaps | query:distinct count and min max | PASS |  |
 | ddl-documented-gaps | query:uncorrelated in-subquery | PASS |  |
 | ddl-documented-gaps | query:scalar subquery threshold | PASS |  |

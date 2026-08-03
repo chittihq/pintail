@@ -77,8 +77,15 @@ export const differentialQueries: DifferentialQuery[] = [
       'FROM orders GROUP BY customer_id HAVING COUNT(*) >= 2 ' +
       'ORDER BY n DESC, customer_id LIMIT 30',
     tables: ['orders'],
-    documentedGap:
-      'DECIMAL AVG passes through Float64; exact half-cent averages can round differently',
+  },
+  {
+    name: 'conditional decimal sum keeps the fraction',
+    sql:
+      'SELECT CAST(status AS CHAR) AS status_text, COUNT(*) AS n, ' +
+      'SUM(CASE WHEN total > 100 THEN total ELSE 0 END) AS big_orders, ' +
+      'SUM(CASE WHEN total > 100 THEN 1 ELSE 0 END) / COUNT(*) AS big_share ' +
+      'FROM orders GROUP BY status_text ORDER BY status_text',
+    tables: ['orders'],
   },
   {
     name: 'distinct count and min max',

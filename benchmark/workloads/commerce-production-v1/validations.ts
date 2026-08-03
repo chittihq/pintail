@@ -112,6 +112,14 @@ export function normalizeRows(rows: unknown[][]): string {
           if (value === null || value === undefined) return 'NULL'
           if (typeof value === 'number') return value.toFixed(6)
           const text = String(value)
+          // Datetime fractional seconds: MySQL prints the column's fsp
+          // width, pintail prints canonical microseconds — trim trailing
+          // fraction zeros on both sides so '.548' and '.548000' agree.
+          const datetime = text.match(/^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\.(\d+))?$/)
+          if (datetime) {
+            const fraction = (datetime[2] ?? '').replace(/0+$/, '')
+            return fraction ? `${datetime[1]}.${fraction}` : datetime[1]
+          }
           const asNumber = Number(text)
           if (text !== '' && Number.isFinite(asNumber) && /^-?\d+(\.\d+)?$/.test(text)) {
             return asNumber.toFixed(6)

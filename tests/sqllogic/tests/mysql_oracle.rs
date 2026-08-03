@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 625;
+const EXPECTED_CASES: usize = 633;
 
 struct OracleCase {
     family: &'static str,
@@ -889,6 +889,46 @@ fn hand_written_cases() -> Vec<OracleCase> {
              ROW_NUMBER() OVER (ORDER BY id DESC) AS by_id, \
              SUM(score) OVER (PARTITION BY active) AS group_total \
              FROM events ORDER BY id",
+        ),
+        ordered(
+            "decimal division",
+            "SELECT id, score / 7, score / 3, id / score FROM events ORDER BY id",
+        ),
+        ordered(
+            "decimal division",
+            "SELECT active, SUM(CASE WHEN score > 40 THEN 1 ELSE 0 END) / COUNT(*) \
+             FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "decimal division",
+            "SELECT id, score * 100 / SUM(score) OVER () FROM events ORDER BY id",
+        ),
+        ordered(
+            "decimal division",
+            // Chained division (1/3/3) is documented-imprecise: MySQL keeps
+            // unrounded internal digits between the two divisions
+            // (docs/limitations.md); single divisions are exact.
+            "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        ordered(
+            "decimal ordering",
+            // Lexical text ordering would put 8.5714 above 14.2857.
+            "SELECT id, score / 7 AS share FROM events ORDER BY share DESC, id",
+        ),
+        ordered(
+            "decimal ordering",
+            "SELECT name, SUM(score) AS total, \
+             ROW_NUMBER() OVER (ORDER BY SUM(score) / 7 DESC) AS heaviest \
+             FROM events GROUP BY name ORDER BY name",
+        ),
+        ordered(
+            "decimal average",
+            "SELECT AVG(score), AVG(id), AVG(active) FROM events",
+        ),
+        ordered(
+            "decimal average",
+            "SELECT active, AVG(score), COUNT(*) FROM events \
+             GROUP BY active ORDER BY active",
         ),
         ordered(
             "datetime helpers",

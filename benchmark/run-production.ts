@@ -111,6 +111,9 @@ async function startMysql(): Promise<{ host: string; port: number }> {
       const conn = await mysql.createConnection({
         host, port, user: 'root', password: 'pintail-root',
         multipleStatements: true, supportBigNumbers: true, bigNumberStrings: true,
+        // Text temporals: JS Date objects stringify with the local zone and
+        // drop fractional seconds, which breaks exact-result comparison.
+        dateStrings: true,
       })
       await conn.query('SELECT 1')
       mysqlConn = conn
@@ -165,7 +168,18 @@ async function startPintail(): Promise<void> {
     // Inherit rather than pipe: unread pipes hide every runtime error and
     // eventually fill and block the server's logging. This way pintail's
     // tracing lands in the runner's own output.
-    { cwd: repository, stdout: 'inherit', stderr: 'inherit' },
+    {
+      cwd: repository,
+      stdout: 'inherit',
+      stderr: 'inherit',
+      // Same per-query budget the main benchmark harness grants (and in the
+      // same ballpark as the 8g containers MySQL runs in); the 64MB default
+      // is a wire-protocol safety net, not a benchmark configuration.
+      env: {
+        ...process.env,
+        PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(4 * 1024 * 1024 * 1024),
+      },
+    },
   )
   for (let attempt = 0; attempt < 240; attempt += 1) {
     if (pintailProcess.exitCode !== null) {
@@ -351,7 +365,24 @@ async function runQuerySuite(
         runs: pintailTimes,
         ...summarize(pintailTimes),
       })
-      if (!exact) log(`RESULT MISMATCH on ${query.id}`)
+      if (!exact) {
+        log(`RESULT MISMATCH on ${query.id}`)
+        // Row-level evidence, or a mismatch is undebuggable after teardown.
+        const diffDir = join(workloadDir, 'results', 'diffs')
+        mkdirSync(diffDir, { recursive: true })
+        const left = normalizeRows(mysqlRows ?? []).split('\n')
+        const right = normalizeRows(pintailRows ?? []).split('\n')
+        const first = left.findIndex((line, index) => line !== right[index])
+        const at = first === -1 ? Math.min(left.length, right.length) : first
+        const window = (lines: string[]) =>
+          lines.slice(Math.max(0, at - 2), at + 8).join('\n')
+        writeFileSync(
+          join(diffDir, `${query.id}.txt`),
+          `rows mysql=${left.length} pintail=${right.length} first_diff_row=${at}\n` +
+            `--- mysql\n${window(left)}\n--- pintail\n${window(right)}\n`,
+        )
+        log(`  diff evidence: results/diffs/${query.id}.txt (first diff at row ${at})`)
+      }
     } catch (error) {
       const message = String(error)
       const unsupported = /unsupported|not\s+implemented|parse|syntax/i.test(message)

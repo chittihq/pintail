@@ -61,6 +61,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:distinct count and min max",
     "status": "PASS"
   },
@@ -201,6 +206,11 @@
   },
   {
     "phase": "crud",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:distinct count and min max",
     "status": "PASS"
   },
@@ -337,6 +347,11 @@
   {
     "phase": "type-edges",
     "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:conditional decimal sum keeps the fraction",
     "status": "PASS"
   },
   {
@@ -482,6 +497,11 @@
   {
     "phase": "ddl",
     "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:conditional decimal sum keeps the fraction",
     "status": "PASS"
   },
   {
@@ -657,8 +677,12 @@
   {
     "phase": "churn",
     "check": "query:group by with having",
-    "status": "WARN",
-    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -803,8 +827,12 @@
   {
     "phase": "restart",
     "check": "query:group by with having",
-    "status": "WARN",
-    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -1009,8 +1037,12 @@
   {
     "phase": "control-plane",
     "check": "query:group by with having",
-    "status": "WARN",
-    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -1157,8 +1189,12 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:group by with having",
-    "status": "WARN",
-    "detail": "DECIMAL AVG passes through Float64; exact half-cent averages can round differently\nrow 9:\n  mysql   28.0000 | 10.0000 | 369.1300\n  pintail 28.0000 | 10.0000 | 369.1200"
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
