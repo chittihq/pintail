@@ -1207,7 +1207,7 @@ fn evaluate_eager_scalar(
                     u8::try_from(input_scale).unwrap_or(30),
                 )
                 .ok_or(ExecError::NumericOverflow)?;
-                let drop = u32::try_from(i64::from(input_scale) - i64::from(render_scale))
+                let drop = u32::try_from(input_scale - i64::from(render_scale))
                     .unwrap_or(0)
                     .min(38);
                 let factor = 10_i128
