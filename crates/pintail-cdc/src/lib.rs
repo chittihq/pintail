@@ -57,7 +57,11 @@ impl CdcTarget {
     ///
     /// Returns an error when the store schema differs from the probed source.
     pub fn new(source: SourceTable, store: TableStore) -> Result<Self, CdcError> {
-        let expected = source.table_schema()?;
+        // Compare at the store's catalog generation: live DDL (ALTER,
+        // TRUNCATE) advances the durable schema version, and a version-1
+        // rebuild would reject every store that ever evolved even though
+        // the column layout still matches.
+        let expected = source.table_schema_with_version(store.schema().version())?;
         if store.schema() != &expected {
             return Err(CdcError::InvalidConfiguration(format!(
                 "store schema for {} does not match the probed source schema",

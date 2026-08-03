@@ -178,6 +178,89 @@ pub fn format_datetime_micros(micros: i64, fsp: u8) -> Option<String> {
     Some(text)
 }
 
+/// Parses decimal text into an integer scaled by `10^scale`, rounding excess
+/// fraction digits half away from zero the way `MySQL` rounds a decimal to a
+/// narrower scale. Unlike [`parse_decimal_scaled`], which rejects text that
+/// does not already fit the scale, this is the coercion used by casts,
+/// division, and `AVG`.
+#[must_use]
+pub fn parse_decimal_rounded(text: &str, scale: u8) -> Option<i128> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let (negative, rest) = match bytes[0] {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let mut magnitude: i128 = 0;
+    let mut fraction_digits: u8 = 0;
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+    let mut round_up = false;
+    for &byte in rest {
+        match byte {
+            b'0'..=b'9' => {
+                seen_digit = true;
+                if seen_dot && fraction_digits >= scale {
+                    if fraction_digits == scale {
+                        round_up = byte >= b'5';
+                    }
+                    fraction_digits = fraction_digits.checked_add(1)?;
+                    continue;
+                }
+                magnitude = magnitude
+                    .checked_mul(10)?
+                    .checked_add(i128::from(byte - b'0'))?;
+                if seen_dot {
+                    fraction_digits += 1;
+                }
+            }
+            b'.' if !seen_dot => seen_dot = true,
+            _ => return None,
+        }
+    }
+    if !seen_digit {
+        return None;
+    }
+    while fraction_digits < scale {
+        magnitude = magnitude.checked_mul(10)?;
+        fraction_digits += 1;
+    }
+    if round_up {
+        magnitude = magnitude.checked_add(1)?;
+    }
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// Divides two scaled integers, rounding half away from zero (`MySQL`
+/// decimal division). The numerator must already carry the result scale.
+#[must_use]
+pub fn div_decimal_round_half_up(numerator: i128, denominator: i128) -> Option<i128> {
+    if denominator == 0 {
+        return None;
+    }
+    let quotient = numerator.checked_div(denominator)?;
+    let remainder = numerator.checked_rem(denominator)?;
+    if remainder == 0 {
+        return Some(quotient);
+    }
+    let round = remainder
+        .unsigned_abs()
+        .checked_mul(2)
+        .is_some_and(|doubled| doubled >= denominator.unsigned_abs());
+    if !round {
+        return Some(quotient);
+    }
+    let step = if (numerator < 0) == (denominator < 0) {
+        1
+    } else {
+        -1
+    };
+    quotient.checked_add(step)
+}
+
 /// Formats an integer scaled by `10^scale` as canonical fixed-scale decimal
 /// text (the inverse of [`parse_decimal_scaled`] for canonical inputs):
 /// exactly `scale` fraction digits, no plus sign, no leading zeros beyond

@@ -1269,6 +1269,11 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
+    // Exact decimal coercion runs before the storage-type collapse: decimals
+    // store as canonical text, so collapsing first would lose the scale.
+    if let Some(DataType::Decimal { scale, .. }) = data_type {
+        return cast_decimal(value, scale);
+    }
     match data_type.map(DataType::storage_type) {
         None => Ok(Value::Null),
         Some(DataType::Boolean) => Ok(mysql_truth(value)?.map_or(Value::Null, Value::Boolean)),
@@ -1278,6 +1283,99 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         Some(DataType::Utf8) => Ok(Value::Utf8(scalar_string(value)?)),
         Some(DataType::Binary) => Ok(Value::Binary(scalar_string(value)?.into_bytes())),
         Some(_) => unreachable!("storage_type returns a physical scalar type"),
+    }
+}
+
+/// Decimal-typed division is exact: scaled i128 units with `MySQL`'s
+/// half-away-from-zero rounding at the widened result scale. Operands that
+/// cannot carry exact units (floats) fall through to the f64 path formatted
+/// at the declared scale, so the result type stays canonical.
+fn divide_decimal(left: &Value, right: &Value, target: u8) -> Result<Value, ExecError> {
+    if let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_units_of(left), decimal_units_of(right))
+    {
+        if right_units == 0 {
+            return Ok(Value::Null);
+        }
+        // value = (lu/10^ls) / (ru/10^rs); at the target scale the numerator
+        // carries 10^(target + rs - ls), which the binder's scale rule keeps
+        // non-negative.
+        let exponent = u32::from(target)
+            .checked_add(u32::from(right_scale))
+            .and_then(|sum| sum.checked_sub(u32::from(left_scale)));
+        let exact = exponent
+            .and_then(|exponent| 10_i128.checked_pow(exponent))
+            .and_then(|factor| left_units.checked_mul(factor))
+            .and_then(|numerator| pintail_types::div_decimal_round_half_up(numerator, right_units));
+        if let Some(units) = exact {
+            return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                units, target,
+            )));
+        }
+    }
+    let dividend = mysql_f64(left)?;
+    let divisor = mysql_f64(right)?;
+    if divisor == 0.0 {
+        return Ok(Value::Null);
+    }
+    cast_decimal(&Value::float64(dividend / divisor), target)
+}
+
+/// Coerces a value to canonical decimal text at `scale`, rounding half away
+/// from zero like `MySQL`. Floats format at the target scale first (their
+/// tie-rounding is the platform's, an accepted v1 edge).
+fn cast_decimal(value: &Value, scale: u8) -> Result<Value, ExecError> {
+    let units = match value {
+        Value::Utf8(text) => pintail_types::parse_decimal_rounded(text, scale),
+        Value::Boolean(flag) => decimal_units_from_i128(i128::from(*flag), scale),
+        Value::Int64(signed) => decimal_units_from_i128(i128::from(*signed), scale),
+        Value::UInt64(unsigned) => decimal_units_from_i128(i128::from(*unsigned), scale),
+        Value::Float64(_) => {
+            let float = mysql_f64(value)?;
+            if !float.is_finite() {
+                return Err(ExecError::NumericOverflow);
+            }
+            pintail_types::parse_decimal_rounded(
+                &format!(
+                    "{float:.precision$}",
+                    precision = usize::from(scale).saturating_add(1)
+                ),
+                scale,
+            )
+        }
+        Value::Binary(bytes) => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| pintail_types::parse_decimal_rounded(text, scale)),
+        Value::Null => return Ok(Value::Null),
+    };
+    units
+        .map(|units| Value::Utf8(pintail_types::format_decimal_scaled(units, scale)))
+        .ok_or(ExecError::NumericOverflow)
+}
+
+fn decimal_units_from_i128(value: i128, scale: u8) -> Option<i128> {
+    value.checked_mul(10_i128.checked_pow(u32::from(scale))?)
+}
+
+/// Splits a value into scaled integer units and the scale it naturally
+/// carries: canonical decimal text keeps its written fraction width,
+/// integers are scale zero. `None` for floats and non-numeric text.
+fn decimal_units_of(value: &Value) -> Option<(i128, u8)> {
+    match value {
+        Value::Utf8(text) => {
+            let fraction = text
+                .split_once('.')
+                .map_or(0, |(_, fraction)| fraction.len());
+            let scale = u8::try_from(fraction).ok()?;
+            if scale > 30 {
+                return None;
+            }
+            pintail_types::parse_decimal_scaled(text, scale).map(|units| (units, scale))
+        }
+        Value::Boolean(flag) => Some((i128::from(*flag), 0)),
+        Value::Int64(signed) => Some((i128::from(*signed), 0)),
+        Value::UInt64(unsigned) => Some((i128::from(*unsigned), 0)),
+        _ => None,
     }
 }
 
@@ -1553,6 +1651,11 @@ fn evaluate_arithmetic(
 ) -> Result<Value, ExecError> {
     if matches!(left, Value::Null) || matches!(right, Value::Null) {
         return Ok(Value::Null);
+    }
+    if let Some(DataType::Decimal { scale: target, .. }) = data_type
+        && op == BinaryOp::Divide
+    {
+        return divide_decimal(left, right, target);
     }
     match data_type.map(DataType::storage_type) {
         Some(DataType::Float64) => {

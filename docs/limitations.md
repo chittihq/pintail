@@ -54,10 +54,15 @@ plausible but incorrect result.
   special-case result that did not follow this behavior; that MySQL-only
   corner is excluded from the common-workload corpus.
 - Integer and floating arithmetic use Pintail's current `Int64`, `UInt64`,
-  and `Float64` execution types. `DECIMAL` values are stored losslessly, but
-  arithmetic and aggregate inputs currently pass through `Float64`; exact
-  fixed-point query arithmetic remains deferred. Numeric overflow returns an
-  error.
+  and `Float64` execution types. `DECIMAL` values are stored losslessly, and
+  the operations MySQL keeps exact over exact numerics are exact here too:
+  division (`/`) and `AVG` produce a DECIMAL widened by four fraction digits
+  with half-away-from-zero rounding, `SUM` accumulates scaled integers, and
+  CASE/IF/COALESCE branches that mix decimals with integers unify to a
+  decimal instead of truncating. Remaining gaps: `+`, `-`, `*` over decimals
+  still pass through `Float64`, and chained division (`a / b / c`) rounds
+  each step to its own result scale while MySQL carries extra unrounded
+  digits between steps. Numeric overflow returns an error.
 
 ### Planning and execution
 

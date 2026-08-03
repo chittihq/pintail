@@ -1308,6 +1308,8 @@ fn bind_binary(
         }
     };
 
+    let (left, right) = coerce_decimal_comparison(op, left, right);
+
     Ok(BoundExpr {
         nullable: left.nullable || right.nullable,
         data_type,
@@ -1317,6 +1319,44 @@ fn bind_binary(
             right: Box::new(right),
         },
     })
+}
+
+/// Decimal-vs-decimal comparisons: both sides carry canonical text at
+/// runtime, and the generic text comparison would order them lexically.
+/// Route them through the numeric carrier the way `MySQL` compares decimals
+/// as numbers (exact within f64's 15 significant digits).
+fn coerce_decimal_comparison(
+    op: BinaryOp,
+    left: BoundExpr,
+    right: BoundExpr,
+) -> (BoundExpr, BoundExpr) {
+    if matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) && matches!(left.data_type, Some(DataType::Decimal { .. }))
+        && matches!(right.data_type, Some(DataType::Decimal { .. }))
+    {
+        (cast_to_float(left), cast_to_float(right))
+    } else {
+        (left, right)
+    }
+}
+
+fn cast_to_float(expr: BoundExpr) -> BoundExpr {
+    let nullable = expr.nullable;
+    BoundExpr {
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(DataType::Float64),
+            args: vec![expr],
+        },
+        data_type: Some(DataType::Float64),
+        nullable,
+    }
 }
 
 fn bind_is_null(
@@ -1925,6 +1965,38 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             args.iter().any(|argument| argument.nullable),
         ),
     };
+    let mut args = args;
+    // A decimal-unified IF/COALESCE must also coerce its branch VALUES:
+    // integer branches would otherwise reach decimal-typed consumers (SUM,
+    // the wire layer) as raw integers and lose the declared scale.
+    if let Some(unified @ DataType::Decimal { .. }) = data_type
+        && matches!(function, ScalarFunction::If | ScalarFunction::Coalesce)
+    {
+        let first_value = usize::from(matches!(function, ScalarFunction::If));
+        for argument in args.iter_mut().skip(first_value) {
+            if argument.data_type != Some(unified)
+                && !matches!(argument.kind, BoundExprKind::Literal(Value::Null))
+            {
+                let nullable = argument.nullable;
+                let inner = std::mem::replace(
+                    argument,
+                    BoundExpr {
+                        kind: BoundExprKind::Literal(Value::Null),
+                        data_type: None,
+                        nullable: true,
+                    },
+                );
+                *argument = BoundExpr {
+                    kind: BoundExprKind::Scalar {
+                        function: ScalarFunction::Cast(unified),
+                        args: vec![inner],
+                    },
+                    data_type: Some(unified),
+                    nullable,
+                };
+            }
+        }
+    }
     Ok(BoundExpr {
         kind: BoundExprKind::Scalar { function, args },
         data_type,
@@ -1952,9 +2024,34 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
             .any(|data_type| matches!(data_type, DataType::Utf8 | DataType::Binary))
         {
             Ok(Some(DataType::Utf8))
-        } else if types.contains(&DataType::Float64)
-            || types.contains(&DataType::Int64) && types.contains(&DataType::UInt64)
+        } else if types
+            .iter()
+            .any(|data_type| matches!(data_type, DataType::Float32 | DataType::Float64))
         {
+            Ok(Some(DataType::Float64))
+        } else if types
+            .iter()
+            .any(|data_type| matches!(data_type, DataType::Decimal { .. }))
+        {
+            // MySQL keeps CASE/COALESCE branches exact when decimals mix
+            // with integers: unify to a decimal wide enough for every
+            // branch. Collapsing to an integer type truncated the fraction
+            // (2026-08-03 production-acceptance q01).
+            let mut scale: u8 = 0;
+            let mut integer_digits: u8 = 0;
+            for data_type in &types {
+                let (branch_scale, branch_integer) =
+                    exact_numeric_digits(*data_type).unwrap_or((0, 20));
+                scale = scale.max(branch_scale);
+                integer_digits = integer_digits.max(branch_integer);
+            }
+            Ok(Some(DataType::Decimal {
+                precision: integer_digits
+                    .saturating_add(scale)
+                    .min(MAX_DECIMAL_PRECISION),
+                scale,
+            }))
+        } else if types.contains(&DataType::Int64) && types.contains(&DataType::UInt64) {
             Ok(Some(DataType::Float64))
         } else if types.contains(&DataType::UInt64) {
             Ok(Some(DataType::UInt64))
@@ -2082,8 +2179,41 @@ fn aggregate_result_type(
     let input_type = expr.and_then(|expr| expr.data_type);
     match function {
         AggregateFunction::Count => Ok((Some(DataType::UInt64), false)),
-        AggregateFunction::Average if is_numeric(input_type) => Ok((Some(DataType::Float64), true)),
+        AggregateFunction::Average if is_numeric(input_type) => {
+            // MySQL AVG over exact numerics stays exact: DECIMAL widened by
+            // div_precision_increment fraction digits. Floats and text keep
+            // the double path.
+            let exact = input_type.and_then(exact_numeric_digits);
+            if let Some((scale, integer_digits)) = exact {
+                let result_scale = scale
+                    .saturating_add(DIVISION_SCALE_INCREMENT)
+                    .min(MAX_DECIMAL_SCALE);
+                Ok((
+                    Some(DataType::Decimal {
+                        precision: integer_digits
+                            .saturating_add(result_scale)
+                            .min(MAX_DECIMAL_PRECISION),
+                        scale: result_scale,
+                    }),
+                    true,
+                ))
+            } else {
+                Ok((Some(DataType::Float64), true))
+            }
+        }
         AggregateFunction::Sum if is_numeric(input_type) => {
+            // MySQL SUM over DECIMAL stays DECIMAL at the input's scale with
+            // widened precision; emitting Float64 here let display rounding
+            // diverge one ulp from MySQL in downstream divisions.
+            if let Some(DataType::Decimal { precision, scale }) = input_type {
+                return Ok((
+                    Some(DataType::Decimal {
+                        precision: precision.saturating_add(10).min(MAX_DECIMAL_PRECISION),
+                        scale,
+                    }),
+                    true,
+                ));
+            }
             let carrier = input_type.map(DataType::storage_type);
             let result = if carrier == Some(DataType::UInt64) {
                 DataType::UInt64
@@ -2146,30 +2276,79 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
     }
 }
 
+/// Fraction digits and integer digits an exact numeric type contributes to
+/// decimal result-type inference. `None` for types that are not exact
+/// numerics (floats, text, temporal).
+fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
+    match data_type {
+        DataType::Decimal { precision, scale } => Some((scale, precision.saturating_sub(scale))),
+        DataType::Boolean
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => Some((0, 20)),
+        _ => None,
+    }
+}
+
+/// `MySQL` `div_precision_increment` default: division and `AVG` widen the
+/// dividend's scale by four fraction digits.
+const DIVISION_SCALE_INCREMENT: u8 = 4;
+/// Pintail v1 decimal bounds (`DataType::is_valid`).
+const MAX_DECIMAL_SCALE: u8 = 30;
+const MAX_DECIMAL_PRECISION: u8 = 38;
+
+fn division_result_type(left: DataType, right: DataType) -> Option<DataType> {
+    let (left_scale, left_integer) = exact_numeric_digits(left)?;
+    let (right_scale, _) = exact_numeric_digits(right)?;
+    // MySQL: result scale is dividend scale + increment; the integer part
+    // can grow by the divisor's scale (dividing by a small fraction).
+    let scale = left_scale
+        .saturating_add(DIVISION_SCALE_INCREMENT)
+        .min(MAX_DECIMAL_SCALE);
+    let precision = left_integer
+        .saturating_add(right_scale)
+        .saturating_add(scale)
+        .min(MAX_DECIMAL_PRECISION);
+    Some(DataType::Decimal { precision, scale })
+}
+
 fn arithmetic_type(
     op: BinaryOp,
     left: Option<DataType>,
     right: Option<DataType>,
 ) -> Option<DataType> {
-    if left.is_none() || right.is_none() {
+    let (Some(left), Some(right)) = (left, right) else {
         return None;
-    }
-    // DECIMAL arithmetic currently passes through Float64 (limitations.md);
-    // routing it to an integer arm would truncate the fraction.
+    };
+    // Division over exact numerics follows MySQL decimal semantics: the
+    // result is a DECIMAL widened by div_precision_increment, evaluated
+    // exactly. Everything else with a decimal operand still passes through
+    // Float64 (limitations.md); routing it to an integer arm would truncate
+    // the fraction.
     if op == BinaryOp::Divide
-        || left == Some(DataType::Float64)
-        || right == Some(DataType::Float64)
+        && let Some(result) = division_result_type(left, right)
+    {
+        return Some(result);
+    }
+    if op == BinaryOp::Divide
+        || left == DataType::Float64
+        || right == DataType::Float64
         || matches!(
             left,
-            Some(DataType::Utf8 | DataType::Binary | DataType::Decimal { .. } | DataType::Float32)
+            DataType::Utf8 | DataType::Binary | DataType::Decimal { .. } | DataType::Float32
         )
         || matches!(
             right,
-            Some(DataType::Utf8 | DataType::Binary | DataType::Decimal { .. } | DataType::Float32)
+            DataType::Utf8 | DataType::Binary | DataType::Decimal { .. } | DataType::Float32
         )
     {
         Some(DataType::Float64)
-    } else if left == Some(DataType::UInt64) && right == Some(DataType::UInt64) {
+    } else if left == DataType::UInt64 && right == DataType::UInt64 {
         Some(DataType::UInt64)
     } else {
         Some(DataType::Int64)
@@ -2291,6 +2470,10 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                 index,
                 ascending,
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
+                decimal: matches!(
+                    bound.projection.get(index).and_then(|p| p.expr.data_type),
+                    Some(DataType::Decimal { .. })
+                ),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -2819,11 +3002,13 @@ mod tests {
                     index: 0,
                     ascending: false,
                     nulls_first: false,
+                    decimal: false,
                 },
                 crate::BoundOrderKey {
                     index: 1,
                     ascending: true,
                     nulls_first: true,
+                    decimal: false,
                 },
             ]
         );
@@ -3000,8 +3185,23 @@ mod tests {
     fn decimal_aggregates_use_the_numeric_executor_carrier() {
         let query = bind("SELECT SUM(amount), AVG(amount) FROM payments").expect("decimal bind");
 
-        assert_eq!(query.aggregates[0].data_type, Some(DataType::Float64));
-        assert_eq!(query.aggregates[1].data_type, Some(DataType::Float64));
+        // SUM over DECIMAL stays DECIMAL at the input scale with widened
+        // precision; AVG follows MySQL and widens the decimal by four
+        // fraction digits (amount is DECIMAL(10,2)).
+        assert_eq!(
+            query.aggregates[0].data_type,
+            Some(DataType::Decimal {
+                precision: 22,
+                scale: 2
+            })
+        );
+        assert_eq!(
+            query.aggregates[1].data_type,
+            Some(DataType::Decimal {
+                precision: 16,
+                scale: 6
+            })
+        );
     }
 
     #[test]

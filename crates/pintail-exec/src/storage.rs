@@ -2418,10 +2418,12 @@ mod tests {
         );
         let shares = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
         // Partition a: ids 1,2 (sum 3); partition b: ids 3,4,5 (sum 12).
-        assert_eq!(shares[0], Value::float64(100.0 / 3.0));
-        assert_eq!(shares[1], Value::float64(200.0 / 3.0));
-        assert_eq!(shares[2], Value::float64(25.0));
-        assert_eq!(shares[4], Value::float64(500.0 / 12.0));
+        // Integer division is MySQL DECIMAL: scale widened by four, rounded
+        // half away from zero.
+        assert_eq!(shares[0], Value::Utf8("33.3333".to_owned()));
+        assert_eq!(shares[1], Value::Utf8("66.6667".to_owned()));
+        assert_eq!(shares[2], Value::Utf8("25.0000".to_owned()));
+        assert_eq!(shares[4], Value::Utf8("41.6667".to_owned()));
     }
 
     #[test]
@@ -2443,13 +2445,13 @@ mod tests {
                 vec![
                     Value::Utf8("a".to_owned()),
                     Value::UInt64(3),
-                    Value::float64(20.0),
+                    Value::Utf8("20.0000".to_owned()),
                     Value::UInt64(2),
                 ],
                 vec![
                     Value::Utf8("b".to_owned()),
                     Value::UInt64(12),
-                    Value::float64(80.0),
+                    Value::Utf8("80.0000".to_owned()),
                     Value::UInt64(1),
                 ],
             ]
@@ -2842,7 +2844,7 @@ mod tests {
             assert_eq!(row[2], Value::Int64(2000), "SUM(amount)");
             assert_eq!(row[3], Value::Int64(2), "MIN(amount)");
             assert_eq!(row[4], Value::Int64(4), "MAX(amount)");
-            assert_eq!(row[5], Value::float64(1000.0), "SUM(price)");
+            assert_eq!(row[5], Value::Utf8("1000.00".to_owned()), "SUM(price)");
             assert_eq!(row[6], Value::Utf8("0.75".to_owned()), "MIN(price)");
             assert_eq!(row[7], Value::Utf8("1.25".to_owned()), "MAX(price)");
         };
@@ -2883,7 +2885,7 @@ mod tests {
         assert_eq!(during_ingest[1], Value::UInt64(751));
         assert_eq!(during_ingest[2], Value::Int64(2010));
         assert_eq!(during_ingest[4], Value::Int64(10), "MAX sees the new row");
-        assert_eq!(during_ingest[5], Value::float64(1002.0));
+        assert_eq!(during_ingest[5], Value::Utf8("1002.00".to_owned()));
         assert_eq!(during_ingest[7], Value::Utf8("2.00".to_owned()));
         // An update of an EXISTING key overlaps the segment key space: the
         // fold must refuse (merge-on-read overlay) and the scan stays exact.

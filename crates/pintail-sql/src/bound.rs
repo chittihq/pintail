@@ -384,6 +384,9 @@ pub struct BoundOrderKey {
     pub ascending: bool,
     /// Whether NULL values appear before non-NULL values.
     pub nulls_first: bool,
+    /// Whether the key is DECIMAL-typed: canonical decimal text must order
+    /// numerically, not lexically.
+    pub decimal: bool,
 }
 
 /// One comma-separated `FROM` item and its left-deep explicit join chain.
