@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-03T18:42:22.330Z.
+Measured 2026-08-03T19:09:35.343Z.
 
-**252 passed, 3 failed, 2 documented-gap warnings.**
+**253 passed, 2 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -205,7 +205,7 @@ Measured 2026-08-03T18:42:22.330Z.
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
-| control-plane | converge:keyless_log | FAIL | row count 4 vs 8 |
+| control-plane | converge:keyless_log | FAIL | pintail query failed: Error: unknown table e2e_db.keyless_log |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
@@ -236,7 +236,7 @@ Measured 2026-08-03T18:42:22.330Z.
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
-| ddl-documented-gaps | converge:keyless_log | FAIL | row count 4 vs 8 |
+| ddl-documented-gaps | converge:keyless_log | PASS |  |
 | ddl-documented-gaps | converge:order_items | WARN | row 0: |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |

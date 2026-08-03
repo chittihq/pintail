@@ -999,7 +999,7 @@
     "phase": "control-plane",
     "check": "converge:keyless_log",
     "status": "FAIL",
-    "detail": "row count 4 vs 8"
+    "detail": "pintail query failed: Error: unknown table e2e_db.keyless_log"
   },
   {
     "phase": "control-plane",
@@ -1155,8 +1155,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:keyless_log",
-    "status": "FAIL",
-    "detail": "row count 4 vs 8"
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",

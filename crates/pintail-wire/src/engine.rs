@@ -133,6 +133,12 @@ impl ReplicaEngine {
             }
         };
         record(&self.metadata_path);
+        // Metadata writes land in SQLite's WAL, not the main file — without
+        // it a replica cached between a table's files appearing and its
+        // metadata rows committing stays stale until unrelated data churn.
+        let mut wal = self.metadata_path.as_os_str().to_owned();
+        wal.push("-wal");
+        record(Path::new(&wal));
         let tables_root = self
             .data_dir
             .join("databases")
