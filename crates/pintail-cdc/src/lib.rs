@@ -32,7 +32,9 @@ use mysql_async::{
 };
 use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
 use pintail_probe::{ProbeReport, SourceFlavor, SourceTable, probe as probe_source};
-use pintail_snapshot::{SnapshotError, SnapshotOptions, SnapshotTarget, run_snapshot};
+use pintail_snapshot::{
+    SnapshotError, SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot,
+};
 use pintail_store::{StoreError, StoreOptions, TableStore};
 use pintail_types::{KeyMode, SchemaError, StoredRow};
 use serde_json::json;
@@ -1005,12 +1007,25 @@ async fn apply_ddl_actions(
                 let index = targets.len();
                 targets.push(target);
                 target_indexes.insert(table.to_ascii_lowercase(), index);
-                if let Some(checkpoint) = metadata.snapshot_checkpoint(database_id)?
-                    && let (Some(file), Some(fence_position)) =
-                        (checkpoint.binlog_file, checkpoint.binlog_pos)
-                {
-                    // Durable: each supervisor cadence is a fresh runner, so
-                    // an in-memory fence alone would replay next cycle.
+                // The fence must be THIS snapshot's consistent position —
+                // the stored database checkpoint still holds the original
+                // snapshot's (insert-if-absent semantics) and would fence
+                // nothing. Durable because each supervisor cadence is a
+                // fresh runner: an in-memory fence alone would replay the
+                // next cycle.
+                let fence = match &snapshot.position {
+                    SnapshotPosition::Gtid {
+                        file: Some(file),
+                        position: Some(fence_position),
+                        ..
+                    } => Some((file.clone(), *fence_position)),
+                    SnapshotPosition::FilePosition {
+                        file,
+                        position: fence_position,
+                    } => Some((file.clone(), *fence_position)),
+                    SnapshotPosition::Gtid { .. } | SnapshotPosition::Unavailable => None,
+                };
+                if let Some((file, fence_position)) = fence {
                     metadata.set_setting(
                         &fence_key(database_id, &table.to_ascii_lowercase()),
                         &format!("{file}:{fence_position}"),
