@@ -12,3 +12,5 @@ GOAL.md
 /tests/browser/artifacts/
 /tests/browser/node_modules/
 /benchmark/workloads/commerce-production-v1/results/diffs/
+/tests/e2e/results-partial.json
+/tests/e2e/results-partial.md

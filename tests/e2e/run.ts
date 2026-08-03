@@ -1071,8 +1071,12 @@ function publish() {
     ),
     '',
   ]
-  writeFileSync(join(import.meta.dir, 'results.md'), lines.join('\n'))
-  writeFileSync(join(import.meta.dir, 'results.json'), JSON.stringify(results, null, 2))
+  // Phase-subset runs write a separate artifact so an iteration loop never
+  // overwrites the committed full-gate record.
+  const partial = Boolean(process.env.E2E_PHASES)
+  const suffix = partial ? '-partial' : ''
+  writeFileSync(join(import.meta.dir, `results${suffix}.md`), lines.join('\n'))
+  writeFileSync(join(import.meta.dir, `results${suffix}.json`), JSON.stringify(results, null, 2))
   log(`gate: ${failed.length === 0 ? 'PASS' : 'FAIL'} (${passed.length} passed, ${failed.length} failed, ${warned.length} warned)`)
   for (const failure of failed) {
     log(`  FAIL ${failure.phase}/${failure.check}: ${failure.detail?.split('\n')[0]}`)
