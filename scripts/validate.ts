@@ -246,6 +246,36 @@ async function main() {
 
     for (const stage of STAGES) {
       if (!requested.includes(stage.name)) continue
+      // Earlier stages write harness artifacts (the e2e gate rewrites its
+      // results ledger), and the benchmark refuses dirty trees. When the
+      // only dirt is a known harness artifact, commit it so the bench
+      // still measures exactly one commit; any other dirt still aborts.
+      if (stage.name === 'bench') {
+        const HARNESS_ARTIFACTS = ['tests/e2e/results.md']
+        const midRunDirty = await run(['git', 'status', '--porcelain'])
+        const dirtyPaths = midRunDirty.output
+          .trim()
+          .split('\n')
+          .filter((line) => line.trim().length > 0)
+          .map((line) => line.slice(3))
+        if (dirtyPaths.length > 0) {
+          const onlyArtifacts = dirtyPaths.every((path) =>
+            HARNESS_ARTIFACTS.some((artifact) => path === artifact || path.startsWith('tests/e2e/results-partial')))
+          if (!onlyArtifacts) {
+            status('ABORT before bench: working tree has non-harness changes — commit first')
+            results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
+            break
+          }
+          await run(['git', 'add', ...dirtyPaths])
+          const committed = await run(['git', 'commit', '-m', 'e2e: bank gate artifacts from validate.ts run'])
+          if (committed.code !== 0) {
+            status('ABORT before bench: could not commit harness artifacts')
+            results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'artifact commit failed' })
+            break
+          }
+          status('bench: committed harness artifacts so the tree matches one commit')
+        }
+      }
       if (stage.remote) {
         const problem = await dockerHostPreflight()
         if (problem) {
