@@ -266,6 +266,14 @@ fn information_columns(catalog: &CatalogSnapshot) -> MetadataResult {
         for table in database.tables() {
             for (index, column) in table.schema().columns().iter().enumerate() {
                 let column_type = mysql_type(column.data_type());
+                // PRI marks physical key membership the way DBeaver-class
+                // tools expect; auto_increment and secondary indexes are
+                // not in the catalog yet.
+                let key = if table.key_column_ids().contains(&column.id()) {
+                    "PRI"
+                } else {
+                    ""
+                };
                 rows.push(vec![
                     utf8("def"),
                     utf8(database.name()),
@@ -276,7 +284,7 @@ fn information_columns(catalog: &CatalogSnapshot) -> MetadataResult {
                     utf8(if column.is_nullable() { "YES" } else { "NO" }),
                     utf8(mysql_data_type(column.data_type())),
                     utf8(&column_type),
-                    utf8(""),
+                    utf8(key),
                     utf8(""),
                 ]);
             }
