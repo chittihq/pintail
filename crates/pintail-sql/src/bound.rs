@@ -154,6 +154,41 @@ pub enum ScalarFunction {
     Ceil,
     /// `FLOOR(x)`.
     Floor,
+    /// `ABS(x)`: exact for integers and decimals, f64 otherwise. `decimal`
+    /// marks a canonical-decimal-text operand whose sign strips exactly.
+    Abs {
+        /// Whether the operand is DECIMAL-typed canonical text.
+        decimal: bool,
+    },
+    /// `SIGN(x)`: -1, 0, or 1 as an integer.
+    Sign,
+    /// `POWER(base, exponent)` / `POW`.
+    Power,
+    /// `SQRT(x)`: NULL for negative input, like `MySQL`.
+    Sqrt,
+    /// `EXP(x)`.
+    Exp,
+    /// `LN(x)` / single-argument `LOG(x)`: NULL for non-positive input.
+    Ln,
+    /// `LOG(base, x)`: NULL outside the valid domain.
+    LogBase,
+    /// `LOG2(x)`.
+    Log2,
+    /// `LOG10(x)`.
+    Log10,
+    /// `TRUNCATE(x, digits)`: toward zero at the given precision.
+    Truncate,
+    /// `GREATEST(...)`; `decimal` selects numeric comparison for canonical
+    /// decimal text operands.
+    Greatest {
+        /// Whether operands unified to DECIMAL and compare numerically.
+        decimal: bool,
+    },
+    /// `LEAST(...)`; see [`ScalarFunction::Greatest`].
+    Least {
+        /// Whether operands unified to DECIMAL and compare numerically.
+        decimal: bool,
+    },
     /// `TIMESTAMPDIFF(unit, from, to)`: complete units from `from` to
     /// `to`, truncated toward zero, matching `MySQL`.
     TimestampDiff {

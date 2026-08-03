@@ -1321,6 +1321,22 @@ fn bind_binary(
     })
 }
 
+/// `MOD(a, b)` is the `%` operator spelled as a function.
+fn bind_modulo(mut args: Vec<BoundExpr>) -> BoundExpr {
+    let right = args.pop().expect("two arguments");
+    let left = args.pop().expect("two arguments");
+    let data_type = arithmetic_type(BinaryOp::Modulo, left.data_type, right.data_type);
+    BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type,
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::Modulo,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    }
+}
+
 /// Decimal-vs-decimal comparisons: both sides carry canonical text at
 /// runtime, and the generic text comparison would order them lexically.
 /// Route them through the numeric carrier the way `MySQL` compares decimals
@@ -1570,6 +1586,26 @@ fn bind_scalar_function(
         "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round,
         "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil,
         "FLOOR" if args.len() == 1 => ScalarFunction::Floor,
+        "ABS" if args.len() == 1 => ScalarFunction::Abs {
+            decimal: matches!(args[0].data_type, Some(DataType::Decimal { .. })),
+        },
+        "SIGN" if args.len() == 1 => ScalarFunction::Sign,
+        "POW" | "POWER" if args.len() == 2 => ScalarFunction::Power,
+        "SQRT" if args.len() == 1 => ScalarFunction::Sqrt,
+        "EXP" if args.len() == 1 => ScalarFunction::Exp,
+        "LN" | "LOG" if args.len() == 1 => ScalarFunction::Ln,
+        "LOG" if args.len() == 2 => ScalarFunction::LogBase,
+        "LOG2" if args.len() == 1 => ScalarFunction::Log2,
+        "LOG10" if args.len() == 1 => ScalarFunction::Log10,
+        "TRUNCATE" if args.len() == 2 => ScalarFunction::Truncate,
+        "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
+            decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
+        },
+        "LEAST" if args.len() >= 2 => ScalarFunction::Least {
+            decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
+        },
+        // MOD(a, b) is the % operator spelled as a function.
+        "MOD" if args.len() == 2 => return Ok(bind_modulo(args)),
         "NOW" if args.is_empty() => ScalarFunction::Now,
         "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
         "DATE" if args.len() == 1 => ScalarFunction::Date,
@@ -1943,6 +1979,37 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             Some(DataType::Float64),
             args.iter().any(|argument| argument.nullable),
         ),
+        ScalarFunction::Abs { .. } => (
+            // Exact numerics keep their type; everything else takes the f64
+            // carrier like the other math scalars.
+            match args[0].data_type.map(DataType::storage_type) {
+                Some(DataType::Int64) => Some(DataType::Int64),
+                Some(DataType::UInt64) => Some(DataType::UInt64),
+                _ if matches!(args[0].data_type, Some(DataType::Decimal { .. })) => {
+                    args[0].data_type
+                }
+                _ => Some(DataType::Float64),
+            },
+            args[0].nullable,
+        ),
+        ScalarFunction::Sign => (Some(DataType::Int64), args[0].nullable),
+        ScalarFunction::Power
+        | ScalarFunction::Sqrt
+        | ScalarFunction::Exp
+        | ScalarFunction::Ln
+        | ScalarFunction::LogBase
+        | ScalarFunction::Log2
+        | ScalarFunction::Log10
+        | ScalarFunction::Truncate => (
+            // MySQL returns NULL outside a function's domain (SQRT of a
+            // negative, logs of non-positives), so these stay nullable.
+            Some(DataType::Float64),
+            true,
+        ),
+        ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. } => (
+            common_result_type(&args)?,
+            args.iter().any(|argument| argument.nullable),
+        ),
         ScalarFunction::TimestampDiff { .. } => (
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
@@ -1966,42 +2033,58 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         ),
     };
     let mut args = args;
-    // A decimal-unified IF/COALESCE must also coerce its branch VALUES:
-    // integer branches would otherwise reach decimal-typed consumers (SUM,
-    // the wire layer) as raw integers and lose the declared scale.
-    if let Some(unified @ DataType::Decimal { .. }) = data_type
-        && matches!(function, ScalarFunction::If | ScalarFunction::Coalesce)
-    {
-        let first_value = usize::from(matches!(function, ScalarFunction::If));
-        for argument in args.iter_mut().skip(first_value) {
-            if argument.data_type != Some(unified)
-                && !matches!(argument.kind, BoundExprKind::Literal(Value::Null))
-            {
-                let nullable = argument.nullable;
-                let inner = std::mem::replace(
-                    argument,
-                    BoundExpr {
-                        kind: BoundExprKind::Literal(Value::Null),
-                        data_type: None,
-                        nullable: true,
-                    },
-                );
-                *argument = BoundExpr {
-                    kind: BoundExprKind::Scalar {
-                        function: ScalarFunction::Cast(unified),
-                        args: vec![inner],
-                    },
-                    data_type: Some(unified),
-                    nullable,
-                };
-            }
-        }
-    }
+    coerce_decimal_branches(function, data_type, &mut args);
     Ok(BoundExpr {
         kind: BoundExprKind::Scalar { function, args },
         data_type,
         nullable,
     })
+}
+
+/// A decimal-unified IF/COALESCE/GREATEST/LEAST must also coerce its branch
+/// VALUES: integer branches would otherwise reach decimal-typed consumers
+/// (SUM, the wire layer) as raw integers and lose the declared scale.
+fn coerce_decimal_branches(
+    function: ScalarFunction,
+    data_type: Option<DataType>,
+    args: &mut [BoundExpr],
+) {
+    let Some(unified @ DataType::Decimal { .. }) = data_type else {
+        return;
+    };
+    if !matches!(
+        function,
+        ScalarFunction::If
+            | ScalarFunction::Coalesce
+            | ScalarFunction::Greatest { .. }
+            | ScalarFunction::Least { .. }
+    ) {
+        return;
+    }
+    let first_value = usize::from(matches!(function, ScalarFunction::If));
+    for argument in args.iter_mut().skip(first_value) {
+        if argument.data_type != Some(unified)
+            && !matches!(argument.kind, BoundExprKind::Literal(Value::Null))
+        {
+            let nullable = argument.nullable;
+            let inner = std::mem::replace(
+                argument,
+                BoundExpr {
+                    kind: BoundExprKind::Literal(Value::Null),
+                    data_type: None,
+                    nullable: true,
+                },
+            );
+            *argument = BoundExpr {
+                kind: BoundExprKind::Scalar {
+                    function: ScalarFunction::Cast(unified),
+                    args: vec![inner],
+                },
+                data_type: Some(unified),
+                nullable,
+            };
+        }
+    }
 }
 
 fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {

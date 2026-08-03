@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 633;
+const EXPECTED_CASES: usize = 639;
 
 struct OracleCase {
     family: &'static str,
@@ -909,6 +909,36 @@ fn hand_written_cases() -> Vec<OracleCase> {
             // unrounded internal digits between the two divisions
             // (docs/limitations.md); single divisions are exact.
             "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        ordered(
+            "numeric scalars",
+            "SELECT id, ABS(CAST(id AS SIGNED) - 5), SIGN(CAST(id AS SIGNED) - 5), \
+             ABS(0 - score / 7) FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric scalars",
+            "SELECT id, POWER(id, 2), ROUND(SQRT(score), 6), ROUND(EXP(id / 100), 6) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric scalars",
+            "SELECT ROUND(LN(score), 6), ROUND(LOG(2, score), 6), ROUND(LOG2(score), 6), \
+             ROUND(LOG10(score), 6), LN(0), SQRT(0 - 1), LOG(1, 5) FROM events WHERE id = 4",
+        ),
+        ordered(
+            "numeric scalars",
+            "SELECT id, TRUNCATE(score / 7, 2), MOD(score, 7), score % 7, MOD(score, 0) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric scalars",
+            "SELECT id, GREATEST(id, score, 25), LEAST(id, score, 25), \
+             GREATEST(score / 7, id), LEAST(name, note), GREATEST('10', '9') \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric scalars",
+            "SELECT id, IFNULL(note, 'none'), IFNULL(NULL, id) FROM events ORDER BY id",
         ),
         ordered(
             "decimal ordering",

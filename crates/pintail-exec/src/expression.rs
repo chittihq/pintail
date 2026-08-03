@@ -684,7 +684,21 @@ impl CompiledExpr {
                     | ScalarFunction::Round
                     | ScalarFunction::Ceil
                     | ScalarFunction::Floor
+                    | ScalarFunction::Sign
+                    | ScalarFunction::Power
+                    | ScalarFunction::Sqrt
+                    | ScalarFunction::Exp
+                    | ScalarFunction::Ln
+                    | ScalarFunction::LogBase
+                    | ScalarFunction::Log2
+                    | ScalarFunction::Log10
+                    | ScalarFunction::Truncate
                     | ScalarFunction::TimestampDiff { .. } => 0,
+                    // Decimal text results are bounded by precision 38 plus
+                    // sign and point.
+                    ScalarFunction::Abs { .. }
+                    | ScalarFunction::Greatest { .. }
+                    | ScalarFunction::Least { .. } => 48,
                 };
                 argument_memory.saturating_add(output)
             }
@@ -751,7 +765,19 @@ impl CompiledExpr {
                     | ScalarFunction::Round
                     | ScalarFunction::Ceil
                     | ScalarFunction::Floor
+                    | ScalarFunction::Sign
+                    | ScalarFunction::Power
+                    | ScalarFunction::Sqrt
+                    | ScalarFunction::Exp
+                    | ScalarFunction::Ln
+                    | ScalarFunction::LogBase
+                    | ScalarFunction::Log2
+                    | ScalarFunction::Log10
+                    | ScalarFunction::Truncate
                     | ScalarFunction::TimestampDiff { .. } => 24,
+                    ScalarFunction::Abs { .. }
+                    | ScalarFunction::Greatest { .. }
+                    | ScalarFunction::Least { .. } => 48,
                 }
             }
         }
@@ -1004,6 +1030,108 @@ fn evaluate_eager_scalar(
         ScalarFunction::InList { negated } => evaluate_in_list(values, negated),
         ScalarFunction::Between { negated } => evaluate_between(values, negated),
         ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
+        ScalarFunction::Abs { decimal } => match &values[0] {
+            Value::Int64(signed) => signed
+                .checked_abs()
+                .map(Value::Int64)
+                .ok_or(ExecError::NumericOverflow),
+            Value::UInt64(unsigned) => Ok(Value::UInt64(*unsigned)),
+            Value::Utf8(text) if decimal => Ok(Value::Utf8(
+                text.strip_prefix('-').unwrap_or(text).to_owned(),
+            )),
+            value => Ok(Value::float64(mysql_f64(value)?.abs())),
+        },
+        ScalarFunction::Sign => {
+            let value = mysql_f64(&values[0])?;
+            Ok(Value::Int64(if value > 0.0 {
+                1
+            } else if value < 0.0 {
+                -1
+            } else {
+                0
+            }))
+        }
+        ScalarFunction::Power => {
+            let result = mysql_f64(&values[0])?.powf(mysql_f64(&values[1])?);
+            if result.is_finite() {
+                Ok(Value::float64(result))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
+        ScalarFunction::Sqrt => {
+            let value = mysql_f64(&values[0])?;
+            // MySQL returns NULL outside the domain instead of erroring.
+            if value < 0.0 {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::float64(value.sqrt()))
+            }
+        }
+        ScalarFunction::Exp => {
+            let result = mysql_f64(&values[0])?.exp();
+            if result.is_finite() {
+                Ok(Value::float64(result))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
+        ScalarFunction::Ln | ScalarFunction::Log2 | ScalarFunction::Log10 => {
+            let value = mysql_f64(&values[0])?;
+            if value <= 0.0 {
+                return Ok(Value::Null);
+            }
+            Ok(Value::float64(match function {
+                ScalarFunction::Ln => value.ln(),
+                ScalarFunction::Log2 => value.log2(),
+                _ => value.log10(),
+            }))
+        }
+        ScalarFunction::LogBase => {
+            let base = mysql_f64(&values[0])?;
+            let value = mysql_f64(&values[1])?;
+            if base <= 0.0 || (base - 1.0).abs() < f64::EPSILON || value <= 0.0 {
+                return Ok(Value::Null);
+            }
+            Ok(Value::float64(value.log(base)))
+        }
+        ScalarFunction::Truncate => {
+            let value = mysql_f64(&values[0])?;
+            let digits = mysql_i64(&values[1])?.clamp(-30, 30);
+            let factor = 10_f64.powi(i32::try_from(digits).expect("clamped to i32 range"));
+            let truncated = (value * factor).trunc() / factor;
+            if truncated.is_finite() {
+                Ok(Value::float64(truncated))
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
+        ScalarFunction::Greatest { decimal } | ScalarFunction::Least { decimal } => {
+            let greatest = matches!(function, ScalarFunction::Greatest { .. });
+            let mut best: Option<&Value> = None;
+            for value in values {
+                if matches!(value, Value::Null) {
+                    // MySQL: NULL poisons GREATEST/LEAST.
+                    return Ok(Value::Null);
+                }
+                best = Some(match best {
+                    None => value,
+                    Some(current) => {
+                        let ordering = if decimal {
+                            compare_decimal_values(value, current)?
+                        } else {
+                            compare_mysql(value, current)?
+                        };
+                        if (ordering == Ordering::Greater) == greatest {
+                            value
+                        } else {
+                            current
+                        }
+                    }
+                });
+            }
+            Ok(best.cloned().unwrap_or(Value::Null))
+        }
         ScalarFunction::Round => {
             let value = mysql_f64(&values[0])?;
             let decimals = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
@@ -1355,6 +1483,28 @@ fn cast_decimal(value: &Value, scale: u8) -> Result<Value, ExecError> {
 
 fn decimal_units_from_i128(value: i128, scale: u8) -> Option<i128> {
     value.checked_mul(10_i128.checked_pow(u32::from(scale))?)
+}
+
+/// Compares two decimal-typed operands numerically on scaled units,
+/// falling back to the f64 carrier when a value cannot carry exact units.
+fn compare_decimal_values(left: &Value, right: &Value) -> Result<Ordering, ExecError> {
+    if let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_units_of(left), decimal_units_of(right))
+    {
+        let common = left_scale.max(right_scale);
+        let rescale = |units: i128, scale: u8| {
+            10_i128
+                .checked_pow(u32::from(common - scale))
+                .and_then(|factor| units.checked_mul(factor))
+        };
+        if let (Some(left), Some(right)) = (
+            rescale(left_units, left_scale),
+            rescale(right_units, right_scale),
+        ) {
+            return Ok(left.cmp(&right));
+        }
+    }
+    Ok(mysql_f64(left)?.total_cmp(&mysql_f64(right)?))
 }
 
 /// Splits a value into scaled integer units and the scale it naturally
