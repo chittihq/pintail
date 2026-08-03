@@ -327,20 +327,41 @@ impl<'catalog> Binder<'catalog> {
         if !simple {
             return Err(unsupported());
         }
-        let inner_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
         if tables.iter().any(|existing| {
             existing
                 .relation_name
-                .eq_ignore_ascii_case(&inner_table.relation_name)
+                .eq_ignore_ascii_case(&probe_table.relation_name)
         }) {
             return Err(unsupported());
         }
-        tables.push(inner_table.clone());
         let Some(selection) = &inner.selection else {
-            tables.pop();
             return Err(unsupported());
         };
-        let condition = bind_expr(selection, tables, None).map_err(|_| {
+        // Conjuncts that bind against the inner table alone stay inside a
+        // derived filtered input; exactly one leftover conjunct must be the
+        // correlation equality.
+        let probe_scope = vec![probe_table.clone()];
+        let mut inner_only: Vec<&Expr> = Vec::new();
+        let mut correlated: Vec<&Expr> = Vec::new();
+        for conjunct in split_and_conjuncts(selection) {
+            if bind_expr(conjunct, &probe_scope, None).is_ok() {
+                inner_only.push(conjunct);
+            } else {
+                correlated.push(conjunct);
+            }
+        }
+        let [correlation] = correlated.as_slice() else {
+            return Err(unsupported());
+        };
+        let inner_table = if inner_only.is_empty() {
+            probe_table
+        } else {
+            self.filtered_join_input(subquery, &probe_table, &inner_only, ctes)
+                .ok_or_else(unsupported)?
+        };
+        tables.push(inner_table.clone());
+        let condition = bind_expr(correlation, tables, None).map_err(|_| {
             tables.pop();
             unsupported()
         })?;
@@ -377,6 +398,40 @@ impl<'catalog> Binder<'catalog> {
             condition: Some(condition),
         });
         Ok(())
+    }
+
+    /// Rebinds a decorrelated subquery as a derived relation that keeps its
+    /// inner-only conjuncts as a filter, exposing every inner column under
+    /// the original relation name so the correlation equality still binds.
+    fn filtered_join_input(
+        &self,
+        subquery: &Query,
+        probe_table: &BoundTable,
+        inner_only: &[&Expr],
+        ctes: &[BoundCte],
+    ) -> Option<BoundTable> {
+        let filter = inner_only
+            .iter()
+            .map(|conjunct| (*conjunct).clone())
+            .reduce(|left, right| Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::And,
+                right: Box::new(right),
+            })?;
+        let mut derived_query = subquery.clone();
+        let SetExpr::Select(derived_select) = derived_query.body.as_mut() else {
+            return None;
+        };
+        derived_select.projection =
+            vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())];
+        derived_select.selection = Some(filter);
+        let input = self.bind_query(&derived_query, ctes).ok()?;
+        Some(self.bind_derived_table(
+            probe_table.relation_name.clone(),
+            probe_table.relation_name.clone(),
+            &[],
+            input,
+        ))
     }
 
     fn bind_from(

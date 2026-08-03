@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 691;
+const EXPECTED_CASES: usize = 695;
 
 struct OracleCase {
     family: &'static str,
@@ -1052,6 +1052,31 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "exists subqueries",
             "SELECT e.id, e.score FROM events e \
              WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = e.id) AND e.score > 30 \
+             ORDER BY e.id",
+        ),
+        ordered(
+            "exists subqueries",
+            "SELECT u.id, u.name FROM users u \
+             WHERE EXISTS (SELECT 1 FROM events e WHERE e.id = u.id AND e.active = 1) \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "exists subqueries",
+            "SELECT u.id FROM users u \
+             WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.id = u.id AND e.score >= 50) \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "exists subqueries",
+            "SELECT u.id, u.name FROM users u \
+             WHERE EXISTS (SELECT 1 FROM events e \
+             WHERE e.active = 0 AND e.id = u.id AND e.note IS NOT NULL) \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "exists subqueries",
+            "SELECT e.id FROM events e \
+             WHERE EXISTS (SELECT 1 FROM users u WHERE u.name <> 'user-05' AND e.id = u.id) \
              ORDER BY e.id",
         ),
         ordered(
