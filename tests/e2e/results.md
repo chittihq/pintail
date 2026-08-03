@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-03T21:01:15.791Z.
+Measured 2026-08-03T21:21:02.199Z.
 
-**252 passed, 4 failed, 1 documented-gap warnings.**
+**256 passed, 0 failed, 1 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -141,7 +141,7 @@ Measured 2026-08-03T21:01:15.791Z.
 | churn | query:left join preserves unmatched rows | PASS |  |
 | churn | query:three-way join through items | PASS |  |
 | churn | query:union all across sources | PASS |  |
-| churn | query:group by with having | FAIL | row 24: |
+| churn | query:group by with having | PASS |  |
 | churn | query:conditional decimal sum keeps the fraction | PASS |  |
 | churn | query:distinct count and min max | PASS |  |
 | churn | query:uncorrelated in-subquery | PASS |  |
@@ -171,7 +171,7 @@ Measured 2026-08-03T21:01:15.791Z.
 | restart | query:left join preserves unmatched rows | PASS |  |
 | restart | query:three-way join through items | PASS |  |
 | restart | query:union all across sources | PASS |  |
-| restart | query:group by with having | FAIL | row 24: |
+| restart | query:group by with having | PASS |  |
 | restart | query:conditional decimal sum keeps the fraction | PASS |  |
 | restart | query:distinct count and min max | PASS |  |
 | restart | query:uncorrelated in-subquery | PASS |  |
@@ -215,7 +215,7 @@ Measured 2026-08-03T21:01:15.791Z.
 | control-plane | query:left join preserves unmatched rows | PASS |  |
 | control-plane | query:three-way join through items | PASS |  |
 | control-plane | query:union all across sources | PASS |  |
-| control-plane | query:group by with having | FAIL | row 24: |
+| control-plane | query:group by with having | PASS |  |
 | control-plane | query:conditional decimal sum keeps the fraction | PASS |  |
 | control-plane | query:distinct count and min max | PASS |  |
 | control-plane | query:uncorrelated in-subquery | PASS |  |
@@ -246,7 +246,7 @@ Measured 2026-08-03T21:01:15.791Z.
 | ddl-documented-gaps | query:left join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:three-way join through items | SKIP |  |
 | ddl-documented-gaps | query:union all across sources | PASS |  |
-| ddl-documented-gaps | query:group by with having | FAIL | row 24: |
+| ddl-documented-gaps | query:group by with having | PASS |  |
 | ddl-documented-gaps | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl-documented-gaps | query:distinct count and min max | PASS |  |
 | ddl-documented-gaps | query:uncorrelated in-subquery | PASS |  |
