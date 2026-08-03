@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/instrument-sans";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -21,8 +22,8 @@
   --green: #267758;
   --green-soft: #e4f2eb;
   --mono: "SFMono-Regular", "Roboto Mono", "Cascadia Code", Consolas, monospace;
-  --sans: Inter, "Avenir Next", Avenir, "Segoe UI", sans-serif;
-  --condensed: "Arial Narrow", "Avenir Next Condensed", var(--sans);
+  --sans: "Instrument Sans Variable", "Instrument Sans", Inter, "Segoe UI", sans-serif;
+  --condensed: var(--sans);
   --background: var(--canvas);
   --foreground: var(--text);
   --primary: var(--signal);
@@ -96,21 +97,16 @@ body.dashboard-body {
     var(--canvas);
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
 
-button {
-  color: inherit;
-  cursor: pointer;
-}
-
-:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 2px;
+  :focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
 }
 
 .boot-screen {
@@ -186,10 +182,10 @@ button {
   max-width: 30rem;
   margin: 0;
   font-family: var(--condensed);
-  font-size: clamp(2.8rem, 5vw, 5.5rem);
-  font-weight: 800;
-  letter-spacing: -0.055em;
-  line-height: 0.92;
+  font-size: clamp(2.2rem, 3.5vw, 3.4rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
 }
 
 .auth-copy {
@@ -356,18 +352,18 @@ button {
 .panel h2 {
   margin: 0;
   font-family: var(--condensed);
-  font-weight: 800;
-  letter-spacing: -0.035em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .page-heading h1 {
-  font-size: clamp(2.3rem, 4vw, 4.4rem);
-  line-height: 0.95;
+  font-size: clamp(1.7rem, 2.6vw, 2.4rem);
+  line-height: 1.1;
 }
 
 .panel h2,
 .wizard-panel h2 {
-  font-size: 1.2rem;
+  font-size: 1.05rem;
 }
 
 .page-heading .muted {
@@ -445,8 +441,9 @@ pre,
 
 .metric-card strong {
   font-family: var(--condensed);
-  font-size: 2.3rem;
-  letter-spacing: -0.04em;
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .panel {
@@ -738,7 +735,9 @@ td small {
 
 .progress-stat strong {
   font-family: var(--condensed);
-  font-size: 2.7rem;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .progress-stat span {
@@ -985,8 +984,9 @@ td small {
 .wizard-form h2 {
   margin: 0;
   font-family: var(--condensed);
-  font-size: 1.8rem;
-  letter-spacing: -0.04em;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .wizard-form > div:first-child .muted {
@@ -1399,7 +1399,7 @@ td small {
   }
 
   .page-heading h1 {
-    font-size: 2.7rem;
+    font-size: 1.8rem;
   }
 
   .metric-grid,
