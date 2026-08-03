@@ -158,7 +158,14 @@ pub struct TableSnapshotOutcome {
 /// Successful snapshot result.
 pub struct SnapshotResult {
     /// Source position from which CDC can replay after snapshot completion.
+    ///
+    /// A pre-existing handoff checkpoint is preserved, so this can sit
+    /// BEHIND the data actually read — see [`SnapshotResult::captured_position`].
     pub position: SnapshotPosition,
+    /// The position captured fresh under this snapshot's read lock — the
+    /// exact point the copied data reflects. Row events at or before it are
+    /// already in the data and must not replay.
+    pub captured_position: SnapshotPosition,
     /// Whether all workers were established under the global read lock.
     pub globally_consistent: bool,
     /// Explanation when global consistency gracefully degraded.
@@ -429,6 +436,7 @@ async fn run_snapshot_inner(
     }
     Ok(SnapshotResult {
         position,
+        captured_position,
         globally_consistent,
         consistency_warning,
         tables: table_outcomes,

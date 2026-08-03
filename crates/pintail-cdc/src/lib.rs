@@ -1007,13 +1007,13 @@ async fn apply_ddl_actions(
                 let index = targets.len();
                 targets.push(target);
                 target_indexes.insert(table.to_ascii_lowercase(), index);
-                // The fence must be THIS snapshot's consistent position —
-                // the stored database checkpoint still holds the original
-                // snapshot's (insert-if-absent semantics) and would fence
-                // nothing. Durable because each supervisor cadence is a
-                // fresh runner: an in-memory fence alone would replay the
-                // next cycle.
-                let fence = match &snapshot.position {
+                // The fence must be the position captured under THIS
+                // snapshot's read lock: the result's handoff position is
+                // preserved from the original snapshot and sits far behind
+                // the data actually copied. Durable because each supervisor
+                // cadence is a fresh runner: an in-memory fence alone would
+                // replay the next cycle.
+                let fence = match &snapshot.captured_position {
                     SnapshotPosition::Gtid {
                         file: Some(file),
                         position: Some(fence_position),
