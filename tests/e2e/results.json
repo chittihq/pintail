@@ -447,8 +447,7 @@
   {
     "phase": "ddl",
     "check": "converge:customers",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | Bruno 1 | user1@example.com | enterprise | alpha | 1504.8100 | {\"lang\":\"en\",\"score\":\"10.0000\"} | 0x0001beef | 2026-08-03 19:53:52.121402\n  pintail 1.0000 | Bruno 1 | user1@example.com | enterprise | alpha | 1503.8100 | {\"lang\":\"en\",\"score\":\"10.0000\"} | 0x0001beef | 2026-08-03 19:53:52.121402"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -458,8 +457,7 @@
   {
     "phase": "ddl",
     "check": "converge:orders",
-    "status": "FAIL",
-    "detail": "row count 201 vs 200"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -474,20 +472,17 @@
   {
     "phase": "ddl",
     "check": "query:range scan with compound predicate",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | delivered | 409.4700\n  pintail 3.0000 | 16.0000 | delivered | 409.4700"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:inner join with aggregation",
-    "status": "FAIL",
-    "detail": "row 1:\n  mysql   free | 57.0000 | 25064.0500\n  pintail free | 57.0000 | 25395.7500"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:left join preserves unmatched rows",
-    "status": "FAIL",
-    "detail": "row 16:\n  mysql   7.0000 | Priya 7 | 5.0000\n  pintail 14.0000 | Göran 14 | 5.0000"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -502,20 +497,17 @@
   {
     "phase": "ddl",
     "check": "query:group by with having",
-    "status": "FAIL",
-    "detail": "row 16:\n  mysql   7.0000 | 5.0000 | 277.0700\n  pintail 14.0000 | 5.0000 | 514.3600"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:conditional decimal sum keeps the fraction",
-    "status": "FAIL",
-    "detail": "row 4:\n  mysql   shipped | 41.0000 | 18930.2300 | 0.9024\n  pintail shipped | 40.0000 | 18930.2300 | 0.9250"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:distinct count and min max",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   40.0000 | 0.0100 | 9999999999.9900\n  pintail 39.0000 | 0.0100 | 9999999999.9900"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -535,8 +527,7 @@
   {
     "phase": "ddl",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "row 14:\n  mysql   2025.0000 | 7.0000 | 2.0000\n  pintail 2025.0000 | 7.0000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -546,14 +537,12 @@
   {
     "phase": "ddl",
     "check": "query:case expression buckets",
-    "status": "FAIL",
-    "detail": "row 1:\n  mysql   low | 20.0000\n  pintail low | 19.0000"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:null handling",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   62.0000\n  pintail 61.0000"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -578,20 +567,17 @@
   {
     "phase": "ddl",
     "check": "query:group_concat single expression",
-    "status": "FAIL",
-    "detail": "row 6:\n  mysql   7.0000 | cancelled,delivered,processing,shipped\n  pintail 7.0000 | cancelled,delivered,processing"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:window ranking per group",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | 1.0000\n  pintail 3.0000 | 16.0000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:window share of total over grouped output",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   delivered | 51.0000 | 25.3700 | 1.0000\n  pintail delivered | 51.0000 | 25.5000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -601,38 +587,32 @@
   {
     "phase": "churn-live",
     "check": "live:point lookup by key",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   7.0000 | Priya 7 | NULL | free | 234.9000\n  pintail 7.0000 | Priya 7 | NULL | free | 232.3300"
+    "status": "PASS"
   },
   {
     "phase": "churn-live",
     "check": "live:range scan with compound predicate",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | delivered | 409.4700\n  pintail 3.0000 | 16.0000 | delivered | 409.4700"
+    "status": "PASS"
   },
   {
     "phase": "churn-live",
     "check": "live:inner join with aggregation",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   enterprise | 110.0000 | 10000046244.8700\n  pintail enterprise | 94.0000 | 10000047558.1800"
+    "status": "PASS"
   },
   {
     "phase": "churn-live",
     "check": "live:left join preserves unmatched rows",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | Dmitri 3 | 17.0000\n  pintail 3.0000 | Dmitri 3 | 14.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn-live",
     "check": "live:three-way join through items",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   Dmitri 3 | sku-31 | 9.0000 | 1667.1600\n  pintail Farah 29 | sku-12 | 9.0000 | 1685.7900"
+    "status": "PASS"
   },
   {
     "phase": "churn-live",
     "check": "live:union all across sources",
-    "status": "FAIL",
-    "detail": "row count 38 vs 46"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -647,8 +627,7 @@
   {
     "phase": "churn",
     "check": "converge:customers",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | Bruno 1 | user1@example.com | enterprise | alpha | 1504.8100 | {\"lang\":\"en\",\"score\":\"10.0000\"} | 0x0001beef | 2026-08-03 19:53:52.121402\n  pintail 1.0000 | Bruno 1 | user1@example.com | enterprise | alpha | 1503.8100 | {\"lang\":\"en\",\"score\":\"10.0000\"} | 0x0001beef | 2026-08-03 19:53:52.121402"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -658,8 +637,7 @@
   {
     "phase": "churn",
     "check": "converge:orders",
-    "status": "FAIL",
-    "detail": "row count 306 vs 200"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -669,80 +647,67 @@
   {
     "phase": "churn",
     "check": "query:point lookup by key",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   7.0000 | Priya 7 | NULL | free | 234.5800\n  pintail 7.0000 | Priya 7 | NULL | free | 232.3300"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:range scan with compound predicate",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | delivered | 409.4700\n  pintail 3.0000 | 16.0000 | delivered | 409.4700"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:inner join with aggregation",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   enterprise | 136.0000 | 52406.4500\n  pintail enterprise | 94.0000 | 10000047558.1800"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:left join preserves unmatched rows",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | Dmitri 3 | 18.0000\n  pintail 3.0000 | Dmitri 3 | 14.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:three-way join through items",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   Dmitri 3 | sku-31 | 9.0000 | 1667.1600\n  pintail Farah 29 | sku-12 | 9.0000 | 1685.7900"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:union all across sources",
-    "status": "FAIL",
-    "detail": "row count 38 vs 46"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:group by with having",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | 18.0000 | 461.7500\n  pintail 3.0000 | 14.0000 | 590.1400"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:conditional decimal sum keeps the fraction",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   cancelled | 17.0000 | 4144.5100 | 0.9412\n  pintail cancelled | 38.0000 | 10000019615.8600 | 0.9474"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:distinct count and min max",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   41.0000 | 3.8100 | 998.9400\n  pintail 39.0000 | 0.0100 | 9999999999.9900"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:uncorrelated in-subquery",
-    "status": "FAIL",
-    "detail": "row 8:\n  mysql   9.0000 | Bruno 9\n  pintail 10.0000 | Chloé 10"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:scalar subquery threshold",
-    "status": "FAIL",
-    "detail": "row count 20 vs 1"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:non-recursive cte",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | Dmitri 3 | 8311.5300\n  pintail 1.0000 | Bruno 1 | 10000002460.9600"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "row count 21 vs 15"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -752,14 +717,12 @@
   {
     "phase": "churn",
     "check": "query:case expression buckets",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   high | 68.0000\n  pintail high | 91.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:null handling",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   197.0000\n  pintail 61.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -779,32 +742,27 @@
   {
     "phase": "churn",
     "check": "query:derived table",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   2025-01-03 | 7.0000\n  pintail 2024-02-08 | 3.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:group_concat single expression",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | delivered,processing,shipped\n  pintail 1.0000 | cancelled,delivered,pending,processing,shipped"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:window ranking per group",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | 1.0000\n  pintail 3.0000 | 16.0000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:window share of total over grouped output",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   delivered | 78.0000 | 25.4900 | 1.0000\n  pintail delivered | 51.0000 | 25.5000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:window running total",
-    "status": "FAIL",
-    "detail": "row 18:\n  mysql   22.0000 | 9758.2400\n  pintail 21.0000 | 9542.1200"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -819,8 +777,7 @@
   {
     "phase": "restart",
     "check": "converge:customers",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | Bruno 1 | user1@example.com | enterprise | alpha | 1504.8100 | {\"lang\":\"en\",\"score\":\"10.0000\"} | 0x0001beef | 2026-08-03 19:53:52.121402\n  pintail 1.0000 | Bruno 1 | user1@example.com | enterprise | alpha | 1503.8100 | {\"lang\":\"en\",\"score\":\"10.0000\"} | 0x0001beef | 2026-08-03 19:53:52.121402"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -830,8 +787,7 @@
   {
     "phase": "restart",
     "check": "converge:orders",
-    "status": "FAIL",
-    "detail": "row count 307 vs 200"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -841,80 +797,67 @@
   {
     "phase": "restart",
     "check": "query:point lookup by key",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   7.0000 | Priya 7 | NULL | free | 234.5800\n  pintail 7.0000 | Priya 7 | NULL | free | 232.3300"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:range scan with compound predicate",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | delivered | 409.4700\n  pintail 3.0000 | 16.0000 | delivered | 409.4700"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:inner join with aggregation",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   enterprise | 140.0000 | 53762.4100\n  pintail enterprise | 94.0000 | 10000047558.1800"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:left join preserves unmatched rows",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | Dmitri 3 | 18.0000\n  pintail 3.0000 | Dmitri 3 | 14.0000"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:three-way join through items",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   Dmitri 3 | sku-31 | 9.0000 | 1667.1600\n  pintail Farah 29 | sku-12 | 9.0000 | 1685.7900"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:union all across sources",
-    "status": "FAIL",
-    "detail": "row count 39 vs 46"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:group by with having",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | 18.0000 | 461.7500\n  pintail 3.0000 | 14.0000 | 590.1400"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:conditional decimal sum keeps the fraction",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   cancelled | 17.0000 | 4144.5100 | 0.9412\n  pintail cancelled | 38.0000 | 10000019615.8600 | 0.9474"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:distinct count and min max",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   41.0000 | 3.8100 | 998.9400\n  pintail 39.0000 | 0.0100 | 9999999999.9900"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:uncorrelated in-subquery",
-    "status": "FAIL",
-    "detail": "row 8:\n  mysql   9.0000 | Bruno 9\n  pintail 10.0000 | Chloé 10"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:scalar subquery threshold",
-    "status": "FAIL",
-    "detail": "row count 20 vs 1"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:non-recursive cte",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   3.0000 | Dmitri 3 | 8311.5300\n  pintail 1.0000 | Bruno 1 | 10000002460.9600"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "row count 21 vs 15"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -924,14 +867,12 @@
   {
     "phase": "restart",
     "check": "query:case expression buckets",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   high | 68.0000\n  pintail high | 91.0000"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:null handling",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   198.0000\n  pintail 61.0000"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -941,8 +882,7 @@
   {
     "phase": "restart",
     "check": "query:enum and set filters",
-    "status": "FAIL",
-    "detail": "row 5:\n  mysql   9.0000 | enterprise | alpha,vip\n  pintail 10.0000 | pro | alpha"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -952,32 +892,27 @@
   {
     "phase": "restart",
     "check": "query:derived table",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   2025-01-03 | 7.0000\n  pintail 2024-02-08 | 3.0000"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:group_concat single expression",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | delivered,processing,shipped\n  pintail 1.0000 | cancelled,delivered,pending,processing,shipped"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:window ranking per group",
-    "status": "FAIL",
-    "detail": "row 2:\n  mysql   3.0000 | 5000000001.0000 | 1.0000\n  pintail 3.0000 | 16.0000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:window share of total over grouped output",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   delivered | 78.0000 | 25.4100 | 1.0000\n  pintail delivered | 51.0000 | 25.5000 | 1.0000"
+    "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:window running total",
-    "status": "FAIL",
-    "detail": "row 18:\n  mysql   22.0000 | 9758.2400\n  pintail 21.0000 | 9542.1200"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -1012,8 +947,7 @@
   {
     "phase": "control-plane",
     "check": "api:table metadata routes match the source",
-    "status": "FAIL",
-    "detail": "Error: count response {\"count\":200} does not contain MySQL's 307"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -1028,8 +962,7 @@
   {
     "phase": "control-plane",
     "check": "api:mode switches to polling and back with exact counts",
-    "status": "FAIL",
-    "detail": "Error: polling never converged: 308 vs 310; status: {\"database\":{\"id\":\"db_4214fed1e5ed0cce2bb138358508272a\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"polling\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-03T19:56:28.861789+00:00\",\"updated_at\":\"2026-08-03T20:17:26.741571+00:00\"},\"tables\":6,\"rows\":655}; activity: [{\"id\":\"run_0324c377e723838b197f33d0680bb500\",\"database_id\":\"db_4214fed1e5ed0cce2bb138358508272a\",\"table\":null,\"kind\":\"polling\",\"status\":\"completed\",\"rows\":0,\"bytes\":0,\"duration_ms\":5206,\"error\":null,\"started_at\":\"2026-08-03T20:17:21.535803+00:00\"},{\"id\":\"run_1889e70fd56eec89166311c6dda26a19\",\"database_id\":\"db_4214fed1e5ed0cce2bb138358508272a\",\"table\":null,\"kind\":\"polling\",\"status\":\"completed\",\"rows\":0,\"bytes\":0,\"duration_ms\":3546,\"error\":null,\"started_at\":\"2026-08-03T20:17:16.537387+00:00\"},{\"id\":\"run_cf5c7abb10e2bd7152fa9e26caabcf51\",\"database_id\":\"db_4214fed1e5ed0cce2bb138358508272a\",\"table\":null,\"kind\":\"polling\",\"status\":\"completed\",\"rows\":0,\"bytes\":0,\"duration_ms\":6943,\"error\":null,\"started_at\":\"2026-08-03T20:17:06.538131+00:00\"},{\"id\":\"run_eb728ac22e57c73292321c0e9c1fad35\",\"database_id\":\"db_4214fed1e5ed0cce2bb138358508272a\",\"table\":null,\"kind\":\"polling\",\"status\":\"completed\",\"rows\":0,\"bytes\":0,\"duration_ms\":5789,\"error\":null,\"started_at\":\"2026-08-03T20:16:56.536851+00:00\"},{\"id\":\"run_d142fccdc1d6cd09e345ef7f83a80431\",\"database_id\":\"db_4214fed1e5ed0cce2bb138358508272a\",\"table\":null,\"kind\":\"polling\",\"status\":\"completed\",\"rows\":0,\"bytes\":0,\"duration_ms\":4805,\"error\":null,\"started_at\":\"2026-08-03T20:16:51.536518+00:00\"}]"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
