@@ -887,6 +887,94 @@ async function phaseControlPlane() {
       }
     }
   })
+  await check('keyless policy: quarantine flags, auto_resync repairs', async () => {
+    // A table with no primary or unique key replicates inserts, but a CDC
+    // UPDATE cannot be targeted and must flag the table needs_resync under
+    // the default quarantine policy. Switching the database to auto_resync
+    // lets the supervisor repair it with a forced snapshot.
+    const detail = await api<{ name: string; mode: string; keyless_policy: string }>(
+      `/api/databases/${databaseId}`,
+    )
+    if (detail.keyless_policy !== 'quarantine') {
+      throw new Error(`expected default policy quarantine, got ${detail.keyless_policy}`)
+    }
+    await sql(
+      'CREATE TABLE keyless_log (label VARCHAR(32) NOT NULL, amount INT NOT NULL)',
+    )
+    await sql(
+      "INSERT INTO keyless_log (label, amount) VALUES ('a', 1), ('b', 2), ('b', 2), ('c', 3)",
+    )
+    const insertDeadline = Date.now() + 120_000
+    for (;;) {
+      try {
+        const actual = await pintailQuery('SELECT COUNT(*) FROM keyless_log')
+        if (String(actual[0][0]) === '4') break
+      } catch {
+        // table not yet replicated
+      }
+      if (Date.now() > insertDeadline) throw new Error('keyless inserts never replicated')
+      await Bun.sleep(2_000)
+    }
+    await sql("UPDATE keyless_log SET amount = amount + 10 WHERE label = 'b'")
+    const flagDeadline = Date.now() + 120_000
+    for (;;) {
+      const tables = await api<Array<{ name: string; state: string }>>(
+        `/api/tables?db=${databaseId}`,
+      )
+      const table = tables.find((candidate) => candidate.name === 'keyless_log')
+      if (table?.state === 'needs_resync') break
+      if (Date.now() > flagDeadline) {
+        throw new Error(
+          `keyless UPDATE never flagged needs_resync: ${JSON.stringify(table)}`,
+        )
+      }
+      await Bun.sleep(2_000)
+    }
+    let rejected = false
+    try {
+      await api(`/api/databases/${databaseId}`, {
+        method: 'PUT',
+        body: { name: detail.name, mode: detail.mode, keyless_policy: 'bogus' },
+      })
+    } catch {
+      rejected = true
+    }
+    if (!rejected) throw new Error('bogus keyless_policy was accepted')
+    await api(`/api/databases/${databaseId}`, {
+      method: 'PUT',
+      body: { name: detail.name, mode: detail.mode, keyless_policy: 'auto_resync' },
+    })
+    const repairDeadline = Date.now() + 180_000
+    for (;;) {
+      const tables = await api<Array<{ name: string; state: string }>>(
+        `/api/tables?db=${databaseId}`,
+      )
+      const table = tables.find((candidate) => candidate.name === 'keyless_log')
+      if (table && table.state !== 'needs_resync') {
+        const expected = await mysqlRows('SELECT COUNT(*), SUM(amount) FROM keyless_log')
+        const actual = await pintailQuery('SELECT COUNT(*), SUM(amount) FROM keyless_log')
+        if (
+          String(expected[0][0]) === String(actual[0][0]) &&
+          String(expected[0][1]) === String(actual[0][1])
+        ) {
+          break
+        }
+      }
+      if (Date.now() > repairDeadline) {
+        const activity = await api<unknown[]>(`/api/activity?db=${databaseId}&limit=8`)
+        throw new Error(
+          `auto_resync never repaired keyless_log: ${JSON.stringify(table)}; ` +
+            `activity: ${JSON.stringify(activity)}`,
+        )
+      }
+      await Bun.sleep(3_000)
+    }
+    // Later phases assume the quarantine default.
+    await api(`/api/databases/${databaseId}`, {
+      method: 'PUT',
+      body: { name: detail.name, mode: detail.mode, keyless_policy: 'quarantine' },
+    })
+  })
   await check('throwaway database lifecycle: create, update, delete', async () => {
     const host = await dockerHost()
     const mysqlPort = await publishedPort(mysqlName, 3306)

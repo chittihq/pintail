@@ -66,38 +66,66 @@ pub(crate) async fn start(
 ) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
-    state.acquire_job(&database_id)?;
+    let force = payload.is_some_and(|Json(request)| request.force);
+    let run_id = begin_snapshot_job(&state, &database_id, force)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedSnapshot {
+            run_id,
+            state: "snapshotting",
+        }),
+    ))
+}
+
+/// Acquires the database job slot, journals a snapshot run, and detaches the
+/// worker. Used by the snapshot/resync routes and the supervisor's
+/// `auto_resync` keyless-policy repair.
+pub(crate) fn begin_snapshot_job(
+    state: &ApiState,
+    database_id: &str,
+    force: bool,
+) -> Result<String, ApiError> {
+    state.acquire_job(database_id)?;
     let run_id = crate::state::random_identifier("run_", 16);
-    let metadata = state.metadata()?;
-    let database = metadata
-        .database(&database_id)
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| {
-            state.release_job(&database_id);
-            ApiError::not_found("database does not exist")
-        })?;
+    let metadata = match state.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            state.release_job(database_id);
+            return Err(error);
+        }
+    };
+    let database = match metadata.database(database_id) {
+        Ok(Some(database)) => database,
+        Ok(None) => {
+            state.release_job(database_id);
+            return Err(ApiError::not_found("database does not exist"));
+        }
+        Err(error) => {
+            state.release_job(database_id);
+            return Err(ApiError::internal(error));
+        }
+    };
     if database.mode == "paused" {
-        state.release_job(&database_id);
+        state.release_job(database_id);
         return Err(ApiError::conflict(
             "resume the database before starting a snapshot",
         ));
     }
     if let Err(error) = metadata.start_sync_run(
         &run_id,
-        &database_id,
+        database_id,
         None,
         "snapshot",
         &Utc::now().to_rfc3339(),
     ) {
-        state.release_job(&database_id);
+        state.release_job(database_id);
         return Err(ApiError::internal(error));
     }
-    let force = payload.is_some_and(|Json(request)| request.force);
     let job_state = state.clone();
-    let job_database_id = database_id.clone();
+    let job_database_id = database_id.to_owned();
     let job_run_id = run_id.clone();
     let failure_state = state.clone();
-    let failure_database_id = database_id.clone();
+    let failure_database_id = database_id.to_owned();
     let failure_run_id = run_id.clone();
     if let Err(error) = std::thread::Builder::new()
         .name(format!("pintail-snapshot-{database_id}"))
@@ -132,13 +160,7 @@ pub(crate) async fn start(
         );
         return Err(ApiError::unavailable(message));
     }
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AcceptedSnapshot {
-            run_id,
-            state: "snapshotting",
-        }),
-    ))
+    Ok(run_id)
 }
 
 pub(crate) async fn start_forced(

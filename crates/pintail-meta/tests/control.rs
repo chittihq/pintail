@@ -47,6 +47,7 @@ fn users_databases_and_table_controls_round_trip() {
                 exclude_tables: Some("[\"secrets\"]"),
                 poll_interval_seconds: 7,
                 reconcile_interval_seconds: 420,
+                keyless_policy: "auto_resync",
                 now: "2026-07-30T00:02:00Z",
             },
         )
@@ -63,6 +64,7 @@ fn users_databases_and_table_controls_round_trip() {
     assert_eq!(database.name, "analytics");
     assert_eq!(database.encrypted_dsn, b"encrypted-v2");
     assert_eq!(database.poll_interval_seconds, 7);
+    assert_eq!(database.keyless_policy, "auto_resync");
     assert_eq!(database.effective_mode.as_deref(), Some("polling"));
     assert_eq!(metadata.databases().unwrap().len(), 1);
 

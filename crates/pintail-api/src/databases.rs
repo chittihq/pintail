@@ -23,6 +23,7 @@ pub(crate) struct DatabaseResponse {
     exclude_tables: Vec<String>,
     poll_interval_seconds: u64,
     reconcile_interval_seconds: u64,
+    keyless_policy: String,
     created_at: String,
     updated_at: String,
 }
@@ -37,6 +38,42 @@ pub(crate) struct CreateDatabaseRequest {
     include_tables: Vec<String>,
     #[serde(default)]
     exclude_tables: Vec<String>,
+    #[serde(default = "default_keyless_policy")]
+    keyless_policy: String,
+}
+
+fn default_keyless_policy() -> String {
+    "quarantine".to_owned()
+}
+
+/// Rejects unknown keyless-table policies with a client error.
+fn validate_keyless_policy(policy: &str) -> Result<(), ApiError> {
+    if matches!(policy, "quarantine" | "auto_resync" | "reject") {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "keyless_policy must be quarantine, auto_resync, or reject",
+        ))
+    }
+}
+
+/// Included tables that fall back to append-row-id identity (no primary or
+/// usable unique key), honoring the include/exclude lists.
+fn included_keyless_tables(
+    report: &pintail_probe::ProbeReport,
+    include: &[String],
+    exclude: &[String],
+) -> Vec<String> {
+    report
+        .tables
+        .iter()
+        .filter(|table| {
+            (include.is_empty() || include.iter().any(|name| name == &table.name))
+                && !exclude.iter().any(|name| name == &table.name)
+                && table.key.mode == pintail_types::KeyMode::AppendRowId
+        })
+        .map(|table| table.name.clone())
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -52,6 +89,8 @@ pub(crate) struct UpdateDatabaseRequest {
     poll_interval_seconds: u64,
     #[serde(default = "default_reconcile_interval")]
     reconcile_interval_seconds: u64,
+    /// Omitted keeps the database's current policy.
+    keyless_policy: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +138,7 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<DatabaseResponse>), ApiError> {
     principal.require_operator()?;
     validate_database_request(&request.name, &request.dsn, &request.mode)?;
+    validate_keyless_policy(&request.keyless_policy)?;
     let id = random_identifier("db_", 16);
     let now = Utc::now().to_rfc3339();
     let encrypted = state.encrypt_dsn(request.dsn.trim())?;
@@ -121,6 +161,7 @@ pub(crate) async fn create(
                 exclude_tables: Some(&excludes),
                 poll_interval_seconds: default_poll_interval(),
                 reconcile_interval_seconds: default_reconcile_interval(),
+                keyless_policy: &request.keyless_policy,
                 now: &now,
             },
         )
@@ -169,6 +210,26 @@ pub(crate) async fn update(
         .transpose()?;
     let includes = encode_names(&request.include_tables)?;
     let excludes = encode_names(&request.exclude_tables)?;
+    let keyless_policy = request
+        .keyless_policy
+        .as_deref()
+        .unwrap_or(existing.keyless_policy.as_str());
+    validate_keyless_policy(keyless_policy)?;
+    // Switching to reject with keyless tables already probed is refused so
+    // the policy always reflects an enforceable state.
+    if keyless_policy == "reject"
+        && let Some(probe_json) = existing.probe_json.as_deref()
+        && let Ok(report) = serde_json::from_str::<pintail_probe::ProbeReport>(probe_json)
+    {
+        let keyless =
+            included_keyless_tables(&report, &request.include_tables, &request.exclude_tables);
+        if !keyless.is_empty() {
+            return Err(ApiError::conflict(format!(
+                "keyless_policy reject refused: tables without a usable key: {}",
+                keyless.join(", ")
+            )));
+        }
+    }
     let now = Utc::now().to_rfc3339();
     let metadata = state.metadata()?;
     metadata
@@ -182,6 +243,7 @@ pub(crate) async fn update(
                 exclude_tables: Some(&excludes),
                 poll_interval_seconds: request.poll_interval_seconds,
                 reconcile_interval_seconds: request.reconcile_interval_seconds,
+                keyless_policy,
                 now: &now,
             },
         )
@@ -253,6 +315,21 @@ pub(crate) async fn probe_database(
         .await
         .map_err(ApiError::internal)?;
     pool.disconnect().await.map_err(ApiError::internal)?;
+    // The reject policy refuses to accept a probe whose included tables
+    // lack a usable key, so replication never starts against them.
+    if record.keyless_policy == "reject" {
+        let keyless = included_keyless_tables(
+            &report,
+            &decode_names(record.include_tables.clone()),
+            &decode_names(record.exclude_tables.clone()),
+        );
+        if !keyless.is_empty() {
+            return Err(ApiError::conflict(format!(
+                "keyless_policy reject: tables without a usable key: {}",
+                keyless.join(", ")
+            )));
+        }
+    }
     let json = serde_json::to_value(&report).map_err(ApiError::internal)?;
     let encoded = serde_json::to_string(&report).map_err(ApiError::internal)?;
     let effective_mode = match record.mode.as_str() {
@@ -359,6 +436,7 @@ impl From<DatabaseRecord> for DatabaseResponse {
             exclude_tables: decode_names(record.exclude_tables),
             poll_interval_seconds: record.poll_interval_seconds,
             reconcile_interval_seconds: record.reconcile_interval_seconds,
+            keyless_policy: record.keyless_policy,
             created_at: record.created_at,
             updated_at: record.updated_at,
         }

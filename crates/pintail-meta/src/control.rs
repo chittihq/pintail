@@ -31,6 +31,9 @@ pub struct DatabaseRecord {
     pub reconcile_interval_seconds: u64,
     pub created_at: String,
     pub updated_at: String,
+    /// Keyless-table replication policy: `quarantine`, `auto_resync`, or
+    /// `reject`.
+    pub keyless_policy: String,
 }
 
 /// Mutable source-database settings.
@@ -42,6 +45,7 @@ pub struct DatabaseUpdate<'a> {
     pub exclude_tables: Option<&'a str>,
     pub poll_interval_seconds: u64,
     pub reconcile_interval_seconds: u64,
+    pub keyless_policy: &'a str,
     pub now: &'a str,
 }
 
@@ -250,6 +254,7 @@ impl MetaStore {
     /// failure.
     pub fn update_database(&self, id: &str, update: &DatabaseUpdate<'_>) -> Result<()> {
         validate_mode(update.mode)?;
+        validate_keyless_policy(update.keyless_policy)?;
         let poll_interval = i64::try_from(update.poll_interval_seconds)
             .context("poll interval exceeds SQLite range")?;
         let reconcile_interval = i64::try_from(update.reconcile_interval_seconds)
@@ -262,7 +267,7 @@ impl MetaStore {
                    mysql_dsn_encrypted = COALESCE(?3, mysql_dsn_encrypted), \
                    mode = ?4, include_tables = ?5, exclude_tables = ?6, \
                    poll_interval_seconds = ?7, reconcile_interval_seconds = ?8, \
-                   updated_at = ?9 \
+                   updated_at = ?9, keyless_policy = ?10 \
                  WHERE id = ?1",
                 params![
                     id,
@@ -274,6 +279,7 @@ impl MetaStore {
                     poll_interval,
                     reconcile_interval,
                     update.now,
+                    update.keyless_policy,
                 ],
             )
             .context("failed to update database")?;
@@ -784,7 +790,7 @@ fn decode_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
 fn database_select_sql() -> &'static str {
     "SELECT id, name, mysql_dsn_encrypted, mode, effective_mode, state, probe_json, \
             include_tables, exclude_tables, poll_interval_seconds, \
-            reconcile_interval_seconds, created_at, updated_at \
+            reconcile_interval_seconds, created_at, updated_at, keyless_policy \
      FROM databases"
 }
 
@@ -817,6 +823,7 @@ fn decode_database(row: &rusqlite::Row<'_>) -> rusqlite::Result<DatabaseRecord> 
         })?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+        keyless_policy: row.get(13)?,
     })
 }
 
@@ -916,6 +923,14 @@ fn validate_role(role: &str) -> Result<()> {
     } else {
         bail!("user role must be admin, operator, or viewer")
     }
+}
+
+/// Rejects unknown keyless-table policies.
+fn validate_keyless_policy(policy: &str) -> Result<()> {
+    if !matches!(policy, "quarantine" | "auto_resync" | "reject") {
+        bail!("keyless policy must be quarantine, auto_resync, or reject");
+    }
+    Ok(())
 }
 
 fn validate_mode(mode: &str) -> Result<()> {

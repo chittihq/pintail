@@ -20,7 +20,7 @@ pub use control::{
     UserRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 9;
+const CURRENT_SCHEMA_VERSION: u32 = 10;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1303,6 +1303,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 9 {
         migration_v9(connection.transaction()?)?;
     }
+    if found < 10 {
+        migration_v10(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1405,4 +1408,13 @@ fn migration_v9(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 9")
+}
+
+fn migration_v10(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/010_keyless_policy.sql"))
+        .context("failed to apply metadata migration 10")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 10")
 }
