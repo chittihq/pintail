@@ -18,7 +18,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  # Keyed by event so a dispatched or scheduled full gate never cancels
+  # (or gets cancelled by) the push-triggered smoke on the same branch.
+  group: e2e-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

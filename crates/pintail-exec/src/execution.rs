@@ -2961,13 +2961,18 @@ fn build_hash_aggregate(
     Ok(result)
 }
 
-/// Successful SMA folds since process start: proof of engagement for
-/// tests and `PINTAIL_AGG_DEBUG` diagnostics.
-static SMA_FOLD_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+// Successful SMA folds on this thread: proof of engagement for tests and
+// `PINTAIL_AGG_DEBUG` diagnostics. Thread-local because the fold runs
+// synchronously on the plan-building thread and the counter's only
+// consumers are same-thread test assertions — a process-wide counter made
+// those assertions race with folds from concurrently running tests.
+thread_local! {
+    static SMA_FOLD_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 #[allow(dead_code)] // test-and-diagnostics accessor; production reads go through PINTAIL_AGG_DEBUG
 pub(crate) fn sma_fold_hits() -> u64 {
-    SMA_FOLD_HITS.load(std::sync::atomic::Ordering::Relaxed)
+    SMA_FOLD_HITS.with(std::cell::Cell::get)
 }
 
 /// Folds per-segment SMAs into finished bare-aggregate states and merges
@@ -3253,7 +3258,7 @@ fn try_sma_fold(
         .map(|state| state.finish(memory))
         .collect::<Result<Vec<_>, _>>()?;
     memory.reserve(estimated_row_payload_bytes(&row))?;
-    SMA_FOLD_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    SMA_FOLD_HITS.with(|hits| hits.set(hits.get() + 1));
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         eprintln!(
             "[agg] SMA fold: {} segments, {} residual rows",
