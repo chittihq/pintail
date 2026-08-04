@@ -133,6 +133,19 @@ fn query_sql(name: &str) -> &'static str {
              WHERE order_date >= '2023-01-01' AND order_date < '2024-01-01' \
              GROUP BY yr, mo ORDER BY yr, mo"
         }
+        "n3" => {
+            "SELECT YEAR(order_date) AS yr, MONTH(order_date) AS mo, COUNT(*) AS cnt, \
+             ROUND(SUM(total_amount), 2) AS revenue FROM orders \
+             WHERE order_date >= '2022-01-01' AND order_date < '2023-01-01' \
+             GROUP BY yr, mo ORDER BY yr, mo"
+        }
+        "n4" => {
+            "SELECT region, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total, \
+             ROUND(AVG(total_amount), 2) AS avg_amt, ROUND(MIN(total_amount), 2) AS min_amt, \
+             ROUND(MAX(total_amount), 2) AS max_amt, COUNT(DISTINCT user_id) AS unique_users \
+             FROM orders WHERE order_date BETWEEN '2021-01-01' AND '2022-12-31' \
+             GROUP BY region ORDER BY total DESC"
+        }
         "q6" => {
             "SELECT user_id, COUNT(*) AS order_count, ROUND(SUM(total_amount), 2) AS total_spent \
              FROM orders GROUP BY user_id ORDER BY total_spent DESC, user_id LIMIT 10"
