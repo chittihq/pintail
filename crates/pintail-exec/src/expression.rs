@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
 
 use chrono::{
-    Datelike, Duration, Local, Months, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
+    Datelike, Duration, FixedOffset, Local, LocalResult, Months, NaiveDate, NaiveDateTime,
+    TimeZone, Timelike, Utc,
 };
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
 use pintail_sql::{DatePart, IntervalUnit};
@@ -690,7 +691,8 @@ impl CompiledExpr {
                     | ScalarFunction::SecToTime
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
-                    | ScalarFunction::StrToDate => 64,
+                    | ScalarFunction::StrToDate
+                    | ScalarFunction::ConvertTz => 64,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
                         .iter()
@@ -813,7 +815,8 @@ impl CompiledExpr {
                     | ScalarFunction::SecToTime
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
-                    | ScalarFunction::StrToDate => 64,
+                    | ScalarFunction::StrToDate
+                    | ScalarFunction::ConvertTz => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::Locate
@@ -1636,6 +1639,12 @@ fn evaluate_eager_scalar(
             }
             Ok(Value::Null)
         }
+        ScalarFunction::ConvertTz => {
+            let text = scalar_string(&values[0])?;
+            let from = scalar_string(&values[1])?;
+            let to = scalar_string(&values[2])?;
+            Ok(convert_tz(&text, &from, &to).map_or(Value::Null, Value::Utf8))
+        }
         ScalarFunction::RegexpLike { negated } => {
             let text = scalar_string(&values[0])?;
             let matched = compiled_regex(&scalar_string(&values[1])?)?.is_match(&text);
@@ -1862,6 +1871,81 @@ fn apply_interval(
         IntervalUnit::Second => value.checked_add_signed(Duration::seconds(amount)),
     }
     .ok_or(ExecError::InvalidDateTime)
+}
+
+/// A `CONVERT_TZ` zone argument: numeric offset or IANA name.
+enum ZoneSpec {
+    Fixed(FixedOffset),
+    Named(chrono_tz::Tz),
+}
+
+fn timezone_spec(text: &str) -> Option<ZoneSpec> {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed
+        .strip_prefix('+')
+        .or_else(|| trimmed.strip_prefix('-'))
+    {
+        let (hours, minutes) = rest.split_once(':')?;
+        let hours: i32 = hours.parse().ok()?;
+        let minutes: i32 = minutes.parse().ok()?;
+        if !(0..=59).contains(&minutes) {
+            return None;
+        }
+        let mut seconds = (hours * 60 + minutes) * 60;
+        if trimmed.starts_with('-') {
+            seconds = -seconds;
+        }
+        // MySQL accepts offsets in [-13:59, +14:00].
+        if !((-14 * 3600 + 60)..=(14 * 3600)).contains(&seconds) {
+            return None;
+        }
+        return FixedOffset::east_opt(seconds).map(ZoneSpec::Fixed);
+    }
+    chrono_tz::Tz::from_str_insensitive(trimmed)
+        .ok()
+        .map(ZoneSpec::Named)
+}
+
+/// `CONVERT_TZ` on the canonical datetime text carrier. Ambiguous local
+/// times (DST fall-back) take the earlier offset like MySQL; nonexistent
+/// local times (spring-forward gap) return None, a documented divergence.
+fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let naive = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f")
+        .or_else(|_| {
+            NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).expect("midnight exists"))
+        })
+        .ok()?;
+    let fraction_digits = trimmed
+        .rsplit_once('.')
+        .map_or(0, |(_, fraction)| fraction.len().min(6));
+    let from = timezone_spec(from)?;
+    let to = timezone_spec(to)?;
+    let utc = match from {
+        ZoneSpec::Fixed(offset) => match offset.from_local_datetime(&naive) {
+            LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {
+                value.with_timezone(&Utc)
+            }
+            LocalResult::None => return None,
+        },
+        ZoneSpec::Named(zone) => match zone.from_local_datetime(&naive) {
+            LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {
+                value.with_timezone(&Utc)
+            }
+            LocalResult::None => return None,
+        },
+    };
+    let converted = match to {
+        ZoneSpec::Fixed(offset) => utc.with_timezone(&offset).naive_local(),
+        ZoneSpec::Named(zone) => utc.with_timezone(&zone).naive_local(),
+    };
+    let base = converted.format("%Y-%m-%d %H:%M:%S").to_string();
+    if fraction_digits == 0 {
+        return Some(base);
+    }
+    let micros = format!("{:06}", converted.and_utc().timestamp_subsec_micros());
+    Some(format!("{base}.{}", &micros[..fraction_digits]))
 }
 
 fn mysql_date_format(value: &str) -> String {
@@ -3016,5 +3100,40 @@ mod tests {
             between.evaluate_predicate_direct(&batch, 1),
             Ok(Some(false))
         );
+    }
+
+    #[test]
+    fn converts_time_zones_by_name_and_offset() {
+        let convert = super::convert_tz;
+        assert_eq!(
+            convert("2026-03-08 06:30:00", "+00:00", "+05:30").as_deref(),
+            Some("2026-03-08 12:00:00")
+        );
+        assert_eq!(
+            convert("2026-01-15 12:00:00", "UTC", "Asia/Kolkata").as_deref(),
+            Some("2026-01-15 17:30:00")
+        );
+        // Case-insensitive zone names, like MySQL.
+        assert_eq!(
+            convert("2026-01-15 12:00:00", "utc", "asia/kolkata").as_deref(),
+            Some("2026-01-15 17:30:00")
+        );
+        // DST: July New York is UTC-4, January is UTC-5.
+        assert_eq!(
+            convert("2026-07-04 18:00:00", "America/New_York", "UTC").as_deref(),
+            Some("2026-07-04 22:00:00")
+        );
+        assert_eq!(
+            convert("2026-01-04 18:00:00", "America/New_York", "UTC").as_deref(),
+            Some("2026-01-04 23:00:00")
+        );
+        // Fractional seconds keep the input's digit count.
+        assert_eq!(
+            convert("2026-06-15 10:00:00.250", "+00:00", "+02:00").as_deref(),
+            Some("2026-06-15 12:00:00.250")
+        );
+        assert_eq!(convert("2026-06-15 10:00:00", "Bad/Zone", "UTC"), None);
+        assert_eq!(convert("not a datetime", "+00:00", "+01:00"), None);
+        assert_eq!(convert("2026-06-15 10:00:00", "+15:00", "+00:00"), None);
     }
 }

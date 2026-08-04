@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 725;
+const EXPECTED_CASES: usize = 729;
 
 struct OracleCase {
     family: &'static str,
@@ -85,6 +85,19 @@ impl MysqlContainer {
                 consecutive_connections = 0;
             }
             if consecutive_connections == 5 {
+                // Named time zones (CONVERT_TZ) need the mysql.time_zone
+                // tables, which the stock image leaves empty.
+                checked_output(
+                    Command::new("docker").args([
+                        "exec",
+                        &container.name,
+                        "sh",
+                        "-c",
+                        "mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null \
+                         | mysql --user=root mysql",
+                    ]),
+                    "load MySQL time zone tables",
+                )?;
                 return Ok(container);
             }
             thread::sleep(Duration::from_millis(500));
@@ -654,6 +667,29 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written scalar subquery",
             "SELECT e.id, (SELECT AVG(u.id) FROM users u WHERE u.id = e.id) AS mean \
              FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written convert_tz",
+            "SELECT CONVERT_TZ('2026-03-08 06:30:00','+00:00','+05:30'), \
+             CONVERT_TZ('2026-03-08 06:30:00','+05:30','-08:00'), \
+             CONVERT_TZ('2026-06-15 10:00:00.250','+00:00','+02:00')",
+        ),
+        ordered(
+            "hand-written convert_tz",
+            "SELECT CONVERT_TZ('2026-01-15 12:00:00','UTC','Asia/Kolkata'), \
+             CONVERT_TZ('2026-01-15 12:00:00','Asia/Kolkata','UTC'), \
+             CONVERT_TZ('2026-07-04 18:00:00','America/New_York','Europe/Paris')",
+        ),
+        ordered(
+            "hand-written convert_tz",
+            "SELECT CONVERT_TZ('2026-11-01 05:30:00','UTC','America/New_York'), \
+             CONVERT_TZ('2026-11-01 01:30:00','America/New_York','UTC')",
+        ),
+        ordered(
+            "hand-written convert_tz",
+            "SELECT CONVERT_TZ('2026-06-15 10:00:00','Bad/Zone','UTC'), \
+             CONVERT_TZ(NULL,'+00:00','+01:00'), \
+             CONVERT_TZ('not a datetime','+00:00','+01:00')",
         ),
         unordered(
             "hand-written cross join",

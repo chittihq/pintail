@@ -2761,6 +2761,7 @@ fn bind_scalar_function(
         "MAKEDATE" if args.len() == 2 => ScalarFunction::MakeDate,
         "CURTIME" | "CURRENT_TIME" if args.is_empty() => ScalarFunction::Curtime,
         "STR_TO_DATE" if args.len() == 2 => ScalarFunction::StrToDate,
+        "CONVERT_TZ" if args.len() == 3 => ScalarFunction::ConvertTz,
         "REGEXP_LIKE" if args.len() == 2 => ScalarFunction::RegexpLike { negated: false },
         "REGEXP_SUBSTR" if args.len() == 2 => ScalarFunction::RegexpSubstr,
         "REGEXP_INSTR" if args.len() == 2 => ScalarFunction::RegexpInstr,
@@ -3331,9 +3332,10 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             args.iter().any(|argument| argument.nullable),
         ),
         // NULL out of range / on malformed input, like MySQL.
-        ScalarFunction::Elt | ScalarFunction::MakeDate | ScalarFunction::StrToDate => {
-            (Some(DataType::Utf8), true)
-        }
+        ScalarFunction::Elt
+        | ScalarFunction::MakeDate
+        | ScalarFunction::StrToDate
+        | ScalarFunction::ConvertTz => (Some(DataType::Utf8), true),
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         ScalarFunction::Instr
         | ScalarFunction::FindInSet

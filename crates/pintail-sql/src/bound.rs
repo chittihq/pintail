@@ -274,6 +274,9 @@ pub enum ScalarFunction {
     Curtime,
     /// `STR_TO_DATE(text, format)`: NULL when the text does not match.
     StrToDate,
+    /// `CONVERT_TZ(datetime, from_tz, to_tz)` with IANA names or numeric
+    /// offsets: NULL on malformed datetimes or unknown zones.
+    ConvertTz,
     /// `expr REGEXP pattern` / `REGEXP_LIKE`, case-insensitive by default
     /// like the ci collations.
     RegexpLike {
