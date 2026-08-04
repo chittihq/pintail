@@ -817,3 +817,24 @@ Notably the scan reaches decoded columns through *two* paths —
 `read_projected_rows` and a `SegmentRowStream::next_row` row-merge path — and
 the second is 19% of the subtree. Understanding why a projected column scan
 falls into a row-oriented merge is its own question.
+
+### e24 follow-up — a block with no nulls no longer pays for the null splice
+
+`read_block_if_with_budget` decoded a block's values into one `Vec<Cell>` and
+then built a *second* `Vec<Cell>` to interleave `Cell::Null` at the bitmap's set
+positions. When a block has no nulls the second vector is a pure copy of the
+first, and non-nullable columns are the common case.
+
+Returning the decoded vector directly when `actual_nulls == 0` (with an explicit
+length check, so a corrupt block still fails rather than silently truncate):
+
+| projection | before | after | gain |
+|---|---:|---:|---:|
+| amount only | 5513 ms | **4954 ms** | 1.11x |
+| amount + day | 6338 ms | 5857 ms | 1.08x |
+| status only (dictionary) | 6312 ms | 5927 ms | 1.06x |
+| all five columns | 11863 ms | 10731 ms | 1.11x |
+
+Cumulative against the pre-popcount baseline, single-column scan:
+**9055 ms to 4954 ms, 1.83x**, from two changes totalling about forty lines and
+no format change.

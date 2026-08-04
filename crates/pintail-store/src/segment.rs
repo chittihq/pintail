@@ -3531,6 +3531,26 @@ where
     }
     let decoded_values = decode_payload(&uncompressed, logical_type, encoding, non_null_count)
         .map_err(|reason| corrupt(path, compressed_offset, reason))?;
+    // A block with no nulls decodes straight into its final shape. The
+    // splice below exists to interleave `Cell::Null`, and doing it anyway
+    // costs a second `Vec<Cell>` allocation plus a full move of every value
+    // — per block, per column, on every scan. Non-nullable columns are the
+    // common case, so this is the difference between one allocation and two
+    // for most of the data an engine reads.
+    if actual_nulls == 0 {
+        if decoded_values.len() != row_count {
+            return Err(corrupt(
+                path,
+                compressed_offset,
+                "encoding produced the wrong value count",
+            ));
+        }
+        return Ok(BlockRead {
+            row_count,
+            cells: Some(decoded_values),
+            reserved_bytes: memory.map_or(0, |_| reserved_bytes),
+        });
+    }
     let mut decoded_values = decoded_values.into_iter();
     let mut cells = Vec::with_capacity(row_count);
     for index in 0..row_count {
