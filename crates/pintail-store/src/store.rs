@@ -28,8 +28,15 @@ const WRITER_LOCK_FILE: &str = ".writer.lock";
 const DEFAULT_MEMTABLE_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOCK_ROWS: usize = 16 * 1024;
 const DEFAULT_COMPACTION_FAN_IN: usize = 4;
-const DEFAULT_MAX_COMPACTION_INPUT_ROWS: u64 = 50_000;
-const DEFAULT_MAX_COMPACTION_ROWS: u64 = 128_000;
+// One flush of a default memtable yields a segment of a few hundred thousand
+// rows, so both compaction bounds have to sit well above that: an input bound
+// below the natural segment size rejects every window and stops compaction
+// entirely, and an output bound below it splits one merge into more segments
+// than it consumed.
+const DEFAULT_MAX_COMPACTION_INPUT_ROWS: u64 = 8_000_000;
+const DEFAULT_MAX_COMPACTION_ROWS: u64 = 4_000_000;
+const DEFAULT_MAX_COMPACTION_OUTPUT_BYTES: usize = 128 * 1024 * 1024;
+const DEFAULT_COMPACTION_FILE_PRESSURE: usize = 16;
 const SIZE_TIER_RATIO: u64 = 4;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
 
@@ -80,6 +87,16 @@ pub struct StoreOptions {
     pub max_compaction_input_rows: u64,
     /// Maximum rows retained in one compaction output buffer and segment.
     pub max_compaction_rows: u64,
+    /// Maximum bytes retained in one compaction output buffer and segment.
+    /// Whichever of this and [`Self::max_compaction_rows`] is reached first
+    /// closes the output segment, so wide rows cannot make the buffer grow
+    /// with the row bound.
+    pub max_compaction_output_bytes: usize,
+    /// Live segment count above which key-adjacent files in one size tier are
+    /// merged even when their key ranges do not overlap. Append-only sources
+    /// produce nothing but disjoint segments, and without this they would
+    /// never consolidate.
+    pub compaction_file_pressure: usize,
     /// Local writable-table mode: rows become visible only through
     /// [`TableStore::commit`], and recovery replays exactly the committed
     /// WAL prefix (docs/design/writable-mode.md, phase 1).
@@ -96,6 +113,8 @@ impl Default for StoreOptions {
             compaction_fan_in: DEFAULT_COMPACTION_FAN_IN,
             max_compaction_input_rows: DEFAULT_MAX_COMPACTION_INPUT_ROWS,
             max_compaction_rows: DEFAULT_MAX_COMPACTION_ROWS,
+            max_compaction_output_bytes: DEFAULT_MAX_COMPACTION_OUTPUT_BYTES,
+            compaction_file_pressure: DEFAULT_COMPACTION_FILE_PRESSURE,
         }
     }
 }
@@ -2698,6 +2717,7 @@ impl TableStore {
             usize::try_from(self.options.max_compaction_rows).unwrap_or(usize::MAX);
         let mut rows = Vec::with_capacity(output_row_limit.min(64 * 1024));
         let mut output_rows = 0_usize;
+        let mut buffered_bytes = 0_usize;
         let mut output_path = None;
         while let Some(minimum) = heads
             .iter()
@@ -2728,10 +2748,13 @@ impl TableStore {
                 ));
             };
             if !full_merge || !winner.is_deleted() {
+                buffered_bytes = buffered_bytes.saturating_add(winner.estimated_bytes());
                 rows.push(winner);
                 output_rows = output_rows.saturating_add(1);
             }
-            if rows.len() >= output_row_limit {
+            if rows.len() >= output_row_limit
+                || buffered_bytes >= self.options.max_compaction_output_bytes
+            {
                 let path = write_compaction_chunk(
                     &self.directory,
                     &self.schema,
@@ -2743,6 +2766,7 @@ impl TableStore {
                 )?;
                 output_path.get_or_insert(path);
                 rows.clear();
+                buffered_bytes = 0;
             }
         }
         if !rows.is_empty() {
@@ -2847,24 +2871,50 @@ impl TableStore {
         }
         candidates.sort_by_key(|candidate| (candidate.size, candidate.index));
         for window in candidates.windows(self.options.compaction_fan_in) {
-            let smallest = window.first().expect("non-empty window").size;
-            let largest = window.last().expect("non-empty window").size;
-            let row_count = window
-                .iter()
-                .map(|candidate| candidate.row_count)
-                .sum::<u64>();
-            if row_count > self.options.max_compaction_input_rows
-                || largest > smallest.saturating_mul(SIZE_TIER_RATIO)
-                || !ranges_overlap(window)
-            {
+            let selected = window.iter().collect::<Vec<_>>();
+            if !self.admits_window(&selected) || !ranges_overlap(&selected) {
                 continue;
             }
-            return Ok(Some(CompactionPlan {
-                indices: window.iter().map(|candidate| candidate.index).collect(),
-                debt_bytes: window.iter().map(|candidate| candidate.size).sum(),
-            }));
+            return Ok(Some(plan_for(&selected)));
+        }
+        // Nothing overlaps, so no merge would collapse a row version. Merging
+        // still pays for itself once the manifest holds many files: every scan
+        // opens and prunes each one. Take neighbours in key order so the
+        // output stays disjoint from everything it did not consume, which is
+        // what keeps SMA value pruning eligible.
+        if self.manifest.segments.len() < self.options.compaction_file_pressure {
+            return Ok(None);
+        }
+        candidates.sort_by(|left, right| left.minimum.cmp(&right.minimum));
+        for window in candidates.windows(self.options.compaction_fan_in) {
+            let selected = window.iter().collect::<Vec<_>>();
+            if self.admits_window(&selected) {
+                return Ok(Some(plan_for(&selected)));
+            }
         }
         Ok(None)
+    }
+
+    /// Reports whether one candidate window fits the configured size tier and
+    /// per-pass row budget.
+    fn admits_window(&self, window: &[&CompactionCandidate]) -> bool {
+        let sizes = window.iter().map(|candidate| candidate.size);
+        let (Some(smallest), Some(largest)) = (sizes.clone().min(), sizes.max()) else {
+            return false;
+        };
+        let row_count = window
+            .iter()
+            .map(|candidate| candidate.row_count)
+            .sum::<u64>();
+        row_count <= self.options.max_compaction_input_rows
+            && largest <= smallest.saturating_mul(SIZE_TIER_RATIO)
+    }
+}
+
+fn plan_for(window: &[&CompactionCandidate]) -> CompactionPlan {
+    CompactionPlan {
+        indices: window.iter().map(|candidate| candidate.index).collect(),
+        debt_bytes: window.iter().map(|candidate| candidate.size).sum(),
     }
 }
 
@@ -2881,8 +2931,8 @@ struct CompactionPlan {
     debt_bytes: u64,
 }
 
-fn ranges_overlap(candidates: &[CompactionCandidate]) -> bool {
-    let mut by_key = candidates.iter().collect::<Vec<_>>();
+fn ranges_overlap(candidates: &[&CompactionCandidate]) -> bool {
+    let mut by_key = candidates.to_vec();
     by_key.sort_by(|left, right| left.minimum.cmp(&right.minimum));
     let Some(first) = by_key.first() else {
         return false;
@@ -3959,6 +4009,11 @@ fn validate_store_options(options: StoreOptions) -> Result<(), StoreError> {
     if options.max_compaction_rows == 0 || options.max_compaction_input_rows == 0 {
         return Err(StoreError::FormatLimit(
             "compaction row bounds must be non-zero".into(),
+        ));
+    }
+    if options.max_compaction_output_bytes == 0 {
+        return Err(StoreError::FormatLimit(
+            "compaction output byte bound must be non-zero".into(),
         ));
     }
     Ok(())

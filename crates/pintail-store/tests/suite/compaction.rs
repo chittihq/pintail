@@ -167,6 +167,104 @@ fn compaction_defers_candidates_above_the_input_row_bound() {
 }
 
 #[test]
+fn flush_sized_segments_still_compact_under_default_bounds() {
+    // A memtable flush produces segments far larger than any hand-written
+    // test batch. Bounds below that size reject every window and compaction
+    // silently stops running, so keep a case whose segments are realistic.
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        compaction_fan_in: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    // Overlapping key windows, so a merge has versions to collapse, and
+    // 60_000 rows per candidate pair — more than a hand-written batch and
+    // more than the bound that used to reject every window.
+    for batch in 0..8_u64 {
+        let start = batch * 10_000;
+        let rows = (start..start + 30_000)
+            .map(|id| row(id, &format!("batch-{batch}"), batch, false))
+            .collect();
+        table.ingest(rows).expect("bulk ingest");
+        table.flush().expect("flush");
+    }
+
+    let before = table
+        .compaction_status()
+        .expect("status before")
+        .segment_count();
+    assert_eq!(before, 8);
+    let outcome = table.compact().expect("compact");
+    assert_eq!(
+        outcome.input_segments(),
+        2,
+        "flush-sized segments must remain eligible for compaction"
+    );
+    assert!(
+        table
+            .compaction_status()
+            .expect("status after")
+            .segment_count()
+            < before,
+        "a merge must reduce the live segment count"
+    );
+    let rows = table.snapshot().scan().expect("scan");
+    assert_eq!(rows.len(), 100_000);
+    assert_eq!(rows[0].values()[1], Value::Utf8("batch-0".into()));
+    assert_eq!(rows[99_999].values()[1], Value::Utf8("batch-7".into()));
+}
+
+#[test]
+fn disjoint_segments_consolidate_only_under_file_pressure() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let relaxed = StoreOptions {
+        compaction_fan_in: 2,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), relaxed).expect("open");
+    for batch in 0..4_u64 {
+        table
+            .ingest(vec![
+                row(batch * 10, "left", 1, false),
+                row(batch * 10 + 1, "right", 1, false),
+            ])
+            .expect("ingest");
+        table.flush().expect("flush");
+    }
+    let expected = table.snapshot().scan().expect("scan before");
+    assert_eq!(expected.len(), 8);
+    assert_eq!(
+        table
+            .compact()
+            .expect("no-pressure compact")
+            .input_segments(),
+        0,
+        "disjoint files stay separate while the manifest is small"
+    );
+    drop(table);
+
+    let pressured = StoreOptions {
+        compaction_fan_in: 2,
+        compaction_file_pressure: 4,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), pressured).expect("reopen");
+    assert_eq!(
+        table.compact().expect("pressured compact").input_segments(),
+        2,
+        "file pressure consolidates key-adjacent neighbours"
+    );
+    assert_eq!(table.snapshot().scan().expect("scan after"), expected);
+    assert_eq!(
+        table
+            .compaction_status()
+            .expect("status after")
+            .segment_count(),
+        3
+    );
+}
+
+#[test]
 fn pinned_snapshot_segments_survive_writer_drop_and_reopen() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let options = StoreOptions {

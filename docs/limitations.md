@@ -315,13 +315,22 @@ plausible but incorrect result.
   permanently attached stream. Its five-second cadence bounds idle resource
   ownership and source failure blast radius, but a newly committed event may
   wait for the next cycle before ingestion starts.
-- Default size-tier maintenance admits at most 50,000 input rows per
-  compaction pass and partitions output at 128,000 rows. A candidate above
-  the admission limit remains as overlapping immutable segments and is
-  resolved correctly by streaming merge-on-read. The current compaction-debt
-  metric reports the next eligible plan, so it does not quantify an
-  oversized deferred window. These storage limits are engine options rather
-  than TOML/CLI settings in v1.
+- Default size-tier maintenance admits at most 8,000,000 input rows per
+  compaction pass and closes an output segment at 4,000,000 rows or 128 MiB.
+  A candidate above the admission limit remains as overlapping immutable
+  segments and is resolved correctly by streaming merge-on-read. The current
+  compaction-debt metric reports the next eligible plan, so it does not
+  quantify an oversized deferred window. These storage limits are engine
+  options rather than TOML/CLI settings in v1.
+- Compaction runs inline on the ingest path, so a merge at a large size tier
+  stalls replication for its duration. A 5,000,000-row append-only load
+  measured 583,000 rows/s with compaction inert and 343,000 rows/s once
+  merges engaged. There is no background compaction thread, and no way to
+  bound or defer a pass that has begun.
+- Segment consolidation of disjoint key ranges waits for the live segment
+  count to reach `compaction_file_pressure` (16 by default). Below that
+  threshold an append-only table accumulates one segment per memtable flush,
+  because no merge among them would collapse a row version.
 - RSS is obtained from the host `ps` process table. Sandboxed or minimal
   environments without a compatible `ps` command report zero rather than
   guessing. Storage and segment metrics walk the local data directory and can
@@ -361,5 +370,5 @@ reason; it does not mean silent corruption is accepted.
 Pintail v1 is a single-node, read-only analytical replica. It does not provide
 clustered query execution, synchronous high availability, source writes,
 multi-tenant isolation, TLS termination, exact decimal arithmetic, spatial
-querying, or query spill-to-disk. Those boundaries are explicit rather than
+querying, or background compaction. Those boundaries are explicit rather than
 emulated with results that look plausible but may be wrong.
