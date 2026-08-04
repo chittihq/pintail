@@ -2591,12 +2591,16 @@ impl TableStore {
             });
         }
 
-        // The memtable is a map, so a flushed segment holds exactly one row
-        // per key. `unique_keys` promises more than that though: the
-        // streaming Direct scan path applies no tombstone filter, so the flag
-        // also asserts the segment carries no deletes. A flush that drains
-        // tombstones must therefore stay false and be merged on read.
-        let unique_keys = rows.iter().all(|row| !row.is_deleted());
+        // A flushed segment provably holds one row per key (the memtable is a
+        // map) and `unique_keys` would let scans take the columnar direct
+        // path — worth 6.9x on a 20M-row scan when it was tried. It is off
+        // because the direct path decodes a whole segment in one reservation,
+        // so a query with a small ceiling that previously streamed through the
+        // chunked merge path fails instead: `MemoryLimitExceeded { requested:
+        // 263280, limit: 65536 }` in the storage key-pruning tests. Turning
+        // this on requires the direct path to size its work to the budget
+        // first; see the notes in experiments/RESULTS.md (e24 follow-up 2).
+        let unique_keys = false;
         let segment = segment::write(
             &self.directory,
             self.manifest.next_segment_id,

@@ -859,8 +859,20 @@ as well as key uniqueness. The correct predicate is
 | status only (dictionary) | 5927 ms | 764 ms | 7.8× |
 | all five columns | 10731 ms | 1820 ms | 5.9× |
 
-**Cumulative across the three changes: 9055 ms → 714 ms on a single-column scan
-of 20M rows, 12.7×.** None of them changed the file format; all three came from
+**REVERTED — see below.** The `unique_keys` change was backed out; the banked
+cumulative figure is **9055 ms → 4954 ms (1.83×)** from the popcount and
+null-splice fixes alone.
+
+The direct path decodes a whole segment in **one reservation**, so a query with
+a small ceiling that previously streamed through the chunked merge path fails
+outright: `MemoryLimitExceeded { requested: 263280, limit: 65536 }` in
+`storage::tests::key_pruning_requires_an_exact_declared_numeric_mapping` and two
+siblings. Three attempts to add a fallback all missed the real call site — the
+failure arrives through `next_column_chunks` prefetch, not the paths I patched —
+so the change is off until the direct path can size its work to the budget.
+That is the prerequisite, and it is real work, not a guard.
+
+Had it held, the figure would have been: None of them changed the file format; all three came from
 profiling rather than from the encoding programme this investigation started
 with, whose best candidate was worth 0.14%.
 
