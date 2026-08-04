@@ -860,7 +860,7 @@ fn parameter_literal(value: ValueInner<'_>) -> Result<String, String> {
     }
 }
 
-/// Renders MySQL's binary DATE/DATETIME parameter encoding as a quoted
+/// Renders `MySQL`'s binary `DATE`/`DATETIME` parameter encoding as a quoted
 /// literal: 0, 4, 7, or 11 payload bytes for zero, date, seconds, and
 /// microsecond precision respectively.
 fn temporal_date_literal(payload: &[u8]) -> Result<String, String> {
@@ -890,7 +890,7 @@ fn temporal_date_literal(payload: &[u8]) -> Result<String, String> {
     }
 }
 
-/// Renders MySQL's binary TIME parameter encoding as a quoted literal:
+/// Renders `MySQL`'s binary `TIME` parameter encoding as a quoted literal:
 /// 0, 8, or 12 payload bytes; hours fold in the day count.
 fn temporal_time_literal(payload: &[u8]) -> Result<String, String> {
     let field = |index: usize| payload.get(index).copied().unwrap_or(0);
