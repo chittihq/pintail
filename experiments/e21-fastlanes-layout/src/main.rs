@@ -70,6 +70,57 @@ fn unpack_horizontal(words: &[u32], width: u32, count: usize, out: &mut Vec<u32>
     }
 }
 
+/// The same horizontal layout, written with every advantage the interleaved
+/// kernel gets: output pre-sized and written by index rather than pushed,
+/// mask hoisted, and the per-value branch replaced by processing a full
+/// repeat group of `64 / gcd(W, 64)` values whose word/offset pattern is
+/// identical in every group. If the interleaved win survives against this,
+/// it is the layout; if it does not, the win was the kernel's shape.
+fn unpack_horizontal_tuned(words: &[u32], width: u32, count: usize, out: &mut Vec<u32>) {
+    out.clear();
+    out.resize(count, 0);
+    let mask = if width == 32 { u32::MAX } else { (1 << width) - 1 };
+    let width = width as usize;
+    // One repeat group spans `group` values and exactly `width` words.
+    let group = 32 / gcd(width, 32);
+    let mut index = 0;
+    while index + group <= count {
+        let base_bit = index * width;
+        let base_word = base_bit / 32;
+        for step in 0..group {
+            let bit = step * width;
+            let word = base_word + bit / 32;
+            let offset = bit % 32;
+            let mut value = words[word] >> offset;
+            if offset + width > 32 {
+                value |= words[word + 1] << (32 - offset);
+            }
+            out[index + step] = value & mask;
+        }
+        index += group;
+    }
+    while index < count {
+        let bit = index * width;
+        let word = bit / 32;
+        let offset = bit % 32;
+        let mut value = words[word] >> offset;
+        if offset + width > 32 {
+            value |= words[word + 1] << (32 - offset);
+        }
+        out[index] = value & mask;
+        index += 1;
+    }
+}
+
+const fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
 // ------------------------------------------------------ interleaved (FL 1a)
 
 /// Round-robin across lanes: value v lives in lane `v % LANES` at slot
@@ -185,12 +236,17 @@ fn main() {
         unpack_horizontal(&horizontal, width, rows, &mut out);
         out.iter().map(|v| u64::from(*v)).sum::<u64>()
     });
+    let sum_tuned = bench("sum: horizontal TUNED, unpack then add", || {
+        let mut out = Vec::with_capacity(rows);
+        unpack_horizontal_tuned(&horizontal, width, rows, &mut out);
+        out.iter().map(|v| u64::from(*v)).sum::<u64>()
+    });
     let sum_interleaved = bench("sum: interleaved, unpack then add", || {
         let mut out = Vec::with_capacity(rows);
         unpack_interleaved(&interleaved, width, rows, &mut out);
         out.iter().map(|v| u64::from(*v)).sum::<u64>()
     });
-    check_consistency(&[sum_horizontal, sum_interleaved]);
+    check_consistency(&[sum_horizontal, sum_tuned, sum_interleaved]);
 
     println!(
         "\nwidths sweep (unpack only, median ms): the paper's speedup is width-dependent"

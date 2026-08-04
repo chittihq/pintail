@@ -70,6 +70,32 @@ fn pack(values: &[u64], width: u32) -> Vec<u64> {
     words
 }
 
+/// Unpacks straight out of a byte buffer, which is what a decoder fed by a
+/// block decompressor actually has in hand. Reading the words back out of
+/// the original in-memory array instead would measure a pipeline nobody
+/// runs and would hide the decompressor's cache footprint.
+fn unpack_from_bytes(bytes: &[u8], width: u32, count: usize, out: &mut Vec<u64>) {
+    out.clear();
+    if width == 0 {
+        out.resize(count, 0);
+        return;
+    }
+    let word = |index: usize| -> u64 {
+        let start = index * 8;
+        u64::from_le_bytes(bytes[start..start + 8].try_into().expect("whole word"))
+    };
+    let mask = if width == 64 { u64::MAX } else { (1 << width) - 1 };
+    for index in 0..count {
+        let bit = index * width as usize;
+        let offset = bit % 64;
+        let mut value = word(bit / 64) >> offset;
+        if offset + width as usize > 64 {
+            value |= word(bit / 64 + 1) << (64 - offset);
+        }
+        out.push(value & mask);
+    }
+}
+
 fn unpack_into(words: &[u64], width: u32, count: usize, out: &mut Vec<u64>) {
     out.clear();
     if width == 0 {
@@ -616,10 +642,10 @@ fn census_integer(column: &str, values: &[i64]) {
         for (block, (compressed, plain_len)) in for_blocks.iter().zip(&compressed_blocks) {
             let plain = lz4_flex::block::decompress(compressed, *plain_len)
                 .expect("block round-trips");
-            // The unpack reads the same words the decompressor just wrote.
-            debug_assert_eq!(plain.len(), *plain_len);
-            std::hint::black_box(&plain);
-            block.decode_into(&mut scratch, &mut out);
+            // Unpack out of the bytes the decompressor just produced, which
+            // is the only buffer a real decoder has.
+            unpack_from_bytes(&plain[12..], block.width, block.rows, &mut scratch);
+            out.extend(scratch.iter().map(|d| block.base.wrapping_add(*d as i64)));
         }
         checksum_i64(&out)
     }));

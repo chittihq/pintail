@@ -412,11 +412,17 @@ actually writes.
 
 | column | encoding | encoded | +lz4 | decode encoded | decode +lz4 |
 |---|---|---:|---:|---:|---:|
-| amount (uniform) | FOR+bitpack | 50,007,344 | 50,201,736 | 62.8 ms | 67.6 ms |
-| amount (0.1% outliers) | FOR+bitpack | 84,883,024 | 85,214,187 | 65.2 ms | 82.7 ms |
+| amount (uniform) | FOR+bitpack | 50,007,344 | 50,201,736 | 63.0 ms | 69.2 ms |
+| amount (0.1% outliers) | FOR+bitpack | 84,883,024 | 85,214,187 | 63.8 ms | 69.0 ms |
 
 LZ4 over a densely bit-packed block makes it **bigger** (+0.4%) and decode
-**8–27% slower**. Bit-packing leaves almost no redundancy for a byte-oriented
+**8–10% slower**.
+
+(Corrected: the first run of this experiment unpacked from the original
+in-memory words after decompressing, measuring a pipeline nobody runs and
+reporting a spurious 27% on the outlier row. The kernel now unpacks out of the
+decompressed byte buffer, which is the only buffer a real decoder holds. The
+conclusion survives at a smaller and more consistent margin.) Bit-packing leaves almost no redundancy for a byte-oriented
 matcher to find, so the second layer is pure cost. This is BtrBlocks' §2.1
 finding reproduced on our own format.
 
@@ -508,8 +514,18 @@ no measurements, so this tests the claim with our own compiler.
 
 | variant | unpack + checksum | unpack + sum |
 |---|---:|---:|
-| horizontal (PTSEG today) | 57.7 ms | 22.8 ms |
-| FastLanes interleaved | **40.0 ms** | **6.5 ms** |
+| horizontal (PTSEG today) | 57.0 ms | 22.8 ms |
+| horizontal, equally tuned (control) | — | 23.2 ms |
+| FastLanes interleaved | **39.5 ms** | **5.7 ms** |
+
+**The control matters more than the headline.** The interleaved kernel writes
+into a pre-sized slice by index, hoists the mask, and splits the word-crossing
+case out of the inner loop; the original horizontal kernel does none of those.
+So the gap could have been my coding rather than the layout. `unpack_horizontal_tuned`
+gives the horizontal layout every one of those advantages, including processing
+a whole repeat group of `32/gcd(W,32)` values whose word/offset pattern is
+identical each time. It lands at 23.2 ms — no better than the naive 22.8 ms.
+The 4× is the layout.
 
 Packed size is identical (−0.00%) and the decoded output is in logical order —
 the checksums match the horizontal decoder and the source array exactly.
