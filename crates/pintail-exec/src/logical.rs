@@ -263,6 +263,7 @@ impl LogicalPlanner {
                     name: format!("<window-{index}>"),
                     data_type: window.data_type.unwrap_or(DataType::Utf8),
                     nullable: window.nullable,
+                    using_shadowed: false,
                 })
                 .collect::<Vec<_>>();
             for item in &mut projection {

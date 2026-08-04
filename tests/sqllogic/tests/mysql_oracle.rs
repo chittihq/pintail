@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 712;
+const EXPECTED_CASES: usize = 720;
 
 struct OracleCase {
     family: &'static str,
@@ -595,6 +595,40 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written cross join",
             "SELECT e.id AS event_id, u.id AS user_id FROM events e CROSS JOIN users u \
              WHERE e.id >= 9 AND u.id <= 2 ORDER BY event_id, user_id",
+        ),
+        ordered(
+            "hand-written using join",
+            "SELECT id, e.name, u.name FROM events e JOIN users u USING (id) \
+             WHERE id >= 3 ORDER BY id",
+        ),
+        ordered(
+            "hand-written using join",
+            "SELECT * FROM events e JOIN users u USING (id) ORDER BY id",
+        ),
+        ordered(
+            "hand-written using join",
+            "SELECT * FROM events e LEFT JOIN users u USING (id) ORDER BY id",
+        ),
+        ordered(
+            "hand-written using join",
+            "SELECT id, u.id FROM events e LEFT JOIN users u USING (id) \
+             ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written using join",
+            "SELECT * FROM events RIGHT JOIN users USING (id) ORDER BY id",
+        ),
+        ordered(
+            "hand-written using join",
+            "SELECT * FROM events e JOIN users u USING (id, name) ORDER BY id",
+        ),
+        ordered(
+            "hand-written natural join",
+            "SELECT * FROM events NATURAL JOIN users ORDER BY id",
+        ),
+        ordered(
+            "hand-written natural join",
+            "SELECT id, name FROM events NATURAL LEFT JOIN users ORDER BY id",
         ),
         unordered(
             "hand-written cross join",

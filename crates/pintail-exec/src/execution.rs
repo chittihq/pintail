@@ -1831,6 +1831,7 @@ fn build_operator(
                     name: format!("<aggregate-{index}>"),
                     data_type: data_type.unwrap_or(DataType::Utf8),
                     nullable,
+                    using_shadowed: false,
                 })
                 .collect();
             let group_by = group_by

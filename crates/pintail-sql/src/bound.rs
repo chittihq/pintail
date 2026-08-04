@@ -48,6 +48,10 @@ pub struct BoundColumn {
     pub data_type: DataType,
     /// Whether the value can be `NULL`.
     pub nullable: bool,
+    /// Consumed as the right side of a `USING`/`NATURAL` join: hidden from
+    /// unqualified name resolution and unqualified `*`, still reachable
+    /// through a qualified reference.
+    pub using_shadowed: bool,
 }
 
 /// A fully name-resolved and type-checked scalar expression.

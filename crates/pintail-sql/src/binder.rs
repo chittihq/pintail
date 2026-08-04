@@ -185,6 +185,7 @@ impl<'catalog> Binder<'catalog> {
                 ),
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: true,
+                using_shadowed: false,
             })
             .collect();
         let working = BoundTable {
@@ -321,7 +322,7 @@ impl<'catalog> Binder<'catalog> {
     fn bind_select(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
         validate_select_shape(select)?;
 
-        let (mut from, mut tables) = self.bind_from(select, ctes)?;
+        let (mut from, mut tables, wildcard_order) = self.bind_from(select, ctes)?;
         let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
         // Correlated EXISTS conjuncts decorrelate into semi/anti joins
         // before general binding; everything else re-ANDs below.
@@ -372,6 +373,7 @@ impl<'catalog> Binder<'catalog> {
         let mut projection = bind_projection(
             &select.projection,
             &tables,
+            &wildcard_order,
             Some(&mut aggregates),
             Some(&mut windows),
             Some(&resolve_subquery),
@@ -711,9 +713,14 @@ impl<'catalog> Binder<'catalog> {
         &self,
         select: &Select,
         ctes: &[BoundCte],
-    ) -> Result<(Vec<BoundFrom>, Vec<BoundTable>), BindError> {
+    ) -> Result<(Vec<BoundFrom>, Vec<BoundTable>, Vec<BoundColumn>), BindError> {
         let mut from = Vec::with_capacity(select.from.len());
         let mut tables = Vec::new();
+        // Column order an unqualified `*` expands to. USING/NATURAL joins
+        // reorder it per the standard MySQL follows: join columns first
+        // (left occurrence), then the remaining left columns, then the
+        // remaining right columns.
+        let mut wildcard_order: Vec<BoundColumn> = Vec::new();
         for table_with_joins in &select.from {
             // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs; the linear
             // join chain expresses the two-table form directly. RIGHT JOINs
@@ -737,6 +744,7 @@ impl<'catalog> Binder<'catalog> {
             let base = self.bind_table(&table_with_joins.relation, ctes)?;
             reject_duplicate_relation(&tables, &base)?;
             tables.push(base.clone());
+            let mut item_wildcard: Vec<BoundColumn> = base.columns.clone();
 
             let mut joins = Vec::with_capacity(table_with_joins.joins.len());
             for join in &table_with_joins.joins {
@@ -749,11 +757,65 @@ impl<'catalog> Binder<'catalog> {
                 let (kind, constraint) = bind_join_operator(&join.join_operator)?;
                 let condition = match constraint {
                     JoinConstraint::On(condition) => {
+                        item_wildcard.extend(table.columns.iter().cloned());
                         let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
                         Some(bind_expr(condition, &tables, Some(&resolve_subquery))?)
                     }
-                    JoinConstraint::None if kind == BoundJoinKind::Cross => None,
-                    JoinConstraint::None if kind == BoundJoinKind::Inner => None,
+                    JoinConstraint::None if kind == BoundJoinKind::Cross => {
+                        item_wildcard.extend(table.columns.iter().cloned());
+                        None
+                    }
+                    JoinConstraint::None if kind == BoundJoinKind::Inner => {
+                        item_wildcard.extend(table.columns.iter().cloned());
+                        None
+                    }
+                    JoinConstraint::Using(names) if kind != BoundJoinKind::Cross => {
+                        let columns = names
+                            .iter()
+                            .map(|name| {
+                                let parts = object_name_parts(name)?;
+                                match parts.as_slice() {
+                                    [column] => Ok((*column).to_owned()),
+                                    _ => Err(BindError::UnsupportedJoinConstraint(format!(
+                                        "USING({name})"
+                                    ))),
+                                }
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Some(self.bind_using_join(
+                            &columns,
+                            &table,
+                            &mut item_wildcard,
+                            &mut tables,
+                        )?)
+                    }
+                    JoinConstraint::Natural if kind != BoundJoinKind::Cross => {
+                        // NATURAL join columns are the shared names, in the
+                        // order the left side exposes them. No shared names
+                        // means a plain unconditioned inner join.
+                        let columns = item_wildcard
+                            .iter()
+                            .filter(|column| !column.using_shadowed)
+                            .filter(|column| {
+                                table
+                                    .columns
+                                    .iter()
+                                    .any(|right| right.name.eq_ignore_ascii_case(&column.name))
+                            })
+                            .map(|column| column.name.clone())
+                            .collect::<Vec<_>>();
+                        if columns.is_empty() {
+                            item_wildcard.extend(table.columns.iter().cloned());
+                            None
+                        } else {
+                            Some(self.bind_using_join(
+                                &columns,
+                                &table,
+                                &mut item_wildcard,
+                                &mut tables,
+                            )?)
+                        }
+                    }
                     JoinConstraint::Using(_) | JoinConstraint::Natural | JoinConstraint::None => {
                         return Err(BindError::UnsupportedJoinConstraint(format!(
                             "{constraint:?}"
@@ -774,8 +836,89 @@ impl<'catalog> Binder<'catalog> {
                 });
             }
             from.push(BoundFrom { base, joins });
+            wildcard_order.append(&mut item_wildcard);
         }
-        Ok((from, tables))
+        Ok((from, tables, wildcard_order))
+    }
+
+    /// Desugars one `USING`/`NATURAL` join: binds the equality condition
+    /// against the left occurrence of every join column, shadows the right
+    /// occurrences from unqualified resolution, and reorders the wildcard
+    /// expansion to the standard join-columns-first layout.
+    fn bind_using_join(
+        &self,
+        columns: &[String],
+        right: &BoundTable,
+        item_wildcard: &mut Vec<BoundColumn>,
+        tables: &mut Vec<BoundTable>,
+    ) -> Result<BoundExpr, BindError> {
+        let mut condition: Option<BoundExpr> = None;
+        let mut front = Vec::with_capacity(columns.len());
+        for name in columns {
+            let left_matches = item_wildcard
+                .iter()
+                .filter(|column| !column.using_shadowed && column.name.eq_ignore_ascii_case(name))
+                .cloned()
+                .collect::<Vec<_>>();
+            let left = match left_matches.as_slice() {
+                [column] => column.clone(),
+                [] => return Err(BindError::UnknownColumn(name.clone())),
+                _ => return Err(BindError::AmbiguousColumn(name.clone())),
+            };
+            let right_column = right
+                .columns
+                .iter()
+                .find(|column| column.name.eq_ignore_ascii_case(name))
+                .cloned()
+                .ok_or_else(|| BindError::UnknownColumn(name.clone()))?;
+            let equality = Expr::BinaryOp {
+                left: Box::new(Expr::CompoundIdentifier(vec![
+                    Ident::new(left.relation_name.clone()),
+                    Ident::new(left.name.clone()),
+                ])),
+                op: BinaryOperator::Eq,
+                right: Box::new(Expr::CompoundIdentifier(vec![
+                    Ident::new(right_column.relation_name.clone()),
+                    Ident::new(right_column.name.clone()),
+                ])),
+            };
+            let bound = bind_expr(&equality, tables, None)?;
+            condition = Some(match condition {
+                None => bound,
+                Some(existing) => and_bound(existing, bound),
+            });
+            // Move the left occurrence to the join-column block up front.
+            item_wildcard.retain(|column| {
+                !(column.relation_name == left.relation_name && column.name == left.name)
+            });
+            front.push(left);
+        }
+        // Shadow the consumed right-side columns in the resolution scope
+        // only; the executed join schema is untouched.
+        if let Some(bound_right) = tables.last_mut() {
+            for column in &mut bound_right.columns {
+                if columns
+                    .iter()
+                    .any(|name| column.name.eq_ignore_ascii_case(name))
+                {
+                    column.using_shadowed = true;
+                }
+            }
+        }
+        front.append(item_wildcard);
+        item_wildcard.extend(front);
+        item_wildcard.extend(
+            right
+                .columns
+                .iter()
+                .filter(|column| {
+                    !columns
+                        .iter()
+                        .any(|name| column.name.eq_ignore_ascii_case(name))
+                })
+                .cloned(),
+        );
+        Ok(condition.expect("USING joins carry at least one column"))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -881,6 +1024,7 @@ impl<'catalog> Binder<'catalog> {
                 name: column.name().to_owned(),
                 data_type: column.data_type(),
                 nullable: column.is_nullable(),
+                using_shadowed: false,
             })
             .collect();
 
@@ -925,6 +1069,7 @@ impl<'catalog> Binder<'catalog> {
                     .unwrap_or_else(|| projection.name.clone()),
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: projection.expr.nullable,
+                using_shadowed: false,
             })
             .collect();
         BoundTable {
@@ -1217,6 +1362,7 @@ fn validate_select_shape(select: &Select) -> Result<(), BindError> {
 fn bind_projection(
     items: &[SelectItem],
     tables: &[BoundTable],
+    wildcard_order: &[BoundColumn],
     mut aggregates: Option<&mut Vec<BoundAggregate>>,
     mut windows: Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
@@ -1245,9 +1391,22 @@ fn bind_projection(
                 if tables.is_empty() {
                     return Err(BindError::WildcardWithoutTable);
                 }
-                for table in tables {
-                    extend_wildcard(&mut projection, table);
-                }
+                // The FROM clause dictates the expansion order (USING and
+                // NATURAL joins reorder it); tables joined later for
+                // decorrelated subqueries never appear in it.
+                projection.extend(
+                    wildcard_order
+                        .iter()
+                        .cloned()
+                        .map(|column| BoundProjection {
+                            name: column.name.clone(),
+                            expr: BoundExpr {
+                                data_type: Some(column.data_type),
+                                nullable: column.nullable,
+                                kind: BoundExprKind::Column(column),
+                            },
+                        }),
+                );
             }
             SelectItem::QualifiedWildcard(kind, options) => {
                 reject_wildcard_options(options)?;
@@ -1728,7 +1887,11 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
         .iter()
         .flat_map(|table| &table.columns)
         .filter(|column| match identifiers {
-            [column_name] => column.name.eq_ignore_ascii_case(&column_name.value),
+            // USING/NATURAL right-side columns resolve only through a
+            // qualified reference; unqualified names see the left side.
+            [column_name] => {
+                !column.using_shadowed && column.name.eq_ignore_ascii_case(&column_name.value)
+            }
             [relation, column_name] => {
                 column.relation_name.eq_ignore_ascii_case(&relation.value)
                     && column.name.eq_ignore_ascii_case(&column_name.value)
@@ -3612,6 +3775,15 @@ fn resolve_order_index(
             .ok_or_else(|| BindError::InvalidOrderBy(expr.to_string()));
     }
 
+    // A qualified name (e.id) refers to the source scope first, so two
+    // outputs sharing its last part are not ambiguous; the output-name
+    // match below stays as the fallback for rewritten projections.
+    if let Expr::CompoundIdentifier(identifiers) = expr
+        && let Ok(column) = bind_column(identifiers, tables)
+        && let Some(index) = projection.iter().position(|item| item.expr == column)
+    {
+        return Ok(index);
+    }
     let requested = match expr {
         Expr::Identifier(identifier) => identifier.value.clone(),
         _ => projection_name(expr),
@@ -4085,10 +4257,22 @@ mod tests {
             ),
             Err(BindError::UnsupportedJoinOperator(_))
         ));
-        assert!(matches!(
-            bind("SELECT * FROM Events JOIN users USING (id)"),
-            Err(BindError::UnsupportedJoinConstraint(_))
-        ));
+        // USING desugars to the left-right equality with the join column
+        // leading the wildcard once and the right copy shadowed.
+        let query =
+            bind("SELECT * FROM Events JOIN users USING (id)").expect("using join binds");
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
+        assert!(query.from[0].joins[0].condition.is_some());
+        let names = query
+            .projection
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names.iter().filter(|name| **name == "id").count(), 1);
+        assert_eq!(names.first(), Some(&"id"));
+        // NATURAL resolves the shared column names the same way.
+        let query = bind("SELECT id FROM Events NATURAL JOIN users").expect("natural join binds");
+        assert!(query.from[0].joins[0].condition.is_some());
     }
 
     #[test]

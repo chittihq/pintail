@@ -1046,6 +1046,7 @@ fn build_prewhere_spec(scan: &Scan, snapshot: &TableSnapshot) -> Option<Prewhere
             name: column.name().to_owned(),
             data_type: column.data_type(),
             nullable: column.is_nullable(),
+            using_shadowed: false,
         });
         data_types.push(column.data_type());
     }
