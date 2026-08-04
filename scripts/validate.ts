@@ -13,7 +13,7 @@
 /// requested stage passes.
 
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const repository = resolve(import.meta.dir, '..')
@@ -244,9 +244,30 @@ async function main() {
     .split(',')
     .map((stage) => stage.trim())
   mkdirSync(reportDir, { recursive: true })
+  // A killed run leaves its lock behind, and every later run then refuses
+  // to start until someone clears it by hand — which reads as "still
+  // running" for as long as nobody looks. Trust the recorded pid instead of
+  // the file's existence: if that process is gone, so is the run.
   if (existsSync(lockPath)) {
-    console.error(`another validation run appears active (${lockPath}); remove the lock if it is stale`)
-    process.exit(2)
+    const holder = Number.parseInt(readFileSync(lockPath, 'utf8').trim().split(/\s+/)[0] ?? '', 10)
+    let alive = false
+    if (Number.isInteger(holder) && holder > 0) {
+      try {
+        // Signal 0 tests for the process without touching it.
+        process.kill(holder, 0)
+        alive = true
+      } catch (error) {
+        // EPERM means it exists under another user, which still counts as
+        // active; anything else means it is gone.
+        alive = (error as NodeJS.ErrnoException).code === 'EPERM'
+      }
+    }
+    if (alive) {
+      console.error(`another validation run is active (pid ${holder}, ${lockPath})`)
+      process.exit(2)
+    }
+    console.error(`clearing stale lock from pid ${holder || 'unknown'} (${lockPath})`)
+    rmSync(lockPath, { force: true })
   }
   writeFileSync(lockPath, `${process.pid} ${new Date().toISOString()}\n`)
   writeFileSync(statusPath, '')
