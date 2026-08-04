@@ -125,8 +125,9 @@ plausible but incorrect result.
   per-query memory cap. The cap is process-configurable but applies
   independently to every HTTP and MySQL-wire query. Sorting, the generic
   grouped aggregation, and hash-join build sides spill to disk under the
-  cap (a grace-partitioned join errors explicitly when one skewed key's
-  partition alone exceeds the ceiling), but DISTINCT state,
+  cap (a grace-partitioned join re-partitions an oversized partition under
+  a new hash seed up to three times, and errors only when one join key's
+  own rows exceed the ceiling), but DISTINCT state,
   GROUP_CONCAT/JSON_ARRAYAGG aggregation, the single-column direct-path
   aggregation, and materialized query outputs do not — those still fail at
   the ceiling. Spill files carry no disk quota. Cross joins also require

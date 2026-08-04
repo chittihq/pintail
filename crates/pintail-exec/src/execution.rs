@@ -2212,7 +2212,7 @@ fn build_hash_join_state(
             )?;
             if let Some(grace) = grace.as_mut() {
                 let values = batch_row(&batch, row)?;
-                grace.build_files[grace_partition(&key)].append(&key, &values)?;
+                grace.build_files[grace_partition(&key, 0)].append(&key, &values)?;
                 continue;
             }
             memory.reserve(key_bytes)?;
@@ -2230,7 +2230,7 @@ fn build_hash_join_state(
         if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
             let mut partitions = GraceJoin::create()?;
             for (key, bucket) in build.drain() {
-                let target = grace_partition(&key);
+                let target = grace_partition(&key, 0);
                 for values in bucket {
                     partitions.build_files[target].append(&key, &values)?;
                 }
@@ -2388,9 +2388,14 @@ fn decode_join_key(decoder: &mut spill::Decoder<'_>) -> Result<JoinHashKey, Stri
     }
 }
 
-fn grace_partition(key: &JoinHashKey) -> usize {
+/// How many times one partition may be split again before a build side that
+/// still will not fit is reported as unjoinable skew.
+const MAX_GRACE_DEPTH: usize = 3;
+
+fn grace_partition(key: &JoinHashKey, seed: u64) -> usize {
     use std::hash::{Hash as _, Hasher as _};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    seed.hash(&mut hasher);
     key.hash(&mut hasher);
     #[allow(clippy::cast_possible_truncation)] // modulo 16 keeps any width
     {
@@ -2402,6 +2407,9 @@ fn grace_partition(key: &JoinHashKey) -> usize {
 struct GraceJoin {
     build_files: Vec<GraceRun>,
     probe_files: Vec<GraceRun>,
+    /// How many times each partition has been re-partitioned. Parallel to
+    /// the file vectors, which grow as oversized partitions are split.
+    depths: Vec<usize>,
     /// Probe routing finished; partitions are being served.
     probing_done: bool,
     /// Next partition to load in the serve phase.
@@ -2423,12 +2431,53 @@ impl GraceJoin {
         Ok(Self {
             build_files,
             probe_files,
+            depths: vec![0; GRACE_PARTITIONS],
             probing_done: false,
             current: 0,
             replay: None,
             partition_reserved: 0,
         })
     }
+}
+
+/// Splits one partition whose build side did not fit into a fresh round of
+/// partitions under a different hash seed, and appends them to the work
+/// list. A different seed is the point: rows that collided under the
+/// previous one are spread by this one, so a partition that was merely
+/// unlucky becomes joinable. Rows sharing a single key follow each other
+/// into the same piece no matter the seed, which is why the depth bound
+/// exists to end the recursion.
+fn split_grace_partition(grace: &mut GraceJoin, index: usize) -> Result<(), ExecError> {
+    let depth = grace.depths[index];
+    if depth >= MAX_GRACE_DEPTH {
+        return Err(ExecError::Source(
+            "grace join partition still exceeds the memory ceiling after re-partitioning \
+             (one join key holds more rows than the ceiling); raise the limit"
+                .to_owned(),
+        ));
+    }
+    let first = grace.build_files.len();
+    for _ in 0..GRACE_PARTITIONS {
+        grace.build_files.push(GraceRun::create()?);
+        grace.probe_files.push(GraceRun::create()?);
+        grace.depths.push(depth + 1);
+    }
+    let seed = u64::try_from(depth).unwrap_or(0).saturating_add(1);
+    // Move each source file out so its replacement can be written to while
+    // the original is read; the emptied slot is never served again.
+    let mut build = std::mem::replace(&mut grace.build_files[index], GraceRun::create()?);
+    let mut entries = build.reader()?;
+    while let Some((key, values)) = entries.next_entry()? {
+        let target = first + grace_partition(&key, seed);
+        grace.build_files[target].append(&key, &values)?;
+    }
+    let mut probe = std::mem::replace(&mut grace.probe_files[index], GraceRun::create()?);
+    let mut entries = probe.reader()?;
+    while let Some((key, values)) = entries.next_entry()? {
+        let target = first + grace_partition(&key, seed);
+        grace.probe_files[target].append(&key, &values)?;
+    }
+    Ok(())
 }
 
 /// One join-emit step shared by the in-memory probe loop and the grace
@@ -2606,7 +2655,7 @@ fn next_grace_join_batch(
         match key {
             Some(key) => {
                 let grace = state.grace.as_mut().expect("grace state engaged");
-                grace.probe_files[grace_partition(&key)].append(&key, &left_values)?;
+                grace.probe_files[grace_partition(&key, 0)].append(&key, &left_values)?;
             }
             None => match kind {
                 // NULL keys never match: inner/semi drop the row, left
@@ -2639,7 +2688,7 @@ fn next_grace_join_batch(
             break;
         }
         if grace.replay.is_none() {
-            if grace.current >= GRACE_PARTITIONS {
+            if grace.current >= grace.build_files.len() {
                 break;
             }
             let index = grace.current;
@@ -2649,11 +2698,12 @@ fn next_grace_join_batch(
             memory.release(grace.partition_reserved);
             grace.partition_reserved = 0;
             let used_before = memory.used();
+            let mut overflowed = false;
             let mut entries = grace.build_files[index].reader()?;
             while let Some((key, values)) = entries.next_entry()? {
                 if state.build.len() == state.build.capacity() {
                     let growth = state.build.capacity().max(64);
-                    reserve_hash_map_entries(
+                    if reserve_hash_map_entries(
                         &mut state.build,
                         growth,
                         size_of::<JoinHashKey>()
@@ -2662,27 +2712,32 @@ fn next_grace_join_batch(
                         0,
                         memory,
                     )
-                    .map_err(|_| {
-                        ExecError::Source(
-                            "grace join partition exceeds the memory ceiling (skewed key); \
-                         raise the limit"
-                                .to_owned(),
-                        )
-                    })?;
+                    .is_err()
+                    {
+                        overflowed = true;
+                        break;
+                    }
                 }
-                memory
+                if memory
                     .reserve(
                         key.heap_bytes()
                             .saturating_add(estimated_row_payload_bytes(&values)),
                     )
-                    .map_err(|_| {
-                        ExecError::Source(
-                            "grace join partition exceeds the memory ceiling (skewed key); \
-                         raise the limit"
-                                .to_owned(),
-                        )
-                    })?;
+                    .is_err()
+                {
+                    overflowed = true;
+                    break;
+                }
                 state.build.entry(key).or_default().push(values);
+            }
+            if overflowed {
+                // This partition's build side does not fit. Give back what it
+                // took and split it again rather than failing the query.
+                drop(entries);
+                state.build.clear();
+                memory.release(memory.used().saturating_sub(used_before));
+                split_grace_partition(grace, index)?;
+                continue;
             }
             grace.partition_reserved = memory.used().saturating_sub(used_before);
             grace.replay = Some(grace.probe_files[index].reader()?);
@@ -9326,6 +9381,65 @@ impl From<BatchError> for ExecError {
 #[cfg(test)]
 mod tests {
     use std::{collections::VecDeque, mem::size_of, sync::Mutex};
+
+    fn drain_partitions(runs: &mut [super::GraceRun]) -> Vec<u64> {
+        let mut ids = Vec::new();
+        for run in runs {
+            let mut reader = run.reader().expect("partition reader");
+            while let Some((_, values)) = reader.next_entry().expect("partition entry") {
+                match values.first() {
+                    Some(pintail_types::Value::UInt64(id)) => ids.push(*id),
+                    other => panic!("unexpected spilled row {other:?}"),
+                }
+            }
+        }
+        ids
+    }
+
+    #[test]
+    fn splitting_an_oversized_partition_keeps_every_row_and_spreads_the_keys() {
+        use super::{GRACE_PARTITIONS, GraceJoin, JoinHashKey, split_grace_partition};
+        let mut grace = GraceJoin::create().expect("grace state");
+        let ids = (0..500_u64).collect::<Vec<_>>();
+        for id in &ids {
+            let key = JoinHashKey::NonNegativeInteger(*id);
+            let row = vec![pintail_types::Value::UInt64(*id)];
+            grace.build_files[0].append(&key, &row).expect("build");
+            grace.probe_files[0].append(&key, &row).expect("probe");
+        }
+
+        split_grace_partition(&mut grace, 0).expect("split");
+        assert_eq!(grace.build_files.len(), GRACE_PARTITIONS * 2);
+        assert_eq!(grace.depths[GRACE_PARTITIONS], 1);
+
+        let mut build = drain_partitions(&mut grace.build_files[GRACE_PARTITIONS..]);
+        let mut probe = drain_partitions(&mut grace.probe_files[GRACE_PARTITIONS..]);
+        build.sort_unstable();
+        probe.sort_unstable();
+        assert_eq!(build, ids, "no build row may be lost in a split");
+        assert_eq!(probe, ids, "probe rows follow their keys");
+
+        // The emptied original must never be served again.
+        assert!(
+            drain_partitions(&mut grace.build_files[0..1]).is_empty(),
+            "the split partition is left empty"
+        );
+    }
+
+    #[test]
+    fn a_single_key_that_never_fits_reports_skew_at_the_depth_bound() {
+        use super::{ExecError, GraceJoin, MAX_GRACE_DEPTH, split_grace_partition};
+        let mut grace = GraceJoin::create().expect("grace state");
+        grace.depths[0] = MAX_GRACE_DEPTH;
+        let error = split_grace_partition(&mut grace, 0).expect_err("depth bound");
+        let ExecError::Source(message) = error else {
+            panic!("expected a source error at the depth bound");
+        };
+        assert!(
+            message.contains("one join key holds more rows than the ceiling"),
+            "the message must name the cause, saw {message}"
+        );
+    }
 
     #[test]
     fn collation_normalization_folds_case_and_optionally_accents() {
