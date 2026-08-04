@@ -62,6 +62,10 @@ pub enum WalSync {
 }
 
 /// Storage settings fixed for the lifetime of an open table.
+/// WAL header length (`MAGIC` + version byte); the truncation floor when a
+/// transactional log holds no commit record at all.
+const HEADER_LENGTH_FOR_TRUNCATION: u64 = 6;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StoreOptions {
     /// Memtable bytes that request a flush.
@@ -76,12 +80,17 @@ pub struct StoreOptions {
     pub max_compaction_input_rows: u64,
     /// Maximum rows retained in one compaction output buffer and segment.
     pub max_compaction_rows: u64,
+    /// Local writable-table mode: rows become visible only through
+    /// [`TableStore::commit`], and recovery replays exactly the committed
+    /// WAL prefix (docs/design/writable-mode.md, phase 1).
+    pub transactional: bool,
 }
 
 impl Default for StoreOptions {
     fn default() -> Self {
         Self {
             memtable_bytes: DEFAULT_MEMTABLE_BYTES,
+            transactional: false,
             block_rows: DEFAULT_BLOCK_ROWS,
             wal_sync: WalSync::Checkpoint,
             compaction_fan_in: DEFAULT_COMPACTION_FAN_IN,
@@ -1905,6 +1914,8 @@ pub struct TableStore {
     manifest: Arc<Manifest>,
     retired: Vec<RetiredGeneration>,
     last_sequence: u64,
+    /// Highest committed local-transaction version (transactional mode).
+    commit_version: u64,
     next_append_row_id: u64,
     table_id: u64,
     truncate_wal_on_flush: bool,
@@ -1954,7 +1965,23 @@ impl TableStore {
             }
         }
         remove_orphan_segments(&directory, &manifest)?;
-        let (mut wal, recovery) = Wal::open(wal_path, options.wal_sync)?;
+        let (mut wal, mut recovery) = Wal::open(wal_path, options.wal_sync)?;
+        let mut commit_version = manifest.committed_version;
+        if options.transactional {
+            // Rows after the last commit record were never acknowledged;
+            // drop them from replay and from the log itself.
+            let committed = recovery.last_commit;
+            let committed_batches = committed.map_or(0, |commit| commit.batches);
+            if recovery.batches.len() > committed_batches {
+                recovery.batches.truncate(committed_batches);
+                let offset =
+                    committed.map_or(HEADER_LENGTH_FOR_TRUNCATION, |commit| commit.end_offset);
+                wal.truncate_to(offset)?;
+            }
+            if let Some(commit) = committed {
+                commit_version = commit_version.max(commit.version);
+            }
+        }
         let recovery_last_sequence = recovery.last_sequence;
         let recovered_batches = recovery
             .batches
@@ -2015,7 +2042,77 @@ impl TableStore {
             next_append_row_id,
             table_id,
             truncate_wal_on_flush,
+            commit_version,
         })
+    }
+
+    /// The highest committed local-transaction version.
+    #[must_use]
+    pub const fn commit_version(&self) -> u64 {
+        self.commit_version
+    }
+
+    /// Durably commits one local transaction: the row batch and a commit
+    /// record reach the log, one fsync makes both durable, and only then
+    /// do the rows become visible. Rows are stamped with the assigned
+    /// commit version. Returns that version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on a non-transactional store, on validation
+    /// failure, or when WAL I/O fails; a failed commit leaves nothing
+    /// visible.
+    pub fn commit(&mut self, rows: Vec<StoredRow>) -> Result<u64, StoreError> {
+        if !self.options.transactional {
+            return Err(StoreError::FormatLimit(
+                "commit requires a transactional store".into(),
+            ));
+        }
+        let version = self
+            .commit_version
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        let rows: Vec<StoredRow> = rows
+            .into_iter()
+            .map(|row| {
+                StoredRow::new(
+                    row.key().clone(),
+                    row.values().to_vec(),
+                    version,
+                    row.is_deleted(),
+                )
+            })
+            .collect();
+        for row in &rows {
+            self.schema.validate_row(row)?;
+        }
+        let sequence = self
+            .last_sequence
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        if !rows.is_empty() {
+            self.wal
+                .append(sequence, self.table_id, &self.schema, &rows)?;
+        }
+        let commit_sequence = sequence
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        self.wal.append_commit(commit_sequence, version)?;
+        self.wal.sync_force()?;
+        // Durable: apply and publish.
+        for row in &rows {
+            self.memtable.apply(row);
+        }
+        self.last_sequence = commit_sequence;
+        self.commit_version = version;
+        if self.memtable.estimated_bytes() >= self.options.memtable_bytes {
+            self.flush()?;
+            if self.manifest.segments.len() >= self.options.compaction_fan_in {
+                self.compact()?;
+            }
+            self.reclaim_obsolete_segments()?;
+        }
+        Ok(version)
     }
 
     /// Validates and durably orders one atomic row batch.
@@ -2481,6 +2578,7 @@ impl TableStore {
             .checked_add(1)
             .ok_or(StoreError::SequenceOverflow)?;
         next_manifest.flushed_sequence = self.last_sequence;
+        next_manifest.committed_version = self.commit_version;
         next_manifest.next_segment_id = next_manifest
             .next_segment_id
             .checked_add(1)

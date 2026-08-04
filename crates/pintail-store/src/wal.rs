@@ -18,6 +18,9 @@ const FORMAT_VERSION: u8 = 1;
 const HEADER_LENGTH: usize = MAGIC.len() + 1;
 const CHECKSUM_LENGTH: usize = size_of::<u64>();
 const MAX_RECORD_LENGTH: usize = 128 * 1024 * 1024;
+/// Reserved `table_id` marking a transaction-commit record; real tables
+/// never carry this id.
+const COMMIT_TABLE_SENTINEL: u64 = u64::MAX;
 
 pub(crate) struct Wal {
     file: File,
@@ -29,6 +32,20 @@ pub(crate) struct Wal {
 pub(crate) struct Recovery {
     pub(crate) batches: Vec<RecoveredBatch>,
     pub(crate) last_sequence: u64,
+    /// The last durable commit record, when the WAL carries transactions.
+    pub(crate) last_commit: Option<WalCommit>,
+}
+
+/// One recovered transaction-commit marker.
+#[derive(Clone, Copy)]
+pub(crate) struct WalCommit {
+    /// Batches (by count, in order) covered by this commit.
+    pub(crate) batches: usize,
+    /// The committed transaction version.
+    pub(crate) version: u64,
+    /// File offset one past the commit record, for truncating
+    /// uncommitted tails.
+    pub(crate) end_offset: u64,
 }
 
 pub(crate) struct RecoveredBatch {
@@ -147,6 +164,47 @@ impl Wal {
             })
     }
 
+    /// Appends a transaction-commit record covering every batch before it.
+    pub(crate) fn append_commit(
+        &mut self,
+        sequence: u64,
+        commit_version: u64,
+    ) -> Result<(), StoreError> {
+        let mut encoder = Encoder::new();
+        encoder.u64(sequence);
+        encoder.u64(COMMIT_TABLE_SENTINEL);
+        encoder.u64(commit_version);
+        let payload = encoder.finish();
+        let length = u32::try_from(payload.len()).expect("commit records are a handful of bytes");
+        let checksum = xxh3_64(&payload);
+        let record_offset = self
+            .file
+            .seek(SeekFrom::End(0))
+            .map_err(|error| StoreError::io("seek to WAL end", error))?;
+        if let Err(write_error) = write_record(&mut self.file, length, &payload, checksum) {
+            self.rollback_failed_append(record_offset, &write_error)?;
+            return Err(StoreError::io("append WAL commit record", write_error));
+        }
+        Ok(())
+    }
+
+    /// Synchronizes unconditionally: transaction commits are durable at
+    /// every policy, unlike per-batch appends.
+    pub(crate) fn sync_force(&mut self) -> Result<(), StoreError> {
+        self.file
+            .sync_data()
+            .map_err(|error| StoreError::io("sync WAL commit", error))
+    }
+
+    /// Truncates the log to `offset`, discarding uncommitted tail records.
+    pub(crate) fn truncate_to(&mut self, offset: u64) -> Result<(), StoreError> {
+        self.file
+            .set_len(offset)
+            .and_then(|()| self.file.seek(SeekFrom::Start(offset)).map(drop))
+            .and_then(|()| self.file.sync_all())
+            .map_err(|error| StoreError::io("truncate uncommitted WAL tail", error))
+    }
+
     pub(crate) fn sync(&mut self) -> Result<(), StoreError> {
         if self.sync_policy != WalSync::Off {
             self.file
@@ -177,6 +235,7 @@ pub(crate) fn recover_read_only(path: &Path) -> Result<Recovery, StoreError> {
             return Ok(Recovery {
                 batches: Vec::new(),
                 last_sequence: 0,
+                last_commit: None,
             });
         }
         Err(error) => {
@@ -246,6 +305,21 @@ fn encode_batch(
         encode_row(&mut encoder, row)?;
     }
     Ok(encoder.finish())
+}
+
+/// A commit record's `(sequence, version)`, or `None` for batch payloads.
+fn decode_commit(payload: &[u8]) -> Option<(u64, u64)> {
+    if payload.len() != 3 * size_of::<u64>() {
+        return None;
+    }
+    let mut decoder = Decoder::new(payload);
+    let sequence = decoder.u64().ok()?;
+    if decoder.u64().ok()? != COMMIT_TABLE_SENTINEL {
+        return None;
+    }
+    let version = decoder.u64().ok()?;
+    decoder.finish().ok()?;
+    Some((sequence, version))
 }
 
 fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
@@ -318,6 +392,7 @@ fn decode_data_type(tag: u8) -> Result<DataType, String> {
     }
 }
 
+#[allow(clippy::too_many_lines)] // one linear record walk
 fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreError> {
     file.seek(SeekFrom::Start(0))
         .map_err(|error| StoreError::io("seek to WAL start", error))?;
@@ -339,6 +414,7 @@ fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreE
     let mut valid_length = HEADER_LENGTH;
     let mut batches = Vec::new();
     let mut last_sequence = 0;
+    let mut last_commit = None;
     while position < bytes.len() {
         let record_offset = position;
         let Some(length_bytes) = bytes.get(position..position + size_of::<u32>()) else {
@@ -385,6 +461,22 @@ fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreE
         }
         position = record_end;
 
+        if let Some((sequence, version)) = decode_commit(payload) {
+            if sequence <= last_sequence {
+                return Err(StoreError::corrupt_wal(
+                    record_offset,
+                    format!("sequence {sequence} does not follow {last_sequence}"),
+                ));
+            }
+            last_sequence = sequence;
+            valid_length = position;
+            last_commit = Some(WalCommit {
+                batches: batches.len(),
+                version,
+                end_offset: valid_length as u64,
+            });
+            continue;
+        }
         let batch = decode_batch(payload).map_err(|reason| {
             StoreError::corrupt_wal(record_offset, format!("invalid record payload: {reason}"))
         })?;
@@ -409,6 +501,7 @@ fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreE
     Ok(Recovery {
         batches,
         last_sequence,
+        last_commit,
     })
 }
 

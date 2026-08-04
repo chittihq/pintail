@@ -34,6 +34,9 @@ pub struct DatabaseRecord {
     /// Keyless-table replication policy: `quarantine`, `auto_resync`, or
     /// `reject`.
     pub keyless_policy: String,
+    /// `replicated` (MySQL-mirrored, the default) or `local` (writable,
+    /// docs/design/writable-mode.md).
+    pub kind: String,
 }
 
 /// Mutable source-database settings.
@@ -793,7 +796,8 @@ fn decode_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
 fn database_select_sql() -> &'static str {
     "SELECT id, name, mysql_dsn_encrypted, mode, effective_mode, state, probe_json, \
             include_tables, exclude_tables, poll_interval_seconds, \
-            reconcile_interval_seconds, created_at, updated_at, keyless_policy \
+            reconcile_interval_seconds, created_at, updated_at, keyless_policy, \
+            kind \
      FROM databases"
 }
 
@@ -827,6 +831,7 @@ fn decode_database(row: &rusqlite::Row<'_>) -> rusqlite::Result<DatabaseRecord> 
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
         keyless_policy: row.get(13)?,
+        kind: row.get(14)?,
     })
 }
 

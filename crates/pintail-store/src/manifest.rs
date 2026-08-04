@@ -16,7 +16,7 @@ pub(crate) const FILE_NAME: &str = "manifest.ptm";
 const MAGIC: &[u8; 5] = b"PTMAN";
 /// v2 adds optional per-segment SMAs; v1 manifests still decode (their
 /// segments carry no SMAs and decline the aggregate fast path).
-const FORMAT_VERSION: u8 = 2;
+const FORMAT_VERSION: u8 = 3;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Manifest {
@@ -27,6 +27,9 @@ pub(crate) struct Manifest {
     pub(crate) flushed_sequence: u64,
     pub(crate) next_segment_id: u64,
     pub(crate) epoch: u64,
+    /// Highest durably committed local-transaction version (format v3;
+    /// zero for replicated tables and older manifests).
+    pub(crate) committed_version: u64,
     pub(crate) segments: Vec<SegmentMeta>,
 }
 
@@ -40,6 +43,7 @@ impl Manifest {
             flushed_sequence: 0,
             next_segment_id: 1,
             epoch: 0,
+            committed_version: 0,
             segments: Vec::new(),
         }
     }
@@ -114,6 +118,13 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
     let epoch = decoder
         .u64()
         .map_err(|reason| corrupt_here(&decoder, reason))?;
+    let committed_version = if format_version >= 3 {
+        decoder
+            .u64()
+            .map_err(|reason| corrupt_here(&decoder, reason))?
+    } else {
+        0
+    };
     let segment_count = decoder
         .u32()
         .map_err(|reason| corrupt_here(&decoder, reason))?;
@@ -216,6 +227,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         flushed_sequence,
         next_segment_id,
         epoch,
+        committed_version,
         segments,
     })
 }
@@ -249,6 +261,7 @@ pub(crate) fn encode(manifest: &Manifest) -> Result<Vec<u8>, StoreError> {
     encoder.u64(manifest.flushed_sequence);
     encoder.u64(manifest.next_segment_id);
     encoder.u64(manifest.epoch);
+    encoder.u64(manifest.committed_version);
     encoder.length(manifest.segments.len(), "manifest segment count")?;
     for segment in &manifest.segments {
         encoder.u64(segment.id);

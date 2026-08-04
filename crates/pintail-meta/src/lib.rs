@@ -20,7 +20,7 @@ pub use control::{
     UserRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 13;
+const CURRENT_SCHEMA_VERSION: u32 = 14;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1357,6 +1357,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 13 {
         migration_v13(connection.transaction()?)?;
     }
+    if found < 14 {
+        migration_v14(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1495,4 +1498,13 @@ fn migration_v13(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 13")
+}
+
+fn migration_v14(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/014_database_kind.sql"))
+        .context("failed to apply metadata migration 14")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 14")
 }

@@ -18,4 +18,5 @@ mod suite {
     mod reader;
     mod recovery;
     mod schema_evolution;
+    mod transactional;
 }
