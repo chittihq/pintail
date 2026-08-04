@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- Point-in-time restore (`point_in_time` + `dsn` on the restore request,
+  the bounded CDC catch-up, and the CDC stop bound) — product decision;
+  recovery is re-snapshot or restore-latest-backup. Backup retention,
+  restore validation, and the full/incremental cadence are unchanged.
+
 ### Added
 
 - An experiment lab (`experiments/`) benchmarks contested engine designs as

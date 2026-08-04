@@ -54,12 +54,12 @@ plausible but incorrect result.
 - `CONVERT(value, type)` supports Pintail's scalar target types.
   `CONVERT(value USING charset)` distinguishes binary from character output,
   but does not perform byte-level transcoding among MySQL character sets.
-- `information_schema` currently exposes catalog-backed `schemata`, `tables`,
-  and `columns` basics. It supports simple projection, aliases,
-  case-insensitive `=`, `<>`, `IN`, `LIKE`, `IS NULL`, Boolean filters,
-  ordering, limits, and `COUNT(*)`. Other metadata tables, joins, aggregates,
-  and the full MySQL column inventory are deferred. `COLUMN_KEY` and `EXTRA`
-  are empty until source index/generated-column metadata enters the catalog.
+- `information_schema` supports simple projection, aliases, case-insensitive
+  `=`, `<>`, `IN`, `LIKE`, `IS NULL`, Boolean filters, ordering, limits, and
+  `COUNT(*)` over the served tables; joins, aggregates beyond `COUNT(*)`,
+  and metadata tables outside the served set (`schemata`, `tables`,
+  `columns`, `statistics`, `key_column_usage`, `table_constraints`,
+  `referential_constraints`) are deferred.
 
 ### MySQL semantic differences
 
@@ -77,7 +77,7 @@ plausible but incorrect result.
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are
   pinned to one timestamp per statement, read from the host clock and
   timezone at plan time. Pintail does not yet expose a MySQL session
-  timezone or `CONVERT_TZ`.
+  timezone.
 - Date parsing accepts the canonical date and date-time forms implemented by
   the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a
   time; compound intervals and the full `DATE_FORMAT` directive inventory are
@@ -265,12 +265,6 @@ plausible but incorrect result.
   counters. The HTTP surface serializes binary values as lowercase `0x` hex
   strings; JSON columns remain canonical JSON text rather than being silently
   retyped as nested response objects.
-- Point-in-time restore (`point_in_time` + source `dsn` on the restore
-  request) rolls the restored replica forward from the backup's
-  checkpoint to the last source transaction at or before the requested
-  instant, then leaves it paused; it requires the source to still retain
-  the binlog range since that backup. Archiving binlogs to the backup
-  destination for sources that purge early is not implemented.
 - The embedded dashboard is a local control plane, not a multi-tenant security
   boundary. Its first-boot admin and signed sessions protect operations, while
   network exposure and TLS remain deployment responsibilities.
