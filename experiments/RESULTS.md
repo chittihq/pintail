@@ -869,3 +869,35 @@ carrying a tombstone must not resurrect it, a tombstone-free flush returns
 exactly its rows, overlapping unique segments still merge to the newer version,
 a memtable tombstone still suppresses a segment row, and the classification
 survives close and reopen since the flag is persisted in the manifest.
+
+### e24 follow-up 3 — profile after the Direct path: no single dominator left
+
+Re-sampled with the columnar path live (scan of one column now 821 ms):
+
+| self samples | symbol | area |
+|---:|---|---|
+| 696 | `read` (syscall) | file I/O |
+| 601 | `_xzm_free` | allocator |
+| 394 | `decode_int_payload_into` | real decode work |
+| 339 | `_platform_memmove` | copies |
+| 291 | `xxh3_64_long_default` | per-block checksum |
+| 253 | `read_projected_rows` | scan driver |
+| 221 + 206 | `malloc` internals | allocator |
+| 194 | `unpack` | bit-unpacking |
+
+The shape has changed qualitatively. Before, one loop was 41% and a second was
+19%; now the top cost is the read syscall and the third is the decode kernel
+doing its actual job. Allocation is still visible (~1000 samples across
+malloc/free) but it is spread across `Vec<Value>` construction rather than
+concentrated anywhere a targeted fix could remove.
+
+**Stopping here deliberately.** The remaining candidates are I/O (inherent),
+the checksum (a correctness feature), and diffuse allocation whose removal
+would mean changing the API shape that returns `Vec<Value>` rows. None of them
+resemble the two structural mistakes that produced the 12.7× — those were a
+per-row loop where a popcount belonged and a flag that was never set.
+
+One number worth carrying forward: row materialization now costs as much as the
+entire columnar scan (821 ms → 1615 ms for the same data with `next_chunk`).
+That is the exec layer's "value tax" from e15, not storage, and it is where the
+next scan-side work belongs.
