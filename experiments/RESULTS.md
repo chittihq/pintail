@@ -773,3 +773,47 @@ place again: profile the engine before rewriting the format.
 
 The remaining ~5.5 s for one column of 20M values is still ~200× the raw decode
 kernel, so the profile should be repeated now that this dominator is gone.
+
+## e24 — Where the scan time actually goes (post-popcount attribution)
+
+15-second sample of `scan_probe` during its scan phase, 20M rows, 60 segments,
+after the null-bitmap popcount fix. Self time, "sort by top of stack":
+
+| self samples | symbol | area |
+|---:|---|---|
+| 1809 | `read` (syscall) | file I/O |
+| 984 | `_xzm_free` | allocator |
+| 587 | `xxh3_64_long_default` | per-block checksum |
+| 578 | `segment::read_projected_rows` | scan driver |
+| 547 | `SegmentRowStream::next_row` | row merge path |
+| 361 + 341 | `_malloc_zone_malloc`, `_xzm_xzone_malloc` | allocator |
+| 315 + 281 | `_free`, malloc internals | allocator |
+| 269 + 262 | `__bzero`, `_platform_memset` | allocation zeroing |
+| 267 | `_platform_memmove` | copies |
+| — | `Vec<Cell>::push`, `Vec<Value>` from_iter, `Vec<KeyPart>` clone | per-row materialization |
+| 154 | `codec::decode_key` | key decode |
+
+**Allocation is the largest software cost: ~2800 samples (~21%)** across
+malloc/free plus the zeroing that accompanies it — more than I/O's 13%, and
+five times the checksum. It is driven by per-row materialization: a `Vec<Cell>`
+per block, a `Vec<Value>` per row, and a cloned `Vec<KeyPart>` per key.
+
+**Bit-unpacking is 101 samples — 1.4%.** This is the third independent
+confirmation that encoding work cannot pay here: e23 sized the candidates at
+0.14% and 0.06% of a scan, and the profile now shows the kernel they would
+improve is a rounding error against the allocator.
+
+Ranked targets:
+
+1. **Per-row allocation churn** (~21%). Reuse buffers across rows and blocks
+   instead of allocating a fresh `Vec` per row; the merge path clones
+   `Vec<KeyPart>` per key where a borrow would do.
+2. **I/O pattern** (13%). `FileDecoder::read_exact` appears twice in the hot
+   tree; block-at-a-time reads may be coalescable.
+3. **Checksum** (4%). A correctness feature, not removable, but it is verified
+   on every block read including blocks a predicate then skips.
+
+Notably the scan reaches decoded columns through *two* paths —
+`read_projected_rows` and a `SegmentRowStream::next_row` row-merge path — and
+the second is 19% of the subtree. Understanding why a projected column scan
+falls into a row-oriented merge is its own question.
