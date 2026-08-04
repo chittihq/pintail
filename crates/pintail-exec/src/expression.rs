@@ -1065,11 +1065,12 @@ fn evaluate_eager_scalar(
             ScalarFunction::InList { .. }
                 | ScalarFunction::NullIf
                 // NULL arguments are data, not poison, for these: CONCAT_WS
-                // skips them, ELT/FIELD treat them positionally, and the
-                // JSON constructors encode them as JSON null.
+                // skips them, ELT/FIELD treat them positionally, CHAR drops
+                // them, and the JSON constructors encode them as JSON null.
                 | ScalarFunction::ConcatWs
                 | ScalarFunction::Elt
                 | ScalarFunction::Field
+                | ScalarFunction::Char
                 | ScalarFunction::JsonObject
                 | ScalarFunction::JsonArray
         )
