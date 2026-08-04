@@ -116,7 +116,9 @@ fn main() {
     let rows: u64 = std::env::args()
         .skip(1)
         .scan(String::new(), |previous, argument| {
-            let value = (previous == "--rows").then(|| argument.parse().ok()).flatten();
+            let value = (previous == "--rows")
+                .then(|| argument.parse().ok())
+                .flatten();
             *previous = argument;
             Some(value)
         })
@@ -172,11 +174,7 @@ fn main() {
         ("all five columns   ", &[1, 2, 3, 4, 5][..]),
     ] {
         let (first, scanned) = scan(&table, columns, false);
-        let columnar = median(
-            (0..3)
-                .map(|_| scan(&table, columns, false).0)
-                .collect(),
-        );
+        let columnar = median((0..3).map(|_| scan(&table, columns, false).0).collect());
         let with_rows = median((0..3).map(|_| scan(&table, columns, true).0).collect());
         println!(
             "{label}: first {:>8.1} ms   columns {:>8.1} ms   +rows {:>8.1} ms   {scanned} values",

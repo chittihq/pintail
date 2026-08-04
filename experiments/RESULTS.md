@@ -742,3 +742,34 @@ decode: LZ4 measurably *expands* densely bit-packed blocks while earning up to
 170× on dictionary codes, so a per-block "keep the codec only if it pays" rule
 is still correct — just justified by bytes and I/O, not by the 6–9% decode tax,
 which is noise at engine scale.
+
+### e23 follow-up — profiling the 9 seconds found a 1.6× scan win
+
+Sampling the probe during its scan phase attributed **41% of scan wall time to a
+single `filter().count()`** inside `read_block_if_with_budget`: every block of
+every column validated its declared null count by testing **one row at a time**,
+
+```rust
+let actual_nulls = (0..row_count)
+    .filter(|index| null_bitmap[index / 8] & (1 << (index % 8)) != 0)
+    .count();
+```
+
+This is a corruption check, and it ran even for blocks the predicate was about
+to skip. Replacing it with a per-byte popcount (masking the trailing byte to the
+bits the row count covers, so a corrupt tail still fails exactly as before):
+
+| projection | before | after | gain |
+|---|---:|---:|---:|
+| amount only | 9055 ms | **5509 ms** | 1.64× |
+| amount + day | 10622 ms | 6396 ms | 1.66× |
+| status only (dictionary) | 10279 ms | 6308 ms | 1.63× |
+| all five columns | 15403 ms | 11873 ms | 1.30× |
+
+**A 20-line change with identical semantics beat the entire encoding programme
+by two orders of magnitude** — 39% off a single-column scan, against 0.14% for
+the FastLanes layout and 0.06% for dropping LZ4. The standing rule earned its
+place again: profile the engine before rewriting the format.
+
+The remaining ~5.5 s for one column of 20M values is still ~200× the raw decode
+kernel, so the profile should be repeated now that this dominator is gone.

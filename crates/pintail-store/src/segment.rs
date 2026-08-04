@@ -3440,9 +3440,25 @@ where
         .finish()
         .map_err(|reason| corrupt(path, block_offset, reason))?;
 
-    let actual_nulls = (0..row_count)
-        .filter(|index| null_bitmap[index / 8] & (1 << (index % 8)) != 0)
-        .count();
+    // Popcount per byte rather than a test per row. This runs for every
+    // block of every column of every scan, including blocks the predicate
+    // is about to skip, so a bit-at-a-time walk here costs more than the
+    // decoding it guards. The trailing byte is masked to the bits the row
+    // count actually covers: without that, a corrupt file could hide a set
+    // bit past the end that the per-row walk would have refused to count.
+    let actual_nulls: usize = null_bitmap
+        .iter()
+        .enumerate()
+        .map(|(byte, bits)| {
+            let covered = row_count.saturating_sub(byte * 8).min(8);
+            let mask = if covered >= 8 {
+                u8::MAX
+            } else {
+                (1_u8 << covered) - 1
+            };
+            (bits & mask).count_ones() as usize
+        })
+        .sum();
     if actual_nulls != declared_nulls {
         return Err(corrupt(path, block_offset, "null count mismatch"));
     }
