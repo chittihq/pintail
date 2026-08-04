@@ -55,8 +55,8 @@ fn row(id: u64) -> StoredRow {
             Value::UInt64(id),
             Value::UInt64(mixed % 200_000),
             Value::Utf8(STATUSES[(id % 5) as usize].to_owned()),
-            Value::Int64(100 + (mixed % 999_900) as i64),
-            Value::Int64(19_000 + (mixed % 1_095) as i64),
+            Value::Int64(100 + i64::try_from(mixed % 999_900).unwrap_or(0)),
+            Value::Int64(19_000 + i64::try_from(mixed % 1_095).unwrap_or(0)),
         ],
         0,
         false,
@@ -100,7 +100,10 @@ fn scan(table: &TableStore, columns: &[u32], rows_too: bool) -> (Duration, usize
             }
         } else {
             while let Some(chunk) = stream.next_column_chunk(256 * 1024 * 1024).expect("chunk") {
-                seen += chunk.columns().first().map_or(0, |column| column.len());
+                seen += chunk
+                    .columns()
+                    .first()
+                    .map_or(0, pintail_store::DecodedColumn::len);
             }
         }
     }
