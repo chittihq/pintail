@@ -2457,6 +2457,7 @@ dependencies = [
  "pintail-types",
  "rayon",
  "regex",
+ "serde",
  "serde_json",
  "tempfile",
  "unicode-normalization",

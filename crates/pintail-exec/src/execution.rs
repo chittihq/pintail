@@ -4136,10 +4136,24 @@ fn build_buffered_hash_aggregate(
     }
 
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
+    // Bytes reserved for the live group map (entries plus state growth),
+    // measured through used() snapshots around the sequential merge section
+    // so state-internal reserves (distinct sets) are included.
+    let mut groups_reserved = 0_usize;
+    let mut spill_runs: Vec<AggregateSpillRun> = Vec::new();
     let mut first_batch = Some(first_batch);
+    let per_row_upper = group_by
+        .len()
+        .saturating_mul(size_of::<Value>())
+        .saturating_mul(2)
+        .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+        .saturating_add(size_of::<AggregateGroup>())
+        .saturating_add(HASH_ENTRY_OVERHEAD)
+        .saturating_add(256);
     loop {
         let mut batches = Vec::with_capacity(8);
         let mut batch_reserved = 0_usize;
+        let mut selected_rows = 0_usize;
         while batches.len() < 8 {
             let batch = if let Some(batch) = first_batch.take() {
                 Some(batch)
@@ -4150,28 +4164,35 @@ fn build_buffered_hash_aggregate(
                 break;
             };
             let bytes = batch.estimated_bytes();
-            memory.reserve(bytes)?;
+            reserve_or_spill_groups(
+                bytes,
+                &mut groups,
+                &mut groups_reserved,
+                &mut spill_runs,
+                memory,
+            )?;
             batch_reserved = batch_reserved.saturating_add(bytes);
+            selected_rows = selected_rows.saturating_add(batch.visible_row_count());
             batches.push(batch);
+            // Tight ceilings cap the round instead of reserving a
+            // conservative upper bound larger than the whole budget; the
+            // default ceiling keeps full 8-batch rounds.
+            if selected_rows.saturating_mul(per_row_upper) > memory.limit() / 4 {
+                break;
+            }
         }
         if batches.is_empty() {
             break;
         }
-        let selected_rows = batches
-            .iter()
-            .map(RecordBatch::visible_row_count)
-            .sum::<usize>();
-        let local_upper = selected_rows.saturating_mul(
-            group_by
-                .len()
-                .saturating_mul(size_of::<Value>())
-                .saturating_mul(2)
-                .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
-                .saturating_add(size_of::<AggregateGroup>())
-                .saturating_add(HASH_ENTRY_OVERHEAD)
-                .saturating_add(256),
-        );
-        memory.reserve(local_upper)?;
+        let local_upper = selected_rows.saturating_mul(per_row_upper);
+        reserve_or_spill_groups(
+            local_upper,
+            &mut groups,
+            &mut groups_reserved,
+            &mut spill_runs,
+            memory,
+        )?;
+        let mut used_before_merge = memory.used();
         let partials = batches
             .par_iter()
             .map(|batch| {
@@ -4182,47 +4203,417 @@ fn build_buffered_hash_aggregate(
             })
             .collect::<Result<Vec<_>, _>>()?;
         for partial in partials {
-            for (key, partial_group) in partial {
-                if groups.len() == groups.capacity() {
-                    let growth = groups.capacity().max(64);
-                    reserve_hash_map_entries(
+            for entry in partial {
+                let mut pending = Some(entry);
+                while let Some((key, partial_group)) = pending.take() {
+                    match merge_partial_group(
                         &mut groups,
-                        growth,
-                        size_of::<Vec<Value>>()
-                            .saturating_add(size_of::<AggregateGroup>())
-                            .saturating_add(HASH_ENTRY_OVERHEAD),
+                        key,
+                        partial_group,
+                        aggregates,
                         batch_reserved,
                         memory,
-                    )?;
-                }
-                let group = match groups.entry(key) {
-                    Entry::Occupied(entry) => entry.into_mut(),
-                    Entry::Vacant(entry) => {
-                        let bytes = estimated_row_payload_bytes(&partial_group.values)
-                            .saturating_add(estimated_row_payload_bytes(entry.key()))
-                            .saturating_add(
-                                aggregates.len().saturating_mul(size_of::<AggregateState>()),
-                            );
-                        memory.reserve(bytes)?;
-                        entry.insert(AggregateGroup {
-                            values: partial_group.values,
-                            states: aggregates.iter().map(AggregateState::new).collect(),
-                        })
+                    ) {
+                        Ok(()) => {}
+                        // The entry was handed back untouched, so spilling
+                        // the map here and retrying it is safe.
+                        Err((ExecError::MemoryLimitExceeded { .. }, Some(returned)))
+                            if !groups.is_empty() =>
+                        {
+                            groups_reserved = groups_reserved
+                                .saturating_add(memory.used().saturating_sub(used_before_merge));
+                            spill_runs.push(write_aggregate_spill_run(&mut groups)?);
+                            memory.release(groups_reserved);
+                            groups_reserved = 0;
+                            used_before_merge = memory.used();
+                            pending = Some(returned);
+                        }
+                        Err((error, _)) => return Err(error),
                     }
-                };
-                for ((state, partial_state), aggregate) in group
-                    .states
-                    .iter_mut()
-                    .zip(partial_group.states)
-                    .zip(aggregates)
-                {
-                    state.merge(aggregate, partial_state, memory)?;
                 }
             }
         }
+        groups_reserved =
+            groups_reserved.saturating_add(memory.used().saturating_sub(used_before_merge));
         memory.release(local_upper.saturating_add(batch_reserved));
+        // Proactive spill at half the ceiling, mirroring the sort spill:
+        // upstream scans size their working sets from the remaining
+        // headroom, so a group map that hoards the budget until hard
+        // failure starves them.
+        if groups_reserved > memory.limit() / 2 && !groups.is_empty() {
+            spill_runs.push(write_aggregate_spill_run(&mut groups)?);
+            memory.release(groups_reserved);
+            groups_reserved = 0;
+        }
     }
-    finish_aggregate_groups(groups.into_values(), memory)
+    if spill_runs.is_empty() {
+        return finish_aggregate_groups(groups.into_values(), memory);
+    }
+    memory.release(groups_reserved);
+    merge_spilled_aggregate_groups(spill_runs, groups, aggregates, memory)
+}
+
+/// Merges one partial group into the live map. A memory failure *before*
+/// the entry touches the map hands the entry back (`Some`) so the caller
+/// can spill and retry it; a failure while merging states cannot be
+/// replayed and returns `None`.
+fn merge_partial_group(
+    groups: &mut HashMap<Vec<Value>, AggregateGroup>,
+    key: Vec<Value>,
+    partial_group: AggregateGroup,
+    aggregates: &[CompiledAggregate],
+    batch_reserved: usize,
+    memory: &MemoryTracker,
+) -> Result<(), (ExecError, Option<(Vec<Value>, AggregateGroup)>)> {
+    if groups.len() == groups.capacity() {
+        let growth = groups.capacity().max(64);
+        if let Err(error) = reserve_hash_map_entries(
+            groups,
+            growth,
+            size_of::<Vec<Value>>()
+                .saturating_add(size_of::<AggregateGroup>())
+                .saturating_add(HASH_ENTRY_OVERHEAD),
+            batch_reserved,
+            memory,
+        ) {
+            return Err((error, Some((key, partial_group))));
+        }
+    }
+    let group = match groups.entry(key) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let bytes = estimated_row_payload_bytes(&partial_group.values)
+                .saturating_add(estimated_row_payload_bytes(entry.key()))
+                .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()));
+            if let Err(error) = memory.reserve(bytes) {
+                return Err((error, Some((entry.into_key(), partial_group))));
+            }
+            entry.insert(AggregateGroup {
+                values: partial_group.values,
+                states: aggregates.iter().map(AggregateState::new).collect(),
+            })
+        }
+    };
+    for ((state, partial_state), aggregate) in group
+        .states
+        .iter_mut()
+        .zip(partial_group.states)
+        .zip(aggregates)
+    {
+        state
+            .merge(aggregate, partial_state, memory)
+            .map_err(|error| (error, None))?;
+    }
+    Ok(())
+}
+
+/// Reserves `bytes`, spilling the live group map as an on-disk run and
+/// retrying once when the first attempt exceeds the memory ceiling. Only
+/// reserves made *between* merge sections are safe to retry this way; a
+/// failure mid-merge propagates because the interrupted group state cannot
+/// be replayed.
+fn reserve_or_spill_groups(
+    bytes: usize,
+    groups: &mut HashMap<Vec<Value>, AggregateGroup>,
+    groups_reserved: &mut usize,
+    spill_runs: &mut Vec<AggregateSpillRun>,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    match memory.reserve(bytes) {
+        Ok(()) => Ok(()),
+        Err(ExecError::MemoryLimitExceeded { .. }) if !groups.is_empty() => {
+            spill_runs.push(write_aggregate_spill_run(groups)?);
+            memory.release(*groups_reserved);
+            *groups_reserved = 0;
+            memory.reserve(bytes)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// One spilled aggregation run: entries sorted by their serialized group
+/// key, one JSON line each. Like the sort spill, the format favors
+/// correctness and streaming reads — this path only engages where the query
+/// previously failed outright.
+struct AggregateSpillRun {
+    lines: std::io::Lines<std::io::BufReader<std::fs::File>>,
+    _path: tempfile::TempPath,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SpilledGroupEntry {
+    /// The group key, serialized once at spill time; the k-way merge orders
+    /// and matches entries on these exact bytes.
+    key: String,
+    values: Vec<Value>,
+    states: Vec<SpilledAggregateState>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SpilledAggregateState {
+    value: SpilledAggregateValue,
+    /// Drained DISTINCT keys; revival replays them through the regular
+    /// update path, which rebuilds the int-set/value-set split.
+    seen: Option<Vec<Value>>,
+}
+
+/// Serializable mirror of [`AggregateValue`]. `i128` units travel as
+/// strings to stay independent of JSON number-width support.
+#[derive(serde::Serialize, serde::Deserialize)]
+enum SpilledAggregateValue {
+    Count(u64),
+    Sum(Option<Value>),
+    DecimalSum {
+        units: String,
+        scale: u8,
+        float_output: bool,
+    },
+    Average {
+        sum: f64,
+        count: u64,
+    },
+    DecimalAverage {
+        units: String,
+        scale: u8,
+        count: u64,
+    },
+    Minimum(Option<Value>),
+    Maximum(Option<Value>),
+}
+
+fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState, ExecError> {
+    let AggregateState { value, seen, .. } = state;
+    let value = match value {
+        AggregateValue::Count(count) => SpilledAggregateValue::Count(count),
+        AggregateValue::Sum(sum) => SpilledAggregateValue::Sum(sum),
+        AggregateValue::DecimalSum {
+            units,
+            scale,
+            float_output,
+        } => SpilledAggregateValue::DecimalSum {
+            units: units.to_string(),
+            scale,
+            float_output,
+        },
+        AggregateValue::Average { sum, count } => SpilledAggregateValue::Average { sum, count },
+        AggregateValue::DecimalAverage {
+            units,
+            scale,
+            count,
+        } => SpilledAggregateValue::DecimalAverage {
+            units: units.to_string(),
+            scale,
+            count,
+        },
+        AggregateValue::Minimum(value) => SpilledAggregateValue::Minimum(value),
+        AggregateValue::Maximum(value) => SpilledAggregateValue::Maximum(value),
+        AggregateValue::GroupConcat { .. } | AggregateValue::JsonArrayAgg { .. } => {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "aggregation spill reached a non-spillable aggregate state",
+            ));
+        }
+    };
+    Ok(SpilledAggregateState {
+        value,
+        seen: seen.map(DistinctSeen::drain_values),
+    })
+}
+
+fn spilled_units(units: &str) -> Result<i128, ExecError> {
+    units
+        .parse::<i128>()
+        .map_err(|_| ExecError::Source("aggregate spill decode: bad decimal units".to_owned()))
+}
+
+/// Rebuilds a live aggregate state from its spilled form. DISTINCT states
+/// replay their seen keys through the regular update path; everything else
+/// restores the accumulator directly (the extreme caches stay invalidated,
+/// exactly as after a merge).
+fn revive_aggregate_state(
+    spilled: SpilledAggregateState,
+    aggregate: &CompiledAggregate,
+    memory: &MemoryTracker,
+) -> Result<AggregateState, ExecError> {
+    let mut state = AggregateState::new(aggregate);
+    if let Some(values) = spilled.seen {
+        for value in values {
+            state.update(aggregate, &value, memory)?;
+        }
+        return Ok(state);
+    }
+    state.value = match spilled.value {
+        SpilledAggregateValue::Count(count) => AggregateValue::Count(count),
+        SpilledAggregateValue::Sum(sum) => AggregateValue::Sum(sum),
+        SpilledAggregateValue::DecimalSum {
+            units,
+            scale,
+            float_output,
+        } => AggregateValue::DecimalSum {
+            units: spilled_units(&units)?,
+            scale,
+            float_output,
+        },
+        SpilledAggregateValue::Average { sum, count } => AggregateValue::Average { sum, count },
+        SpilledAggregateValue::DecimalAverage {
+            units,
+            scale,
+            count,
+        } => AggregateValue::DecimalAverage {
+            units: spilled_units(&units)?,
+            scale,
+            count,
+        },
+        SpilledAggregateValue::Minimum(value) => AggregateValue::Minimum(value),
+        SpilledAggregateValue::Maximum(value) => AggregateValue::Maximum(value),
+    };
+    Ok(state)
+}
+
+/// Drains the live group map into one sorted on-disk run.
+fn write_aggregate_spill_run(
+    groups: &mut HashMap<Vec<Value>, AggregateGroup>,
+) -> Result<AggregateSpillRun, ExecError> {
+    use std::io::Write as _;
+    let mut entries = groups
+        .drain()
+        .map(|(key, group)| {
+            Ok(SpilledGroupEntry {
+                key: serde_json::to_string(&key)
+                    .map_err(|error| ExecError::Source(format!("aggregate spill key: {error}")))?,
+                values: group.values,
+                states: group
+                    .states
+                    .into_iter()
+                    .map(spill_aggregate_state)
+                    .collect::<Result<_, _>>()?,
+            })
+        })
+        .collect::<Result<Vec<_>, ExecError>>()?;
+    entries.sort_unstable_by(|left, right| left.key.cmp(&right.key));
+    let file = tempfile::Builder::new()
+        .prefix("pintail-aggregate-spill-")
+        .tempfile()
+        .map_err(|error| ExecError::Source(format!("aggregate spill create: {error}")))?;
+    let (file, path) = file.into_parts();
+    let mut writer = std::io::BufWriter::new(file);
+    for entry in entries {
+        let line = serde_json::to_string(&entry)
+            .map_err(|error| ExecError::Source(format!("aggregate spill encode: {error}")))?;
+        writer
+            .write_all(line.as_bytes())
+            .and_then(|()| writer.write_all(b"\n"))
+            .map_err(|error| ExecError::Source(format!("aggregate spill write: {error}")))?;
+    }
+    let mut file = writer
+        .into_inner()
+        .map_err(|error| ExecError::Source(format!("aggregate spill flush: {error}")))?;
+    std::io::Seek::rewind(&mut file)
+        .map_err(|error| ExecError::Source(format!("aggregate spill rewind: {error}")))?;
+    Ok(AggregateSpillRun {
+        lines: std::io::BufRead::lines(std::io::BufReader::new(file)),
+        _path: path,
+    })
+}
+
+impl AggregateSpillRun {
+    fn next_entry(&mut self) -> Result<Option<SpilledGroupEntry>, ExecError> {
+        match self.lines.next() {
+            None => Ok(None),
+            Some(Ok(line)) => serde_json::from_str(&line)
+                .map(Some)
+                .map_err(|error| ExecError::Source(format!("aggregate spill decode: {error}"))),
+            Some(Err(error)) => Err(ExecError::Source(format!("aggregate spill read: {error}"))),
+        }
+    }
+}
+
+/// K-way merges the spilled runs (plus the resident remainder written as a
+/// final run) into finished output rows. Runs are keyed and sorted by the
+/// serialized group key, so equal groups are adjacent across run heads and
+/// partial states combine through the existing merge path.
+fn merge_spilled_aggregate_groups(
+    mut runs: Vec<AggregateSpillRun>,
+    mut groups: HashMap<Vec<Value>, AggregateGroup>,
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+) -> Result<MaterializedRows, ExecError> {
+    if !groups.is_empty() {
+        runs.push(write_aggregate_spill_run(&mut groups)?);
+    }
+    let mut heads = Vec::with_capacity(runs.len());
+    for run in &mut runs {
+        heads.push(run.next_entry()?);
+    }
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    loop {
+        let mut winner: Option<usize> = None;
+        for (index, head) in heads.iter().enumerate() {
+            let Some(candidate) = head else { continue };
+            let better = match winner {
+                None => true,
+                Some(current) => {
+                    let current_head = heads[current]
+                        .as_ref()
+                        .expect("winner head is always occupied");
+                    candidate.key < current_head.key
+                }
+            };
+            if better {
+                winner = Some(index);
+            }
+        }
+        let Some(winner) = winner else { break };
+        let replacement = runs[winner].next_entry()?;
+        let entry =
+            std::mem::replace(&mut heads[winner], replacement).expect("winner head is occupied");
+        if entry.states.len() != aggregates.len() {
+            return Err(ExecError::Source(
+                "aggregate spill decode: state arity mismatch".to_owned(),
+            ));
+        }
+        // Revival and finishing reserve transient state (distinct sets,
+        // merge growth) that dies with this group; measure and release it,
+        // then account the finished row alone.
+        let used_before_group = memory.used();
+        let mut states = entry
+            .states
+            .into_iter()
+            .zip(aggregates)
+            .map(|(state, aggregate)| revive_aggregate_state(state, aggregate, memory))
+            .collect::<Result<Vec<_>, _>>()?;
+        // Fold every other run's entry for the same key into this group.
+        for index in 0..heads.len() {
+            while heads[index]
+                .as_ref()
+                .is_some_and(|head| head.key == entry.key)
+            {
+                let replacement = runs[index].next_entry()?;
+                let duplicate = std::mem::replace(&mut heads[index], replacement)
+                    .expect("matching head is occupied");
+                if duplicate.states.len() != aggregates.len() {
+                    return Err(ExecError::Source(
+                        "aggregate spill decode: state arity mismatch".to_owned(),
+                    ));
+                }
+                for ((state, spilled), aggregate) in
+                    states.iter_mut().zip(duplicate.states).zip(aggregates)
+                {
+                    let other = revive_aggregate_state(spilled, aggregate, memory)?;
+                    state.merge(aggregate, other, memory)?;
+                }
+            }
+        }
+        let mut row = entry.values;
+        row.reserve(states.len());
+        for state in states {
+            row.push(state.finish(memory)?);
+        }
+        memory.release(memory.used().saturating_sub(used_before_group));
+        memory
+            .reserve(size_of::<Vec<Value>>().saturating_add(estimated_row_payload_bytes(&row)))?;
+        rows.push(row);
+    }
+    Ok(MaterializedRows { rows, position: 0 })
 }
 
 #[allow(clippy::too_many_lines)]
