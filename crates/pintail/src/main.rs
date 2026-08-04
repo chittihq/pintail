@@ -29,6 +29,24 @@ async fn main() -> Result<()> {
         eprintln!("PINTAIL_JWT_SECRET={}", jwt_secret.value());
         eprintln!("JWT secret saved to {}", metadata_path.display());
     }
+    // Spill must land on the volume provisioned for data, not the system
+    // temp directory the container gives us. Prove the location works now:
+    // a query that spills only to discover an unwritable directory has
+    // already done all of its work.
+    pintail_exec::spill::set_spill_directory(config.spill_dir().to_path_buf()).with_context(
+        || {
+            format!(
+                "failed to prepare spill directory {}",
+                config.spill_dir().display()
+            )
+        },
+    )?;
+    match pintail_exec::spill::reclaim_orphaned_spill(config.spill_dir()) {
+        Ok(0) => {}
+        Ok(count) => eprintln!("reclaimed {count} spill files from a previous run"),
+        Err(error) => eprintln!("could not reclaim old spill files: {error}"),
+    }
+
     let api_state = ApiState::new(
         config.data_dir(),
         &metadata_path,

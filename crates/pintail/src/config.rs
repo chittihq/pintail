@@ -15,6 +15,11 @@ use serde::Deserialize;
 
 const DEFAULT_CONFIG_FILE: &str = "pintail.toml";
 const DEFAULT_DATA_DIR: &str = "./data";
+/// Spill lives under the data directory by default so it inherits whatever
+/// volume the operator mounted for data. Putting it in the system temp
+/// directory instead — `tempfile`'s default — silently writes query spill to
+/// the container's root filesystem rather than the provisioned volume.
+const DEFAULT_SPILL_SUBDIRECTORY: &str = "spill";
 const DEFAULT_HTTP_PORT: u16 = 8080;
 const DEFAULT_WIRE_PORT: u16 = 3306;
 
@@ -41,12 +46,17 @@ pub struct Cli {
     /// Hard byte ceiling for each HTTP or `MySQL` wire query.
     #[arg(long)]
     pub query_memory_limit_bytes: Option<usize>,
+
+    /// Directory for query spill files. Defaults to `<data-dir>/spill`.
+    #[arg(long)]
+    pub spill_dir: Option<PathBuf>,
 }
 
 /// Effective process configuration after all sources have been merged.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppConfig {
     data_dir: PathBuf,
+    spill_dir: PathBuf,
     http_bind: SocketAddr,
     wire_bind: SocketAddr,
     query_memory_limit_bytes: usize,
@@ -109,6 +119,19 @@ impl AppConfig {
             .or(environment_data_dir)
             .or(file_data_dir)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+
+        let file_spill_dir = file.spill_dir.map(|path| {
+            resolve_config_relative(path, config_path.as_deref().and_then(Path::parent))
+        });
+        let environment_spill_dir = environment
+            .get(&OsString::from("PINTAIL_SPILL_DIR"))
+            .map(PathBuf::from);
+        let spill_dir = cli
+            .spill_dir
+            .clone()
+            .or(environment_spill_dir)
+            .or(file_spill_dir)
+            .unwrap_or_else(|| data_dir.join(DEFAULT_SPILL_SUBDIRECTORY));
 
         let environment_http_bind = environment
             .get(&OsString::from("PINTAIL_HTTP_BIND"))
@@ -193,6 +216,7 @@ impl AppConfig {
 
         Ok(Self {
             data_dir,
+            spill_dir,
             http_bind,
             wire_bind,
             query_memory_limit_bytes,
@@ -236,12 +260,19 @@ impl AppConfig {
     pub const fn query_memory_limit_bytes(&self) -> usize {
         self.query_memory_limit_bytes
     }
+
+    /// Returns the directory query spill files are written to.
+    #[must_use]
+    pub fn spill_dir(&self) -> &Path {
+        &self.spill_dir
+    }
 }
 
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct FileConfig {
     data_dir: Option<PathBuf>,
+    spill_dir: Option<PathBuf>,
     http: FileHttpConfig,
     wire: FileWireConfig,
     query: FileQueryConfig,
@@ -312,6 +343,7 @@ mod tests {
             http_bind: None,
             wire_bind: None,
             query_memory_limit_bytes: None,
+            spill_dir: None,
         }
     }
 

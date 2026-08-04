@@ -2437,6 +2437,7 @@ dependencies = [
  "clap",
  "fs2",
  "pintail-api",
+ "pintail-exec",
  "pintail-meta",
  "pintail-wire",
  "rand 0.9.5",

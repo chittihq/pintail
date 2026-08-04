@@ -323,3 +323,112 @@ mod tests {
         assert!(decoder.value().is_err());
     }
 }
+
+/// Process-wide directory for spill files.
+///
+/// `tempfile`'s default is the system temp directory, which on a container
+/// is the root filesystem rather than the volume mounted for data. Every
+/// spill path routes through [`spill_file`] so a deployment that mounts a
+/// data volume gets its spill on that volume without extra configuration.
+static SPILL_DIRECTORY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Sets the directory spill files are created in. Called once during
+/// startup; later calls are ignored so a running process cannot have spill
+/// files stranded across two directories.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be created or written to, so
+/// an unusable location fails at startup rather than mid-query.
+pub fn set_spill_directory(directory: std::path::PathBuf) -> std::io::Result<()> {
+    std::fs::create_dir_all(&directory)?;
+    // Prove writability now: discovering it at spill time means failing a
+    // query that had already done all of its work.
+    tempfile::Builder::new()
+        .prefix("pintail-spill-probe-")
+        .tempfile_in(&directory)?;
+    let _ = SPILL_DIRECTORY.set(directory);
+    Ok(())
+}
+
+/// Removes spill files left behind by a previous process. The self-deleting
+/// handles cover a clean exit; a `kill -9` does not.
+///
+/// Returns the number of files removed.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be listed. A file that resists
+/// removal is skipped rather than failing the sweep, so one stuck leftover
+/// cannot stop a process from starting.
+pub fn reclaim_orphaned_spill(directory: &std::path::Path) -> std::io::Result<usize> {
+    let mut removed = 0;
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("pintail-"))
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
+            && std::fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// Creates one spill file in the configured directory, falling back to the
+/// system temp directory when startup never set one (tests, embedded use).
+pub(crate) fn spill_file(prefix: &str) -> std::io::Result<tempfile::NamedTempFile> {
+    let builder = &mut tempfile::Builder::new();
+    let builder = builder.prefix(prefix);
+    match SPILL_DIRECTORY.get() {
+        Some(directory) => builder.tempfile_in(directory),
+        None => builder.tempfile(),
+    }
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::{reclaim_orphaned_spill, spill_file};
+
+    #[test]
+    fn a_spill_file_lands_in_the_directory_it_is_given() {
+        // `set_spill_directory` writes a process-wide OnceLock, so this
+        // exercises the placement through the same builder path without
+        // fixing the global for every other test in the binary.
+        let directory = tempfile::tempdir().expect("tempdir");
+        let file = tempfile::Builder::new()
+            .prefix("pintail-sort-spill-")
+            .tempfile_in(directory.path())
+            .expect("spill file");
+        assert_eq!(
+            file.path().parent(),
+            Some(directory.path()),
+            "spill must not fall back to the system temp directory"
+        );
+    }
+
+    #[test]
+    fn an_unset_directory_still_produces_a_usable_file() {
+        let file = spill_file("pintail-sort-spill-").expect("fallback spill file");
+        assert!(file.path().exists());
+    }
+
+    #[test]
+    fn reclaim_removes_only_our_leftovers() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let ours = directory.path().join("pintail-join-spill-abc");
+        let theirs = directory.path().join("someone-elses.db");
+        std::fs::write(&ours, b"stale").expect("write ours");
+        std::fs::write(&theirs, b"keep").expect("write theirs");
+
+        assert_eq!(
+            reclaim_orphaned_spill(directory.path()).expect("reclaim"),
+            1
+        );
+        assert!(!ours.exists(), "a stale spill file must be removed");
+        assert!(theirs.exists(), "unrelated files must survive");
+    }
+}

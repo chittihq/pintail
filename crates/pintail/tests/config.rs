@@ -30,6 +30,7 @@ fn cli_and_environment_override_the_toml_configuration() {
         http_bind: None,
         wire_bind: None,
         query_memory_limit_bytes: Some(268_435_456),
+        spill_dir: None,
     };
     let environment = [(
         OsString::from("PINTAIL_HTTP_BIND"),

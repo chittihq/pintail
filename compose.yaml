@@ -6,8 +6,18 @@ services:
     ports:
       - "${PINTAIL_HTTP_PORT:-8080}:8080"
       - "${PINTAIL_WIRE_PORT:-3306}:3306"
+    environment:
+      PINTAIL_DATA_DIR: /var/lib/pintail
+      # Query spill (sort, aggregation, hash-join partitions) defaults to
+      # ${PINTAIL_DATA_DIR}/spill so it lands on the data volume rather than
+      # the container's root filesystem. Point it at its own mount when spill
+      # should not share a device with segments — it is write-once-read-once
+      # and benefits from faster storage than bulk data does.
+      PINTAIL_SPILL_DIR: ${PINTAIL_SPILL_DIR:-/var/lib/pintail/spill}
     volumes:
       - pintail-data:/var/lib/pintail
+      # Uncomment to give spill its own device:
+      # - pintail-spill:/var/lib/pintail/spill
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
       interval: 5s
@@ -18,3 +28,5 @@ services:
 
 volumes:
   pintail-data:
+  # Uncomment together with the mount above.
+  # pintail-spill:

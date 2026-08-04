@@ -2268,9 +2268,7 @@ struct GraceRun {
 
 impl GraceRun {
     fn create() -> Result<Self, ExecError> {
-        let file = tempfile::Builder::new()
-            .prefix("pintail-join-spill-")
-            .tempfile()
+        let file = spill::spill_file("pintail-join-spill-")
             .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?;
         let (file, path) = file.into_parts();
         Ok(Self {
@@ -4983,9 +4981,7 @@ fn write_aggregate_spill_run(
         })
         .collect::<Result<Vec<_>, ExecError>>()?;
     entries.sort_unstable_by(|left, right| left.key.cmp(&right.key));
-    let file = tempfile::Builder::new()
-        .prefix("pintail-aggregate-spill-")
-        .tempfile()
+    let file = spill::spill_file("pintail-aggregate-spill-")
         .map_err(|error| ExecError::Source(format!("aggregate spill create: {error}")))?;
     let (file, path) = file.into_parts();
     let mut writer = std::io::BufWriter::new(file);
@@ -8446,9 +8442,7 @@ struct SpilledRun {
 
 impl SpilledRun {
     fn write(rows: &[Vec<Value>]) -> Result<Self, ExecError> {
-        let file = tempfile::Builder::new()
-            .prefix("pintail-sort-spill-")
-            .tempfile()
+        let file = spill::spill_file("pintail-sort-spill-")
             .map_err(|error| ExecError::Source(format!("sort spill create: {error}")))?;
         let (file, path) = file.into_parts();
         let mut writer = std::io::BufWriter::new(file);
