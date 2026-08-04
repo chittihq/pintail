@@ -384,3 +384,24 @@ e09 showed zone maps and predicate caches deliver 10-18x on clustered layouts
 and exactly nothing on scattered ones. Optional clustering/ordering keys move
 from a v1.1 convenience into the performance-critical path; the
 condition-cache niche narrows to predicates zone maps cannot express (e14).
+
+### Window functions and recursive CTEs are in scope after all
+
+The goal specification listed "window functions and CTE recursion in SQL" as
+out of scope for v1, and the query-engine section repeated them as explicitly
+deferred. Both are now implemented in the forms real analytical workloads ask
+for: `ROW_NUMBER`/`RANK`/`DENSE_RANK` and the standard aggregates over
+`PARTITION BY` / `ORDER BY` with MySQL's default frames, and `WITH RECURSIVE`
+in its canonical `anchor UNION [ALL] member` shape.
+
+The reason for the change is that the deferral assumed these were conveniences.
+They are not: BI tools generate windowed queries for ranking and running
+totals by default, and a MySQL-dialect endpoint that rejects them fails on the
+first dashboard a user points at it. Recursive CTEs carry the same weight for
+hierarchy queries over self-referencing tables, which are ordinary in the
+mirrored schemas Pintail targets.
+
+`GOAL.md` is updated rather than contradicted, and `docs/limitations.md`
+remains the authority on which shapes within these features are supported —
+explicit frames, named windows, the positional window functions, and several
+recursive-member restrictions are still absent.
