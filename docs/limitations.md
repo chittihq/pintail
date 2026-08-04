@@ -275,17 +275,12 @@ plausible but incorrect result.
 
 ## MySQL wire protocol
 
-- Pintail advertises `caching_sha2_password` (the MySQL 8.0+ client default)
-  and verifies its fast-auth exchange from a stored double-SHA-256 verifier,
-  so MySQL 9.x CLIs and modern connectors authenticate in one round trip over
-  plaintext or TLS. `mysql_native_password` clients keep working from the
-  stored double-SHA-1 verifier; plaintext API keys are never retained.
-- The caching_sha2 full-authentication fallback (RSA key exchange or
-  cleartext-over-TLS) is not implemented and is never needed for keys that
-  carry the verifier. Keys created before metadata schema version 13 lack it
-  and must be rotated before use with clients that insist on
-  caching_sha2_password; keys from before schema version 6 lack both
-  verifiers.
+- The `caching_sha2_password` full-authentication fallback (RSA key exchange
+  or cleartext-over-TLS) is not implemented; only the fast-auth exchange is
+  served, which requires the verifier stored at key creation. Keys created
+  before metadata schema version 13 must be rotated before use with
+  caching_sha2_password clients; keys from before schema version 6 also lack
+  the mysql_native_password verifier.
 - The wire endpoint is read-only. `SET`, transaction boundaries, and common
   capability probes are accepted for client compatibility but do not create a
   mutable session transaction. Multiple SQL statements in one command are not
