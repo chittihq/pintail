@@ -2591,6 +2591,12 @@ impl TableStore {
             });
         }
 
+        // The memtable is a map, so a flushed segment holds exactly one row
+        // per key. `unique_keys` promises more than that though: the
+        // streaming Direct scan path applies no tombstone filter, so the flag
+        // also asserts the segment carries no deletes. A flush that drains
+        // tombstones must therefore stay false and be merged on read.
+        let unique_keys = rows.iter().all(|row| !row.is_deleted());
         let segment = segment::write(
             &self.directory,
             self.manifest.next_segment_id,
@@ -2598,7 +2604,7 @@ impl TableStore {
             &rows,
             self.options.block_rows,
             segment::Compression::Lz4,
-            false,
+            unique_keys,
         )?;
         let segment_path = self.directory.join(&segment.file_name);
         let mut next_manifest = self.manifest.as_ref().clone();

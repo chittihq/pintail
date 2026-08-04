@@ -8,6 +8,7 @@
 mod suite {
     mod compaction;
     mod database;
+    mod direct_scan;
     mod encodings;
     mod flush;
     mod ingest;

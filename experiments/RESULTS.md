@@ -838,3 +838,34 @@ length check, so a corrupt block still fails rather than silently truncate):
 Cumulative against the pre-popcount baseline, single-column scan:
 **9055 ms to 4954 ms, 1.83x**, from two changes totalling about forty lines and
 no format change.
+
+### e24 follow-up 2 — flushed segments are unique-keyed, so scans stop merging
+
+`flush()` hardcoded `unique_keys = false`. The memtable is a
+`BTreeMap<PrimaryKey, StoredRow>`, so a flushed segment provably holds one row
+per key — and the scan classifier only takes its columnar `Direct` path when a
+single-segment cluster is `all_unique`. Every scan over flush-produced segments
+therefore fell into `ScanPart::Merge` and materialised `Cell`s row by row.
+
+A Codex trace settled the safety question: the streaming `Direct`/`DirectRange`
+paths apply **no tombstone filter**, so `unique_keys` promises tombstone-freedom
+as well as key uniqueness. The correct predicate is
+`rows.iter().all(|row| !row.is_deleted())`, not `true`.
+
+| projection | before | after | gain |
+|---|---:|---:|---:|
+| amount only | 4954 ms | **714 ms** | 6.9× |
+| amount + day | 5857 ms | 967 ms | 6.1× |
+| status only (dictionary) | 5927 ms | 764 ms | 7.8× |
+| all five columns | 10731 ms | 1820 ms | 5.9× |
+
+**Cumulative across the three changes: 9055 ms → 714 ms on a single-column scan
+of 20M rows, 12.7×.** None of them changed the file format; all three came from
+profiling rather than from the encoding programme this investigation started
+with, whose best candidate was worth 0.14%.
+
+Five boundary cases pin the flag (`tests/suite/direct_scan.rs`): a flush
+carrying a tombstone must not resurrect it, a tombstone-free flush returns
+exactly its rows, overlapping unique segments still merge to the newer version,
+a memtable tombstone still suppresses a segment row, and the classification
+survives close and reopen since the flag is persisted in the manifest.
