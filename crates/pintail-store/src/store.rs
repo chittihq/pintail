@@ -37,6 +37,7 @@ const DEFAULT_MAX_COMPACTION_INPUT_ROWS: u64 = 8_000_000;
 const DEFAULT_MAX_COMPACTION_ROWS: u64 = 4_000_000;
 const DEFAULT_MAX_COMPACTION_OUTPUT_BYTES: usize = 128 * 1024 * 1024;
 const DEFAULT_COMPACTION_FILE_PRESSURE: usize = 16;
+const DEFAULT_COMPACTION_DISK_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
 const SIZE_TIER_RATIO: u64 = 4;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
 
@@ -97,6 +98,11 @@ pub struct StoreOptions {
     /// produce nothing but disjoint segments, and without this they would
     /// never consolidate.
     pub compaction_file_pressure: usize,
+    /// Free bytes that must remain after a merge writes its output. A merge
+    /// holds its inputs until the new segments are published, so it needs
+    /// their size again transiently; below this floor the pass is deferred
+    /// rather than risking a full volume mid-write.
+    pub compaction_disk_reserve_bytes: u64,
     /// Local writable-table mode: rows become visible only through
     /// [`TableStore::commit`], and recovery replays exactly the committed
     /// WAL prefix (docs/design/writable-mode.md, phase 1).
@@ -115,6 +121,7 @@ impl Default for StoreOptions {
             max_compaction_rows: DEFAULT_MAX_COMPACTION_ROWS,
             max_compaction_output_bytes: DEFAULT_MAX_COMPACTION_OUTPUT_BYTES,
             compaction_file_pressure: DEFAULT_COMPACTION_FILE_PRESSURE,
+            compaction_disk_reserve_bytes: DEFAULT_COMPACTION_DISK_RESERVE_BYTES,
         }
     }
 }
@@ -258,6 +265,7 @@ pub struct CompactionOutcome {
     input_segments: usize,
     output_rows: usize,
     output_path: Option<PathBuf>,
+    deferred: Option<&'static str>,
 }
 
 /// A scan row containing only the requested user columns.
@@ -1915,6 +1923,12 @@ impl CompactionOutcome {
     pub fn output_path(&self) -> Option<&Path> {
         self.output_path.as_deref()
     }
+
+    /// Returns why an eligible merge was not run, when one was skipped.
+    #[must_use]
+    pub fn deferred_reason(&self) -> Option<&'static str> {
+        self.deferred
+    }
 }
 
 struct RetiredGeneration {
@@ -2662,8 +2676,20 @@ impl TableStore {
                 input_segments: 0,
                 output_rows: 0,
                 output_path: None,
+                deferred: None,
             });
         };
+        if !self.merge_fits_on_disk(&plan)? {
+            // Correctness does not depend on merging: the unmerged segments
+            // still resolve through streaming merge-on-read. Filling the
+            // volume mid-write would put that at risk, so defer instead.
+            return Ok(CompactionOutcome {
+                input_segments: 0,
+                output_rows: 0,
+                output_path: None,
+                deferred: Some("free disk space cannot cover the planned merge"),
+            });
+        }
         let full_merge = plan.indices.len() == self.manifest.segments.len();
         let mut streams = Vec::with_capacity(plan.indices.len());
         for index in &plan.indices {
@@ -2792,7 +2818,18 @@ impl TableStore {
             input_segments: plan.indices.len(),
             output_rows,
             output_path,
+            deferred: None,
         })
+    }
+
+    /// Whether the volume can hold the merge's output alongside its inputs.
+    fn merge_fits_on_disk(&self, plan: &CompactionPlan) -> Result<bool, StoreError> {
+        let available = fs2::available_space(&self.directory)
+            .map_err(|error| StoreError::io("inspect free space for compaction", error))?;
+        Ok(available
+            >= plan
+                .debt_bytes
+                .saturating_add(self.options.compaction_disk_reserve_bytes))
     }
 
     /// Deletes obsolete segments after every snapshot that pins them releases.

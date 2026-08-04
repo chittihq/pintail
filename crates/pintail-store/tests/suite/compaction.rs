@@ -265,6 +265,48 @@ fn disjoint_segments_consolidate_only_under_file_pressure() {
 }
 
 #[test]
+fn compaction_defers_when_free_space_cannot_cover_the_merge() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        compaction_fan_in: 2,
+        compaction_disk_reserve_bytes: u64::MAX,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    for batch in [
+        vec![row(1, "old", 1, false), row(2, "first", 1, false)],
+        vec![row(1, "new", 2, false), row(3, "second", 1, false)],
+    ] {
+        table.ingest(batch).expect("ingest");
+        table.flush().expect("flush");
+    }
+
+    assert_eq!(
+        table
+            .compaction_status()
+            .expect("status")
+            .eligible_segments(),
+        2,
+        "the merge is still planned; only running it is deferred"
+    );
+    let outcome = table.compact().expect("deferred compact");
+    assert_eq!(outcome.input_segments(), 0);
+    assert_eq!(
+        outcome.deferred_reason(),
+        Some("free disk space cannot cover the planned merge")
+    );
+    assert_eq!(
+        table.snapshot().scan().expect("scan unmerged segments"),
+        vec![
+            row(1, "new", 2, false),
+            row(2, "first", 1, false),
+            row(3, "second", 1, false),
+        ],
+        "merge-on-read still resolves the unmerged segments"
+    );
+}
+
+#[test]
 fn pinned_snapshot_segments_survive_writer_drop_and_reopen() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let options = StoreOptions {

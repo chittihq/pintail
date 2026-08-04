@@ -323,6 +323,11 @@ plausible but incorrect result.
   compaction-debt metric reports the next eligible plan, so it does not
   quantify an oversized deferred window. These storage limits are engine
   options rather than TOML/CLI settings in v1.
+- A compaction pass is deferred, not queued, when free disk space cannot
+  cover the planned merge plus `compaction_disk_reserve_bytes` (64 MiB by
+  default). The segments stay unmerged and resolve through merge-on-read;
+  nothing retries the pass until the next flush makes the plan eligible
+  again.
 - Compaction runs inline on the ingest path, so a merge at a large size tier
   stalls replication for its duration. A 5,000,000-row append-only load
   measured 583,000 rows/s with compaction inert and 343,000 rows/s once
