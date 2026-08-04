@@ -3326,32 +3326,40 @@ impl TableSnapshot {
             .collect())
     }
 
-    /// Scans an inclusive key range while decoding only requested user
-    /// columns after segment and key-block pruning.
+    /// Reports, per live segment, whether skipping it on scan-predicate
+    /// statistics alone is sound.
     ///
-    /// # Errors
-    ///
-    /// Whether value-bound segment pruning is sound on this manifest:
-    /// every segment carries statistics with zero tombstones, and segment
-    /// key ranges are pairwise disjoint, so no key has row versions split
-    /// across segments that pruning could separate.
-    fn value_pruning_safe(&self) -> bool {
-        if self
-            .manifest
-            .segments
-            .iter()
-            .any(|meta| meta.smas.as_ref().is_none_or(|smas| smas.tombstones > 0))
-        {
-            return false;
+    /// Skipping is safe only for a segment whose key range no other live
+    /// segment touches. Where ranges overlap, the skipped segment may hold
+    /// the winning version of a key whose older, predicate-matching version
+    /// survives in a segment that is still read, which would emit a stale
+    /// row. Deciding this per segment rather than for the whole manifest
+    /// matters at scale: a large table under continuous replication almost
+    /// always has some overlap somewhere, and a single overlapping pair used
+    /// to disable pruning for every other segment.
+    fn value_prunable_segments(&self) -> Vec<bool> {
+        let segments = &self.manifest.segments;
+        let mut order = (0..segments.len()).collect::<Vec<_>>();
+        order.sort_by(|left, right| {
+            segments[*left]
+                .min_key
+                .cmp(&segments[*right].min_key)
+                .then_with(|| segments[*left].max_key.cmp(&segments[*right].max_key))
+        });
+        let mut prunable = vec![false; segments.len()];
+        let mut highest_end: Option<&PrimaryKey> = None;
+        for (position, index) in order.iter().copied().enumerate() {
+            let meta = &segments[index];
+            let touches_earlier = highest_end.is_some_and(|end| end >= &meta.min_key);
+            let touches_later = order
+                .get(position + 1)
+                .is_some_and(|next| segments[*next].min_key <= meta.max_key);
+            prunable[index] = !touches_earlier && !touches_later;
+            if highest_end.is_none_or(|end| end < &meta.max_key) {
+                highest_end = Some(&meta.max_key);
+            }
         }
-        let mut ordered: Vec<_> = self
-            .manifest
-            .segments
-            .iter()
-            .map(|meta| (&meta.min_key, &meta.max_key))
-            .collect();
-        ordered.sort();
-        ordered.windows(2).all(|pair| pair[0].1 < pair[1].0)
+        prunable
     }
 
     /// Scans an inclusive key range while decoding only requested user
@@ -3431,12 +3439,17 @@ impl TableSnapshot {
         }
         let mut segments = Vec::new();
         let mut pruned_segments = 0;
-        let value_pruning = !bounds.is_empty() && self.value_pruning_safe();
-        for meta in &self.manifest.segments {
+        let prunable = if bounds.is_empty() {
+            Vec::new()
+        } else {
+            self.value_prunable_segments()
+        };
+        for (index, meta) in self.manifest.segments.iter().enumerate() {
             let overlaps = segment::overlaps_key_range(meta, start, end);
             let point_might_match = start != end
                 || segment::might_contain_key(&self.directory, meta, &self.schema, start)?;
-            let value_disjoint = value_pruning && segment::sma_disjoint(meta, bounds);
+            let value_disjoint = prunable.get(index).copied().unwrap_or(false)
+                && segment::sma_disjoint(meta, bounds);
             if !overlaps || !point_might_match || value_disjoint {
                 pruned_segments += 1;
             } else {
@@ -3716,7 +3729,11 @@ impl TableSnapshot {
         let scan_memory = AtomicUsize::new(0);
         let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
         let scan_pool = projected_scan_pool()?;
-        let value_pruning = !bounds.is_empty() && self.value_pruning_safe();
+        let prunable = if bounds.is_empty() {
+            Vec::new()
+        } else {
+            self.value_prunable_segments()
+        };
         let segment_scans = scan_pool.install(|| {
             self.manifest
                 .segments
@@ -3731,8 +3748,8 @@ impl TableSnapshot {
                             &self.schema,
                             start,
                         )?;
-                    let value_disjoint =
-                        value_pruning && segment::sma_disjoint(segment_meta, bounds);
+                    let value_disjoint = prunable.get(segment_index).copied().unwrap_or(false)
+                        && segment::sma_disjoint(segment_meta, bounds);
                     if !overlaps || !point_might_match || value_disjoint {
                         return Ok((
                             ScanStats {

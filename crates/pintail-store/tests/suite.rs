@@ -19,4 +19,5 @@ mod suite {
     mod recovery;
     mod schema_evolution;
     mod transactional;
+    mod value_pruning;
 }

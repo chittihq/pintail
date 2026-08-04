@@ -49,7 +49,7 @@ fn parse_args() -> Args {
                 args.rows = flags
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(args.rows)
+                    .unwrap_or(args.rows);
             }
             "--memtable-mb" => {
                 args.memtable_mb = flags
