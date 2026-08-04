@@ -259,8 +259,9 @@ async function main() {
       'benchmark/workloads/commerce-production-v1/results/',
     ]
     const porcelain = await run(['git', 'status', '--porcelain'])
+    // No global trim: it would eat the first line's leading status space
+    // and shift the path slice by one.
     const dirtyPaths = porcelain.output
-      .trim()
       .split('\n')
       .filter((line) => line.trim().length > 0)
       .map((line) => line.slice(3))
