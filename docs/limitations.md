@@ -67,10 +67,13 @@ plausible but incorrect result.
   declaration-index order; `CAST(col AS CHAR)` on the MySQL side produces
   matching orderings.
 - Text comparison, grouping, hashing, `LIKE`, and ordering use a
-  case-insensitive Unicode-lowercase approximation. Pintail does not yet
-  implement MySQL's complete collation matrix, accent weights, locale
-  tailoring, coercibility rules, or pad-space behavior. Binary values remain
-  bytewise.
+  case-insensitive Unicode-lowercase approximation by default. Setting
+  `PINTAIL_COLLATION=utf8mb4_0900_ai_ci` opts every text comparison into
+  an accent-insensitive approximation of MySQL's default collation (NFD
+  with combining marks stripped, then lowercased) — closer to
+  `utf8mb4_0900_ai_ci` for Latin scripts, but still not the UCA weight
+  tables, locale tailoring, coercibility rules, or pad-space behavior.
+  The flag reads once at process start. Binary values remain bytewise.
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are
   pinned to one timestamp per statement, read from the host clock and
   timezone at plan time. Pintail does not yet expose a MySQL session

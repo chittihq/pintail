@@ -47,6 +47,7 @@ tokio-rustls = { version = "0.25", default-features = false, features = ["ring"]
 rustls-pemfile = "2"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = "0.13"
+unicode-normalization = "0.1"
 object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
 pintail-api = { path = "crates/pintail-api" }
 pintail-backup = { path = "crates/pintail-backup" }

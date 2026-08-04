@@ -16,6 +16,7 @@ pintail-types.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+unicode-normalization.workspace = true
 rayon.workspace = true
 
 [lints]

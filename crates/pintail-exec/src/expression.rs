@@ -2688,6 +2688,10 @@ pub(crate) fn compare_utf8_mysql(left: &str, right: &str) -> Ordering {
             .map(|byte| byte.to_ascii_lowercase())
             .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()));
     }
+    if crate::execution::accent_insensitive_collation() {
+        return crate::execution::normalized_collation_text(left)
+            .cmp(&crate::execution::normalized_collation_text(right));
+    }
     left.chars()
         .flat_map(char::to_lowercase)
         .cmp(right.chars().flat_map(char::to_lowercase))
