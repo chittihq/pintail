@@ -1181,7 +1181,7 @@ enum PullOperator {
         column_types: Vec<DataType>,
         top_k: Option<usize>,
         trim: usize,
-        state: Option<MaterializedRows>,
+        state: Option<SortedRows>,
     },
     Window {
         input: Box<Self>,
@@ -1580,21 +1580,19 @@ impl PullOperator {
                 state,
             } => {
                 if state.is_none() {
-                    let mut sorted = build_sort(input, keys, *top_k, memory)?;
-                    if *trim > 0 {
+                    let trim_to = if *trim > 0 {
                         // Hidden sort-only columns ordered the rows; the
                         // output layout never contains them.
-                        for row in &mut sorted.rows {
-                            row.truncate(column_types.len());
-                        }
-                    }
-                    *state = Some(sorted);
+                        Some(column_types.len())
+                    } else {
+                        None
+                    };
+                    *state = Some(build_sort(input, keys, *top_k, trim_to, memory)?);
                 }
-                next_materialized_batch(
-                    state.as_mut().expect("initialized above"),
-                    column_types,
-                    memory,
-                )
+                match state.as_mut().expect("initialized above") {
+                    SortedRows::Memory(rows) => next_materialized_batch(rows, column_types, memory),
+                    SortedRows::Spilled(merge) => merge.next_batch(column_types, memory),
+                }
             }
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
@@ -7294,20 +7292,266 @@ fn compute_window_column(
     Ok(results)
 }
 
+/// Sorted rows served either from memory (the fast path, byte-identical to
+/// the pre-spill behavior) or by merging sorted on-disk runs when the input
+/// exceeded the query memory ceiling.
+enum SortedRows {
+    Memory(MaterializedRows),
+    Spilled(SpilledMerge),
+}
+
 fn build_sort(
     input: &mut PullOperator,
     keys: &[BoundOrderKey],
     top_k: Option<usize>,
+    trim_to: Option<usize>,
     memory: &MemoryTracker,
-) -> Result<MaterializedRows, ExecError> {
+) -> Result<SortedRows, ExecError> {
     let compare = |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys);
-    let mut rows = if let Some(top_k) = top_k {
-        materialize_top_k(input, top_k, keys, compare, memory)?
-    } else {
-        materialize(input, memory)?
-    };
+    if let Some(top_k) = top_k {
+        // Top-k retains at most k rows and cannot exceed the ceiling by
+        // materializing its input; the in-memory path is unchanged.
+        let mut rows = materialize_top_k(input, top_k, keys, compare, memory)?;
+        rows.sort_by(compare);
+        if let Some(width) = trim_to {
+            for row in &mut rows {
+                row.truncate(width);
+            }
+        }
+        return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
+    }
+    let (mut rows, runs) = materialize_with_spill(input, keys, memory)?;
     rows.sort_by(compare);
-    Ok(MaterializedRows { rows, position: 0 })
+    if runs.is_empty() {
+        if let Some(width) = trim_to {
+            for row in &mut rows {
+                row.truncate(width);
+            }
+        }
+        return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
+    }
+    let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to)?;
+    merge.push_final_run(rows, memory)?;
+    Ok(SortedRows::Spilled(merge))
+}
+
+/// Materializes the sort input, spilling the accumulated rows as a sorted
+/// on-disk run whenever the memory ceiling would be exceeded. Queries that
+/// fit in memory take exactly the old path and produce no runs.
+fn materialize_with_spill(
+    input: &mut PullOperator,
+    keys: &[BoundOrderKey],
+    memory: &MemoryTracker,
+) -> Result<(Vec<Vec<Value>>, Vec<SpilledRun>), ExecError> {
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut retained = 0_usize;
+    let mut vector_reserved = 0_usize;
+    let mut runs: Vec<SpilledRun> = Vec::new();
+    while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
+        let additional_rows = batch.visible_row_count();
+        memory.ensure_transient(
+            batch_bytes.saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
+        )?;
+        match reserve_vec_elements(&mut rows, additional_rows, 0, memory) {
+            Ok(reserved) => vector_reserved = vector_reserved.saturating_add(reserved),
+            Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
+                rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
+                runs.push(SpilledRun::write(&rows)?);
+                rows = Vec::new();
+                memory.release(retained.saturating_add(vector_reserved));
+                retained = 0;
+                vector_reserved = 0;
+                vector_reserved = vector_reserved.saturating_add(reserve_vec_elements(
+                    &mut rows,
+                    additional_rows,
+                    0,
+                    memory,
+                )?);
+            }
+            Err(error) => return Err(error),
+        }
+        for row in batch.selection().selected_rows() {
+            let row_bytes =
+                estimated_batch_row_bytes(&batch, row)?.saturating_sub(size_of::<Vec<Value>>());
+            memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+            match memory.reserve(row_bytes) {
+                Ok(()) => {}
+                Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
+                    // Spill the buffered rows as one sorted run and retry;
+                    // releasing both the row payloads and the vector's
+                    // capacity reservation frees the sort's whole footprint.
+                    rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
+                    runs.push(SpilledRun::write(&rows)?);
+                    rows = Vec::new();
+                    memory.release(retained.saturating_add(vector_reserved));
+                    retained = 0;
+                    vector_reserved = 0;
+                    memory.reserve(row_bytes)?;
+                }
+                Err(error) => return Err(error),
+            }
+            retained = retained.saturating_add(row_bytes);
+            let values = batch
+                .columns()
+                .iter()
+                .map(|column| {
+                    column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+                        "sort row is outside an input column",
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.push(values);
+            // Proactive spill at half the ceiling: upstream operators size
+            // their own working sets from the remaining headroom, so a sort
+            // that hoards the budget until hard failure starves the scan.
+            if retained.saturating_add(vector_reserved) > memory.limit() / 2 && rows.len() > 1 {
+                rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
+                runs.push(SpilledRun::write(&rows)?);
+                rows = Vec::new();
+                memory.release(retained.saturating_add(vector_reserved));
+                retained = 0;
+                vector_reserved = 0;
+            }
+        }
+    }
+    Ok((rows, runs))
+}
+
+/// One sorted run on disk: JSON-line rows in a self-deleting temp file.
+/// The format favors correctness and streaming reads; the spill path only
+/// engages where the query previously failed outright.
+struct SpilledRun {
+    lines: std::io::Lines<std::io::BufReader<std::fs::File>>,
+    _path: tempfile::TempPath,
+}
+
+impl SpilledRun {
+    fn write(rows: &[Vec<Value>]) -> Result<Self, ExecError> {
+        use std::io::Write as _;
+        let file = tempfile::Builder::new()
+            .prefix("pintail-sort-spill-")
+            .tempfile()
+            .map_err(|error| ExecError::Source(format!("sort spill create: {error}")))?;
+        let (file, path) = file.into_parts();
+        let mut writer = std::io::BufWriter::new(file);
+        for row in rows {
+            let line = serde_json::to_string(row)
+                .map_err(|error| ExecError::Source(format!("sort spill encode: {error}")))?;
+            writer
+                .write_all(line.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"))
+                .map_err(|error| ExecError::Source(format!("sort spill write: {error}")))?;
+        }
+        let mut file = writer
+            .into_inner()
+            .map_err(|error| ExecError::Source(format!("sort spill flush: {error}")))?;
+        std::io::Seek::rewind(&mut file)
+            .map_err(|error| ExecError::Source(format!("sort spill rewind: {error}")))?;
+        Ok(Self {
+            lines: std::io::BufRead::lines(std::io::BufReader::new(file)),
+            _path: path,
+        })
+    }
+
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
+        match self.lines.next() {
+            None => Ok(None),
+            Some(Ok(line)) => serde_json::from_str(&line)
+                .map(Some)
+                .map_err(|error| ExecError::Source(format!("sort spill decode: {error}"))),
+            Some(Err(error)) => Err(ExecError::Source(format!("sort spill read: {error}"))),
+        }
+    }
+}
+
+/// K-way merge over sorted spilled runs; run count is bounded by
+/// input-bytes / memory-ceiling, so a linear minimum scan per row is fine.
+struct SpilledMerge {
+    runs: Vec<SpilledRun>,
+    heads: Vec<Option<Vec<Value>>>,
+    keys: Vec<BoundOrderKey>,
+    trim_to: Option<usize>,
+}
+
+impl SpilledMerge {
+    fn new(
+        runs: Vec<SpilledRun>,
+        keys: Vec<BoundOrderKey>,
+        trim_to: Option<usize>,
+    ) -> Result<Self, ExecError> {
+        let mut merge = Self {
+            heads: Vec::with_capacity(runs.len()),
+            runs,
+            keys,
+            trim_to,
+        };
+        for index in 0..merge.runs.len() {
+            let head = merge.runs[index].next_row()?;
+            merge.heads.push(head);
+        }
+        Ok(merge)
+    }
+
+    fn push_final_run(
+        &mut self,
+        rows: Vec<Vec<Value>>,
+        _memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut run = SpilledRun::write(&rows)?;
+        let head = run.next_row()?;
+        self.runs.push(run);
+        self.heads.push(head);
+        Ok(())
+    }
+
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
+        let mut best: Option<usize> = None;
+        for (index, head) in self.heads.iter().enumerate() {
+            let Some(candidate) = head else { continue };
+            let better = match best {
+                None => true,
+                Some(current) => {
+                    let current_head = self.heads[current]
+                        .as_ref()
+                        .expect("best head is always occupied");
+                    compare_sort_rows(candidate, current_head, &self.keys) == Ordering::Less
+                }
+            };
+            if better {
+                best = Some(index);
+            }
+        }
+        let Some(winner) = best else { return Ok(None) };
+        let replacement = self.runs[winner].next_row()?;
+        let mut row = std::mem::replace(&mut self.heads[winner], replacement)
+            .expect("winner head is occupied");
+        if let Some(width) = self.trim_to {
+            row.truncate(width);
+        }
+        Ok(Some(row))
+    }
+
+    fn next_batch(
+        &mut self,
+        column_types: &[DataType],
+        memory: &MemoryTracker,
+    ) -> Result<Option<RecordBatch>, ExecError> {
+        let mut rows = Vec::with_capacity(DEFAULT_BATCH_ROWS);
+        while rows.len() < DEFAULT_BATCH_ROWS {
+            let Some(row) = self.next_row()? else { break };
+            rows.push(row);
+        }
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        memory.ensure_transient(estimated_record_batch_bytes(&rows, column_types.len()))?;
+        let columns = rows_to_columns(&rows, column_types)?;
+        Ok(Some(RecordBatch::new(rows.len(), columns)?))
+    }
 }
 
 fn materialize_top_k(
