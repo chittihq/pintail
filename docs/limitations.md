@@ -219,6 +219,29 @@ plausible but incorrect result.
   and simply decline the fold.
 
 ## DDL and polling
+
+### Guarantee delta: CDC mode versus polling mode
+
+Polling-mode sources are second-class by construction, not by omission: without
+a binlog there is no record of what happened between two reads. Use cases that
+need cross-table point-in-time correctness must run on a CDC-capable source.
+
+| Guarantee | CDC mode | Polling mode |
+|---|---|---|
+| Transaction atomicity | Events buffer per source transaction and become visible together at the XID boundary; a query never observes a torn transaction | None. A cycle can expose part of a source transaction and the rest on the next cycle |
+| Intermediate states | Every row version reaches the replica | Lost. Only the state at each cycle boundary is observed |
+| Hard deletes | Captured as tombstones from the binlog, seconds behind the source | Invisible until the key reconciler runs (default 10 minutes), because a delete leaves no trace in a cursor read |
+| Cascaded deletes (`ON DELETE CASCADE`) | Invisible to the binlog by MySQL's design; repaired by the reconciler on the database's reconcile interval, on tables the probe flagged | Same reconciler, same cadence |
+| Secondary UNIQUE collisions | Cannot occur: transactional visibility keeps the swap atomic | Possible transiently on delete-then-reuse; the uniqueness audit repairs within seconds of the cursor-sync cadence |
+| Soft deletes (`deleted_at` style) | Ordinary row updates | Ordinary cursor sync, so they converge in seconds — the mitigation for apps that never hard-delete |
+| Cursor-less tables | Not applicable | Chunk-checksum sync; only mismatched chunks are re-dumped |
+| Primary-key uniqueness | Enforced at read time by merge-on-read, always on | Identical — merge-on-read does not depend on the source mode |
+| Ordering across tables | Consistent, driven by one binlog position | No cross-table ordering guarantee |
+
+The dashboard carries a persistent polling-mode banner stating the delete
+latency and intermediate-state loss, so the trade is visible to whoever reads
+the data rather than only to whoever configured it.
+
 - Polling converges source state; it cannot reproduce intermediate states that
   exist entirely between cycles. Hard deletes on cursor tables remain visible
   until a scheduled key reconciliation, except when a secondary-UNIQUE
