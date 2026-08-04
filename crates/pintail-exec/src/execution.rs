@@ -8392,8 +8392,8 @@ mod tests {
         // (The env flag reads once per process, so this test asserts only
         // the default path; the ai_ci path is covered by the pure helper
         // below through explicit NFD expectations.)
-        assert_eq!(super::normalized_collation_text("CaFé"), "café");
         use unicode_normalization::UnicodeNormalization as _;
+        assert_eq!(super::normalized_collation_text("CaFé"), "café");
         let folded: String = "CaFé"
             .nfd()
             .filter(|character| !unicode_normalization::char::is_combining_mark(*character))
