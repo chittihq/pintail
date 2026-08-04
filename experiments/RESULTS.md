@@ -494,3 +494,57 @@ and gates it off below 10% unique values.
 - **Dictionary on high-cardinality integers**: 0.91× encoded, worse than plain.
   Our chooser already restricts Dictionary to text under 10% distinct; this
   confirms the guard rather than challenging it.
+
+## e21 — FastLanes interleaved bit-packing, in Rust (Afroozeh & Boncz, PVLDB 16(9) 2023)
+
+20M values, frame-of-reference deltas at 20 bits (our `amount` column's real
+width), T=32 so 32 lanes of a 1024-value chunk, single-threaded, local (M2).
+Only the bit-level interleave was implemented — FastLanes' mechanism 1a, which
+preserves logical order. The transposed tuple layout (needed only for DELTA and
+RLE) was not tested.
+
+Every published FastLanes throughput number is C++/clang; the Rust port ships
+no measurements, so this tests the claim with our own compiler.
+
+| variant | unpack + checksum | unpack + sum |
+|---|---:|---:|
+| horizontal (PTSEG today) | 57.7 ms | 22.8 ms |
+| FastLanes interleaved | **40.0 ms** | **6.5 ms** |
+
+Packed size is identical (−0.00%) and the decoded output is in logical order —
+the checksums match the horizontal decoder and the source array exactly.
+
+**Read the second column, not the first.** The checksum has a serial dependency
+chain that costs roughly 35 ms whichever decoder feeds it, which compresses the
+apparent gap to 1.4×. Subtracting that common cost puts the actual unpack at
+about 22.7 ms horizontal against 5.0 ms interleaved, consistent with the sum
+column's **3.5×**. The paper predicts 2× for a purely scalar path at T=32 and
+says LLVM then auto-vectorizes further; that is what the sum column shows.
+
+Width sweep (unpack + checksum, so all figures carry the same ~35 ms floor):
+
+| W | horizontal | interleaved |
+|---:|---:|---:|
+| 4 | 53.6 ms | 37.8 ms |
+| 8 | 53.2 ms | 37.5 ms |
+| 12 | 55.1 ms | 38.7 ms |
+| 16 | 54.3 ms | 38.0 ms |
+| 20 | 56.8 ms | 41.5 ms |
+| 24 | 57.9 ms | 39.3 ms |
+| 28 | 55.8 ms | 40.2 ms |
+
+The advantage is flat across widths, which matters because it means the win does
+not depend on the data happening to pack narrowly.
+
+**Verdict: the largest measured decode lever available to us, and it costs no
+compression ratio.** It is a byte-layout change inside a packed column segment,
+so it needs a PTSEG format-version bump but touches neither row order nor
+predicate paths nor partial reads. Sequenced against e20's finding, the two
+compose: interleaving makes unpacking cheaper, and dropping the LZ4 layer over
+bit-packed blocks removes the memcpy-plus-match pass that currently sits in
+front of it.
+
+Caveat: T=32 only, one machine, and the harness measures decode into a
+materialized array. Before adoption it needs the T=8/16/64 kernels, the partial
+final chunk (1024 does not divide 20M evenly — 256 values were dropped here),
+width 0 and width 64 fixtures, and a re-run on the Linux reference host.

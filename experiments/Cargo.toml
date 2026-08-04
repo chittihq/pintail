@@ -22,6 +22,7 @@ members = [
     "e18-block-stats",
     "e19-compressed-exec",
     "e20-encoding-census",
+    "e21-fastlanes-layout",
 ]
 
 [workspace.dependencies]
