@@ -1,4 +1,5 @@
-# Pintail
+# Pintail - Anything in milli seconds
+
 
 Pintail makes slow MySQL reports fast. It keeps a live copy of your
 MySQL database, organized for analytics, and answers the questions MySQL
