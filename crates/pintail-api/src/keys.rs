@@ -93,6 +93,7 @@ pub(crate) async fn create(
     let secret = random_identifier("pk_", 32);
     let digest = Sha256::digest(secret.as_bytes());
     let native_password_hash = Sha1::digest(Sha1::digest(secret.as_bytes()));
+    let caching_sha2_hash = Sha256::digest(Sha256::digest(secret.as_bytes()));
     let scopes_json = serde_json::to_string(&request.scopes).map_err(ApiError::internal)?;
     let now = Utc::now().to_rfc3339();
     let metadata = state.metadata()?;
@@ -103,6 +104,7 @@ pub(crate) async fn create(
             name: request.name.trim(),
             sha256: &digest,
             mysql_native_password_hash: Some(&native_password_hash),
+            caching_sha2_password_hash: Some(&caching_sha2_hash),
             scopes_json: &scopes_json,
             expires_at: request.expires_at.as_deref(),
             now: &now,

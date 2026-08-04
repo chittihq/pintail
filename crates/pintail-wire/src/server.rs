@@ -20,6 +20,7 @@ use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_types::{DataType, Value};
 use rand::RngCore as _;
 use sha1::{Digest as _, Sha1};
+use sha2::{Digest as _, Sha256};
 use tokio::{
     io::AsyncWrite,
     net::{TcpListener, TcpStream},
@@ -263,7 +264,7 @@ impl Backend {
             })
     }
 
-    fn authenticate_native(
+    fn authenticate_wire_key(
         &self,
         username: &[u8],
         salt: &[u8],
@@ -332,17 +333,27 @@ where
         self.salt
     }
 
+    fn default_auth_plugin(&self) -> &str {
+        "caching_sha2_password"
+    }
+
+    async fn auth_plugin_for_username(&self, _user: &[u8]) -> &str {
+        // Auth-switch target for legacy clients that answered the
+        // caching_sha2_password greeting with an empty response.
+        "mysql_native_password"
+    }
+
     async fn authenticate(
         &self,
-        auth_plugin: &str,
+        _auth_plugin: &str,
         username: &[u8],
         salt: &[u8],
         auth_data: &[u8],
     ) -> bool {
-        auth_plugin == "mysql_native_password"
-            && self
-                .authenticate_native(username, salt, auth_data)
-                .unwrap_or(false)
+        // The response length identifies the plugin the client actually used:
+        // 32 bytes = caching_sha2_password fast auth, 20 = mysql_native_password.
+        self.authenticate_wire_key(username, salt, auth_data)
+            .unwrap_or(false)
     }
 
     async fn on_prepare<'a>(
@@ -683,10 +694,17 @@ fn wire_key_is_valid(key: &ApiKeyRecord, salt: &[u8], response: &[u8]) -> bool {
     {
         return false;
     }
-    let Some(expected) = key.mysql_native_password_hash.as_deref() else {
-        return false;
-    };
-    verify_native_password(expected, salt, response)
+    match response.len() {
+        20 => key
+            .mysql_native_password_hash
+            .as_deref()
+            .is_some_and(|expected| verify_native_password(expected, salt, response)),
+        32 => key
+            .caching_sha2_password_hash
+            .as_deref()
+            .is_some_and(|expected| verify_caching_sha2(expected, salt, response)),
+        _ => false,
+    }
 }
 
 fn key_has_query_scope(key: &ApiKeyRecord) -> bool {
@@ -695,6 +713,25 @@ fn key_has_query_scope(key: &ApiKeyRecord) -> bool {
             .iter()
             .any(|scope| matches!(scope.as_str(), "*" | "query"))
     })
+}
+
+/// Verifies a `caching_sha2_password` fast-auth response against the stored
+/// `SHA256(SHA256(password))` verifier.
+///
+/// The client sends `XOR(SHA256(password), SHA256(SHA256(SHA256(password)) || nonce))`,
+/// so XOR-ing the response with `SHA256(verifier || nonce)` recovers a candidate
+/// `SHA256(password)` whose hash must equal the verifier.
+fn verify_caching_sha2(expected: &[u8], nonce: &[u8], response: &[u8]) -> bool {
+    if expected.len() != 32 || response.len() != 32 {
+        return false;
+    }
+    let challenge = Sha256::digest([expected, nonce].concat());
+    let mut stage_one = [0_u8; 32];
+    for (index, output) in stage_one.iter_mut().enumerate() {
+        *output = response[index] ^ challenge[index];
+    }
+    let candidate = Sha256::digest(stage_one);
+    constant_time_equal(candidate.as_slice(), expected)
 }
 
 fn verify_native_password(expected: &[u8], salt: &[u8], response: &[u8]) -> bool {
@@ -939,8 +976,12 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
 #[cfg(test)]
 mod tests {
     use sha1::{Digest as _, Sha1};
+    use sha2::Digest as _;
 
-    use super::{placeholder_offsets, substitute_parameters, verify_native_password};
+    use super::{
+        Sha256, placeholder_offsets, substitute_parameters, verify_caching_sha2,
+        verify_native_password,
+    };
 
     #[test]
     fn renders_temporal_prepared_parameters_as_mysql_literals() {
@@ -983,6 +1024,29 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(verify_native_password(&stage_two, salt, &response));
         assert!(!verify_native_password(&stage_two, salt, &[0; 20]));
+    }
+
+    #[test]
+    fn verifies_caching_sha2_fast_auth_responses() {
+        let password = b"pk_wire_secret";
+        let nonce = b"12345678901234567890";
+        // Client-side scramble per mysql_common:
+        // XOR(SHA256(password), SHA256(SHA256(SHA256(password)) || nonce)).
+        let stage_one = Sha256::digest(password);
+        let verifier = Sha256::digest(stage_one);
+        let challenge = Sha256::digest([verifier.as_slice(), nonce.as_slice()].concat());
+        let response = stage_one
+            .iter()
+            .zip(challenge)
+            .map(|(left, right)| left ^ right)
+            .collect::<Vec<_>>();
+        assert!(verify_caching_sha2(&verifier, nonce, &response));
+        assert!(!verify_caching_sha2(&verifier, nonce, &[0; 32]));
+        assert!(!verify_caching_sha2(
+            &verifier,
+            b"09876543210987654321",
+            &response
+        ));
     }
 
     #[test]

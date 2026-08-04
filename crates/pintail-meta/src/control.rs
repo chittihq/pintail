@@ -74,6 +74,7 @@ pub struct ApiKeyRecord {
     pub name: String,
     pub sha256: Vec<u8>,
     pub mysql_native_password_hash: Option<Vec<u8>>,
+    pub caching_sha2_password_hash: Option<Vec<u8>>,
     pub enabled: bool,
     pub scopes_json: String,
     pub expires_at: Option<String>,
@@ -88,6 +89,7 @@ pub struct NewApiKey<'a> {
     pub name: &'a str,
     pub sha256: &'a [u8],
     pub mysql_native_password_hash: Option<&'a [u8]>,
+    pub caching_sha2_password_hash: Option<&'a [u8]>,
     pub scopes_json: &'a str,
     pub expires_at: Option<&'a str>,
     pub now: &'a str,
@@ -543,14 +545,15 @@ impl MetaStore {
             .execute(
                 "INSERT INTO api_keys (\
                    id, db_id, name, sha256, mysql_native_password_hash, \
-                   scopes_json, expires_at, created_at\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                   caching_sha2_password_hash, scopes_json, expires_at, created_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     key.id,
                     key.database_id,
                     key.name,
                     key.sha256,
                     key.mysql_native_password_hash,
+                    key.caching_sha2_password_hash,
                     key.scopes_json,
                     key.expires_at,
                     key.now,
@@ -859,7 +862,8 @@ fn decode_table(row: &rusqlite::Row<'_>) -> rusqlite::Result<TableRecord> {
 }
 
 fn api_key_select_sql() -> &'static str {
-    "SELECT id, db_id, name, sha256, mysql_native_password_hash, enabled, \
+    "SELECT id, db_id, name, sha256, mysql_native_password_hash, \
+            caching_sha2_password_hash, enabled, \
             scopes_json, expires_at, last_used_at, created_at FROM api_keys"
 }
 
@@ -870,11 +874,12 @@ fn decode_api_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
         name: row.get(2)?,
         sha256: row.get(3)?,
         mysql_native_password_hash: row.get(4)?,
-        enabled: row.get(5)?,
-        scopes_json: row.get(6)?,
-        expires_at: row.get(7)?,
-        last_used_at: row.get(8)?,
-        created_at: row.get(9)?,
+        caching_sha2_password_hash: row.get(5)?,
+        enabled: row.get(6)?,
+        scopes_json: row.get(7)?,
+        expires_at: row.get(8)?,
+        last_used_at: row.get(9)?,
+        created_at: row.get(10)?,
     })
 }
 

@@ -369,6 +369,7 @@ fn seed_replica(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
     let secret = b"pk_wire_secret";
     let sha256 = Sha256::digest(secret);
     let native = Sha1::digest(Sha1::digest(secret));
+    let caching_sha2 = Sha256::digest(Sha256::digest(secret));
     metadata
         .create_api_key(&NewApiKey {
             id: "key-wire",
@@ -376,6 +377,7 @@ fn seed_replica(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
             name: "wire gate",
             sha256: &sha256,
             mysql_native_password_hash: Some(&native),
+            caching_sha2_password_hash: Some(&caching_sha2),
             scopes_json: r#"["query","read"]"#,
             expires_at: None,
             now: "2026-07-30T00:00:03Z",
