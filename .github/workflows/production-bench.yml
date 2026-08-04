@@ -27,6 +27,38 @@ concurrency:
   cancel-in-progress: false # benchmark runs must not be killed mid-measurement
 
 jobs:
+  # Runner-local production acceptance: the correctness regression net.
+  # Runs on the GitHub runner's own Docker with the public ci dataset —
+  # no external host, no secrets — so it works on every fork. Exactness
+  # is the signal here; timing comparisons stay on the dedicated host.
+  acceptance:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+        working-directory: benchmark
+      - name: Production acceptance (ci profile, runner-local docker)
+        run: >
+          bun run run-production.ts --profile ci --dataset ci
+          --phases snapshot,cold --engines mysql,pintail
+        working-directory: benchmark
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f benchmark/workloads/commerce-production-v1/results/latest.md ]; then
+            cat benchmark/workloads/commerce-production-v1/results/latest.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-acceptance-results
+          path: benchmark/workloads/commerce-production-v1/results/
+
   ci-profile:
     if: github.event_name == 'push' && vars.BENCHMARK_DOCKER_SSH != ''
     runs-on: ubuntu-latest
