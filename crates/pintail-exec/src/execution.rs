@@ -4254,6 +4254,11 @@ fn build_buffered_hash_aggregate(
     merge_spilled_aggregate_groups(spill_runs, groups, aggregates, memory)
 }
 
+/// The error and, when the failure struck *before* the entry touched the
+/// map, the entry itself so the caller can spill and retry it; `None`
+/// means a mid-merge failure that cannot be replayed.
+type MergeGroupFailure = (ExecError, Option<(Vec<Value>, AggregateGroup)>);
+
 /// Merges one partial group into the live map. A memory failure *before*
 /// the entry touches the map hands the entry back (`Some`) so the caller
 /// can spill and retry it; a failure while merging states cannot be
@@ -4265,7 +4270,7 @@ fn merge_partial_group(
     aggregates: &[CompiledAggregate],
     batch_reserved: usize,
     memory: &MemoryTracker,
-) -> Result<(), (ExecError, Option<(Vec<Value>, AggregateGroup)>)> {
+) -> Result<(), MergeGroupFailure> {
     if groups.len() == groups.capacity() {
         let growth = groups.capacity().max(64);
         if let Err(error) = reserve_hash_map_entries(

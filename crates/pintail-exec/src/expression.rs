@@ -1934,7 +1934,7 @@ fn timezone_spec(text: &str) -> Option<ZoneSpec> {
 }
 
 /// `CONVERT_TZ` on the canonical datetime text carrier. Ambiguous local
-/// times (DST fall-back) take the earlier offset like MySQL; nonexistent
+/// times (DST fall-back) take the earlier offset like `MySQL`; nonexistent
 /// local times (spring-forward gap) return None, a documented divergence.
 fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
     let trimmed = text.trim();

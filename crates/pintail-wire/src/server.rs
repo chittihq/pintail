@@ -333,10 +333,13 @@ where
         self.salt
     }
 
+    // The opensrv trait fixes the &str return; the literal is 'static.
+    #[allow(clippy::unnecessary_literal_bound)]
     fn default_auth_plugin(&self) -> &str {
         "caching_sha2_password"
     }
 
+    #[allow(clippy::unnecessary_literal_bound)]
     async fn auth_plugin_for_username(&self, _user: &[u8]) -> &str {
         // Auth-switch target for legacy clients that answered the
         // caching_sha2_password greeting with an empty response.

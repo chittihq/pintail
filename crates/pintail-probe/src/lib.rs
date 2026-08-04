@@ -105,8 +105,34 @@ pub struct SourceTable {
     /// Whether invisible cascading foreign-key changes require periodic
     /// primary-key reconciliation even in CDC mode.
     pub requires_reconciliation: bool,
+    /// Foreign-key constraints on this table, for metadata fidelity.
+    #[serde(default)]
+    pub foreign_keys: Vec<SourceForeignKey>,
     /// Table-specific mapping warnings.
     pub warnings: Vec<String>,
+}
+
+/// One `REFERENTIAL_CONSTRAINTS` row: constraint name, delete rule, update
+/// rule, referenced unique-constraint name, referenced table.
+type CascadeRuleRow = (String, String, String, Option<String>, Option<String>);
+
+/// One foreign-key constraint captured from the source.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
+pub struct SourceForeignKey {
+    /// Constraint name.
+    pub name: String,
+    /// Constrained column names in constraint order.
+    pub columns: Vec<String>,
+    /// Referenced (parent) table name.
+    pub referenced_table: String,
+    /// Referenced column names, parallel to `columns`.
+    pub referenced_columns: Vec<String>,
+    /// Referenced constraint name (usually `PRIMARY`), when reported.
+    pub unique_constraint_name: Option<String>,
+    /// `ON UPDATE` rule text.
+    pub update_rule: String,
+    /// `ON DELETE` rule text.
+    pub delete_rule: String,
 }
 
 impl SourceTable {
@@ -410,19 +436,55 @@ async fn probe_table(
         .collect::<Vec<_>>();
     let key = choose_key(&raw_columns, &index_parts);
     let unique_keys = usable_unique_keys(&raw_columns, &index_parts);
-    let cascade_rules: Vec<(String, String, String)> = connection
+    let cascade_rules: Vec<CascadeRuleRow> = connection
         .exec(
-            "SELECT CONSTRAINT_NAME, DELETE_RULE, UPDATE_RULE \
+            "SELECT CONSTRAINT_NAME, DELETE_RULE, UPDATE_RULE, \
+                    UNIQUE_CONSTRAINT_NAME, REFERENCED_TABLE_NAME \
              FROM information_schema.REFERENTIAL_CONSTRAINTS \
              WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? \
              ORDER BY CONSTRAINT_NAME",
             (database, &table),
         )
         .await?;
+    let member_rows: Vec<(String, String, Option<String>)> = connection
+        .exec(
+            "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_COLUMN_NAME \
+             FROM information_schema.KEY_COLUMN_USAGE \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+               AND REFERENCED_TABLE_NAME IS NOT NULL \
+             ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION",
+            (database, &table),
+        )
+        .await?;
+    let foreign_keys = cascade_rules
+        .iter()
+        .filter_map(
+            |(name, delete_rule, update_rule, unique_constraint, referenced_table)| {
+                let referenced_table = referenced_table.clone()?;
+                let mut columns = Vec::new();
+                let mut referenced_columns = Vec::new();
+                for (member, column, referenced) in &member_rows {
+                    if member == name {
+                        columns.push(column.clone());
+                        referenced_columns.push(referenced.clone()?);
+                    }
+                }
+                (!columns.is_empty()).then(|| SourceForeignKey {
+                    name: name.clone(),
+                    columns,
+                    referenced_table,
+                    referenced_columns,
+                    unique_constraint_name: unique_constraint.clone(),
+                    update_rule: update_rule.clone(),
+                    delete_rule: delete_rule.clone(),
+                })
+            },
+        )
+        .collect::<Vec<_>>();
 
     let mut columns = Vec::with_capacity(raw_columns.len());
     let mut warnings = Vec::new();
-    for (constraint, delete_rule, update_rule) in &cascade_rules {
+    for (constraint, delete_rule, update_rule, _, _) in &cascade_rules {
         if invisible_fk_rule(delete_rule) || invisible_fk_rule(update_rule) {
             warnings.push(format!(
                 "foreign key {constraint} uses DELETE {delete_rule}/UPDATE {update_rule}; \
@@ -471,9 +533,12 @@ async fn probe_table(
         columns,
         key,
         unique_keys,
-        requires_reconciliation: cascade_rules.iter().any(|(_, delete_rule, update_rule)| {
-            invisible_fk_rule(delete_rule) || invisible_fk_rule(update_rule)
-        }),
+        requires_reconciliation: cascade_rules
+            .iter()
+            .any(|(_, delete_rule, update_rule, _, _)| {
+                invisible_fk_rule(delete_rule) || invisible_fk_rule(update_rule)
+            }),
+        foreign_keys,
         warnings,
     })
 }
@@ -944,6 +1009,7 @@ mod tests {
             },
             unique_keys: vec![vec!["id".to_owned()]],
             requires_reconciliation: false,
+            foreign_keys: Vec::new(),
             warnings: Vec::new(),
         };
         let schema = table.table_schema().expect("table schema");

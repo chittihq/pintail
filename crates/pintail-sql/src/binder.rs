@@ -322,7 +322,11 @@ impl<'catalog> Binder<'catalog> {
     fn bind_select(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
         validate_select_shape(select)?;
 
-        let (mut from, mut tables, wildcard_order) = self.bind_from(select, ctes)?;
+        let BoundFromScope {
+            mut from,
+            mut tables,
+            wildcard_order,
+        } = self.bind_from(select, ctes)?;
         let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
         // Correlated EXISTS conjuncts decorrelate into semi/anti joins
         // before general binding; everything else re-ANDs below.
@@ -742,6 +746,7 @@ impl<'catalog> Binder<'catalog> {
     /// an inner column with an outer expression. Returns the replacement
     /// expression and whether the caller must fold NULL to zero (COUNT
     /// over an absent group).
+    #[allow(clippy::too_many_lines)] // linear canonical-shape validation reads best unsplit
     fn decorrelate_scalar(
         &self,
         subquery: &Query,
@@ -938,11 +943,8 @@ impl<'catalog> Binder<'catalog> {
         ))
     }
 
-    fn bind_from(
-        &self,
-        select: &Select,
-        ctes: &[BoundCte],
-    ) -> Result<(Vec<BoundFrom>, Vec<BoundTable>, Vec<BoundColumn>), BindError> {
+    #[allow(clippy::too_many_lines)] // linear join-constraint dispatch reads best unsplit
+    fn bind_from(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundFromScope, BindError> {
         let mut from = Vec::with_capacity(select.from.len());
         let mut tables = Vec::new();
         // Column order an unqualified `*` expands to. USING/NATURAL joins
@@ -1011,7 +1013,7 @@ impl<'catalog> Binder<'catalog> {
                                 }
                             })
                             .collect::<Result<Vec<_>, _>>()?;
-                        Some(self.bind_using_join(
+                        Some(Self::bind_using_join(
                             &columns,
                             &table,
                             &mut item_wildcard,
@@ -1037,7 +1039,7 @@ impl<'catalog> Binder<'catalog> {
                             item_wildcard.extend(table.columns.iter().cloned());
                             None
                         } else {
-                            Some(self.bind_using_join(
+                            Some(Self::bind_using_join(
                                 &columns,
                                 &table,
                                 &mut item_wildcard,
@@ -1067,7 +1069,11 @@ impl<'catalog> Binder<'catalog> {
             from.push(BoundFrom { base, joins });
             wildcard_order.append(&mut item_wildcard);
         }
-        Ok((from, tables, wildcard_order))
+        Ok(BoundFromScope {
+            from,
+            tables,
+            wildcard_order,
+        })
     }
 
     /// Desugars one `USING`/`NATURAL` join: binds the equality condition
@@ -1075,11 +1081,10 @@ impl<'catalog> Binder<'catalog> {
     /// occurrences from unqualified resolution, and reorders the wildcard
     /// expansion to the standard join-columns-first layout.
     fn bind_using_join(
-        &self,
         columns: &[String],
         right: &BoundTable,
         item_wildcard: &mut Vec<BoundColumn>,
-        tables: &mut Vec<BoundTable>,
+        tables: &mut [BoundTable],
     ) -> Result<BoundExpr, BindError> {
         let mut condition: Option<BoundExpr> = None;
         let mut front = Vec::with_capacity(columns.len());
@@ -3333,11 +3338,14 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        // NULL out of range / on malformed input, like MySQL.
+        // NULL out of range / on malformed or unmatched input, like MySQL.
         ScalarFunction::Elt
         | ScalarFunction::MakeDate
         | ScalarFunction::StrToDate
-        | ScalarFunction::ConvertTz => (Some(DataType::Utf8), true),
+        | ScalarFunction::ConvertTz
+        | ScalarFunction::RegexpSubstr
+        | ScalarFunction::JsonExtract { .. }
+        | ScalarFunction::JsonUnquote => (Some(DataType::Utf8), true),
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),
@@ -3356,9 +3364,6 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             Some(DataType::Boolean),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::RegexpSubstr
-        | ScalarFunction::JsonExtract { .. }
-        | ScalarFunction::JsonUnquote => (Some(DataType::Utf8), true),
         // NULL arguments become JSON nulls, never a NULL result.
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Utf8), false),
         ScalarFunction::RegexpInstr => (
@@ -3785,6 +3790,14 @@ fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
 /// dividend's scale by four fraction digits.
 /// Aggregate output column of a decorrelated scalar-subquery derived table.
 const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
+
+/// Everything one FROM clause contributes to binding: the join structure,
+/// the resolution scope, and the unqualified-`*` expansion order.
+struct BoundFromScope {
+    from: Vec<BoundFrom>,
+    tables: Vec<BoundTable>,
+    wildcard_order: Vec<BoundColumn>,
+}
 
 const DIVISION_SCALE_INCREMENT: u8 = 4;
 /// Pintail v1 decimal bounds (`DataType::is_valid`).

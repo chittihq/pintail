@@ -119,6 +119,7 @@ fn test_source_table() -> SourceTable {
         },
         unique_keys: Vec::new(),
         requires_reconciliation: false,
+        foreign_keys: Vec::new(),
         warnings: Vec::new(),
     }
 }

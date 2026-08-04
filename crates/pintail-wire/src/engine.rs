@@ -464,6 +464,19 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
                 columns: source.key.columns.clone(),
             });
         }
+        for key in &source.foreign_keys {
+            facts.foreign_keys.push(pintail_sql::ForeignKeyFacts {
+                database: replica.database.name.clone(),
+                table: source.name.clone(),
+                name: key.name.clone(),
+                columns: key.columns.clone(),
+                referenced_table: key.referenced_table.clone(),
+                referenced_columns: key.referenced_columns.clone(),
+                unique_constraint_name: key.unique_constraint_name.clone(),
+                update_rule: key.update_rule.clone(),
+                delete_rule: key.delete_rule.clone(),
+            });
+        }
         for (position, unique) in source.unique_keys.iter().enumerate() {
             let is_chosen = chosen_unique
                 && unique.len() == source.key.columns.len()

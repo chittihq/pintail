@@ -36,6 +36,31 @@ pub struct SourceFacts {
     pub columns: Vec<ColumnFacts>,
     /// Per-index facts (primary and unique constraints).
     pub indexes: Vec<IndexFacts>,
+    /// Per-foreign-key facts.
+    pub foreign_keys: Vec<ForeignKeyFacts>,
+}
+
+/// One foreign-key constraint on a source table.
+#[derive(Clone, Debug, Default)]
+pub struct ForeignKeyFacts {
+    /// Source database name.
+    pub database: String,
+    /// Constrained (child) table name.
+    pub table: String,
+    /// Constraint name.
+    pub name: String,
+    /// Constrained column names in constraint order.
+    pub columns: Vec<String>,
+    /// Referenced (parent) table name.
+    pub referenced_table: String,
+    /// Referenced column names, parallel to `columns`.
+    pub referenced_columns: Vec<String>,
+    /// Referenced constraint name (usually `PRIMARY`), when known.
+    pub unique_constraint_name: Option<String>,
+    /// `ON UPDATE` rule text.
+    pub update_rule: String,
+    /// `ON DELETE` rule text.
+    pub delete_rule: String,
 }
 
 /// One primary or unique constraint on a source table.
@@ -253,6 +278,8 @@ fn information_schema_table(
         Ok(information_key_column_usage(catalog, facts))
     } else if table.eq_ignore_ascii_case("table_constraints") {
         Ok(information_table_constraints(catalog, facts))
+    } else if table.eq_ignore_ascii_case("referential_constraints") {
+        Ok(information_referential_constraints(catalog, facts))
     } else {
         Err(MetadataError::UnknownTable((*table).to_owned()))
     }
@@ -522,9 +549,82 @@ fn information_key_column_usage(catalog: &CatalogSnapshot, facts: &SourceFacts) 
                     ]);
                 }
             }
+            for key in table_foreign_keys(database.name(), table.name(), facts) {
+                for (sequence, (column, referenced)) in
+                    key.columns.iter().zip(&key.referenced_columns).enumerate()
+                {
+                    let position = i64::try_from(sequence + 1).expect("position fits i64");
+                    rows.push(vec![
+                        utf8("def"),
+                        utf8(database.name()),
+                        utf8(&key.name),
+                        utf8("def"),
+                        utf8(database.name()),
+                        utf8(table.name()),
+                        utf8(column),
+                        Value::UInt64(u64::try_from(sequence + 1).expect("sequence fits u64")),
+                        Value::Int64(position),
+                        utf8(database.name()),
+                        utf8(&key.referenced_table),
+                        utf8(referenced),
+                    ]);
+                }
+            }
         }
     }
     MetadataResult { fields, rows }
+}
+
+fn information_referential_constraints(
+    catalog: &CatalogSnapshot,
+    facts: &SourceFacts,
+) -> MetadataResult {
+    let fields = metadata_fields(&[
+        ("CONSTRAINT_CATALOG", DataType::Utf8, false),
+        ("CONSTRAINT_SCHEMA", DataType::Utf8, false),
+        ("CONSTRAINT_NAME", DataType::Utf8, false),
+        ("UNIQUE_CONSTRAINT_CATALOG", DataType::Utf8, false),
+        ("UNIQUE_CONSTRAINT_SCHEMA", DataType::Utf8, false),
+        ("UNIQUE_CONSTRAINT_NAME", DataType::Utf8, true),
+        ("MATCH_OPTION", DataType::Utf8, false),
+        ("UPDATE_RULE", DataType::Utf8, false),
+        ("DELETE_RULE", DataType::Utf8, false),
+        ("TABLE_NAME", DataType::Utf8, false),
+        ("REFERENCED_TABLE_NAME", DataType::Utf8, false),
+    ]);
+    let mut rows = Vec::new();
+    for database in catalog.databases() {
+        for table in database.tables() {
+            for key in table_foreign_keys(database.name(), table.name(), facts) {
+                rows.push(vec![
+                    utf8("def"),
+                    utf8(database.name()),
+                    utf8(&key.name),
+                    utf8("def"),
+                    utf8(database.name()),
+                    key.unique_constraint_name
+                        .as_deref()
+                        .map_or(Value::Null, utf8),
+                    utf8("NONE"),
+                    utf8(&key.update_rule),
+                    utf8(&key.delete_rule),
+                    utf8(table.name()),
+                    utf8(&key.referenced_table),
+                ]);
+            }
+        }
+    }
+    MetadataResult { fields, rows }
+}
+
+fn table_foreign_keys<'facts>(
+    database: &str,
+    table: &str,
+    facts: &'facts SourceFacts,
+) -> impl Iterator<Item = &'facts ForeignKeyFacts> {
+    facts.foreign_keys.iter().filter(move |key| {
+        key.database.eq_ignore_ascii_case(database) && key.table.eq_ignore_ascii_case(table)
+    })
 }
 
 fn information_table_constraints(catalog: &CatalogSnapshot, facts: &SourceFacts) -> MetadataResult {
@@ -554,6 +654,17 @@ fn information_table_constraints(catalog: &CatalogSnapshot, facts: &SourceFacts)
                     utf8(database.name()),
                     utf8(table.name()),
                     utf8(constraint_type),
+                    utf8("YES"),
+                ]);
+            }
+            for key in table_foreign_keys(database.name(), table.name(), facts) {
+                rows.push(vec![
+                    utf8("def"),
+                    utf8(database.name()),
+                    utf8(&key.name),
+                    utf8(database.name()),
+                    utf8(table.name()),
+                    utf8("FOREIGN KEY"),
                     utf8("YES"),
                 ]);
             }
@@ -1157,6 +1268,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // one linear metadata walkthrough
     fn serves_constraint_metadata_and_show_create_table() {
         let table = TableEntry::new(
             TableId::new(2),
@@ -1194,6 +1306,17 @@ mod tests {
                 unique: true,
                 columns: vec!["name".to_owned()],
             }],
+            foreign_keys: vec![crate::ForeignKeyFacts {
+                database: "Analytics".to_owned(),
+                table: "Events".to_owned(),
+                name: "fk_events_owner".to_owned(),
+                columns: vec!["id".to_owned()],
+                referenced_table: "Owners".to_owned(),
+                referenced_columns: vec!["id".to_owned()],
+                unique_constraint_name: Some("PRIMARY".to_owned()),
+                update_rule: "NO ACTION".to_owned(),
+                delete_rule: "CASCADE".to_owned(),
+            }],
         };
 
         let statistics = execute_metadata(
@@ -1215,8 +1338,10 @@ mod tests {
             &facts,
         )
         .expect("key_column_usage");
-        assert_eq!(usage.rows.len(), 2);
+        assert_eq!(usage.rows.len(), 3);
         assert_eq!(usage.rows[0][2], Value::Utf8("PRIMARY".to_owned()));
+        assert_eq!(usage.rows[2][2], Value::Utf8("fk_events_owner".to_owned()));
+        assert_eq!(usage.rows[2][10], Value::Utf8("Owners".to_owned()));
 
         let constraints = execute_metadata(
             &parse_statement("SELECT * FROM information_schema.table_constraints").expect("parse"),
@@ -1225,12 +1350,32 @@ mod tests {
             &facts,
         )
         .expect("table_constraints");
-        assert_eq!(constraints.rows.len(), 2);
+        assert_eq!(constraints.rows.len(), 3);
         assert_eq!(
             constraints.rows[0][5],
             Value::Utf8("PRIMARY KEY".to_owned())
         );
         assert_eq!(constraints.rows[1][5], Value::Utf8("UNIQUE".to_owned()));
+        assert_eq!(
+            constraints.rows[2][5],
+            Value::Utf8("FOREIGN KEY".to_owned())
+        );
+
+        let referential = execute_metadata(
+            &parse_statement("SELECT * FROM information_schema.referential_constraints")
+                .expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("referential_constraints");
+        assert_eq!(referential.rows.len(), 1);
+        assert_eq!(
+            referential.rows[0][2],
+            Value::Utf8("fk_events_owner".to_owned())
+        );
+        assert_eq!(referential.rows[0][8], Value::Utf8("CASCADE".to_owned()));
+        assert_eq!(referential.rows[0][10], Value::Utf8("Owners".to_owned()));
 
         let create = execute_metadata(
             &parse_statement("SHOW CREATE TABLE Analytics.Events").expect("parse"),

@@ -20,8 +20,8 @@ pub use bound::{
     IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
 pub use metadata::{
-    ColumnFacts, IndexFacts, MetadataError, MetadataField, MetadataResult, SourceFacts,
-    execute_metadata,
+    ColumnFacts, ForeignKeyFacts, IndexFacts, MetadataError, MetadataField, MetadataResult,
+    SourceFacts, execute_metadata,
 };
 
 /// An error produced while parsing a SQL request.
