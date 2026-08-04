@@ -15,6 +15,83 @@ use sha2::{Digest as _, Sha256};
 use tokio::{net::TcpListener, sync::oneshot};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn wire_tls_negotiates_and_required_tls_refuses_plaintext() {
+    // mysql_async's rustls client hits the same multi-backend ambiguity the
+    // server pins away internally; tests pick ring process-wide.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_replica(data.path(), &metadata_path);
+
+    let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
+        .expect("self-signed certificate");
+    let certificate_path = data.path().join("wire.crt");
+    let key_path = data.path().join("wire.key");
+    std::fs::write(&certificate_path, certified.cert.pem()).expect("write certificate");
+    std::fs::write(&key_path, certified.key_pair.serialize_pem()).expect("write key");
+    let tls =
+        pintail_wire::load_wire_tls(&certificate_path, &key_path, true).expect("load TLS policy");
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server_metadata = metadata_path.clone();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until_with_options(
+            listener,
+            data_dir,
+            server_metadata,
+            pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+            Some(tls),
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+    });
+
+    // TLS client succeeds end to end.
+    let ssl = mysql_async::SslOpts::default()
+        .with_danger_accept_invalid_certs(true)
+        .with_danger_skip_domain_validation(true);
+    let secure = mysql_async::OptsBuilder::from_opts(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/analytics"
+        ))
+        .expect("wire DSN"),
+    )
+    .ssl_opts(Some(ssl));
+    let pool = Pool::new(secure);
+    let mut connection = pool.get_conn().await.expect("TLS wire client");
+    let rows: Vec<(u64, String)> = connection
+        .query("SELECT id, name FROM events ORDER BY id")
+        .await
+        .expect("TLS wire query");
+    assert_eq!(rows, vec![(1, "launch".to_owned()), (2, "land".to_owned())]);
+    drop(connection);
+    pool.disconnect().await.expect("pool shutdown");
+
+    // Plaintext client is refused when TLS is required.
+    let plain = Pool::new(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/analytics"
+        ))
+        .expect("wire DSN"),
+    );
+    assert!(
+        plain.get_conn().await.is_err(),
+        "plaintext connection must be refused when TLS is required"
+    );
+    plain.disconnect().await.ok();
+
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::too_many_lines)]
 async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
     let data = tempfile::tempdir().expect("wire data directory");

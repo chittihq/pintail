@@ -7,4 +7,7 @@ pub use engine::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
     ReplicaEngine, table_directory,
 };
-pub use server::{serve, serve_until, serve_until_with_memory_limit};
+pub use server::{
+    WireTls, load_wire_tls, serve, serve_until, serve_until_with_memory_limit,
+    serve_until_with_options,
+};

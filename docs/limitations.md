@@ -281,8 +281,12 @@ plausible but incorrect result.
   and binary type tags. Prepared parameters support NULL, integers, floats,
   UTF-8 strings, and binary strings; DATE/DATETIME/TIME parameters are
   explicitly rejected until their literal binder is implemented.
-- The server does not terminate TLS. Keep the default loopback bind or put a
-  private TLS-capable ingress in front of Pintail before exposing the endpoint
+- The wire endpoint terminates TLS when configured
+  (`PINTAIL_WIRE_TLS_CERT`/`PINTAIL_WIRE_TLS_KEY` PEM paths or the
+  `[wire]` config keys, plus `PINTAIL_WIRE_REQUIRE_TLS` to refuse
+  plaintext clients after the greeting). rustls with its default modern
+  protocol and cipher policy; certificate rotation requires a restart.
+  The HTTP endpoint still expects a TLS-capable ingress when exposed
   across a network.
 - The automated compatibility gate runs `mysql_async`, MySQL 8.4 CLI, mysql2,
   and PyMySQL. DBeaver and Metabase use the same documented MySQL 8 connection

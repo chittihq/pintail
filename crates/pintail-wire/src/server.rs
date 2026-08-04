@@ -14,7 +14,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use opensrv_mysql::{
     AsyncMysqlIntermediary, AsyncMysqlShim, Column, ColumnFlags, ColumnType, ErrorKind, InitWriter,
     IntermediaryOptions, OkResponse, ParamParser, QueryResultWriter, StatementMetaWriter,
-    ToMysqlValue, ValueInner,
+    ToMysqlValue, ValueInner, plain_run_with_options, secure_run_with_options,
 };
 use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_types::{DataType, Value};
@@ -48,7 +48,7 @@ pub async fn serve(
         let (stream, _) = listener.accept().await?;
         let backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
         tokio::spawn(async move {
-            let _ = serve_connection(stream, backend).await;
+            let _ = serve_connection(stream, backend, None).await;
         });
     }
 }
@@ -92,6 +92,86 @@ pub async fn serve_until_with_memory_limit<F>(
 where
     F: Future<Output = ()>,
 {
+    serve_until_with_options(
+        listener,
+        data_dir,
+        metadata_path,
+        query_memory_limit,
+        None,
+        shutdown,
+    )
+    .await
+}
+
+/// TLS termination policy for the wire listener.
+#[derive(Clone)]
+pub struct WireTls {
+    /// Certificate chain and key, ready for per-connection handshakes.
+    pub config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
+    /// Whether plaintext clients are refused after the greeting.
+    pub required: bool,
+}
+
+/// Loads a PEM certificate chain and private key into a wire TLS policy.
+///
+/// # Errors
+///
+/// Returns an error when either file is unreadable or not valid PEM, or the
+/// key does not match rustls' supported formats.
+pub fn load_wire_tls(
+    certificate_path: &std::path::Path,
+    key_path: &std::path::Path,
+    required: bool,
+) -> io::Result<WireTls> {
+    let certificates = rustls_pemfile::certs(&mut io::BufReader::new(std::fs::File::open(
+        certificate_path,
+    )?))
+    .collect::<Result<Vec<_>, _>>()?;
+    if certificates.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "certificate file contains no certificates",
+        ));
+    }
+    let key = rustls_pemfile::private_key(&mut io::BufReader::new(std::fs::File::open(key_path)?))?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "key file contains no private key",
+            )
+        })?;
+    // An explicit provider keeps the build deterministic even when feature
+    // unification enables more than one rustls crypto backend.
+    let provider = std::sync::Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
+    let config = tokio_rustls::rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?
+        .with_no_client_auth()
+        .with_single_cert(certificates, key)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    Ok(WireTls {
+        config: std::sync::Arc::new(config),
+        required,
+    })
+}
+
+/// Serves clients with an explicit memory ceiling and optional TLS policy
+/// until shutdown.
+///
+/// # Errors
+///
+/// Returns an error when the listener cannot accept another connection.
+pub async fn serve_until_with_options<F>(
+    listener: TcpListener,
+    data_dir: impl Into<PathBuf>,
+    metadata_path: impl Into<PathBuf>,
+    query_memory_limit: usize,
+    tls: Option<WireTls>,
+    shutdown: F,
+) -> io::Result<()>
+where
+    F: Future<Output = ()>,
+{
     let data_dir = data_dir.into();
     let metadata_path = metadata_path.into();
     tokio::pin!(shutdown);
@@ -102,26 +182,39 @@ where
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
                 let backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
+                let tls = tls.clone();
                 tokio::spawn(async move {
-                    let _ = serve_connection(stream, backend).await;
+                    let _ = serve_connection(stream, backend, tls).await;
                 });
             }
         }
     }
 }
 
-async fn serve_connection(stream: TcpStream, backend: Backend) -> io::Result<()> {
-    let (reader, writer) = stream.into_split();
-    AsyncMysqlIntermediary::run_with_options(
-        backend,
-        reader,
-        writer,
-        &IntermediaryOptions {
-            process_use_statement_on_query: true,
-            reject_connection_on_dbname_absence: false,
-        },
-    )
-    .await
+async fn serve_connection(
+    stream: TcpStream,
+    mut backend: Backend,
+    tls: Option<WireTls>,
+) -> io::Result<()> {
+    let (reader, mut writer) = stream.into_split();
+    let options = IntermediaryOptions {
+        process_use_statement_on_query: true,
+        reject_connection_on_dbname_absence: false,
+    };
+    let tls_config = tls.as_ref().map(|tls| std::sync::Arc::clone(&tls.config));
+    let (client_requested_tls, init) =
+        AsyncMysqlIntermediary::init_before_ssl(&mut backend, reader, &mut writer, &tls_config)
+            .await?;
+    match (client_requested_tls, tls) {
+        (true, Some(tls)) => {
+            secure_run_with_options(backend, writer, options, tls.config, init).await
+        }
+        // A required-TLS listener drops plaintext clients after the
+        // greeting; MySQL clients report the closed connection as
+        // "server requires secure transport".
+        (false, Some(tls)) if tls.required => Ok(()),
+        _ => plain_run_with_options(backend, writer, options, init).await,
+    }
 }
 
 #[derive(Clone, Debug)]

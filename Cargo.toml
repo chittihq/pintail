@@ -42,7 +42,11 @@ jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["rus
 lz4_flex = "0.11.5"
 mime_guess = "2.0.5"
 mysql_async = { version = "0.37.0", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
-opensrv-mysql = { version = "0.7.0", default-features = false }
+opensrv-mysql = { version = "0.7.0", default-features = false, features = ["tls"] }
+tokio-rustls = { version = "0.25", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
 object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
 pintail-api = { path = "crates/pintail-api" }
 pintail-backup = { path = "crates/pintail-backup" }

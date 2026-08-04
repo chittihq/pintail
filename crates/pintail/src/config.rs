@@ -50,6 +50,9 @@ pub struct AppConfig {
     http_bind: SocketAddr,
     wire_bind: SocketAddr,
     query_memory_limit_bytes: usize,
+    wire_tls_certificate: Option<PathBuf>,
+    wire_tls_key: Option<PathBuf>,
+    wire_require_tls: bool,
 }
 
 impl AppConfig {
@@ -72,6 +75,7 @@ impl AppConfig {
     ///
     /// Returns an error when a requested file cannot be read or parsed, or an
     /// environment override is invalid.
+    #[allow(clippy::too_many_lines)] // linear CLI/env/file source merge
     pub fn load_from<I>(cli: &Cli, environment: I) -> Result<Self>
     where
         I: IntoIterator<Item = (OsString, OsString)>,
@@ -155,11 +159,46 @@ impl AppConfig {
             bail!("query memory limit must be greater than zero");
         }
 
+        let read_env_path = |key: &str| -> Result<Option<PathBuf>> {
+            environment
+                .get(&OsString::from(key))
+                .map(|value| {
+                    value
+                        .to_str()
+                        .map(PathBuf::from)
+                        .with_context(|| format!("{key} must be valid UTF-8"))
+                })
+                .transpose()
+        };
+        let wire_tls_certificate =
+            read_env_path("PINTAIL_WIRE_TLS_CERT")?.or(file.wire.tls_certificate);
+        let wire_tls_key = read_env_path("PINTAIL_WIRE_TLS_KEY")?.or(file.wire.tls_key);
+        if wire_tls_certificate.is_some() != wire_tls_key.is_some() {
+            bail!("wire TLS certificate and key must be configured together");
+        }
+        let wire_require_tls = environment
+            .get(&OsString::from("PINTAIL_WIRE_REQUIRE_TLS"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_WIRE_REQUIRE_TLS must be valid UTF-8")
+                    .map(|value| matches!(value, "1" | "true" | "yes"))
+            })
+            .transpose()?
+            .or(file.wire.require_tls)
+            .unwrap_or(false);
+        if wire_require_tls && wire_tls_certificate.is_none() {
+            bail!("PINTAIL_WIRE_REQUIRE_TLS needs a configured certificate and key");
+        }
+
         Ok(Self {
             data_dir,
             http_bind,
             wire_bind,
             query_memory_limit_bytes,
+            wire_tls_certificate,
+            wire_tls_key,
+            wire_require_tls,
         })
     }
 
@@ -167,6 +206,17 @@ impl AppConfig {
     #[must_use]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// PEM certificate chain and key for wire TLS, when configured.
+    #[must_use]
+    pub fn wire_tls(&self) -> Option<(&Path, &Path, bool)> {
+        match (&self.wire_tls_certificate, &self.wire_tls_key) {
+            (Some(certificate), Some(key)) => {
+                Some((certificate.as_path(), key.as_path(), self.wire_require_tls))
+            }
+            _ => None,
+        }
     }
 
     /// Address used by the dashboard and HTTP API.
@@ -207,6 +257,9 @@ struct FileHttpConfig {
 #[serde(default, deny_unknown_fields)]
 struct FileWireConfig {
     bind: Option<SocketAddr>,
+    tls_certificate: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+    require_tls: Option<bool>,
 }
 
 #[derive(Default, Deserialize)]

@@ -8,7 +8,7 @@ use pintail::{
 };
 use pintail_api::{ApiState, router_with_state, spawn_supervisor};
 use pintail_meta::MetaStore;
-use pintail_wire::serve_until_with_memory_limit;
+use pintail_wire::{load_wire_tls, serve_until_with_options};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -65,11 +65,16 @@ async fn main() -> Result<()> {
             let _ = http_shutdown.recv().await;
         },
     );
-    let wire = serve_until_with_memory_limit(
+    let wire_tls = config
+        .wire_tls()
+        .map(|(certificate, key, required)| load_wire_tls(certificate, key, required))
+        .transpose()?;
+    let wire = serve_until_with_options(
         wire_listener,
         config.data_dir(),
         &metadata_path,
         config.query_memory_limit_bytes(),
+        wire_tls,
         async move {
             let _ = wire_shutdown.recv().await;
         },
