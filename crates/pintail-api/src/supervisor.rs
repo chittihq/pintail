@@ -1,10 +1,10 @@
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
 use chrono::{DateTime, Utc};
 use mysql_async::{Opts, Pool};
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
-use pintail_meta::{DatabaseRecord, TableRecord};
-use pintail_poll::{PollOptions, PollTarget, run_poll_cycle};
+use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
+use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
 use pintail_probe::ProbeReport;
 use pintail_store::StoreOptions;
 
@@ -213,7 +213,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
         Some("cdc") => {
             let includes = decode_names(database.include_tables.as_deref())?;
             let excludes = decode_names(database.exclude_tables.as_deref())?;
-            run_cdc(
+            let streamed = run_cdc(
                 &pool,
                 &metadata_path,
                 &database.id,
@@ -221,15 +221,90 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                 targets,
                 CdcOptions {
                     blocking: false,
-                    new_table_root: Some(root),
+                    new_table_root: Some(root.clone()),
                     new_table_includes: includes,
                     new_table_excludes: excludes,
                     ..CdcOptions::default()
                 },
             )
             .await
-            .map(|result| u64::try_from(result.mutations).unwrap_or(u64::MAX))
-            .map_err(display)
+            .map(|outcome| u64::try_from(outcome.mutations).unwrap_or(u64::MAX))
+            .map_err(display);
+            let result = streamed;
+
+            // MySQL executes `ON DELETE/UPDATE CASCADE` inside InnoDB without
+            // writing row events, so those child rows are invisible to any CDC
+            // reader and survive in the replica forever. The probe flags the
+            // affected tables; this is what actually repairs them, on the same
+            // cadence polling mode uses for its reconciler.
+            if let Ok(due) = cascade_reconciliation_due(&metadata_path, database, &report) {
+                if !due.is_empty() {
+                    let names = due.join(", ");
+                    match open_targets(&metadata_path, &database.id, &root, &report, &records) {
+                        Ok(all) => {
+                            let cascade = all
+                                .into_iter()
+                                .filter(|target| {
+                                    due.iter().any(|name| {
+                                        name.eq_ignore_ascii_case(&target.source().name)
+                                    })
+                                })
+                                .map(|target| {
+                                    let source = target.source().clone();
+                                    PollTarget::new(source, target.into_store())
+                                })
+                                .collect::<Result<Vec<_>, _>>();
+                            let cascade = match cascade {
+                                Ok(cascade) => cascade,
+                                Err(error) => {
+                                    state.publish(ApiEvent::database(
+                                        "replication.cascade-reconcile.error",
+                                        &database.id,
+                                        format!("could not build cascade targets: {error}"),
+                                    ));
+                                    Vec::new()
+                                }
+                            };
+                            match run_cdc_reconciliation(
+                                &pool,
+                                &metadata_path,
+                                &database.id,
+                                &report,
+                                cascade,
+                                10_000,
+                            )
+                            .await
+                            {
+                                Ok(outcome) => {
+                                    let repaired: usize =
+                                        outcome.tables.iter().map(|table| table.tombstones).sum();
+                                    state.publish(ApiEvent::database(
+                                        "replication.cascade-reconcile",
+                                        &database.id,
+                                        format!(
+                                            "reconciled cascade-affected tables ({names}); {repaired} rows tombstoned"
+                                        ),
+                                    ));
+                                }
+                                // A failed repair must not fail the CDC cycle:
+                                // streaming is still correct for everything
+                                // cascades do not touch.
+                                Err(error) => state.publish(ApiEvent::database(
+                                    "replication.cascade-reconcile.error",
+                                    &database.id,
+                                    format!("cascade reconciliation failed for {names}: {error}"),
+                                )),
+                            }
+                        }
+                        Err(error) => state.publish(ApiEvent::database(
+                            "replication.cascade-reconcile.error",
+                            &database.id,
+                            format!("could not open cascade targets: {error}"),
+                        )),
+                    }
+                }
+            }
+            result
         }
         Some("polling") => {
             // A tracked table can vanish from the source between probes (DROP
@@ -342,6 +417,47 @@ fn open_targets(
             .map_err(display)
         })
         .collect()
+}
+
+/// Tables the probe flagged as cascade-affected whose last reconcile is older
+/// than the database's interval. Returns names, because the caller reopens
+/// targets rather than holding stores across the CDC run.
+fn cascade_reconciliation_due(
+    metadata_path: &Path,
+    database: &DatabaseRecord,
+    report: &ProbeReport,
+) -> Result<Vec<String>, String> {
+    let flagged = report
+        .tables
+        .iter()
+        .filter(|table| table.requires_reconciliation)
+        .map(|table| table.name.clone())
+        .collect::<Vec<_>>();
+    if flagged.is_empty() {
+        return Ok(Vec::new());
+    }
+    let metadata = MetaStore::open(metadata_path).map_err(display)?;
+    let records = metadata.tables(&database.id).map_err(display)?;
+    Ok(records
+        .into_iter()
+        .filter(|record| {
+            flagged
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&record.name))
+                && record
+                    .last_reconcile_at
+                    .as_deref()
+                    .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
+                    .is_none_or(|last| {
+                        Utc::now()
+                            .signed_duration_since(last.with_timezone(&Utc))
+                            .num_seconds()
+                            >= i64::try_from(database.reconcile_interval_seconds)
+                                .unwrap_or(i64::MAX)
+                    })
+        })
+        .map(|record| record.name)
+        .collect())
 }
 
 fn reconciliation_due(database: &DatabaseRecord, records: &[TableRecord]) -> bool {
