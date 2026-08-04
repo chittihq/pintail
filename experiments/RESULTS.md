@@ -619,3 +619,78 @@ rules alongside the e14–e19 set:
 Net: the *direction* survives — LZ4 demonstrably expands densely bit-packed
 blocks and demonstrably wins big on dictionary codes — but no adoption decision
 is supported by these two experiments as written.
+
+## e22 — The contested claims, settled
+
+Re-run under the methodology the Codex review demanded: **16,384-row blocks**
+(the engine's `DEFAULT_BLOCK_ROWS`, not e20/e21's 64k), every decoder reading a
+**serialized byte buffer** through the identical `word_at` accessor, a
+**const-generic width-specialized** horizontal control, **two-sided** outliers,
+a **byte-cost** exception search, and a **self-delimiting** patched format.
+Round-trip fixtures pass first: width 0, width 64, single row, partial block,
+two-sided outliers.
+
+### Claim 1 — the LZ4 layer: SUPPORTED
+
+Both arms now run the same const-generic kernel over bytes; only the source of
+those bytes differs.
+
+| data | FOR size | FOR+lz4 size | decode FOR | decode lz4+FOR |
+|---|---:|---:|---:|---:|
+| amount, uniform | 50,034,188 | 50,225,934 | 59.9 ms | 65.3 ms (+9.0%) |
+| amount, two-sided outliers | 86,133,964 | 86,472,606 | 62.9 ms | 67.0 ms (+6.5%) |
+
+LZ4 over a bit-packed block is **bigger and 6.5–9% slower to decode**, now
+measured with the decoders equalized. The claim survives its correction.
+
+### Claim 2 — the interleaved layout: SUPPORTED AT HALF THE CLAIMED SIZE
+
+Consumer costs measured *directly* rather than inferred by subtraction:
+
+| measurement | median |
+|---|---:|
+| consumer only: checksum over decoded | 35.3 ms |
+| consumer only: sum over decoded | 2.6 ms |
+| unpack + checksum: horizontal (const-generic) | 59.2 ms |
+| unpack + checksum: interleaved | 46.6 ms |
+| unpack + sum: horizontal (const-generic) | 28.2 ms |
+| unpack + sum: interleaved | 14.2 ms |
+
+Subtracting the directly-measured consumer cost gives pure unpack of **~24–26 ms
+horizontal against ~11–12 ms interleaved**, from both the checksum and the sum
+path independently: **2.1×**, not the 4.0× e21 reported.
+
+e21's 4× was an artifact of an unfair control, exactly as the review predicted.
+Giving the horizontal layout compile-time-constant widths closes half the gap.
+The remaining 2.1× is **precisely what the FastLanes paper predicts for a scalar
+path at T=32** (64/T = 2), which is the most reassuring outcome available: the
+corrected measurement agrees with the published model instead of beating it.
+
+Interleaved is also 9,768 bytes *smaller* across the column — the horizontal
+packer carries a sentinel word per block that interleaving does not need.
+
+### Claim 3 — patched exceptions: LARGELY WITHDRAWN
+
+| data | FOR | patched | decode FOR | decode patched |
+|---|---:|---:|---:|---:|
+| amount, uniform | 3.20× | 3.20× (same width) | 59.9 ms | 64.3 ms |
+| amount, **two-sided** outliers | 1.86× | **1.91×** | 62.9 ms | 63.0 ms |
+
+e20 reported 1.88× → 3.18× on outlier data. That was measured with **high
+outliers only**. With outliers on both sides — the realistic shape — a low
+outlier becomes the frame-of-reference base and widens every delta no matter
+what the exception list does, so patching recovers only **2.5%**, not 70%.
+
+Decode is free (63.0 vs 62.9 ms), and on clean data the byte-cost search picks
+the same width, so it is never worse. But it is a marginal safety net, not the
+headline win e20 claimed.
+
+### Still open
+
+Findings from the review that this experiment does **not** settle, and which
+still gate adoption: measuring inside PTSEG's real exact-length bitstream and
+typed columnar builders rather than a lab `Vec` (#5, #9); genuinely cold file
+scans rather than warm heap buffers (#7); the run-end comparison against the
+engine's actual UTF-8-only dictionary path (#13, #14); and the PTSEG
+segment-version bump with golden compatibility tests that `Compression::None`
+requires (#2).

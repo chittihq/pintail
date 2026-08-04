@@ -1,0 +1,8 @@
+[package]
+name = "e22-encoding-settled"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+lz4_flex = { workspace = true }

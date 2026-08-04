@@ -205,6 +205,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "e22-encoding-settled"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "lz4_flex",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
