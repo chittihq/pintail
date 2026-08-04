@@ -438,10 +438,13 @@ left behind:
 | amount | FOR+bitpack | 50,007,344 | 50,201,736 | loss |
 | ratio (real doubles) | plain | 160,000,000 | 160,627,452 | loss |
 
-**Verdict: compress only when it pays.** Keep the compressed block when it beats
-the encoded block by a margin, else store the encoded bytes as-is. The block
-header already carries a compression tag, so this needs a `None` variant, not a
-format break.
+**Verdict: WITHDRAWN pending re-measurement (see the Codex review below).**
+The *size* rows are plain byte counts and stand. The decode figures do not:
+the no-LZ4 arm decodes from a native `Vec<u64>` while the LZ4 arm parses a byte
+buffer, so the two arms run different decoders and the 8–10% is partly that
+difference rather than LZ4. And `Compression::None` is a PTSEG segment-version
+break, not a free tag: the segment reader accepts versions 1 and 2 only, and the
+manifest's version 3 is an independent counter.
 
 ### Patched exceptions — the clearest ratio win available
 
@@ -552,8 +555,10 @@ Width sweep (unpack + checksum, so all figures carry the same ~35 ms floor):
 The advantage is flat across widths, which matters because it means the win does
 not depend on the data happening to pack narrowly.
 
-**Verdict: the largest measured decode lever available to us, and it costs no
-compression ratio.** It is a byte-layout change inside a packed column segment,
+**Verdict: PROMISING BUT NOT ESTABLISHED (see the Codex review below).** The
+tuned-horizontal control does not yet give the horizontal layout every advantage
+the interleaved kernel has, the experiments do not use PTSEG's actual exact-length
+byte bitstream, and they use 64k-row blocks where the engine's default is 16k.** It is a byte-layout change inside a packed column segment,
 so it needs a PTSEG format-version bump but touches neither row order nor
 predicate paths nor partial reads. Sequenced against e20's finding, the two
 compose: interleaving makes unpacking cheaper, and dropping the LZ4 layer over
@@ -564,3 +569,53 @@ Caveat: T=32 only, one machine, and the harness measures decode into a
 materialized array. Before adoption it needs the T=8/16/64 kernels, the partial
 final chunk (1024 does not divide 20M evenly — 256 values were dropped here),
 width 0 and width 64 fixtures, and a re-run on the Linux reference host.
+
+## Codex adversarial review of e20–e21 (2026-08-04)
+
+A second-model review of the two compression experiments before any engine work.
+17 findings, 3 critical. The ones that change decisions, adopted as standing
+rules alongside the e14–e19 set:
+
+1. **Both arms of a codec comparison must run the identical decoder.** e20's
+   no-LZ4 arm decoded from a native `Vec<u64>`; the LZ4 arm parsed a serialized
+   byte buffer through a different function. The 8–10% decode tax is therefore
+   partly the byte-parsing difference, not LZ4. The size rows are unaffected.
+2. **A new block-level tag is a segment format break.** PTSEG's own
+   `FORMAT_VERSION` is 2 and `format_version_supported` accepts 1 and 2; the
+   manifest's version 3 is a separate counter that does not version block tags.
+   `Compression::None = 0` needs a PTSEG version bump, versioned decoding, and
+   golden tests proving new readers read v1/v2 while old readers *reject* rather
+   than misread new files.
+3. **A candidate encoding must be measured through a self-delimiting wire
+   format.** `PforBlock` serialized packed words, exception positions and values
+   with no exception count, and its size accounting charged four bytes more than
+   it emitted; decode read the already-separated in-memory vectors. Neither the
+   3.18× ratio nor "no measurable decode cost" is supported for an implementable
+   encoding.
+4. **Experiments must use the engine's block size.** These used 64k-row blocks;
+   `DEFAULT_BLOCK_ROWS` is **16,384**. Block size changes per-block bases,
+   outlier counts, metadata share, and cache footprint, so the ratios do not
+   transfer.
+5. **The engine's representation is not the experiment's.** PTSEG writes an
+   exact-length byte bitstream decoded through a 16-byte window and materializes
+   into typed columnar builders; the experiments use padded word arrays decoded
+   into a `Vec`. Engine-applicability claims need the candidate inserted behind
+   `encode_packed`/`unpack` and measured on real segment files.
+6. **Dictionary encoding is selected only for Utf8/Binary.** The run-end
+   comparison used integer dictionaries the engine never builds, so the
+   "ties LZ4-compressed dictionary" result does not describe PTSEG.
+7. **An equivalence claim needs an equivalence bound.** "No measurable decode
+   cost" rested on median-of-7 with no confidence interval, fixed variant order,
+   and checksum validation only on the final run.
+8. **Outlier fixtures must be two-sided.** `amounts_with_outliers` generates only
+   high outliers; a *low* outlier becomes the frame-of-reference base and widens
+   every delta, which the patched-exception search never faced. The width search
+   also minimises exception count against a fixed 2% budget rather than encoded
+   bytes, so "never worse on clean data" is unproven outside the tested shape.
+9. **Five round-trip fixtures are mandatory before any encoding lands:** width 0,
+   width 64, partial final block, all-NULL column, single-row block. e21 rejects
+   partial chunks outright and drops the final 256 values.
+
+Net: the *direction* survives — LZ4 demonstrably expands densely bit-packed
+blocks and demonstrably wins big on dictionary codes — but no adoption decision
+is supported by these two experiments as written.
