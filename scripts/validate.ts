@@ -74,7 +74,9 @@ const STAGES: Stage[] = [
     name: 'unit',
     remote: false,
     timeoutMinutes: 20,
-    command: ['cargo', 'test', '--workspace'],
+    // nextest schedules tests across the workspace's binaries in
+    // parallel; there are no doctests to lose.
+    command: ['cargo', 'nextest', 'run', '--workspace'],
   },
   {
     name: 'oracle',
@@ -179,9 +181,24 @@ async function dockerHostPreflight(): Promise<string | null> {
     ], { timeoutMinutes: 2 })
     const freeKb = Number(disk.output.trim().split('\n').pop())
     if (Number.isFinite(freeKb)) {
-      const freeGb = freeKb / 1024 / 1024
+      let freeGb = freeKb / 1024 / 1024
       if (freeGb < MIN_DOCKER_HOST_FREE_GB) {
-        return `docker host has ${freeGb.toFixed(1)}GB free; need ${MIN_DOCKER_HOST_FREE_GB}GB — free space before running storage-heavy stages`
+        // Reclaim regenerable space we own before giving up: build cache
+        // and dangling images. Named volumes and other projects' state
+        // are never touched.
+        status(`preflight: ${freeGb.toFixed(1)}GB free < ${MIN_DOCKER_HOST_FREE_GB}GB — pruning build cache and dangling images`)
+        await docker(['builder', 'prune', '-f'])
+        await docker(['image', 'prune', '-f'])
+        const after = await run([
+          'bash', '-c',
+          `TARGET=$(docker context inspect $(docker context show) --format '{{.Endpoints.docker.Host}}' | sed 's|^ssh://||; s|:.*$||'); ` +
+          `ssh -o BatchMode=yes -o ConnectTimeout=10 "$TARGET" "df -kP / | tail -1 | awk '{print \$4}'"`,
+        ], { timeoutMinutes: 5 })
+        const afterKb = Number(after.output.trim().split('\n').pop())
+        if (Number.isFinite(afterKb)) freeGb = afterKb / 1024 / 1024
+        if (freeGb < MIN_DOCKER_HOST_FREE_GB) {
+          return `docker host has ${freeGb.toFixed(1)}GB free after pruning; need ${MIN_DOCKER_HOST_FREE_GB}GB`
+        }
       }
       status(`preflight: docker host free space ${freeGb.toFixed(1)}GB`)
     } else {
@@ -233,48 +250,50 @@ async function main() {
   }
   writeFileSync(lockPath, `${process.pid} ${new Date().toISOString()}\n`)
   writeFileSync(statusPath, '')
+  /// Commits known harness result ledgers so remote stages see one clean
+  /// commit. Returns false when non-artifact paths are dirty.
+  async function commitHarnessArtifacts(context: string): Promise<boolean> {
+    const ARTIFACT_PREFIXES = [
+      'tests/e2e/results',
+      'benchmark/results.',
+      'benchmark/workloads/commerce-production-v1/results/',
+    ]
+    const porcelain = await run(['git', 'status', '--porcelain'])
+    const dirtyPaths = porcelain.output
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((line) => line.slice(3))
+    if (dirtyPaths.length === 0) return true
+    if (!dirtyPaths.every((path) => ARTIFACT_PREFIXES.some((prefix) => path.startsWith(prefix)))) {
+      status(`dirty non-artifact paths: ${dirtyPaths.join(', ')}`)
+      return false
+    }
+    await run(['git', 'add', ...dirtyPaths])
+    const committed = await run(['git', 'commit', '-m', `harness: bank gate artifacts (before ${context})`])
+    if (committed.code === 0) status(`${context}: banked harness artifacts as one commit`)
+    return committed.code === 0
+  }
+
   const results: Array<{ name: string; verdict: string; minutes: number; note: string }> = []
 
   try {
     // The benchmark refuses dirty trees; fail everything fast instead of
-    // discovering it forty minutes in.
-    const dirty = await run(['git', 'status', '--porcelain'])
-    if (dirty.output.trim() && requested.includes('bench')) {
-      status('ABORT: working tree is dirty and the bench stage is requested — commit first')
+    // discovering it forty minutes in. Harness artifacts (results ledgers
+    // earlier stages rewrite) are auto-committed instead of aborting.
+    if (requested.includes('bench') && !(await commitHarnessArtifacts('launch'))) {
+      status('ABORT: working tree has non-artifact changes and bench is requested — commit first')
       process.exit(2)
     }
 
     for (const stage of STAGES) {
       if (!requested.includes(stage.name)) continue
-      // Earlier stages write harness artifacts (the e2e gate rewrites its
-      // results ledger), and the benchmark refuses dirty trees. When the
-      // only dirt is a known harness artifact, commit it so the bench
-      // still measures exactly one commit; any other dirt still aborts.
-      if (stage.name === 'bench') {
-        const HARNESS_ARTIFACTS = ['tests/e2e/results.md']
-        const midRunDirty = await run(['git', 'status', '--porcelain'])
-        const dirtyPaths = midRunDirty.output
-          .trim()
-          .split('\n')
-          .filter((line) => line.trim().length > 0)
-          .map((line) => line.slice(3))
-        if (dirtyPaths.length > 0) {
-          const onlyArtifacts = dirtyPaths.every((path) =>
-            HARNESS_ARTIFACTS.some((artifact) => path === artifact || path.startsWith('tests/e2e/results-partial')))
-          if (!onlyArtifacts) {
-            status('ABORT before bench: working tree has non-harness changes — commit first')
-            results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
-            break
-          }
-          await run(['git', 'add', ...dirtyPaths])
-          const committed = await run(['git', 'commit', '-m', 'e2e: bank gate artifacts from validate.ts run'])
-          if (committed.code !== 0) {
-            status('ABORT before bench: could not commit harness artifacts')
-            results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'artifact commit failed' })
-            break
-          }
-          status('bench: committed harness artifacts so the tree matches one commit')
-        }
+      // Earlier stages rewrite harness artifacts and the benchmark
+      // refuses dirty trees: bank artifacts before every remote stage.
+      if (stage.remote && !(await commitHarnessArtifacts(stage.name))) {
+        status(`ABORT before ${stage.name}: working tree has non-artifact changes — commit first`)
+        results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
+        break
       }
       if (stage.remote) {
         const problem = await dockerHostPreflight()
