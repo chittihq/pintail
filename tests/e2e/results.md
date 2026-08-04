@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-04T14:02:42.882Z.
+Measured 2026-08-04T15:27:53.300Z.
 
-**256 passed, 0 failed, 1 documented-gap warnings.**
+**288 passed, 0 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -159,6 +159,39 @@ Measured 2026-08-04T14:02:42.882Z.
 | churn | query:window ranking per group | PASS |  |
 | churn | query:window share of total over grouped output | PASS |  |
 | churn | query:window running total | PASS |  |
+| pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
+| pooling | pool:prepared-statements | PASS |  |
+| pooling | pool:session-reset-between-borrows | WARN | time_zone leaked across borrows as +05:30 |
+| pooling | converge:audit_log | PASS |  |
+| pooling | converge:counters | PASS |  |
+| pooling | converge:customers | PASS |  |
+| pooling | converge:order_items | PASS |  |
+| pooling | converge:orders | PASS |  |
+| pooling | converge:shipments | PASS |  |
+| pooling | query:point lookup by key | PASS |  |
+| pooling | query:range scan with compound predicate | PASS |  |
+| pooling | query:inner join with aggregation | PASS |  |
+| pooling | query:left join preserves unmatched rows | PASS |  |
+| pooling | query:three-way join through items | PASS |  |
+| pooling | query:union all across sources | PASS |  |
+| pooling | query:group by with having | PASS |  |
+| pooling | query:conditional decimal sum keeps the fraction | PASS |  |
+| pooling | query:distinct count and min max | PASS |  |
+| pooling | query:uncorrelated in-subquery | PASS |  |
+| pooling | query:scalar subquery threshold | PASS |  |
+| pooling | query:non-recursive cte | PASS |  |
+| pooling | query:date bucketing | PASS |  |
+| pooling | query:string functions and like | PASS |  |
+| pooling | query:case expression buckets | PASS |  |
+| pooling | query:null handling | PASS |  |
+| pooling | query:coalesce and ifnull | PASS |  |
+| pooling | query:enum and set filters | PASS |  |
+| pooling | query:unsigned boundary readback | PASS |  |
+| pooling | query:derived table | PASS |  |
+| pooling | query:group_concat single expression | PASS |  |
+| pooling | query:window ranking per group | PASS |  |
+| pooling | query:window share of total over grouped output | PASS |  |
+| pooling | query:window running total | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |

@@ -765,6 +765,172 @@
     "status": "PASS"
   },
   {
+    "phase": "pooling",
+    "check": "pool:concurrent-borrows(40 over 4)",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "pool:prepared-statements",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "pool:session-reset-between-borrows",
+    "status": "WARN",
+    "detail": "time_zone leaked across borrows as +05:30"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
     "phase": "restart",
     "check": "converge:audit_log",
     "status": "PASS"

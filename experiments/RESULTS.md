@@ -694,3 +694,51 @@ scans rather than warm heap buffers (#7); the run-end comparison against the
 engine's actual UTF-8-only dictionary path (#13, #14); and the PTSEG
 segment-version bump with golden compatibility tests that `Compression::None`
 requires (#2).
+
+## e23 — In-engine scan probe: the encoding wins do not transfer
+
+`crates/pintail-store/examples/scan_probe.rs`. 20M rows through PTSEG's real
+writer and reader — actual segment files, reopened so no writer state serves
+the read, drained two ways: `next_column_chunk` (decoded columns, what a
+vectorized operator consumes) and `next_chunk` (additionally transposed into
+per-row `Vec<Value>`).
+
+Load: 131.6 s. On disk: 60 segments, 224,867,282 B (11.24 B/row).
+
+| projection | first scan | columns only | + row materialization |
+|---|---:|---:|---:|
+| amount only | 9823 ms | **9055 ms** | 9862 ms |
+| amount + day | 10153 ms | 10622 ms | 11507 ms |
+| status only (dictionary) | 10797 ms | 10279 ms | 11007 ms |
+| all five columns | 15054 ms | 15403 ms | 17321 ms |
+
+**The decode kernel is not the cost.** e22 unpacks 20M frame-of-reference
+values from bytes in **~24–26 ms**. The engine takes **9055 ms** to deliver the
+same 20M values as decoded columns — roughly **360×** more. Row materialization,
+the obvious suspect, accounts for only ~0.8 s of it (9055 → 9862).
+
+Sizing the two candidates against that:
+
+| candidate | lab saving on 20M values | share of a real 9055 ms scan |
+|---|---:|---:|
+| FastLanes interleaved bit-packing (2.1×) | ~13 ms | **0.14%** |
+| dropping LZ4 over bit-packed blocks | ~5 ms | **0.06%** |
+
+**Verdict: neither candidate is worth implementing now.** Both are real wins on
+the kernel and both are invisible in the engine, because something in the scan
+path costs three orders of magnitude more than the arithmetic they improve. A
+format-version bump, golden compatibility tests and 116 unpack kernels cannot be
+justified by 0.14%.
+
+This is the e14–e19 standing rule firing again in a new place: *phase zero is
+engine profiling, not a rewrite.* The prerequisite is per-span attribution of
+those 9 seconds — segment open and footer parse, key/version/tombstone header
+merge across 60 segments, block window decode, null merge, typed builder
+appends, memory accounting — until ≥80% is explained. Whatever dominates it is
+the actual WS5 target; encoding is downstream of it.
+
+The size findings stand on their own and remain worth acting on independently of
+decode: LZ4 measurably *expands* densely bit-packed blocks while earning up to
+170× on dictionary codes, so a per-block "keep the codec only if it pays" rule
+is still correct — just justified by bytes and I/O, not by the 6–9% decode tax,
+which is noise at engine scale.
