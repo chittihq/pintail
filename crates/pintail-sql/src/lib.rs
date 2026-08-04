@@ -19,7 +19,10 @@ pub use bound::{
     BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart,
     IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
-pub use metadata::{ColumnFacts, MetadataError, MetadataField, MetadataResult, execute_metadata};
+pub use metadata::{
+    ColumnFacts, IndexFacts, MetadataError, MetadataField, MetadataResult, SourceFacts,
+    execute_metadata,
+};
 
 /// An error produced while parsing a SQL request.
 #[derive(Debug, Clone, PartialEq, Eq)]

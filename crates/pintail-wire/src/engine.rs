@@ -15,7 +15,8 @@ use pintail_exec::{
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
-    Binder, ColumnFacts, MetadataError, Statement, execute_metadata, parse_statement,
+    Binder, ColumnFacts, IndexFacts, MetadataError, SourceFacts, Statement, execute_metadata,
+    parse_statement,
 };
 use pintail_store::TableSnapshot;
 use pintail_types::{DataType, Value};
@@ -431,12 +432,12 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
 
 /// Probe-derived facts the catalog schema does not carry, for
 /// `information_schema.columns` fidelity.
-fn column_facts(replica: &LoadedReplica) -> Vec<ColumnFacts> {
-    let mut facts = Vec::new();
+fn column_facts(replica: &LoadedReplica) -> SourceFacts {
+    let mut facts = SourceFacts::default();
     for target in &replica.targets {
         let source = &target.source;
         for column in &source.columns {
-            facts.push(ColumnFacts {
+            facts.columns.push(ColumnFacts {
                 database: replica.database.name.clone(),
                 table: source.name.clone(),
                 column: column.name.clone(),
@@ -447,6 +448,40 @@ fn column_facts(replica: &LoadedReplica) -> Vec<ColumnFacts> {
                     .unique_keys
                     .iter()
                     .any(|key| key.len() == 1 && key[0].eq_ignore_ascii_case(&column.name)),
+            });
+        }
+        let chosen_unique = matches!(source.key.mode, pintail_types::KeyMode::Unique);
+        if chosen_unique {
+            facts.indexes.push(IndexFacts {
+                database: replica.database.name.clone(),
+                table: source.name.clone(),
+                index_name: source
+                    .key
+                    .index_name
+                    .clone()
+                    .unwrap_or_else(|| "unique_key".to_owned()),
+                unique: true,
+                columns: source.key.columns.clone(),
+            });
+        }
+        for (position, unique) in source.unique_keys.iter().enumerate() {
+            let is_chosen = chosen_unique
+                && unique.len() == source.key.columns.len()
+                && unique
+                    .iter()
+                    .zip(&source.key.columns)
+                    .all(|(left, right)| left.eq_ignore_ascii_case(right));
+            if is_chosen {
+                continue;
+            }
+            facts.indexes.push(IndexFacts {
+                database: replica.database.name.clone(),
+                table: source.name.clone(),
+                // The probe keeps unique column sets but not their index
+                // names; a synthesized stable name beats hiding the key.
+                index_name: format!("unique_{}", position + 1),
+                unique: true,
+                columns: unique.clone(),
             });
         }
     }
