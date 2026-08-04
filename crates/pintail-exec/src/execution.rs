@@ -7331,7 +7331,7 @@ fn build_sort(
         return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
     }
     let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to)?;
-    merge.push_final_run(rows, memory)?;
+    merge.push_final_run(&rows)?;
     Ok(SortedRows::Spilled(merge))
 }
 
@@ -7493,15 +7493,11 @@ impl SpilledMerge {
         Ok(merge)
     }
 
-    fn push_final_run(
-        &mut self,
-        rows: Vec<Vec<Value>>,
-        _memory: &MemoryTracker,
-    ) -> Result<(), ExecError> {
+    fn push_final_run(&mut self, rows: &[Vec<Value>]) -> Result<(), ExecError> {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut run = SpilledRun::write(&rows)?;
+        let mut run = SpilledRun::write(rows)?;
         let head = run.next_row()?;
         self.runs.push(run);
         self.heads.push(head);
