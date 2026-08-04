@@ -3775,6 +3775,18 @@ fn try_sma_fold(
                             max: max.max(right_max),
                             scale,
                         },
+                        (
+                            Some(pintail_store::SmaExtremes::Temporal { min, max, units }),
+                            pintail_store::SmaExtremes::Temporal {
+                                min: right_min,
+                                max: right_max,
+                                units: right_units,
+                            },
+                        ) if units == right_units => pintail_store::SmaExtremes::Temporal {
+                            min: min.min(right_min),
+                            max: max.max(right_max),
+                            units,
+                        },
                         _ => return Ok(None),
                     });
                 }
@@ -3797,6 +3809,12 @@ fn try_sma_fold(
                                     if minimum { min } else { max },
                                     scale,
                                 ))
+                            }
+                            pintail_store::SmaExtremes::Temporal { min, max, units } => {
+                                match units.format(if minimum { min } else { max }) {
+                                    Some(text) => Value::Utf8(text),
+                                    None => return Ok(None),
+                                }
                             }
                         };
                         Some(if minimum {

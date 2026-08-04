@@ -268,9 +268,15 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 }
             }
         }
+        let value_bounds = sma_column_bounds(&scan.predicates);
         if unique_keys.is_none()
             && let Some(stream) = snapshot
-                .scan_projected_range_stream(&start, &end, &physical_column_ids)
+                .scan_projected_range_stream_pruned(
+                    &start,
+                    &end,
+                    &physical_column_ids,
+                    &value_bounds,
+                )
                 .map_err(|error| ExecError::Source(error.to_string()))?
         {
             self.record_stats(
@@ -349,11 +355,12 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             }));
         }
         let projected = snapshot
-            .scan_projected_range_bounded(
+            .scan_projected_range_bounded_pruned(
                 &start,
                 &end,
                 &physical_column_ids,
                 memory_limit - stream_overhead,
+                &value_bounds,
             )
             .map_err(|error| match error {
                 StoreError::MemoryLimitExceeded {
@@ -974,6 +981,140 @@ impl BatchStream for SnapshotStream {
         }
         // On decline or error the original stream stays: best-effort pruning.
     }
+}
+
+/// Derives per-column value bounds from a scan's predicate conjuncts for
+/// SMA segment pruning: `col <op> literal` comparisons and non-negated
+/// `BETWEEN` over integer, unsigned, date, and datetime columns. Anything
+/// else contributes no bound (never unsound — pruning only tightens).
+#[allow(clippy::too_many_lines)] // one linear conjunct-shape walk
+fn sma_column_bounds(predicates: &[BoundExpr]) -> Vec<pintail_store::ColumnBounds> {
+    use pintail_store::{BoundDomain, ColumnBounds, NativeUnits};
+
+    fn column_domain(column: &pintail_sql::BoundColumn) -> Option<BoundDomain> {
+        match column.data_type {
+            pintail_types::DataType::Int64
+            | pintail_types::DataType::Int32
+            | pintail_types::DataType::Int16
+            | pintail_types::DataType::Int8 => Some(BoundDomain::Int),
+            pintail_types::DataType::UInt64
+            | pintail_types::DataType::UInt32
+            | pintail_types::DataType::UInt16
+            | pintail_types::DataType::UInt8 => Some(BoundDomain::UInt),
+            pintail_types::DataType::Date32 => Some(BoundDomain::Temporal(NativeUnits::Date)),
+            pintail_types::DataType::DateTime64 { fsp } => {
+                Some(BoundDomain::Temporal(NativeUnits::DateTime { fsp }))
+            }
+            _ => None,
+        }
+    }
+
+    fn literal_units(domain: BoundDomain, value: &Value) -> Option<i128> {
+        match (domain, value) {
+            (BoundDomain::Int | BoundDomain::UInt, Value::Int64(value)) => Some(i128::from(*value)),
+            (BoundDomain::Int | BoundDomain::UInt, Value::UInt64(value)) => {
+                Some(i128::from(*value))
+            }
+            (BoundDomain::Temporal(NativeUnits::Date), Value::Utf8(text)) => {
+                pintail_types::parse_date_days(text).map(i128::from)
+            }
+            (BoundDomain::Temporal(NativeUnits::DateTime { .. }), Value::Utf8(text)) => {
+                pintail_types::parse_datetime_micros(text).map(i128::from)
+            }
+            _ => None,
+        }
+    }
+
+    let mut bounds: Vec<ColumnBounds> = Vec::new();
+    let mut apply =
+        |column: &pintail_sql::BoundColumn, lower: Option<i128>, upper: Option<i128>| {
+            let Some(domain) = column_domain(column) else {
+                return;
+            };
+            let entry = bounds
+                .iter_mut()
+                .find(|bound| bound.column_id == column.column_id && bound.domain == domain);
+            let entry = if let Some(entry) = entry {
+                entry
+            } else {
+                bounds.push(ColumnBounds {
+                    column_id: column.column_id,
+                    domain,
+                    lower: None,
+                    upper: None,
+                });
+                bounds.last_mut().expect("just pushed")
+            };
+            if let Some(lower) = lower {
+                entry.lower = Some(entry.lower.map_or(lower, |existing| existing.max(lower)));
+            }
+            if let Some(upper) = upper {
+                entry.upper = Some(entry.upper.map_or(upper, |existing| existing.min(upper)));
+            }
+        };
+
+    for predicate in predicates {
+        match &predicate.kind {
+            BoundExprKind::Binary { op, left, right } => {
+                let (column, literal, op) = match (&left.kind, &right.kind) {
+                    (BoundExprKind::Column(column), BoundExprKind::Literal(value)) => {
+                        (column, value, *op)
+                    }
+                    (BoundExprKind::Literal(value), BoundExprKind::Column(column)) => {
+                        let flipped = match op {
+                            BinaryOp::Less => BinaryOp::Greater,
+                            BinaryOp::LessOrEqual => BinaryOp::GreaterOrEqual,
+                            BinaryOp::Greater => BinaryOp::Less,
+                            BinaryOp::GreaterOrEqual => BinaryOp::LessOrEqual,
+                            other => *other,
+                        };
+                        (column, value, flipped)
+                    }
+                    _ => continue,
+                };
+                let Some(domain) = column_domain(column) else {
+                    continue;
+                };
+                let Some(units) = literal_units(domain, literal) else {
+                    continue;
+                };
+                match op {
+                    BinaryOp::Equal => apply(column, Some(units), Some(units)),
+                    BinaryOp::Less => apply(column, None, Some(units - 1)),
+                    BinaryOp::LessOrEqual => apply(column, None, Some(units)),
+                    BinaryOp::Greater => apply(column, Some(units + 1), None),
+                    BinaryOp::GreaterOrEqual => apply(column, Some(units), None),
+                    _ => {}
+                }
+            }
+            BoundExprKind::Scalar {
+                function: ScalarFunction::Between { negated: false },
+                args,
+            } => {
+                let [subject, low, high] = args.as_slice() else {
+                    continue;
+                };
+                let BoundExprKind::Column(column) = &subject.kind else {
+                    continue;
+                };
+                let Some(domain) = column_domain(column) else {
+                    continue;
+                };
+                let (BoundExprKind::Literal(low), BoundExprKind::Literal(high)) =
+                    (&low.kind, &high.kind)
+                else {
+                    continue;
+                };
+                if let (Some(low), Some(high)) =
+                    (literal_units(domain, low), literal_units(domain, high))
+                {
+                    apply(column, Some(low), Some(high));
+                }
+            }
+            _ => {}
+        }
+    }
+    bounds
 }
 
 /// Converts a probe-side bound into the key-part shape of the scanned

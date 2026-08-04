@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dev-dependencies]
+chrono.workspace = true
 pintail-catalog.workspace = true
 pintail-exec.workspace = true
 pintail-sql.workspace = true

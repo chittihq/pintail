@@ -2621,6 +2621,7 @@ dependencies = [
 name = "pintail-sqllogic"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "pintail-catalog",
  "pintail-exec",
  "pintail-sql",

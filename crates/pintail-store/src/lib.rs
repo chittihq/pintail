@@ -17,7 +17,9 @@ mod wal;
 
 pub use database::DatabaseStore;
 pub use error::StoreError;
-pub use segment::{ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum};
+pub use segment::{
+    BoundDomain, ColumnBounds, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum,
+};
 pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, CompactionOutcome, CompactionStatus,
     DecodedColumn, FlushOutcome, IngestOutcome, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,

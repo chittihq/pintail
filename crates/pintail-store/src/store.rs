@@ -3183,9 +3183,36 @@ impl TableSnapshot {
     ///
     /// # Errors
     ///
+    /// Whether value-bound segment pruning is sound on this manifest:
+    /// every segment carries statistics with zero tombstones, and segment
+    /// key ranges are pairwise disjoint, so no key has row versions split
+    /// across segments that pruning could separate.
+    fn value_pruning_safe(&self) -> bool {
+        if self
+            .manifest
+            .segments
+            .iter()
+            .any(|meta| meta.smas.as_ref().is_none_or(|smas| smas.tombstones > 0))
+        {
+            return false;
+        }
+        let mut ordered: Vec<_> = self
+            .manifest
+            .segments
+            .iter()
+            .map(|meta| (&meta.min_key, &meta.max_key))
+            .collect();
+        ordered.sort();
+        ordered.windows(2).all(|pair| pair[0].1 < pair[1].0)
+    }
+
+    /// Scans an inclusive key range while decoding only requested user
+    /// columns after segment and key-block pruning.
+    ///
+    /// # Errors
+    ///
     /// Returns an error for a reversed range, duplicate/unknown column ID,
     /// incompatible schema, corrupt block, or filesystem failure.
-    #[allow(clippy::too_many_lines)]
     pub fn scan_projected_range(
         &self,
         start: &PrimaryKey,
@@ -3208,6 +3235,28 @@ impl TableSnapshot {
         start: &PrimaryKey,
         end: &PrimaryKey,
         column_ids: &[u32],
+    ) -> Result<Option<ProjectedScanStream>, StoreError> {
+        self.scan_projected_range_stream_pruned(start, end, column_ids, &[])
+    }
+
+    /// [`Self::scan_projected_range_stream`] with scan-predicate value
+    /// bounds: segments whose statistics prove every row fails a bound are
+    /// skipped without decoding. Value pruning engages only on manifests
+    /// whose segments have pairwise-disjoint key ranges and no tombstones —
+    /// under overlapping row versions a skipped segment could hide the
+    /// winning version of another segment's key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reversed range, duplicate or unknown columns,
+    /// or a corrupt point-lookup bloom filter.
+    #[allow(clippy::too_many_lines)]
+    pub fn scan_projected_range_stream_pruned(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        column_ids: &[u32],
+        bounds: &[crate::segment::ColumnBounds],
     ) -> Result<Option<ProjectedScanStream>, StoreError> {
         if start > end {
             return Err(StoreError::FormatLimit(
@@ -3234,11 +3283,13 @@ impl TableSnapshot {
         }
         let mut segments = Vec::new();
         let mut pruned_segments = 0;
+        let value_pruning = !bounds.is_empty() && self.value_pruning_safe();
         for meta in &self.manifest.segments {
             let overlaps = segment::overlaps_key_range(meta, start, end);
             let point_might_match = start != end
                 || segment::might_contain_key(&self.directory, meta, &self.schema, start)?;
-            if !overlaps || !point_might_match {
+            let value_disjoint = value_pruning && segment::sma_disjoint(meta, bounds);
+            if !overlaps || !point_might_match || value_disjoint {
                 pruned_segments += 1;
             } else {
                 segments.push(meta.clone());
@@ -3470,6 +3521,26 @@ impl TableSnapshot {
         column_ids: &[u32],
         memory_limit: usize,
     ) -> Result<ProjectedScan, StoreError> {
+        self.scan_projected_range_bounded_pruned(start, end, column_ids, memory_limit, &[])
+    }
+
+    /// [`Self::scan_projected_range_bounded`] with scan-predicate value
+    /// bounds; see [`Self::scan_projected_range_stream_pruned`] for the
+    /// pruning contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reversed range, duplicate or unknown columns,
+    /// or a corrupt segment.
+    #[allow(clippy::too_many_lines)]
+    pub fn scan_projected_range_bounded_pruned(
+        &self,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        column_ids: &[u32],
+        memory_limit: usize,
+        bounds: &[crate::segment::ColumnBounds],
+    ) -> Result<ProjectedScan, StoreError> {
         if start > end {
             return Err(StoreError::FormatLimit(
                 "scan range start follows its end".into(),
@@ -3497,6 +3568,7 @@ impl TableSnapshot {
         let scan_memory = AtomicUsize::new(0);
         let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
         let scan_pool = projected_scan_pool()?;
+        let value_pruning = !bounds.is_empty() && self.value_pruning_safe();
         let segment_scans = scan_pool.install(|| {
             self.manifest
                 .segments
@@ -3511,7 +3583,9 @@ impl TableSnapshot {
                             &self.schema,
                             start,
                         )?;
-                    if !overlaps || !point_might_match {
+                    let value_disjoint =
+                        value_pruning && segment::sma_disjoint(segment_meta, bounds);
+                    if !overlaps || !point_might_match || value_disjoint {
                         return Ok((
                             ScanStats {
                                 segments_pruned: 1,

@@ -345,6 +345,26 @@ fn encode_smas(encoder: &mut Encoder, smas: Option<&SegmentSmas>) -> Result<(), 
                 encode_i128(encoder, max);
                 encoder.u8(scale);
             }
+            Some(SmaExtremes::Temporal { min, max, units }) => {
+                encoder.u8(5);
+                #[allow(clippy::cast_sign_loss)]
+                {
+                    encoder.u64(min as u64);
+                    encoder.u64(max as u64);
+                }
+                match units {
+                    crate::segment::NativeUnits::Date => encoder.u8(0),
+                    crate::segment::NativeUnits::DateTime { fsp } => {
+                        encoder.u8(1);
+                        encoder.u8(fsp);
+                    }
+                    crate::segment::NativeUnits::Decimal { .. } => {
+                        return Err(StoreError::FormatLimit(
+                            "decimal extremes use the DecimalUnits form".into(),
+                        ));
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -446,6 +466,36 @@ fn decode_smas(decoder: &mut Decoder<'_>) -> Result<Option<SegmentSmas>, StoreEr
                     .u8()
                     .map_err(|reason| corrupt_here(decoder, reason))?;
                 Some(SmaExtremes::DecimalUnits { min, max, scale })
+            }
+            5 => {
+                #[allow(clippy::cast_possible_wrap)]
+                let min = decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?
+                    as i64;
+                #[allow(clippy::cast_possible_wrap)]
+                let max = decoder
+                    .u64()
+                    .map_err(|reason| corrupt_here(decoder, reason))?
+                    as i64;
+                let units = match decoder
+                    .u8()
+                    .map_err(|reason| corrupt_here(decoder, reason))?
+                {
+                    0 => crate::segment::NativeUnits::Date,
+                    1 => crate::segment::NativeUnits::DateTime {
+                        fsp: decoder
+                            .u8()
+                            .map_err(|reason| corrupt_here(decoder, reason))?,
+                    },
+                    tag => {
+                        return Err(corrupt_here(
+                            decoder,
+                            format!("invalid temporal SMA unit tag {tag}"),
+                        ));
+                    }
+                };
+                Some(SmaExtremes::Temporal { min, max, units })
             }
             tag => {
                 return Err(corrupt_here(

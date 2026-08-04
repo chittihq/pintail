@@ -236,10 +236,104 @@ pub enum SmaSum {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SmaExtremes {
-    Int { min: i64, max: i64 },
-    UInt { min: u64, max: u64 },
-    Float { min: f64, max: f64 },
-    DecimalUnits { min: i128, max: i128, scale: u8 },
+    Int {
+        min: i64,
+        max: i64,
+    },
+    UInt {
+        min: u64,
+        max: u64,
+    },
+    Float {
+        min: f64,
+        max: f64,
+    },
+    DecimalUnits {
+        min: i128,
+        max: i128,
+        scale: u8,
+    },
+    /// Native temporal units (days for `Date32`, microseconds for
+    /// `DateTime64`); consumers must format through [`NativeUnits`].
+    Temporal {
+        min: i64,
+        max: i64,
+        units: NativeUnits,
+    },
+}
+
+/// One scan-predicate value bound in a column's SMA domain, used to prune
+/// whole segments whose extremes are provably disjoint from it.
+#[derive(Clone, Copy, Debug)]
+pub struct ColumnBounds {
+    /// Stable schema column id the bound constrains.
+    pub column_id: u32,
+    /// Which extremes family the bound values live in.
+    pub domain: BoundDomain,
+    /// Inclusive lower bound in the domain's integer units.
+    pub lower: Option<i128>,
+    /// Inclusive upper bound in the domain's integer units.
+    pub upper: Option<i128>,
+}
+
+/// The extremes family a [`ColumnBounds`] compares against. A mismatched
+/// family never prunes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundDomain {
+    Int,
+    UInt,
+    /// Native temporal units of the named kind.
+    Temporal(NativeUnits),
+}
+
+/// Whether a segment's statistics prove every live row fails one of the
+/// bounds. NULL values fail range predicates, so non-NULL extremes decide;
+/// an all-NULL column fails them all. Callers gate on clean, key-disjoint
+/// manifests — under overlapping row versions value pruning is unsound.
+pub(crate) fn sma_disjoint(meta: &SegmentMeta, bounds: &[ColumnBounds]) -> bool {
+    let Some(smas) = &meta.smas else { return false };
+    if smas.tombstones > 0 {
+        return false;
+    }
+    for bound in bounds {
+        let Some(column) = smas
+            .columns
+            .iter()
+            .find(|column| column.column_id == bound.column_id)
+        else {
+            continue;
+        };
+        if column.non_null == 0 && smas.live_rows > 0 {
+            return true;
+        }
+        let Some(extremes) = column.extremes else {
+            continue;
+        };
+        let range = match (bound.domain, extremes) {
+            (BoundDomain::Int, SmaExtremes::Int { min, max }) => {
+                Some((i128::from(min), i128::from(max)))
+            }
+            (BoundDomain::UInt, SmaExtremes::UInt { min, max }) => {
+                Some((i128::from(min), i128::from(max)))
+            }
+            (
+                BoundDomain::Temporal(units),
+                SmaExtremes::Temporal {
+                    min,
+                    max,
+                    units: kind,
+                },
+            ) if units == kind => Some((i128::from(min), i128::from(max))),
+            _ => None,
+        };
+        let Some((min, max)) = range else { continue };
+        if bound.lower.is_some_and(|lower| max < lower)
+            || bound.upper.is_some_and(|upper| min > upper)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Computes per-column SMAs for a segment's rows. Columns whose type or
@@ -263,6 +357,14 @@ pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> 
                 DataType::Decimal { scale, .. } => Some(scale),
                 _ => None,
             };
+            // Temporal columns fold their native units (days/microseconds)
+            // into extremes; sums over dates are meaningless and stay unset.
+            let temporal_units = match column.data_type() {
+                DataType::Date32 | DataType::DateTime64 { .. } => {
+                    NativeUnits::for_data_type(column.data_type())
+                }
+                _ => None,
+            };
             // One numeric family per column; the first value outside it
             // clears every statistic except the non-NULL count.
             let mut family: Option<u8> = None;
@@ -279,14 +381,17 @@ pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> 
                 if !supported {
                     continue;
                 }
-                let observed = match (value, decimal_scale) {
-                    (Value::Utf8(text), Some(scale)) => {
+                let observed = match (value, decimal_scale, temporal_units) {
+                    (Value::Utf8(text), Some(scale), _) => {
                         pintail_types::parse_decimal_scaled(text, scale)
                             .map(|units| (3, units, 0.0))
                     }
-                    (Value::Int64(value), None) => Some((1, i128::from(*value), 0.0)),
-                    (Value::UInt64(value), None) => Some((2, i128::from(*value), 0.0)),
-                    (Value::Float64(value), None) => Some((4, 0, value.get())),
+                    (Value::Utf8(text), None, Some(units)) => units
+                        .parse_exact(text)
+                        .map(|value| (5, i128::from(value), 0.0)),
+                    (Value::Int64(value), None, None) => Some((1, i128::from(*value), 0.0)),
+                    (Value::UInt64(value), None, None) => Some((2, i128::from(*value), 0.0)),
+                    (Value::Float64(value), None, None) => Some((4, 0, value.get())),
                     _ => None,
                 };
                 let Some((kind, integer, float)) = observed else {
@@ -345,6 +450,17 @@ pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> 
                     Some(4) => (
                         float_sum.map(SmaSum::Float),
                         float_extremes.map(|(min, max)| SmaExtremes::Float { min, max }),
+                    ),
+                    Some(5) => (
+                        None,
+                        int_extremes.and_then(|(min, max)| {
+                            let units = temporal_units?;
+                            Some(SmaExtremes::Temporal {
+                                min: i64::try_from(min).expect("native units fit i64"),
+                                max: i64::try_from(max).expect("native units fit i64"),
+                                units,
+                            })
+                        }),
                     ),
                     _ => (None, None),
                 }

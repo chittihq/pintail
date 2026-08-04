@@ -261,7 +261,15 @@ impl TypedValues {
                 match text.kind {
                     TextKind::Date => pintail_types::format_date_days(unit),
                     TextKind::DateTime { fsp } => pintail_types::format_datetime_micros(unit, fsp),
-                    TextKind::Ready | TextKind::Decimal { .. } => None,
+                    // Value-born temporal columns keep their original text;
+                    // serve it instead of refusing (a filtered MIN/MAX over
+                    // such a column previously errored here).
+                    TextKind::Ready => text.cell.get().and_then(|column| {
+                        column.views().get(row)?.with_bytes(column.heap(), |bytes| {
+                            std::str::from_utf8(bytes).ok().map(str::to_owned)
+                        })
+                    }),
+                    TextKind::Decimal { .. } => None,
                 }
             }
             _ => None,
