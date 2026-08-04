@@ -14,6 +14,7 @@ pintail-catalog.workspace = true
 pintail-sql.workspace = true
 pintail-store.workspace = true
 pintail-types.workspace = true
+rand.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

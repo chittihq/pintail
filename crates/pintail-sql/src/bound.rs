@@ -277,6 +277,12 @@ pub enum ScalarFunction {
     /// `CONVERT_TZ(datetime, from_tz, to_tz)` with IANA names or numeric
     /// offsets: NULL on malformed datetimes or unknown zones.
     ConvertTz,
+    /// `CHAR(n, ...)`: integer code points become bytes (values above 255
+    /// span multiple bytes); NULL arguments are skipped, never propagated.
+    Char,
+    /// `RAND()`: volatile uniform value in `[0, 1)`; never memoized or
+    /// constant-folded. The seeded form is unsupported.
+    Rand,
     /// `expr REGEXP pattern` / `REGEXP_LIKE`, case-insensitive by default
     /// like the ci collations.
     RegexpLike {

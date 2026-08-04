@@ -513,7 +513,10 @@ impl CompiledExpr {
             } => {
                 if matches!(
                     function,
-                    ScalarFunction::Now | ScalarFunction::UnixTimestamp
+                    ScalarFunction::Now
+                        | ScalarFunction::UnixTimestamp
+                        | ScalarFunction::Curtime
+                        | ScalarFunction::Rand
                 ) {
                     return None;
                 }
@@ -692,7 +695,9 @@ impl CompiledExpr {
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
-                    | ScalarFunction::ConvertTz => 64,
+                    | ScalarFunction::ConvertTz
+                    | ScalarFunction::Char
+                    | ScalarFunction::Rand => 64,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
                         .iter()
@@ -816,7 +821,9 @@ impl CompiledExpr {
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
-                    | ScalarFunction::ConvertTz => 64,
+                    | ScalarFunction::ConvertTz
+                    | ScalarFunction::Char
+                    | ScalarFunction::Rand => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::Locate
@@ -1645,6 +1652,26 @@ fn evaluate_eager_scalar(
             let to = scalar_string(&values[2])?;
             Ok(convert_tz(&text, &from, &to).map_or(Value::Null, Value::Utf8))
         }
+        ScalarFunction::Char => {
+            let mut bytes = Vec::with_capacity(values.len() * 4);
+            for value in values {
+                if matches!(value, Value::Null) {
+                    continue;
+                }
+                // MySQL wraps each code point to u32 and emits its minimal
+                // big-endian bytes; zero is a single 0x00 byte.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let point = mysql_i64(value)? as u32;
+                let encoded = point.to_be_bytes();
+                let start = encoded
+                    .iter()
+                    .position(|byte| *byte != 0)
+                    .unwrap_or(encoded.len() - 1);
+                bytes.extend_from_slice(&encoded[start..]);
+            }
+            Ok(Value::Binary(bytes))
+        }
+        ScalarFunction::Rand => Ok(Value::float64(rand::random::<f64>())),
         ScalarFunction::RegexpLike { negated } => {
             let text = scalar_string(&values[0])?;
             let matched = compiled_regex(&scalar_string(&values[1])?)?.is_match(&text);

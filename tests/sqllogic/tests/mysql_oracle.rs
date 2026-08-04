@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 729;
+const EXPECTED_CASES: usize = 731;
 
 struct OracleCase {
     family: &'static str,
@@ -690,6 +690,15 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT CONVERT_TZ('2026-06-15 10:00:00','Bad/Zone','UTC'), \
              CONVERT_TZ(NULL,'+00:00','+01:00'), \
              CONVERT_TZ('not a datetime','+00:00','+01:00')",
+        ),
+        ordered(
+            "hand-written char and rand",
+            "SELECT CHAR(77,121,83,81,76), CHAR(256), CHAR(77,NULL,121), \
+             CHAR(id + 64) FROM events WHERE id <= 3 ORDER BY id",
+        ),
+        ordered(
+            "hand-written char and rand",
+            "SELECT RAND() >= 0 AND RAND() < 1, RAND() <> RAND() OR RAND() <> RAND()",
         ),
         unordered(
             "hand-written cross join",

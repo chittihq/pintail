@@ -2762,6 +2762,8 @@ fn bind_scalar_function(
         "CURTIME" | "CURRENT_TIME" if args.is_empty() => ScalarFunction::Curtime,
         "STR_TO_DATE" if args.len() == 2 => ScalarFunction::StrToDate,
         "CONVERT_TZ" if args.len() == 3 => ScalarFunction::ConvertTz,
+        "CHAR" if !args.is_empty() => ScalarFunction::Char,
+        "RAND" if args.is_empty() => ScalarFunction::Rand,
         "REGEXP_LIKE" if args.len() == 2 => ScalarFunction::RegexpLike { negated: false },
         "REGEXP_SUBSTR" if args.len() == 2 => ScalarFunction::RegexpSubstr,
         "REGEXP_INSTR" if args.len() == 2 => ScalarFunction::RegexpInstr,
@@ -3337,6 +3339,9 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::StrToDate
         | ScalarFunction::ConvertTz => (Some(DataType::Utf8), true),
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
+        // NULL arguments are skipped, so the result itself is never NULL.
+        ScalarFunction::Char => (Some(DataType::Binary), false),
+        ScalarFunction::Rand => (Some(DataType::Float64), false),
         ScalarFunction::Instr
         | ScalarFunction::FindInSet
         | ScalarFunction::Ascii
@@ -4506,6 +4511,14 @@ mod tests {
         // NATURAL resolves the shared column names the same way.
         let query = bind("SELECT id FROM Events NATURAL JOIN users").expect("natural join binds");
         assert!(query.from[0].joins[0].condition.is_some());
+    }
+
+    #[test]
+    fn binds_char_and_rand() {
+        let query = bind("SELECT CHAR(77, 121, NULL), RAND() FROM Events").expect("binds");
+        assert_eq!(query.projection.len(), 2);
+        // The seeded form stays unsupported.
+        assert!(bind("SELECT RAND(3) FROM Events").is_err());
     }
 
     #[test]
