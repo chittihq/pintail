@@ -123,13 +123,14 @@ plausible but incorrect result.
 - Hash joins, hash aggregation, sorting, distinct state, subquery
   materialization, retained projected scans, and cross joins obey a hard
   per-query memory cap. The cap is process-configurable but applies
-  independently to every HTTP and MySQL-wire query. Sorting and the generic
-  grouped aggregation spill to disk under the cap, but hash joins, DISTINCT
-  state, GROUP_CONCAT/JSON_ARRAYAGG aggregation, the single-column
-  direct-path aggregation, and materialized query outputs do not — those
-  still fail at the ceiling. Spill files carry no disk quota. Cross joins
-  also require catalog cardinalities and reject estimates above one million
-  rows.
+  independently to every HTTP and MySQL-wire query. Sorting, the generic
+  grouped aggregation, and hash-join build sides spill to disk under the
+  cap (a grace-partitioned join errors explicitly when one skewed key's
+  partition alone exceeds the ceiling), but DISTINCT state,
+  GROUP_CONCAT/JSON_ARRAYAGG aggregation, the single-column direct-path
+  aggregation, and materialized query outputs do not — those still fail at
+  the ceiling. Spill files carry no disk quota. Cross joins also require
+  catalog cardinalities and reject estimates above one million rows.
 - Aggregate pushdown is intentionally conservative. M2 removes only
   unreferenced predicate-free cross-join inputs with an exact catalog
   cardinality of one; Pintail has no relationship or uniqueness statistics

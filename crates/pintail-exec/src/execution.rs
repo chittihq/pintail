@@ -2098,6 +2098,9 @@ const MAX_DENSE_SPAN: i128 = 1 << 22;
 
 struct HashJoinState {
     build: HashMap<JoinHashKey, Vec<Vec<Value>>>,
+    /// Engaged when the build side overflowed: partitioned files replace
+    /// the resident map and probing runs partition by partition.
+    grace: Option<GraceJoin>,
     /// Min/max of non-null build keys, for probe-side scan restriction.
     key_bounds: Option<(Value, Value)>,
     batch: Option<RecordBatch>,
@@ -2127,6 +2130,7 @@ impl HashJoinState {
     }
 }
 
+#[allow(clippy::too_many_lines)] // one linear build walk with the spill valve
 fn build_hash_join_state(
     right: &mut PullOperator,
     right_key: &CompiledExpr,
@@ -2135,6 +2139,10 @@ fn build_hash_join_state(
     memory: &MemoryTracker,
 ) -> Result<HashJoinState, ExecError> {
     let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
+    let mut grace: Option<GraceJoin> = None;
+    // Bytes reserved for the resident map, measured through used()
+    // snapshots so entry, bucket, and payload reserves all count.
+    let mut build_reserved = 0_usize;
     let mut key_bounds: Option<(Value, Value)> = None;
     let bound_order = BoundOrderKey {
         index: 0,
@@ -2143,6 +2151,7 @@ fn build_hash_join_state(
         decimal: false,
     };
     while let Some(batch) = right.next_batch(memory)? {
+        let used_before_batch = memory.used();
         let batch_bytes = batch.estimated_bytes();
         reserve_hash_map_entries(
             &mut build,
@@ -2200,6 +2209,11 @@ fn build_hash_join_state(
                     .saturating_add(64_usize.saturating_mul(size_of::<Vec<Value>>()))
                     .saturating_add(key_bytes),
             )?;
+            if let Some(grace) = grace.as_mut() {
+                let values = batch_row(&batch, row)?;
+                grace.build_files[grace_partition(&key)].append(&key, &values)?;
+                continue;
+            }
             memory.reserve(key_bytes)?;
             let bucket = build.entry(key).or_default();
             reserve_vec_elements(bucket, 1, 64, memory)?;
@@ -2207,9 +2221,27 @@ fn build_hash_join_state(
             let values = batch_row(&batch, row)?;
             bucket.push(values);
         }
+        build_reserved =
+            build_reserved.saturating_add(memory.used().saturating_sub(used_before_batch));
+        // Proactive spill at half the ceiling, like sort and aggregation:
+        // drain the resident map into partition files and route the rest
+        // of the build (and later the probe) through them.
+        if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
+            let mut partitions = GraceJoin::create()?;
+            for (key, bucket) in build.drain() {
+                let target = grace_partition(&key);
+                for values in bucket {
+                    partitions.build_files[target].append(&key, &values)?;
+                }
+            }
+            memory.release(build_reserved);
+            build_reserved = 0;
+            grace = Some(partitions);
+        }
     }
     Ok(HashJoinState {
         build,
+        grace,
         key_bounds,
         batch: None,
         batch_reserved: 0,
@@ -2222,6 +2254,150 @@ fn build_hash_join_state(
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// Number of grace-join partitions; key hashes route rows uniformly, so
+/// each partition holds roughly build-bytes / 16.
+const GRACE_PARTITIONS: usize = 16;
+
+/// One append-mode spill file of `(join key, row values)` pairs.
+struct GraceRun {
+    writer: Option<std::io::BufWriter<std::fs::File>>,
+    path: tempfile::TempPath,
+    entries: u64,
+}
+
+impl GraceRun {
+    fn create() -> Result<Self, ExecError> {
+        let file = tempfile::Builder::new()
+            .prefix("pintail-join-spill-")
+            .tempfile()
+            .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?;
+        let (file, path) = file.into_parts();
+        Ok(Self {
+            writer: Some(std::io::BufWriter::new(file)),
+            path,
+            entries: 0,
+        })
+    }
+
+    fn append(&mut self, key: &JoinHashKey, row: &[Value]) -> Result<(), ExecError> {
+        use std::io::Write as _;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or(ExecError::InvalidPhysicalPlan("grace run already sealed"))?;
+        let line = serde_json::to_string(&(key, row))
+            .map_err(|error| ExecError::Source(format!("join spill encode: {error}")))?;
+        writer
+            .write_all(line.as_bytes())
+            .and_then(|()| writer.write_all(b"\n"))
+            .map_err(|error| ExecError::Source(format!("join spill write: {error}")))?;
+        self.entries += 1;
+        Ok(())
+    }
+
+    fn reader(&mut self) -> Result<std::io::Lines<std::io::BufReader<std::fs::File>>, ExecError> {
+        use std::io::Seek as _;
+        let writer = self
+            .writer
+            .take()
+            .ok_or(ExecError::InvalidPhysicalPlan("grace run read twice"))?;
+        let mut file = writer
+            .into_inner()
+            .map_err(|error| ExecError::Source(format!("join spill flush: {error}")))?;
+        file.rewind()
+            .map_err(|error| ExecError::Source(format!("join spill rewind: {error}")))?;
+        let _ = &self.path;
+        Ok(std::io::BufRead::lines(std::io::BufReader::new(file)))
+    }
+}
+
+fn grace_partition(key: &JoinHashKey) -> usize {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    #[allow(clippy::cast_possible_truncation)] // modulo 16 keeps any width
+    {
+        (hasher.finish() as usize) % GRACE_PARTITIONS
+    }
+}
+
+/// Partitioned join state once the build side overflowed the ceiling.
+struct GraceJoin {
+    build_files: Vec<GraceRun>,
+    probe_files: Vec<GraceRun>,
+    /// Probe routing finished; partitions are being served.
+    probing_done: bool,
+    /// Next partition to load in the serve phase.
+    current: usize,
+    /// The loaded partition's probe entries being replayed.
+    replay: Option<std::io::Lines<std::io::BufReader<std::fs::File>>>,
+    /// Bytes reserved for the loaded partition's build map.
+    partition_reserved: usize,
+}
+
+impl GraceJoin {
+    fn create() -> Result<Self, ExecError> {
+        let mut build_files = Vec::with_capacity(GRACE_PARTITIONS);
+        let mut probe_files = Vec::with_capacity(GRACE_PARTITIONS);
+        for _ in 0..GRACE_PARTITIONS {
+            build_files.push(GraceRun::create()?);
+            probe_files.push(GraceRun::create()?);
+        }
+        Ok(Self {
+            build_files,
+            probe_files,
+            probing_done: false,
+            current: 0,
+            replay: None,
+            partition_reserved: 0,
+        })
+    }
+}
+
+/// One join-emit step shared by the in-memory probe loop and the grace
+/// replay: produces at most one output row and reports whether this left
+/// row is finished.
+fn join_emit(
+    kind: BoundJoinKind,
+    left_values: &[Value],
+    matches: Option<&Vec<Vec<Value>>>,
+    match_index: &mut usize,
+    right_width: usize,
+) -> Result<(Option<Vec<Value>>, bool), ExecError> {
+    let output = match kind {
+        BoundJoinKind::Inner | BoundJoinKind::Left => {
+            if let Some(right_values) = matches.and_then(|matches| matches.get(*match_index)) {
+                *match_index += 1;
+                let mut output = left_values.to_vec();
+                output.extend(right_values.iter().cloned());
+                Some(output)
+            } else if kind == BoundJoinKind::Left && *match_index == 0 {
+                *match_index = 1;
+                let mut output = left_values.to_vec();
+                output.extend(std::iter::repeat_n(Value::Null, right_width));
+                Some(output)
+            } else {
+                None
+            }
+        }
+        BoundJoinKind::Semi if matches.is_some() => Some(left_values.to_vec()),
+        BoundJoinKind::Anti if matches.is_none() => Some(left_values.to_vec()),
+        BoundJoinKind::Semi | BoundJoinKind::Anti => None,
+        BoundJoinKind::Cross => {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "cross semantics reached hash join",
+            ));
+        }
+    };
+    let complete = match kind {
+        BoundJoinKind::Inner | BoundJoinKind::Left => *match_index >= matches.map_or(1, Vec::len),
+        BoundJoinKind::Semi | BoundJoinKind::Anti => true,
+        BoundJoinKind::Cross => unreachable!("handled above"),
+    };
+    Ok((output, complete))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn next_hash_join_batch(
     left: &mut PullOperator,
     kind: BoundJoinKind,
@@ -2233,6 +2409,19 @@ fn next_hash_join_batch(
     state: &mut HashJoinState,
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
+    if state.grace.is_some() {
+        return next_grace_join_batch(
+            left,
+            kind,
+            left_key,
+            key_mode,
+            extra_keys,
+            right_width,
+            column_types,
+            state,
+            memory,
+        );
+    }
     let mut rows = Vec::<Vec<Value>>::with_capacity(DEFAULT_BATCH_ROWS);
     let mut buffered_bytes = 0_usize;
     while rows.len() < DEFAULT_BATCH_ROWS {
@@ -2246,40 +2435,13 @@ fn next_hash_join_batch(
             .as_ref()
             .expect("prepared join row is present");
         let matches = state.left_key.as_ref().and_then(|key| state.build.get(key));
-        let output = match kind {
-            BoundJoinKind::Inner | BoundJoinKind::Left => {
-                if let Some(right_values) =
-                    matches.and_then(|matches| matches.get(state.match_index))
-                {
-                    state.match_index += 1;
-                    let mut output = left_values.clone();
-                    output.extend(right_values.iter().cloned());
-                    Some(output)
-                } else if kind == BoundJoinKind::Left && state.match_index == 0 {
-                    state.match_index = 1;
-                    let mut output = left_values.clone();
-                    output.extend(std::iter::repeat_n(Value::Null, right_width));
-                    Some(output)
-                } else {
-                    None
-                }
-            }
-            BoundJoinKind::Semi if matches.is_some() => Some(left_values.clone()),
-            BoundJoinKind::Anti if matches.is_none() => Some(left_values.clone()),
-            BoundJoinKind::Semi | BoundJoinKind::Anti => None,
-            BoundJoinKind::Cross => {
-                return Err(ExecError::InvalidPhysicalPlan(
-                    "cross semantics reached hash join",
-                ));
-            }
-        };
-        let complete = match kind {
-            BoundJoinKind::Inner | BoundJoinKind::Left => {
-                state.match_index >= matches.map_or(1, Vec::len)
-            }
-            BoundJoinKind::Semi | BoundJoinKind::Anti => true,
-            BoundJoinKind::Cross => unreachable!("handled above"),
-        };
+        let (output, complete) = join_emit(
+            kind,
+            left_values,
+            matches,
+            &mut state.match_index,
+            right_width,
+        )?;
         let emitted = output.is_some();
         if let Some(output) = output {
             let output_bytes = estimated_row_payload_bytes(&output);
@@ -2298,6 +2460,192 @@ fn next_hash_join_batch(
         }
     }
     if rows.is_empty() {
+        state.clear_batch(memory);
+        return Ok(None);
+    }
+    memory.ensure_transient(
+        buffered_bytes.saturating_add(estimated_record_batch_bytes(&rows, column_types.len())),
+    )?;
+    let columns = rows_to_columns(&rows, column_types)?;
+    Ok(Some(RecordBatch::new(rows.len(), columns)?))
+}
+
+/// Serves a grace-partitioned join: routes remaining probe rows to their
+/// partition files (NULL-key rows resolve immediately), then loads each
+/// build partition and replays its probe file through the shared emit
+/// logic.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn next_grace_join_batch(
+    left: &mut PullOperator,
+    kind: BoundJoinKind,
+    left_key: &CompiledExpr,
+    key_mode: JoinKeyMode,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    right_width: usize,
+    column_types: &[DataType],
+    state: &mut HashJoinState,
+    memory: &MemoryTracker,
+) -> Result<Option<RecordBatch>, ExecError> {
+    let mut rows = Vec::<Vec<Value>>::with_capacity(DEFAULT_BATCH_ROWS);
+    let mut buffered_bytes = 0_usize;
+    let push = |rows: &mut Vec<Vec<Value>>,
+                buffered_bytes: &mut usize,
+                output: Vec<Value>|
+     -> Result<(), ExecError> {
+        let output_bytes = estimated_row_payload_bytes(&output);
+        memory.ensure_transient(
+            buffered_bytes
+                .saturating_add(output_bytes)
+                .saturating_add(size_of::<Vec<Value>>()),
+        )?;
+        *buffered_bytes = buffered_bytes
+            .saturating_add(output_bytes)
+            .saturating_add(size_of::<Vec<Value>>());
+        rows.push(output);
+        Ok(())
+    };
+
+    // Phase B: route the probe side to partition files.
+    loop {
+        let probing_done = state.grace.as_ref().is_some_and(|grace| grace.probing_done);
+        if probing_done {
+            break;
+        }
+        if rows.len() >= DEFAULT_BATCH_ROWS {
+            break;
+        }
+        if state.left_values.is_none()
+            && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory)?
+        {
+            let grace = state.grace.as_mut().expect("grace state engaged");
+            grace.probing_done = true;
+            break;
+        }
+        let left_values = state
+            .left_values
+            .take()
+            .expect("prepared join row is present");
+        let key = state.left_key.take();
+        match key {
+            Some(key) => {
+                let grace = state.grace.as_mut().expect("grace state engaged");
+                grace.probe_files[grace_partition(&key)].append(&key, &left_values)?;
+            }
+            None => match kind {
+                // NULL keys never match: inner/semi drop the row, left
+                // emits it null-extended, anti passes it through.
+                BoundJoinKind::Inner | BoundJoinKind::Semi => {}
+                BoundJoinKind::Left => {
+                    let mut output = left_values.clone();
+                    output.extend(std::iter::repeat_n(Value::Null, right_width));
+                    push(&mut rows, &mut buffered_bytes, output)?;
+                }
+                BoundJoinKind::Anti => {
+                    push(&mut rows, &mut buffered_bytes, left_values.clone())?;
+                }
+                BoundJoinKind::Cross => {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "cross semantics reached hash join",
+                    ));
+                }
+            },
+        }
+        state.match_index = 0;
+        memory.release(state.left_reserved);
+        state.left_reserved = 0;
+    }
+
+    // Phase C: serve partitions.
+    while rows.len() < DEFAULT_BATCH_ROWS {
+        let grace = state.grace.as_mut().expect("grace state engaged");
+        if !grace.probing_done {
+            break;
+        }
+        if grace.replay.is_none() {
+            if grace.current >= GRACE_PARTITIONS {
+                break;
+            }
+            let index = grace.current;
+            grace.current += 1;
+            // Load this partition's build rows into the resident map.
+            state.build.clear();
+            memory.release(grace.partition_reserved);
+            grace.partition_reserved = 0;
+            let used_before = memory.used();
+            let mut lines = grace.build_files[index].reader()?;
+            for line in &mut lines {
+                let line =
+                    line.map_err(|error| ExecError::Source(format!("join spill read: {error}")))?;
+                let (key, values): (JoinHashKey, Vec<Value>) = serde_json::from_str(&line)
+                    .map_err(|error| ExecError::Source(format!("join spill decode: {error}")))?;
+                if state.build.len() == state.build.capacity() {
+                    let growth = state.build.capacity().max(64);
+                    reserve_hash_map_entries(
+                        &mut state.build,
+                        growth,
+                        size_of::<JoinHashKey>()
+                            .saturating_add(size_of::<Vec<Vec<Value>>>())
+                            .saturating_add(HASH_ENTRY_OVERHEAD),
+                        0,
+                        memory,
+                    )
+                    .map_err(|_| {
+                        ExecError::Source(
+                            "grace join partition exceeds the memory ceiling (skewed key); \
+                         raise the limit"
+                                .to_owned(),
+                        )
+                    })?;
+                }
+                memory
+                    .reserve(
+                        key.heap_bytes()
+                            .saturating_add(estimated_row_payload_bytes(&values)),
+                    )
+                    .map_err(|_| {
+                        ExecError::Source(
+                            "grace join partition exceeds the memory ceiling (skewed key); \
+                         raise the limit"
+                                .to_owned(),
+                        )
+                    })?;
+                state.build.entry(key).or_default().push(values);
+            }
+            grace.partition_reserved = memory.used().saturating_sub(used_before);
+            grace.replay = Some(grace.probe_files[index].reader()?);
+        }
+        let Some(replay) = grace.replay.as_mut() else {
+            break;
+        };
+        let Some(line) = replay.next() else {
+            grace.replay = None;
+            continue;
+        };
+        let line = line.map_err(|error| ExecError::Source(format!("join spill read: {error}")))?;
+        let (key, left_values): (JoinHashKey, Vec<Value>) = serde_json::from_str(&line)
+            .map_err(|error| ExecError::Source(format!("join spill decode: {error}")))?;
+        let matches = state.build.get(&key);
+        let mut match_index = 0_usize;
+        loop {
+            let (output, complete) =
+                join_emit(kind, &left_values, matches, &mut match_index, right_width)?;
+            let emitted = output.is_some();
+            if let Some(output) = output {
+                push(&mut rows, &mut buffered_bytes, output)?;
+            }
+            // Mirrors the resident loop: an unmatched row is finished even
+            // when the completion test says otherwise (inner, no matches).
+            if complete || !emitted {
+                break;
+            }
+        }
+    }
+
+    if rows.is_empty() {
+        let grace = state.grace.as_mut().expect("grace state engaged");
+        memory.release(grace.partition_reserved);
+        grace.partition_reserved = 0;
+        state.build.clear();
         state.clear_batch(memory);
         return Ok(None);
     }
@@ -7308,7 +7656,7 @@ fn normalized_hash_key(value: Value) -> Option<Value> {
     (!matches!(value, Value::Null)).then(|| normalized_collation_value(value))
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 enum JoinHashKey {
     NegativeInteger(i64),
     NonNegativeInteger(u64),
