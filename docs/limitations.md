@@ -337,6 +337,16 @@ plausible but incorrect result.
   count to reach `compaction_file_pressure` (16 by default). Below that
   threshold an append-only table accumulates one segment per memtable flush,
   because no merge among them would collapse a row version.
+- **Availability model: one process is the whole analytics tier.** Pintail is
+  crash-safe and self-recovering, but it is not highly available. A restart or
+  host failure means analytics is unavailable until the process is serving
+  again; there is no standby, no replica read path, and no failover. Recovery
+  on start is control-plane open, manifest load per table, WAL replay from the
+  last flushed offset, and listener bind, and its duration is exported as
+  `pintail_startup_milliseconds` so the window can be measured rather than
+  guessed. Replication resumes from the persisted checkpoint, so a restart
+  costs availability, never data: MySQL remains the system of record and every
+  byte is re-derivable by re-snapshot.
 - RSS is obtained from the host `ps` process table. Sandboxed or minimal
   environments without a compatible `ps` command report zero rather than
   guessing. Storage and segment metrics walk the local data directory and can

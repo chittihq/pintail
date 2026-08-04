@@ -405,3 +405,25 @@ mirrored schemas Pintail targets.
 remains the authority on which shapes within these features are supported —
 explicit frames, named windows, the positional window functions, and several
 recursive-member restrictions are still absent.
+
+### Clustering and replica reads are deferred to v2
+
+Pintail v1 is a single node: one process holds the WAL, memtables, segments and
+control plane for every mirrored database, and a restart or host failure takes
+analytics offline for the length of its recovery. That boundary is deliberate,
+not an oversight, and it is recorded in `docs/limitations.md` alongside the
+`pintail_startup_milliseconds` metric that measures the resulting window.
+
+The reason to defer rather than build is that the failure it protects against is
+cheap here in a way it is not for a system of record. Pintail is derived: MySQL
+holds the truth, and every byte in a replica is re-derivable by re-snapshotting.
+The disaster-recovery story for the analytics tier is "re-add the database",
+which needs no consensus protocol, no quorum, and no split-brain reasoning.
+Adding clustering in v1 would buy availability during a restart at the cost of
+the single-writer-per-table concurrency contract that keeps a from-scratch
+storage engine tractable.
+
+v2 direction, when it is justified by an operator who cannot absorb the restart
+window: replica reads served from pinned manifest generations, which the
+existing snapshot isolation already makes safe, before any attempt at
+multi-writer clustering.

@@ -74,6 +74,12 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
     );
     gauge(
         &mut output,
+        "pintail_startup_milliseconds",
+        "Time from process start until the API accepted connections: manifest          load, WAL replay and control-plane open. This is how long analytics          is unavailable across a restart.",
+        crate::startup_milliseconds(),
+    );
+    gauge(
+        &mut output,
         "pintail_process_resident_memory_bytes",
         "Resident memory reported by the host process table.",
         process_resident_bytes(),

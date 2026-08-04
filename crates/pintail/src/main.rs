@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let started = std::time::Instant::now();
     let cli = Cli::parse();
     let config = AppConfig::load(&cli)?;
 
@@ -68,6 +69,9 @@ async fn main() -> Result<()> {
         http_listener.local_addr()?
     );
     eprintln!("pintail MySQL wire listening on {wire_address}");
+    // Everything above is what a restart costs: control plane opened,
+    // manifests loaded, WAL replayed, listeners bound.
+    pintail_api::record_startup(started.elapsed());
 
     let (shutdown, _) = tokio::sync::broadcast::channel::<()>(1);
     let shutdown_signal_sender = shutdown.clone();

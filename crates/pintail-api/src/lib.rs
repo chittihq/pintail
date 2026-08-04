@@ -9,6 +9,24 @@ mod error;
 mod events;
 mod keys;
 mod metrics;
+
+/// Milliseconds from process start until the API began accepting
+/// connections — manifest load, WAL replay and control-plane open. A
+/// single-node deployment is unavailable for exactly this long across a
+/// restart, so it is the number an operator sizes their tolerance against.
+static STARTUP_MILLISECONDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Records how long startup took. Called once, after the listeners bind.
+pub fn record_startup(elapsed: std::time::Duration) {
+    STARTUP_MILLISECONDS.store(
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub(crate) fn startup_milliseconds() -> u64 {
+    STARTUP_MILLISECONDS.load(std::sync::atomic::Ordering::Relaxed)
+}
 mod query;
 mod snapshot;
 mod state;
