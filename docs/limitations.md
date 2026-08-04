@@ -279,8 +279,8 @@ plausible but incorrect result.
   supported.
 - Prepared result rows preserve MySQL numeric, decimal, temporal, JSON, text,
   and binary type tags. Prepared parameters support NULL, integers, floats,
-  UTF-8 strings, and binary strings; DATE/DATETIME/TIME parameters are
-  explicitly rejected until their literal binder is implemented.
+  UTF-8 strings, binary strings, and binary DATE/DATETIME/TIME values
+  (including negative and fractional-second times).
 - The wire endpoint terminates TLS when configured
   (`PINTAIL_WIRE_TLS_CERT`/`PINTAIL_WIRE_TLS_KEY` PEM paths or the
   `[wire]` config keys, plus `PINTAIL_WIRE_REQUIRE_TLS` to refuse

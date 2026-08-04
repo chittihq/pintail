@@ -855,9 +855,66 @@ fn parameter_literal(value: ValueInner<'_>) -> Result<String, String> {
         ValueInner::UInt(value) => Ok(value.to_string()),
         ValueInner::Double(value) if value.is_finite() => Ok(value.to_string()),
         ValueInner::Double(_) => Err("non-finite prepared parameters are unsupported".to_owned()),
-        ValueInner::Date(_) | ValueInner::Time(_) | ValueInner::Datetime(_) => {
-            Err("temporal prepared parameters are not yet supported".to_owned())
+        ValueInner::Date(payload) | ValueInner::Datetime(payload) => temporal_date_literal(payload),
+        ValueInner::Time(payload) => temporal_time_literal(payload),
+    }
+}
+
+/// Renders MySQL's binary DATE/DATETIME parameter encoding as a quoted
+/// literal: 0, 4, 7, or 11 payload bytes for zero, date, seconds, and
+/// microsecond precision respectively.
+fn temporal_date_literal(payload: &[u8]) -> Result<String, String> {
+    let field = |index: usize| payload.get(index).copied().unwrap_or(0);
+    match payload.len() {
+        0 => Ok("'0000-00-00'".to_owned()),
+        4 | 7 | 11 => {
+            let year = u16::from(field(0)) | (u16::from(field(1)) << 8);
+            let mut literal = format!("'{year:04}-{:02}-{:02}", field(2), field(3));
+            if payload.len() >= 7 {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut literal,
+                    format_args!(" {:02}:{:02}:{:02}", field(4), field(5), field(6)),
+                );
+            }
+            if payload.len() == 11 {
+                let micros = u32::from(field(7))
+                    | (u32::from(field(8)) << 8)
+                    | (u32::from(field(9)) << 16)
+                    | (u32::from(field(10)) << 24);
+                let _ = std::fmt::Write::write_fmt(&mut literal, format_args!(".{micros:06}"));
+            }
+            literal.push('\'');
+            Ok(literal)
         }
+        length => Err(format!("temporal parameter has invalid length {length}")),
+    }
+}
+
+/// Renders MySQL's binary TIME parameter encoding as a quoted literal:
+/// 0, 8, or 12 payload bytes; hours fold in the day count.
+fn temporal_time_literal(payload: &[u8]) -> Result<String, String> {
+    let field = |index: usize| payload.get(index).copied().unwrap_or(0);
+    match payload.len() {
+        0 => Ok("'00:00:00'".to_owned()),
+        8 | 12 => {
+            let sign = if field(0) == 0 { "" } else { "-" };
+            let days = u32::from(field(1))
+                | (u32::from(field(2)) << 8)
+                | (u32::from(field(3)) << 16)
+                | (u32::from(field(4)) << 24);
+            let hours = u64::from(days) * 24 + u64::from(field(5));
+            let mut literal = format!("'{sign}{hours:02}:{:02}:{:02}", field(6), field(7));
+            if payload.len() == 12 {
+                let micros = u32::from(field(8))
+                    | (u32::from(field(9)) << 8)
+                    | (u32::from(field(10)) << 16)
+                    | (u32::from(field(11)) << 24);
+                let _ = std::fmt::Write::write_fmt(&mut literal, format_args!(".{micros:06}"));
+            }
+            literal.push('\'');
+            Ok(literal)
+        }
+        length => Err(format!("time parameter has invalid length {length}")),
     }
 }
 
@@ -884,6 +941,33 @@ mod tests {
     use sha1::{Digest as _, Sha1};
 
     use super::{placeholder_offsets, substitute_parameters, verify_native_password};
+
+    #[test]
+    fn renders_temporal_prepared_parameters_as_mysql_literals() {
+        assert_eq!(
+            super::temporal_date_literal(&[0xE8, 0x07, 2, 29]).unwrap(),
+            "'2024-02-29'"
+        );
+        assert_eq!(
+            super::temporal_date_literal(&[0xE8, 0x07, 2, 29, 12, 34, 56]).unwrap(),
+            "'2024-02-29 12:34:56'"
+        );
+        assert_eq!(
+            super::temporal_date_literal(&[0xE8, 0x07, 2, 29, 12, 34, 56, 0x40, 0xE2, 0x01, 0])
+                .unwrap(),
+            "'2024-02-29 12:34:56.123456'"
+        );
+        assert_eq!(super::temporal_date_literal(&[]).unwrap(), "'0000-00-00'");
+        assert_eq!(
+            super::temporal_time_literal(&[1, 2, 0, 0, 0, 3, 4, 5]).unwrap(),
+            "'-51:04:05'"
+        );
+        assert_eq!(
+            super::temporal_time_literal(&[0, 0, 0, 0, 0, 2, 3, 4, 0x40, 0xE2, 0x01, 0]).unwrap(),
+            "'02:03:04.123456'"
+        );
+        assert!(super::temporal_date_literal(&[1, 2]).is_err());
+    }
 
     #[test]
     fn verifies_mysql_native_password_challenges() {

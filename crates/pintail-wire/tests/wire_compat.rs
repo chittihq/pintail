@@ -130,6 +130,30 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("prepared wire query");
     assert_eq!(prepared, vec![(2, "land".to_owned())]);
+    let by_date: Vec<u64> = connection
+        .exec(
+            "SELECT id FROM type_fidelity WHERE date_value = ?",
+            (mysql_async::Value::Date(1000, 1, 1, 0, 0, 0, 0),),
+        )
+        .await
+        .expect("prepared DATE parameter");
+    assert_eq!(by_date, vec![1]);
+    let by_datetime: Vec<u64> = connection
+        .exec(
+            "SELECT id FROM type_fidelity WHERE datetime_value = ?",
+            (mysql_async::Value::Date(2024, 2, 29, 12, 34, 56, 123_456),),
+        )
+        .await
+        .expect("prepared DATETIME parameter");
+    assert_eq!(by_datetime, vec![1]);
+    let by_time: Vec<u64> = connection
+        .exec(
+            "SELECT id FROM type_fidelity WHERE time_value = ?",
+            (mysql_async::Value::Time(true, 2, 3, 4, 5, 600_000),),
+        )
+        .await
+        .expect("prepared TIME parameter");
+    assert_eq!(by_time, vec![1]);
     let fidelity = connection
         .exec_first::<mysql_async::Row, _, _>(
             "SELECT decimal_exact, date_value, datetime_value, time_value, \
