@@ -277,10 +277,14 @@ plausible but incorrect result.
   before metadata schema version 13 must be rotated before use with
   caching_sha2_password clients; keys from before schema version 6 also lack
   the mysql_native_password verifier.
-- The wire endpoint is read-only. `SET`, transaction boundaries, and common
-  capability probes are accepted for client compatibility but do not create a
-  mutable session transaction. Multiple SQL statements in one command are not
-  supported.
+- The wire endpoint is read-only. Transaction boundaries and most `SET`
+  variables are accepted for client compatibility without creating session
+  state; the exceptions with real semantics are `SET time_zone` (shifts
+  statement-pinned time functions; unknown zones error), `SET NAMES`
+  (utf8-family charsets only, others error), and `SET sql_mode` (stored and
+  echoed, no semantic effect). The session time zone does not affect
+  `CONVERT_TZ` or stored temporal values. Multiple SQL statements in one
+  command are not supported.
 - Prepared result rows preserve MySQL numeric, decimal, temporal, JSON, text,
   and binary type tags. Prepared parameters support NULL, integers, floats,
   UTF-8 strings, binary strings, and binary DATE/DATETIME/TIME values

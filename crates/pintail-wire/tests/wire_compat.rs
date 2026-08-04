@@ -119,6 +119,64 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("session setup");
+    // Real session state: time_zone shifts statement-pinned NOW() and
+    // echoes through @@session probes; bad zones and charsets error.
+    connection
+        .query_drop("SET time_zone = '+05:30'")
+        .await
+        .expect("set time zone");
+    let echoed: Option<String> = connection
+        .query_first("SELECT @@session.time_zone")
+        .await
+        .expect("time zone probe");
+    assert_eq!(echoed.as_deref(), Some("+05:30"));
+    let ahead: Option<String> = connection
+        .query_first("SELECT NOW()")
+        .await
+        .expect("now ahead");
+    connection
+        .query_drop("SET time_zone = '-02:00'")
+        .await
+        .expect("set second zone");
+    let behind: Option<String> = connection
+        .query_first("SELECT NOW()")
+        .await
+        .expect("now behind");
+    let parse = |text: &str| {
+        chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S").expect("NOW format")
+    };
+    let offset = parse(&ahead.expect("ahead value"))
+        .signed_duration_since(parse(&behind.expect("behind value")))
+        .num_seconds();
+    let expected = i64::from(5 * 3600 + 30 * 60 + 2 * 3600);
+    assert!(
+        (offset - expected).abs() <= 5,
+        "NOW() difference {offset}s should track the 7.5h zone gap"
+    );
+    assert!(
+        connection
+            .query_drop("SET time_zone = 'Bad/Zone'")
+            .await
+            .is_err(),
+        "unknown time zones must error"
+    );
+    assert!(
+        connection.query_drop("SET NAMES latin1").await.is_err(),
+        "unsupported charsets must error"
+    );
+    connection
+        .query_drop("SET sql_mode = 'ANSI_QUOTES'")
+        .await
+        .expect("set sql mode");
+    let mode: Option<String> = connection
+        .query_first("SELECT @@sql_mode")
+        .await
+        .expect("sql mode probe");
+    assert_eq!(mode.as_deref(), Some("ANSI_QUOTES"));
+    connection
+        .query_drop("SET time_zone = 'SYSTEM'")
+        .await
+        .expect("restore zone");
     let rows: Vec<(u64, String)> = connection
         .query("SELECT id, name FROM events ORDER BY id")
         .await

@@ -218,6 +218,29 @@ async fn serve_connection(
     }
 }
 
+/// Per-connection session variables with real semantics: `time_zone`
+/// shifts the statement-pinned time functions, `NAMES` accepts only the
+/// utf8 charsets Pintail actually serves, and `sql_mode` is stored and
+/// echoed with documented no-op semantics.
+#[derive(Clone, Debug)]
+struct Session {
+    time_zone: String,
+    sql_mode: String,
+    charset: String,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            time_zone: "SYSTEM".to_owned(),
+            sql_mode: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
+                .to_owned(),
+            charset: "utf8mb4".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Authenticated {
     database_id: String,
@@ -234,6 +257,7 @@ struct Backend {
     metadata_path: PathBuf,
     engine: ReplicaEngine,
     authentication: Mutex<Option<Authenticated>>,
+    session: Mutex<Session>,
     prepared: BTreeMap<u32, Prepared>,
     next_statement_id: u32,
     connection_id: u32,
@@ -247,6 +271,7 @@ impl Backend {
             engine: ReplicaEngine::new(data_dir, metadata_path)
                 .with_memory_limit(query_memory_limit),
             authentication: Mutex::new(None),
+            session: Mutex::new(Session::default()),
             prepared: BTreeMap::new(),
             next_statement_id: 1,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
@@ -304,13 +329,81 @@ impl Backend {
         let authenticated = self
             .authenticated()
             .map_err(|error| QueryError::Internal(error.to_string()))?;
-        compatibility_query(sql, &authenticated.database_name).map_or_else(
+        let session = self
+            .session
+            .lock()
+            .map_err(|error| QueryError::Internal(error.to_string()))?
+            .clone();
+        compatibility_query(sql, &authenticated.database_name, &session).map_or_else(
             || {
-                self.engine
-                    .execute(&authenticated.database_id, sql, DEFAULT_MAX_ROWS)
+                // The session zone shifts statement-pinned time functions;
+                // optimization runs on this thread, so install-and-restore
+                // brackets exactly one statement.
+                let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                let result = self
+                    .engine
+                    .execute(&authenticated.database_id, sql, DEFAULT_MAX_ROWS);
+                let _ = pintail_exec::set_session_time_zone(None);
+                result
             },
             Ok,
         )
+    }
+
+    /// Applies one `SET`/`SET NAMES` session command, or reports why it
+    /// cannot be honored.
+    fn apply_session_command(&self, sql: &str) -> Result<(), String> {
+        let command = sql.trim().trim_end_matches(';').trim();
+        let lowered = command.to_ascii_lowercase();
+        let mut session = self.session.lock().map_err(|error| error.to_string())?;
+        if let Some(rest) = lowered.strip_prefix("set names ") {
+            let charset = rest.split_whitespace().next().unwrap_or("");
+            let charset = charset.trim_matches(['\'', '"', '`']);
+            if matches!(charset, "utf8" | "utf8mb3" | "utf8mb4" | "binary") {
+                charset.clone_into(&mut session.charset);
+                return Ok(());
+            }
+            return Err(format!("Unknown character set: '{charset}'"));
+        }
+        let assignment = lowered.strip_prefix("set ").map(|rest| {
+            rest.trim_start_matches("session ")
+                .trim_start_matches("local ")
+        });
+        let Some(assignment) = assignment else {
+            return Ok(());
+        };
+        let Some((name, _)) = assignment.split_once('=') else {
+            return Ok(());
+        };
+        let name = name
+            .trim()
+            .trim_start_matches("@@session.")
+            .trim_start_matches("@@");
+        // Values come from the ORIGINAL text to preserve case (zone names).
+        let value = command
+            .split_once('=')
+            .map_or("", |(_, value)| value)
+            .trim()
+            .trim_matches(['\'', '"'])
+            .to_owned();
+        match name {
+            "time_zone" => {
+                if pintail_exec::set_session_time_zone(Some(&value)) {
+                    let _ = pintail_exec::set_session_time_zone(None);
+                    session.time_zone = value;
+                    Ok(())
+                } else {
+                    Err(format!("Unknown or incorrect time zone: '{value}'"))
+                }
+            }
+            "sql_mode" => {
+                session.sql_mode = value;
+                Ok(())
+            }
+            // Everything else keeps the accepted-no-op compatibility
+            // behavior (autocommit, isolation levels, probes).
+            _ => Ok(()),
+        }
     }
 }
 
@@ -444,7 +537,14 @@ where
         results: QueryResultWriter<'a, W>,
     ) -> io::Result<()> {
         if is_session_command(query) {
-            return results.completed(OkResponse::default()).await;
+            return match self.apply_session_command(query) {
+                Ok(()) => results.completed(OkResponse::default()).await,
+                Err(error) => {
+                    results
+                        .error(ErrorKind::ER_WRONG_ARGUMENTS, error.as_bytes())
+                        .await
+                }
+            };
         }
         write_query_result(self.execute(query), results).await
     }
@@ -788,7 +888,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
     }
 }
 
-fn compatibility_query(sql: &str, database: &str) -> Option<QueryOutput> {
+fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
     let (name, value) = if normalized.starts_with("select version()") {
         (
@@ -804,6 +904,26 @@ fn compatibility_query(sql: &str, database: &str) -> Option<QueryOutput> {
         )
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
+    } else if normalized.contains("@@session.time_zone") || normalized.contains("@@time_zone") {
+        (
+            "@@session.time_zone",
+            Value::Utf8(session.time_zone.clone()),
+        )
+    } else if normalized.contains("@@sql_mode") {
+        ("@@sql_mode", Value::Utf8(session.sql_mode.clone()))
+    } else if normalized.contains("@@character_set_client")
+        || normalized.contains("@@character_set_connection")
+        || normalized.contains("@@character_set_results")
+    {
+        (
+            "@@character_set_client",
+            Value::Utf8(session.charset.clone()),
+        )
+    } else if normalized.contains("@@collation_connection") {
+        (
+            "@@collation_connection",
+            Value::Utf8("utf8mb4_0900_ai_ci".to_owned()),
+        )
     } else {
         return None;
     };

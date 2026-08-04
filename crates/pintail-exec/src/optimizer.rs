@@ -25,9 +25,15 @@ impl Optimizer {
     pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
         // MySQL pins every current-time function in a statement to one
         // timestamp; capture it once so folding sees a single instant.
+        let utc = chrono::Utc::now();
+        let local = match SESSION_TIME_ZONE.get() {
+            None => chrono::Local::now().naive_local(),
+            Some(SessionZone::Fixed(offset)) => utc.with_timezone(&offset).naive_local(),
+            Some(SessionZone::Named(zone)) => utc.with_timezone(&zone).naive_local(),
+        };
         STATEMENT_NOW.set(Some(StatementNow {
-            local: chrono::Local::now().naive_local(),
-            unix: chrono::Utc::now().timestamp(),
+            local,
+            unix: utc.timestamp(),
         }));
         let plan = fold_constants(plan);
         let plan = push_predicates(plan);
@@ -411,6 +417,64 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
             limit,
         },
     }
+}
+
+/// A parsed session time zone for statement-pinned time functions.
+#[derive(Clone, Copy)]
+enum SessionZone {
+    Fixed(chrono::FixedOffset),
+    Named(chrono_tz::Tz),
+}
+
+thread_local! {
+    static SESSION_TIME_ZONE: std::cell::Cell<Option<SessionZone>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Installs the session time zone that `NOW`/`CURDATE`/`CURTIME` observe on
+/// this thread ("SYSTEM" or `None` restores the host zone). Numeric offsets
+/// use `MySQL`'s `[-13:59, +14:00]` range; names resolve case-insensitively
+/// through the embedded tz database. Returns `false` for an unknown or
+/// out-of-range zone, leaving the previous setting in place.
+#[must_use]
+pub fn set_session_time_zone(zone: Option<&str>) -> bool {
+    let Some(zone) = zone else {
+        SESSION_TIME_ZONE.set(None);
+        return true;
+    };
+    let trimmed = zone.trim();
+    if trimmed.eq_ignore_ascii_case("system") {
+        SESSION_TIME_ZONE.set(None);
+        return true;
+    }
+    if trimmed.starts_with(['+', '-']) {
+        let Some((hours, minutes)) = trimmed[1..].split_once(':') else {
+            return false;
+        };
+        let (Ok(hours), Ok(minutes)) = (hours.parse::<i32>(), minutes.parse::<i32>()) else {
+            return false;
+        };
+        if !(0..=59).contains(&minutes) {
+            return false;
+        }
+        let mut seconds = (hours * 60 + minutes) * 60;
+        if trimmed.starts_with('-') {
+            seconds = -seconds;
+        }
+        if !((-14 * 3600 + 60)..=(14 * 3600)).contains(&seconds) {
+            return false;
+        }
+        let Some(offset) = chrono::FixedOffset::east_opt(seconds) else {
+            return false;
+        };
+        SESSION_TIME_ZONE.set(Some(SessionZone::Fixed(offset)));
+        return true;
+    }
+    let Ok(zone) = chrono_tz::Tz::from_str_insensitive(trimmed) else {
+        return false;
+    };
+    SESSION_TIME_ZONE.set(Some(SessionZone::Named(zone)));
+    true
 }
 
 #[derive(Clone, Copy)]

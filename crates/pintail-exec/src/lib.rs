@@ -21,5 +21,5 @@ pub use explain::{
     format_physical_plan_with_stats,
 };
 pub use logical::{LogicalPlan, LogicalPlanner, Scan};
-pub use optimizer::Optimizer;
+pub use optimizer::{Optimizer, set_session_time_zone};
 pub use storage::{PhysicalScanStats, SnapshotScanProvider};
