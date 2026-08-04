@@ -190,6 +190,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "e20-encoding-census"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "lz4_flex",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

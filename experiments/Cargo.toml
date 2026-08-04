@@ -21,6 +21,7 @@ members = [
     "e17-morsel-fusion",
     "e18-block-stats",
     "e19-compressed-exec",
+    "e20-encoding-census",
 ]
 
 [workspace.dependencies]

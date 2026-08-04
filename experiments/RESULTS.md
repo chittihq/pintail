@@ -400,3 +400,97 @@ decisions, adopted as standing rules:
    thermal state. Adopt: per-run checksum stability asserts, sorted
    exact result comparison for small outputs, and null-bearing fixtures
    (current cell_pair-style helpers silently zero NULLs).
+
+## e20 — Encoding census: what PTSEG's encodings cost and what the missing ones buy
+
+20M rows per column, 64k-row blocks, single-threaded, local (M2). Every decoder
+reconstructs the column exactly (position-mixing checksum over decoded values).
+Sizes marked "+lz4" apply LZ4 to the *encoded* block, which is what PTSEG
+actually writes.
+
+### The second compression layer is a loss on bit-packed data
+
+| column | encoding | encoded | +lz4 | decode encoded | decode +lz4 |
+|---|---|---:|---:|---:|---:|
+| amount (uniform) | FOR+bitpack | 50,007,344 | 50,201,736 | 62.8 ms | 67.6 ms |
+| amount (0.1% outliers) | FOR+bitpack | 84,883,024 | 85,214,187 | 65.2 ms | 82.7 ms |
+
+LZ4 over a densely bit-packed block makes it **bigger** (+0.4%) and decode
+**8–27% slower**. Bit-packing leaves almost no redundancy for a byte-oriented
+matcher to find, so the second layer is pure cost. This is BtrBlocks' §2.1
+finding reproduced on our own format.
+
+The layer is not always a loss — it depends entirely on what the first layer
+left behind:
+
+| column | encoding | encoded | +lz4 | lz4 verdict |
+|---|---|---:|---:|---|
+| status (cycles every 5) | dict codes | 7,517,136 | 44,290 | **170× win** |
+| status (clustered runs) | dict codes | 7,517,136 | 954,337 | 7.9× win |
+| user_id (200k distinct) | dict codes | 176,441,984 | 108,610,649 | 1.6× win |
+| region (8 random values) | dict codes | 7,524,480 | 7,542,146 | loss |
+| amount | FOR+bitpack | 50,007,344 | 50,201,736 | loss |
+| ratio (real doubles) | plain | 160,000,000 | 160,627,452 | loss |
+
+**Verdict: compress only when it pays.** Keep the compressed block when it beats
+the encoded block by a margin, else store the encoded bytes as-is. The block
+header already carries a compression tag, so this needs a `None` variant, not a
+format break.
+
+### Patched exceptions — the clearest ratio win available
+
+| data | FOR+bitpack | FOR+patched | decode FOR | decode patched |
+|---|---:|---:|---:|---:|
+| amount, uniform | 3.20× (20 bits) | 3.20× (20 bits) | 62.8 ms | 63.2 ms |
+| amount, 0.1% outliers | 1.88× (33–34 bits) | **3.18×** (20 bits) | 65.2 ms | 65.5 ms |
+
+A 0.1% tail of large values costs 13 extra bits on *every* value in the block.
+Storing those stragglers out of line restores the narrow width for **1.7× the
+ratio at no measurable decode cost** — the patch loop is proportional to the
+exception count, not the block. On clean data the chooser lands on the same
+width, so it is never worse.
+
+### Run-end over dictionary codes — an execution win, not a storage win
+
+| shape | dict +lz4 | run-end +lz4 | rows/run |
+|---|---:|---:|---:|
+| status, cycles every 5 (benchmark shape) | 44,290 | 80,630,880 | 1.0 |
+| status, clustered into runs | 954,337 | 941,220 | 136.5 |
+| region, 8 random values | 7,542,146 | 94,538,581 | 1.1 |
+
+After LZ4, run-end **ties** dictionary on clustered data (941 KB vs 954 KB) and
+is catastrophic on unclustered data — 1,800× worse on the benchmark's cyclic
+status column. LZ4 already captures run redundancy, so run-end buys no bytes.
+
+What it does buy is compute, because the count is arithmetic per run:
+
+| shape | decode then scan | count per run | speedup |
+|---|---:|---:|---:|
+| status, clustered | 34.8 ms | **0.080 ms** | 435× |
+| status, cyclic | 34.4 ms | 10.5 ms | 3.3× |
+| region, random | 34.5 ms | 9.3 ms | 3.7× |
+
+**Verdict: not a compression change.** If adopted it is an execution change,
+justified by predicate/aggregate evaluation per run, and it must be gated on
+measured run length (BtrBlocks gates RLE at average run length ≥ 2).
+
+### Floats
+
+| column | plain+lz4 | pseudodecimal | decode |
+|---|---:|---:|---:|
+| price (2-decimal money as f64) | 1.46× | **3.19×** | 72.0 ms |
+| ratio (genuinely real doubles) | 1.00× (lz4 *expands* it) | rejected | — |
+
+Pseudodecimal more than doubles the ratio on decimal-like doubles, at a decode
+cost (72 ms vs 62.8 ms for FOR on the same row count). **Applicability caveat
+that likely disqualifies it for us:** Pintail stores MySQL `DECIMAL` as scaled
+i128 units, not as f64, so money never reaches this path. Only real `FLOAT`/
+`DOUBLE` columns do, and those are the case where pseudodecimal is rejected.
+BtrBlocks reports the same trade — +20% double ratio for −35% double decode —
+and gates it off below 10% unique values.
+
+### Not adopted, and why
+
+- **Dictionary on high-cardinality integers**: 0.91× encoded, worse than plain.
+  Our chooser already restricts Dictionary to text under 10% distinct; this
+  confirms the guard rather than challenging it.
