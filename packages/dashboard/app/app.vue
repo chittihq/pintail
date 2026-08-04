@@ -1211,7 +1211,14 @@ function describeTable(table: TableSummary) {
                 </TableHeader>
                 <TableBody>
                   <TableRow v-for="table in tables" :key="table.name">
-                    <TableCell><strong>{{ table.name }}</strong></TableCell>
+                    <TableCell>
+                      <strong>{{ table.name }}</strong>
+                      <Badge
+                        v-if="table.cascade_reconciled"
+                        class="tone-warning"
+                        title="A source foreign key cascades into this table. MySQL performs cascades inside InnoDB without writing row events, so they cannot reach the replica through CDC; these rows converge on the reconcile interval rather than in seconds."
+                      >cascade</Badge>
+                    </TableCell>
                     <TableCell><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></TableCell>
                     <TableCell class="mono">{{ table.rows.toLocaleString() }}</TableCell>
                     <TableCell class="mono">v{{ table.schema_version }}</TableCell>

@@ -77,6 +77,10 @@ export interface TableSummary {
   rows: number
   schema_version: number
   last_error: string | null
+  /** A source foreign key cascades into this table. MySQL performs cascades
+   *  inside InnoDB without writing row events, so they are invisible to CDC
+   *  and repaired by scheduled reconciliation instead of arriving in seconds. */
+  cascade_reconciled: boolean
 }
 
 export interface SnapshotStatus {

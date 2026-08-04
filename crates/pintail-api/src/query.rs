@@ -71,6 +71,13 @@ pub(crate) struct TableSummary {
     rows: u64,
     schema_version: u32,
     last_error: Option<String>,
+    /// The source has an `ON DELETE/UPDATE CASCADE` or `SET NULL` foreign key
+    /// pointing at this table. `MySQL` performs those inside `InnoDB` without
+    /// writing row events, so no CDC reader can observe them and the rows are
+    /// repaired by scheduled reconciliation instead of arriving in seconds.
+    /// Surfaced per row because an operator reading a stale child table needs
+    /// to know it is a known mechanism, not a replication fault.
+    cascade_reconciled: bool,
 }
 
 #[derive(Serialize)]
@@ -121,13 +128,19 @@ pub(crate) async fn list_tables(
 ) -> Result<Json<Vec<TableSummary>>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&query.db)?;
-    load_database(&state, &query.db)?;
+    let database = load_database(&state, &query.db)?;
+    let cascaded = cascade_reconciled_tables(database.probe_json.as_deref());
     let tables = state
         .metadata()?
         .tables(&query.db)
         .map_err(ApiError::internal)?
         .into_iter()
-        .map(TableSummary::from)
+        .map(|record| {
+            let cascade_reconciled = cascaded
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&record.name));
+            TableSummary::new(record, cascade_reconciled)
+        })
         .collect();
     Ok(Json(tables))
 }
@@ -350,14 +363,33 @@ const fn default_preview_rows() -> usize {
     DEFAULT_PREVIEW_ROWS
 }
 
-impl From<TableRecord> for TableSummary {
-    fn from(record: TableRecord) -> Self {
+impl TableSummary {
+    fn new(record: TableRecord, cascade_reconciled: bool) -> Self {
         Self {
             name: record.name,
             state: record.state,
             rows: record.rows_synced,
             schema_version: record.schema_version,
             last_error: record.last_error,
+            cascade_reconciled,
         }
     }
+}
+
+/// Names the probe flagged as reachable by an invisible cascade. An
+/// unreadable or absent report yields none rather than failing the listing:
+/// the flag is advisory, and a table list is not the place to surface a
+/// probe-decoding problem.
+fn cascade_reconciled_tables(probe_json: Option<&str>) -> Vec<String> {
+    probe_json
+        .and_then(|json| serde_json::from_str::<pintail_probe::ProbeReport>(json).ok())
+        .map(|report| {
+            report
+                .tables
+                .into_iter()
+                .filter(|table| table.requires_reconciliation)
+                .map(|table| table.name)
+                .collect()
+        })
+        .unwrap_or_default()
 }
