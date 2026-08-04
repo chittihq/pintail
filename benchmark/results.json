@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-04T10:52:11.470Z",
+  "generatedAt": "2026-08-04T14:11:53.164Z",
   "scale": 1,
   "rows": {
     "users": 100000,
@@ -25,29 +25,29 @@
     {
       "name": "Q1: Full table count",
       "mysqlMs": 2321,
-      "pintailMs": 154,
-      "clickhouseMs": 157,
-      "clickhouseFinalMs": 159,
-      "speedup": 15.071428571428571,
-      "speedupVsClickhouse": 1.0324675324675325,
+      "pintailMs": 173,
+      "clickhouseMs": 172,
+      "clickhouseFinalMs": 174,
+      "speedup": 13.416184971098266,
+      "speedupVsClickhouse": 1.0057803468208093,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 154,
-          "p95Ms": 161,
-          "minMs": 152,
+          "medianMs": 173,
+          "p95Ms": 174,
+          "minMs": 172,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 157,
-          "p95Ms": 298,
-          "minMs": 152,
+          "medianMs": 172,
+          "p95Ms": 177,
+          "minMs": 169,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 159,
-          "p95Ms": 183,
-          "minMs": 153,
+          "medianMs": 174,
+          "p95Ms": 186,
+          "minMs": 172,
           "runs": 5
         },
         "mysql": {
@@ -59,19 +59,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 2,
-          "cpuAvgPct": 2,
-          "memPeakMb": 24
+          "cpuPeakPct": 1,
+          "cpuAvgPct": 1,
+          "memPeakMb": 33
         },
         "clickhouse": {
-          "cpuPeakPct": 7,
-          "cpuAvgPct": 7,
-          "memPeakMb": 571
+          "cpuPeakPct": 14,
+          "cpuAvgPct": 14,
+          "memPeakMb": 557
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 17,
-          "cpuAvgPct": 17,
-          "memPeakMb": 583
+          "cpuPeakPct": 11,
+          "cpuAvgPct": 11,
+          "memPeakMb": 566
         }
       },
       "pintailMatchesMysql": true,
@@ -81,29 +81,29 @@
     {
       "name": "Q2: Filtered count",
       "mysqlMs": 1211,
-      "pintailMs": 153,
-      "clickhouseMs": 198,
-      "clickhouseFinalMs": 195,
-      "speedup": 7.915032679738562,
-      "speedupVsClickhouse": 1.2745098039215685,
+      "pintailMs": 173,
+      "clickhouseMs": 203,
+      "clickhouseFinalMs": 196,
+      "speedup": 7,
+      "speedupVsClickhouse": 1.1329479768786128,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 153,
-          "p95Ms": 154,
-          "minMs": 152,
+          "medianMs": 173,
+          "p95Ms": 186,
+          "minMs": 170,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 198,
-          "p95Ms": 207,
-          "minMs": 177,
+          "medianMs": 203,
+          "p95Ms": 267,
+          "minMs": 195,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 195,
-          "p95Ms": 275,
-          "minMs": 177,
+          "medianMs": 196,
+          "p95Ms": 281,
+          "minMs": 195,
           "runs": 5
         },
         "mysql": {
@@ -115,19 +115,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 1,
-          "cpuAvgPct": 1,
-          "memPeakMb": 38
+          "cpuPeakPct": 2,
+          "cpuAvgPct": 2,
+          "memPeakMb": 47
         },
         "clickhouse": {
-          "cpuPeakPct": 45,
-          "cpuAvgPct": 45,
-          "memPeakMb": 606
+          "cpuPeakPct": 64,
+          "cpuAvgPct": 64,
+          "memPeakMb": 580
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 42,
-          "cpuAvgPct": 42,
-          "memPeakMb": 600
+          "cpuPeakPct": 51,
+          "cpuAvgPct": 51,
+          "memPeakMb": 591
         }
       },
       "pintailMatchesMysql": true,
@@ -137,29 +137,29 @@
     {
       "name": "Q3: Group by status",
       "mysqlMs": 63664,
-      "pintailMs": 171,
-      "clickhouseMs": 243,
-      "clickhouseFinalMs": 239,
-      "speedup": 372.30409356725147,
-      "speedupVsClickhouse": 1.3976608187134503,
+      "pintailMs": 179,
+      "clickhouseMs": 254,
+      "clickhouseFinalMs": 267,
+      "speedup": 355.66480446927375,
+      "speedupVsClickhouse": 1.4916201117318435,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 171,
-          "p95Ms": 201,
-          "minMs": 154,
+          "medianMs": 179,
+          "p95Ms": 200,
+          "minMs": 170,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 243,
-          "p95Ms": 312,
-          "minMs": 227,
+          "medianMs": 254,
+          "p95Ms": 277,
+          "minMs": 247,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 239,
-          "p95Ms": 309,
-          "minMs": 221,
+          "medianMs": 267,
+          "p95Ms": 287,
+          "minMs": 247,
           "runs": 5
         },
         "mysql": {
@@ -171,19 +171,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 2,
-          "cpuAvgPct": 2,
-          "memPeakMb": 123
+          "cpuPeakPct": 3,
+          "cpuAvgPct": 3,
+          "memPeakMb": 132
         },
         "clickhouse": {
-          "cpuPeakPct": 188,
-          "cpuAvgPct": 188,
-          "memPeakMb": 657
+          "cpuPeakPct": 201,
+          "cpuAvgPct": 201,
+          "memPeakMb": 600
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 121,
-          "cpuAvgPct": 121,
-          "memPeakMb": 627
+          "cpuPeakPct": 176,
+          "cpuAvgPct": 176,
+          "memPeakMb": 606
         }
       },
       "pintailMatchesMysql": true,
@@ -193,29 +193,29 @@
     {
       "name": "Q4: Region × status breakdown",
       "mysqlMs": 24106,
-      "pintailMs": 172,
-      "clickhouseMs": 307,
-      "clickhouseFinalMs": 308,
-      "speedup": 140.15116279069767,
-      "speedupVsClickhouse": 1.7906976744186047,
+      "pintailMs": 176,
+      "clickhouseMs": 342,
+      "clickhouseFinalMs": 391,
+      "speedup": 136.9659090909091,
+      "speedupVsClickhouse": 2.221590909090909,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 172,
-          "p95Ms": 182,
-          "minMs": 159,
+          "medianMs": 176,
+          "p95Ms": 211,
+          "minMs": 171,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 307,
-          "p95Ms": 482,
-          "minMs": 291,
+          "medianMs": 342,
+          "p95Ms": 387,
+          "minMs": 327,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 308,
-          "p95Ms": 385,
-          "minMs": 289,
+          "medianMs": 391,
+          "p95Ms": 767,
+          "minMs": 338,
           "runs": 5
         },
         "mysql": {
@@ -227,19 +227,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
-          "memPeakMb": 173
+          "cpuPeakPct": 2,
+          "cpuAvgPct": 2,
+          "memPeakMb": 184
         },
         "clickhouse": {
-          "cpuPeakPct": 353,
-          "cpuAvgPct": 353,
-          "memPeakMb": 670
+          "cpuPeakPct": 360,
+          "cpuAvgPct": 360,
+          "memPeakMb": 650
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 415,
-          "cpuAvgPct": 210,
-          "memPeakMb": 680
+          "cpuPeakPct": 232,
+          "cpuAvgPct": 136,
+          "memPeakMb": 665
         }
       },
       "pintailMatchesMysql": true,
@@ -249,29 +249,29 @@
     {
       "name": "Q5: Monthly revenue (2023)",
       "mysqlMs": 12063,
-      "pintailMs": 157,
-      "clickhouseMs": 201,
-      "clickhouseFinalMs": 205,
-      "speedup": 76.8343949044586,
-      "speedupVsClickhouse": 1.305732484076433,
+      "pintailMs": 177,
+      "clickhouseMs": 231,
+      "clickhouseFinalMs": 228,
+      "speedup": 68.15254237288136,
+      "speedupVsClickhouse": 1.2881355932203389,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 157,
-          "p95Ms": 201,
-          "minMs": 154,
+          "medianMs": 177,
+          "p95Ms": 178,
+          "minMs": 171,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 201,
-          "p95Ms": 212,
-          "minMs": 199,
+          "medianMs": 231,
+          "p95Ms": 297,
+          "minMs": 210,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 205,
-          "p95Ms": 289,
-          "minMs": 198,
+          "medianMs": 228,
+          "p95Ms": 484,
+          "minMs": 210,
           "runs": 5
         },
         "mysql": {
@@ -283,19 +283,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
-          "memPeakMb": 485
+          "cpuPeakPct": 65,
+          "cpuAvgPct": 65,
+          "memPeakMb": 493
         },
         "clickhouse": {
-          "cpuPeakPct": 68,
-          "cpuAvgPct": 68,
-          "memPeakMb": 629
+          "cpuPeakPct": 97,
+          "cpuAvgPct": 97,
+          "memPeakMb": 597
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 96,
-          "cpuAvgPct": 96,
-          "memPeakMb": 627
+          "cpuPeakPct": 72,
+          "cpuAvgPct": 72,
+          "memPeakMb": 601
         }
       },
       "pintailMatchesMysql": true,
@@ -305,29 +305,29 @@
     {
       "name": "Q6: Top 10 spenders",
       "mysqlMs": 1606563,
-      "pintailMs": 260,
-      "clickhouseMs": 299,
-      "clickhouseFinalMs": 282,
-      "speedup": 6179.088461538461,
-      "speedupVsClickhouse": 1.0846153846153845,
+      "pintailMs": 278,
+      "clickhouseMs": 289,
+      "clickhouseFinalMs": 316,
+      "speedup": 5779.003597122302,
+      "speedupVsClickhouse": 1.1366906474820144,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 260,
-          "p95Ms": 295,
-          "minMs": 241,
+          "medianMs": 278,
+          "p95Ms": 336,
+          "minMs": 262,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 299,
-          "p95Ms": 323,
-          "minMs": 251,
+          "medianMs": 289,
+          "p95Ms": 472,
+          "minMs": 283,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 282,
-          "p95Ms": 288,
-          "minMs": 269,
+          "medianMs": 316,
+          "p95Ms": 396,
+          "minMs": 283,
           "runs": 5
         },
         "mysql": {
@@ -339,19 +339,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 211,
-          "cpuAvgPct": 105,
-          "memPeakMb": 669
+          "cpuPeakPct": 212,
+          "cpuAvgPct": 106,
+          "memPeakMb": 697
         },
         "clickhouse": {
-          "cpuPeakPct": 263,
-          "cpuAvgPct": 263,
-          "memPeakMb": 763
+          "cpuPeakPct": 266,
+          "cpuAvgPct": 266,
+          "memPeakMb": 735
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 288,
-          "cpuAvgPct": 288,
-          "memPeakMb": 756
+          "cpuPeakPct": 269,
+          "cpuAvgPct": 269,
+          "memPeakMb": 728
         }
       },
       "pintailMatchesMysql": true,
@@ -361,29 +361,29 @@
     {
       "name": "Q7: Regional analytics",
       "mysqlMs": 117114,
-      "pintailMs": 153,
-      "clickhouseMs": 292,
-      "clickhouseFinalMs": 299,
-      "speedup": 765.4509803921569,
-      "speedupVsClickhouse": 1.9542483660130718,
+      "pintailMs": 203,
+      "clickhouseMs": 300,
+      "clickhouseFinalMs": 315,
+      "speedup": 576.9162561576354,
+      "speedupVsClickhouse": 1.5517241379310345,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 153,
-          "p95Ms": 155,
-          "minMs": 153,
+          "medianMs": 203,
+          "p95Ms": 251,
+          "minMs": 175,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 292,
-          "p95Ms": 328,
-          "minMs": 279,
+          "medianMs": 300,
+          "p95Ms": 589,
+          "minMs": 295,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 299,
-          "p95Ms": 532,
-          "minMs": 288,
+          "medianMs": 315,
+          "p95Ms": 363,
+          "minMs": 307,
           "runs": 5
         },
         "mysql": {
@@ -395,19 +395,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 349,
-          "cpuAvgPct": 174,
-          "memPeakMb": 870
+          "cpuPeakPct": 345,
+          "cpuAvgPct": 173,
+          "memPeakMb": 906
         },
         "clickhouse": {
-          "cpuPeakPct": 326,
-          "cpuAvgPct": 326,
-          "memPeakMb": 698
+          "cpuPeakPct": 361,
+          "cpuAvgPct": 361,
+          "memPeakMb": 677
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 276,
-          "cpuAvgPct": 276,
-          "memPeakMb": 690
+          "cpuPeakPct": 326,
+          "cpuAvgPct": 326,
+          "memPeakMb": 672
         }
       },
       "pintailMatchesMysql": true,
@@ -417,29 +417,29 @@
     {
       "name": "Q8: Join users + orders",
       "mysqlMs": 1638533,
-      "pintailMs": 155,
-      "clickhouseMs": 607,
-      "clickhouseFinalMs": 609,
-      "speedup": 10571.18064516129,
-      "speedupVsClickhouse": 3.9290322580645163,
+      "pintailMs": 211,
+      "clickhouseMs": 633,
+      "clickhouseFinalMs": 653,
+      "speedup": 7765.559241706161,
+      "speedupVsClickhouse": 3.09478672985782,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 155,
-          "p95Ms": 159,
-          "minMs": 153,
+          "medianMs": 211,
+          "p95Ms": 402,
+          "minMs": 174,
           "runs": 5
         },
         "clickhouse": {
-          "medianMs": 607,
-          "p95Ms": 685,
-          "minMs": 567,
+          "medianMs": 633,
+          "p95Ms": 787,
+          "minMs": 425,
           "runs": 5
         },
         "clickhouseFinal": {
-          "medianMs": 609,
-          "p95Ms": 717,
-          "minMs": 422,
+          "medianMs": 653,
+          "p95Ms": 799,
+          "minMs": 458,
           "runs": 5
         },
         "mysql": {
@@ -451,19 +451,19 @@
       },
       "resources": {
         "pintail": {
-          "cpuPeakPct": 571,
-          "cpuAvgPct": 287,
-          "memPeakMb": 996
+          "cpuPeakPct": 582,
+          "cpuAvgPct": 291,
+          "memPeakMb": 979
         },
         "clickhouse": {
-          "cpuPeakPct": 276,
-          "cpuAvgPct": 243,
-          "memPeakMb": 810
+          "cpuPeakPct": 336,
+          "cpuAvgPct": 299,
+          "memPeakMb": 819
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 300,
-          "cpuAvgPct": 255,
-          "memPeakMb": 818
+          "cpuPeakPct": 257,
+          "cpuAvgPct": 248,
+          "memPeakMb": 821
         }
       },
       "pintailMatchesMysql": true,
@@ -473,10 +473,10 @@
   ],
   "totals": {
     "mysqlMs": 3465575,
-    "pintailMs": 1375,
-    "clickhouseMs": 2304,
-    "clickhouseFinalMs": 2296,
-    "speedup": 2520.418181818182,
-    "speedupVsClickhouse": 1.6698181818181819
+    "pintailMs": 1570,
+    "clickhouseMs": 2424,
+    "clickhouseFinalMs": 2540,
+    "speedup": 2207.372611464968,
+    "speedupVsClickhouse": 1.6178343949044587
   }
 }
