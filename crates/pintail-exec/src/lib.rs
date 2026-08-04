@@ -7,6 +7,7 @@ mod explain;
 mod expression;
 mod logical;
 mod optimizer;
+mod spill;
 mod storage;
 
 pub use batch::{

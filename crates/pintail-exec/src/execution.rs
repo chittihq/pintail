@@ -24,6 +24,7 @@ use crate::{
         CompiledExpr, compare_mysql, compare_utf8_mysql, mysql_f64, mysql_i64, mysql_u64,
         predicate_truth,
     },
+    spill,
 };
 
 /// Maximum estimated result rows accepted by the unqualified cross-join
@@ -2280,22 +2281,20 @@ impl GraceRun {
     }
 
     fn append(&mut self, key: &JoinHashKey, row: &[Value]) -> Result<(), ExecError> {
-        use std::io::Write as _;
         let writer = self
             .writer
             .as_mut()
             .ok_or(ExecError::InvalidPhysicalPlan("grace run already sealed"))?;
-        let line = serde_json::to_string(&(key, row))
-            .map_err(|error| ExecError::Source(format!("join spill encode: {error}")))?;
-        writer
-            .write_all(line.as_bytes())
-            .and_then(|()| writer.write_all(b"\n"))
+        let mut encoder = spill::Encoder::with_capacity(64);
+        encode_join_key(&mut encoder, key);
+        encoder.values(row);
+        spill::write_record(writer, &encoder.finish())
             .map_err(|error| ExecError::Source(format!("join spill write: {error}")))?;
         self.entries += 1;
         Ok(())
     }
 
-    fn reader(&mut self) -> Result<std::io::Lines<std::io::BufReader<std::fs::File>>, ExecError> {
+    fn reader(&mut self) -> Result<GraceRunReader, ExecError> {
         use std::io::Seek as _;
         let writer = self
             .writer
@@ -2307,7 +2306,85 @@ impl GraceRun {
         file.rewind()
             .map_err(|error| ExecError::Source(format!("join spill rewind: {error}")))?;
         let _ = &self.path;
-        Ok(std::io::BufRead::lines(std::io::BufReader::new(file)))
+        Ok(GraceRunReader {
+            reader: std::io::BufReader::new(file),
+            payload: Vec::new(),
+        })
+    }
+}
+
+/// Streams back one grace-join spill file.
+struct GraceRunReader {
+    reader: std::io::BufReader<std::fs::File>,
+    payload: Vec<u8>,
+}
+
+impl GraceRunReader {
+    fn next_entry(&mut self) -> Result<Option<(JoinHashKey, Vec<Value>)>, ExecError> {
+        if !spill::read_record(&mut self.reader, &mut self.payload)
+            .map_err(|error| ExecError::Source(format!("join spill read: {error}")))?
+        {
+            return Ok(None);
+        }
+        let mut decoder = spill::Decoder::new(&self.payload);
+        let entry = decode_join_key(&mut decoder)
+            .and_then(|key| Ok((key, decoder.values()?)))
+            .map_err(|error| ExecError::Source(format!("join spill decode: {error}")))?;
+        Ok(Some(entry))
+    }
+}
+
+const JOIN_KEY_NEGATIVE: u8 = 0;
+const JOIN_KEY_NON_NEGATIVE: u8 = 1;
+const JOIN_KEY_MYSQL_NUMBER: u8 = 2;
+const JOIN_KEY_SCALAR: u8 = 3;
+const JOIN_KEY_COMPOSITE: u8 = 4;
+
+fn encode_join_key(encoder: &mut spill::Encoder, key: &JoinHashKey) {
+    match key {
+        JoinHashKey::NegativeInteger(value) => {
+            encoder.u8(JOIN_KEY_NEGATIVE);
+            encoder.i64(*value);
+        }
+        JoinHashKey::NonNegativeInteger(value) => {
+            encoder.u8(JOIN_KEY_NON_NEGATIVE);
+            encoder.u64(*value);
+        }
+        JoinHashKey::MysqlNumber(value) => {
+            encoder.u8(JOIN_KEY_MYSQL_NUMBER);
+            encoder.f64(value.get());
+        }
+        JoinHashKey::Scalar(value) => {
+            encoder.u8(JOIN_KEY_SCALAR);
+            encoder.value(value);
+        }
+        JoinHashKey::Composite(parts) => {
+            encoder.u8(JOIN_KEY_COMPOSITE);
+            encoder.count(parts.len());
+            for part in parts {
+                encode_join_key(encoder, part);
+            }
+        }
+    }
+}
+
+fn decode_join_key(decoder: &mut spill::Decoder<'_>) -> Result<JoinHashKey, String> {
+    match decoder.u8()? {
+        JOIN_KEY_NEGATIVE => Ok(JoinHashKey::NegativeInteger(decoder.i64()?)),
+        JOIN_KEY_NON_NEGATIVE => Ok(JoinHashKey::NonNegativeInteger(decoder.u64()?)),
+        JOIN_KEY_MYSQL_NUMBER => Ok(JoinHashKey::MysqlNumber(pintail_types::Float64::new(
+            decoder.f64()?,
+        ))),
+        JOIN_KEY_SCALAR => Ok(JoinHashKey::Scalar(decoder.value()?)),
+        JOIN_KEY_COMPOSITE => {
+            let count = decoder.count()?;
+            let mut parts = Vec::with_capacity(count.min(64));
+            for _ in 0..count {
+                parts.push(decode_join_key(decoder)?);
+            }
+            Ok(JoinHashKey::Composite(parts))
+        }
+        other => Err(format!("spilled join key holds unknown tag {other}")),
     }
 }
 
@@ -2330,7 +2407,7 @@ struct GraceJoin {
     /// Next partition to load in the serve phase.
     current: usize,
     /// The loaded partition's probe entries being replayed.
-    replay: Option<std::io::Lines<std::io::BufReader<std::fs::File>>>,
+    replay: Option<GraceRunReader>,
     /// Bytes reserved for the loaded partition's build map.
     partition_reserved: usize,
 }
@@ -2572,12 +2649,8 @@ fn next_grace_join_batch(
             memory.release(grace.partition_reserved);
             grace.partition_reserved = 0;
             let used_before = memory.used();
-            let mut lines = grace.build_files[index].reader()?;
-            for line in &mut lines {
-                let line =
-                    line.map_err(|error| ExecError::Source(format!("join spill read: {error}")))?;
-                let (key, values): (JoinHashKey, Vec<Value>) = serde_json::from_str(&line)
-                    .map_err(|error| ExecError::Source(format!("join spill decode: {error}")))?;
+            let mut entries = grace.build_files[index].reader()?;
+            while let Some((key, values)) = entries.next_entry()? {
                 if state.build.len() == state.build.capacity() {
                     let growth = state.build.capacity().max(64);
                     reserve_hash_map_entries(
@@ -2617,13 +2690,10 @@ fn next_grace_join_batch(
         let Some(replay) = grace.replay.as_mut() else {
             break;
         };
-        let Some(line) = replay.next() else {
+        let Some((key, left_values)) = replay.next_entry()? else {
             grace.replay = None;
             continue;
         };
-        let line = line.map_err(|error| ExecError::Source(format!("join spill read: {error}")))?;
-        let (key, left_values): (JoinHashKey, Vec<Value>) = serde_json::from_str(&line)
-            .map_err(|error| ExecError::Source(format!("join spill decode: {error}")))?;
         let matches = state.build.get(&key);
         let mut match_index = 0_usize;
         loop {
@@ -4703,25 +4773,22 @@ fn reserve_or_spill_groups(
     }
 }
 
-/// One spilled aggregation run: entries sorted by their serialized group
-/// key, one JSON line each. Like the sort spill, the format favors
-/// correctness and streaming reads — this path only engages where the query
-/// previously failed outright.
+/// One spilled aggregation run: entries sorted by their encoded group key,
+/// one length-framed record each, streamed back in write order.
 struct AggregateSpillRun {
-    lines: std::io::Lines<std::io::BufReader<std::fs::File>>,
+    reader: std::io::BufReader<std::fs::File>,
+    payload: Vec<u8>,
     _path: tempfile::TempPath,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
 struct SpilledGroupEntry {
-    /// The group key, serialized once at spill time; the k-way merge orders
+    /// The group key, encoded once at spill time; the k-way merge orders
     /// and matches entries on these exact bytes.
-    key: String,
+    key: Vec<u8>,
     values: Vec<Value>,
     states: Vec<SpilledAggregateState>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
 struct SpilledAggregateState {
     value: SpilledAggregateValue,
     /// Drained DISTINCT keys; revival replays them through the regular
@@ -4729,9 +4796,8 @@ struct SpilledAggregateState {
     seen: Option<Vec<Value>>,
 }
 
-/// Serializable mirror of [`AggregateValue`]. `i128` units travel as
-/// strings to stay independent of JSON number-width support.
-#[derive(serde::Serialize, serde::Deserialize)]
+/// Spillable mirror of [`AggregateValue`]. `i128` units travel as decimal
+/// strings so the encoding stays independent of integer width.
 enum SpilledAggregateValue {
     Count(u64),
     Sum(Option<Value>),
@@ -4845,13 +4911,13 @@ fn revive_aggregate_state(
 fn write_aggregate_spill_run(
     groups: &mut HashMap<Vec<Value>, AggregateGroup>,
 ) -> Result<AggregateSpillRun, ExecError> {
-    use std::io::Write as _;
     let mut entries = groups
         .drain()
         .map(|(key, group)| {
+            let mut encoder = spill::Encoder::with_capacity(32);
+            encoder.values(&key);
             Ok(SpilledGroupEntry {
-                key: serde_json::to_string(&key)
-                    .map_err(|error| ExecError::Source(format!("aggregate spill key: {error}")))?,
+                key: encoder.finish(),
                 values: group.values,
                 states: group
                     .states
@@ -4869,11 +4935,14 @@ fn write_aggregate_spill_run(
     let (file, path) = file.into_parts();
     let mut writer = std::io::BufWriter::new(file);
     for entry in entries {
-        let line = serde_json::to_string(&entry)
-            .map_err(|error| ExecError::Source(format!("aggregate spill encode: {error}")))?;
-        writer
-            .write_all(line.as_bytes())
-            .and_then(|()| writer.write_all(b"\n"))
+        let mut encoder = spill::Encoder::with_capacity(entry.key.len() + 64);
+        encoder.bytes(&entry.key);
+        encoder.values(&entry.values);
+        encoder.count(entry.states.len());
+        for state in &entry.states {
+            encode_aggregate_state(&mut encoder, state);
+        }
+        spill::write_record(&mut writer, &encoder.finish())
             .map_err(|error| ExecError::Source(format!("aggregate spill write: {error}")))?;
     }
     let mut file = writer
@@ -4882,21 +4951,130 @@ fn write_aggregate_spill_run(
     std::io::Seek::rewind(&mut file)
         .map_err(|error| ExecError::Source(format!("aggregate spill rewind: {error}")))?;
     Ok(AggregateSpillRun {
-        lines: std::io::BufRead::lines(std::io::BufReader::new(file)),
+        reader: std::io::BufReader::new(file),
+        payload: Vec::new(),
         _path: path,
     })
 }
 
 impl AggregateSpillRun {
     fn next_entry(&mut self) -> Result<Option<SpilledGroupEntry>, ExecError> {
-        match self.lines.next() {
-            None => Ok(None),
-            Some(Ok(line)) => serde_json::from_str(&line)
-                .map(Some)
-                .map_err(|error| ExecError::Source(format!("aggregate spill decode: {error}"))),
-            Some(Err(error)) => Err(ExecError::Source(format!("aggregate spill read: {error}"))),
+        if !spill::read_record(&mut self.reader, &mut self.payload)
+            .map_err(|error| ExecError::Source(format!("aggregate spill read: {error}")))?
+        {
+            return Ok(None);
+        }
+        let mut decoder = spill::Decoder::new(&self.payload);
+        let entry = (|| {
+            let key = decoder.bytes()?.to_vec();
+            let values = decoder.values()?;
+            let count = decoder.count()?;
+            let mut states = Vec::with_capacity(count.min(64));
+            for _ in 0..count {
+                states.push(decode_aggregate_state(&mut decoder)?);
+            }
+            Ok::<_, String>(SpilledGroupEntry {
+                key,
+                values,
+                states,
+            })
+        })()
+        .map_err(|error| ExecError::Source(format!("aggregate spill decode: {error}")))?;
+        Ok(Some(entry))
+    }
+}
+
+const AGGREGATE_COUNT: u8 = 0;
+const AGGREGATE_SUM: u8 = 1;
+const AGGREGATE_DECIMAL_SUM: u8 = 2;
+const AGGREGATE_AVERAGE: u8 = 3;
+const AGGREGATE_DECIMAL_AVERAGE: u8 = 4;
+const AGGREGATE_MINIMUM: u8 = 5;
+const AGGREGATE_MAXIMUM: u8 = 6;
+
+fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregateState) {
+    match &state.value {
+        SpilledAggregateValue::Count(count) => {
+            encoder.u8(AGGREGATE_COUNT);
+            encoder.u64(*count);
+        }
+        SpilledAggregateValue::Sum(sum) => {
+            encoder.u8(AGGREGATE_SUM);
+            encoder.optional_value(sum.as_ref());
+        }
+        SpilledAggregateValue::DecimalSum {
+            units,
+            scale,
+            float_output,
+        } => {
+            encoder.u8(AGGREGATE_DECIMAL_SUM);
+            encoder.str(units);
+            encoder.u8(*scale);
+            encoder.bool(*float_output);
+        }
+        SpilledAggregateValue::Average { sum, count } => {
+            encoder.u8(AGGREGATE_AVERAGE);
+            encoder.f64(*sum);
+            encoder.u64(*count);
+        }
+        SpilledAggregateValue::DecimalAverage {
+            units,
+            scale,
+            count,
+        } => {
+            encoder.u8(AGGREGATE_DECIMAL_AVERAGE);
+            encoder.str(units);
+            encoder.u8(*scale);
+            encoder.u64(*count);
+        }
+        SpilledAggregateValue::Minimum(value) => {
+            encoder.u8(AGGREGATE_MINIMUM);
+            encoder.optional_value(value.as_ref());
+        }
+        SpilledAggregateValue::Maximum(value) => {
+            encoder.u8(AGGREGATE_MAXIMUM);
+            encoder.optional_value(value.as_ref());
         }
     }
+    match &state.seen {
+        None => encoder.bool(false),
+        Some(seen) => {
+            encoder.bool(true);
+            encoder.values(seen);
+        }
+    }
+}
+
+fn decode_aggregate_state(
+    decoder: &mut spill::Decoder<'_>,
+) -> Result<SpilledAggregateState, String> {
+    let value = match decoder.u8()? {
+        AGGREGATE_COUNT => SpilledAggregateValue::Count(decoder.u64()?),
+        AGGREGATE_SUM => SpilledAggregateValue::Sum(decoder.optional_value()?),
+        AGGREGATE_DECIMAL_SUM => SpilledAggregateValue::DecimalSum {
+            units: decoder.string()?,
+            scale: decoder.u8()?,
+            float_output: decoder.bool()?,
+        },
+        AGGREGATE_AVERAGE => SpilledAggregateValue::Average {
+            sum: decoder.f64()?,
+            count: decoder.u64()?,
+        },
+        AGGREGATE_DECIMAL_AVERAGE => SpilledAggregateValue::DecimalAverage {
+            units: decoder.string()?,
+            scale: decoder.u8()?,
+            count: decoder.u64()?,
+        },
+        AGGREGATE_MINIMUM => SpilledAggregateValue::Minimum(decoder.optional_value()?),
+        AGGREGATE_MAXIMUM => SpilledAggregateValue::Maximum(decoder.optional_value()?),
+        other => return Err(format!("spilled aggregate holds unknown tag {other}")),
+    };
+    let seen = if decoder.bool()? {
+        Some(decoder.values()?)
+    } else {
+        None
+    };
+    Ok(SpilledAggregateState { value, seen })
 }
 
 /// K-way merges the spilled runs (plus the resident remainder written as a
@@ -8203,29 +8381,27 @@ fn materialize_with_spill(
     Ok((rows, runs))
 }
 
-/// One sorted run on disk: JSON-line rows in a self-deleting temp file.
-/// The format favors correctness and streaming reads; the spill path only
-/// engages where the query previously failed outright.
+/// One sorted run on disk: length-framed binary rows in a self-deleting
+/// temp file, streamed back in write order.
 struct SpilledRun {
-    lines: std::io::Lines<std::io::BufReader<std::fs::File>>,
+    reader: std::io::BufReader<std::fs::File>,
+    payload: Vec<u8>,
     _path: tempfile::TempPath,
 }
 
 impl SpilledRun {
     fn write(rows: &[Vec<Value>]) -> Result<Self, ExecError> {
-        use std::io::Write as _;
         let file = tempfile::Builder::new()
             .prefix("pintail-sort-spill-")
             .tempfile()
             .map_err(|error| ExecError::Source(format!("sort spill create: {error}")))?;
         let (file, path) = file.into_parts();
         let mut writer = std::io::BufWriter::new(file);
+        let mut encoder = spill::Encoder::new();
         for row in rows {
-            let line = serde_json::to_string(row)
-                .map_err(|error| ExecError::Source(format!("sort spill encode: {error}")))?;
-            writer
-                .write_all(line.as_bytes())
-                .and_then(|()| writer.write_all(b"\n"))
+            encoder.values(row);
+            let payload = std::mem::replace(&mut encoder, spill::Encoder::new()).finish();
+            spill::write_record(&mut writer, &payload)
                 .map_err(|error| ExecError::Source(format!("sort spill write: {error}")))?;
         }
         let mut file = writer
@@ -8234,19 +8410,22 @@ impl SpilledRun {
         std::io::Seek::rewind(&mut file)
             .map_err(|error| ExecError::Source(format!("sort spill rewind: {error}")))?;
         Ok(Self {
-            lines: std::io::BufRead::lines(std::io::BufReader::new(file)),
+            reader: std::io::BufReader::new(file),
+            payload: Vec::new(),
             _path: path,
         })
     }
 
     fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
-        match self.lines.next() {
-            None => Ok(None),
-            Some(Ok(line)) => serde_json::from_str(&line)
-                .map(Some)
-                .map_err(|error| ExecError::Source(format!("sort spill decode: {error}"))),
-            Some(Err(error)) => Err(ExecError::Source(format!("sort spill read: {error}"))),
+        if !spill::read_record(&mut self.reader, &mut self.payload)
+            .map_err(|error| ExecError::Source(format!("sort spill read: {error}")))?
+        {
+            return Ok(None);
         }
+        spill::Decoder::new(&self.payload)
+            .values()
+            .map(Some)
+            .map_err(|error| ExecError::Source(format!("sort spill decode: {error}")))
     }
 }
 
