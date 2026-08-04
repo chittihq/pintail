@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 720;
+const EXPECTED_CASES: usize = 725;
 
 struct OracleCase {
     family: &'static str,
@@ -629,6 +629,31 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written natural join",
             "SELECT id, name FROM events NATURAL LEFT JOIN users ORDER BY id",
+        ),
+        ordered(
+            "hand-written scalar subquery",
+            "SELECT e.id, (SELECT COUNT(*) FROM users u WHERE u.id = e.id) AS n \
+             FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written scalar subquery",
+            "SELECT e.id, (SELECT COUNT(*) FROM users u WHERE u.id = e.id AND u.id >= 3) AS n \
+             FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written scalar subquery",
+            "SELECT e.id, (SELECT SUM(u.id) FROM users u WHERE u.id = e.id) AS total \
+             FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written scalar subquery",
+            "SELECT e.id, (SELECT MIN(u.name) FROM users u WHERE u.id = e.id) AS lo \
+             FROM events e WHERE e.active = TRUE ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written scalar subquery",
+            "SELECT e.id, (SELECT AVG(u.id) FROM users u WHERE u.id = e.id) AS mean \
+             FROM events e ORDER BY e.id",
         ),
         unordered(
             "hand-written cross join",

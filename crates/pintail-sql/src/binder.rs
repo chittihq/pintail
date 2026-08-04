@@ -368,19 +368,79 @@ impl<'catalog> Binder<'catalog> {
                 actual: filter.data_type,
             });
         }
+        // Correlated scalar aggregate subqueries in the select list
+        // decorrelate into LEFT JOINs against derived per-key aggregates;
+        // non-canonical shapes keep their original unsupported error.
+        let mut projection_items: Vec<SelectItem> = select.projection.clone();
+        let mut zero_folds: Vec<String> = Vec::new();
+        for item in &mut projection_items {
+            let (original, alias) = match item {
+                SelectItem::UnnamedExpr(expr) => (expr.clone(), None),
+                SelectItem::ExprWithAlias { expr, alias } => (expr.clone(), Some(alias.clone())),
+                _ => continue,
+            };
+            let Expr::Subquery(subquery) = &original else {
+                continue;
+            };
+            if self.bind_query(subquery, ctes).is_ok() {
+                continue;
+            }
+            let Ok((replacement, counts)) =
+                self.decorrelate_scalar(subquery, &mut from, &mut tables, ctes)
+            else {
+                continue;
+            };
+            if counts
+                && let Expr::CompoundIdentifier(identifiers) = &replacement
+                && let Some(relation) = identifiers.first()
+            {
+                zero_folds.push(relation.value.clone());
+            }
+            let alias = alias.unwrap_or_else(|| Ident::new(projection_name(&original)));
+            *item = SelectItem::ExprWithAlias {
+                expr: replacement,
+                alias,
+            };
+        }
         let mut aggregates = Vec::new();
         let mut windows = Vec::new();
         let mut projection = bind_projection(
-            &select.projection,
+            &projection_items,
             &tables,
             &wildcard_order,
             Some(&mut aggregates),
             Some(&mut windows),
             Some(&resolve_subquery),
         )?;
+        // A missing group leaves scalar COUNT at NULL through the LEFT
+        // JOIN; MySQL returns 0 there.
+        for relation in &zero_folds {
+            for item in &mut projection {
+                let folds = matches!(&item.expr.kind, BoundExprKind::Column(column)
+                    if column.relation_name == *relation && column.name == SCALAR_VALUE_COLUMN);
+                if folds {
+                    let inner = item.expr.clone();
+                    item.expr = BoundExpr {
+                        data_type: inner.data_type,
+                        nullable: false,
+                        kind: BoundExprKind::Scalar {
+                            function: ScalarFunction::Coalesce,
+                            args: vec![
+                                inner,
+                                BoundExpr {
+                                    data_type: Some(DataType::Int64),
+                                    nullable: false,
+                                    kind: BoundExprKind::Literal(Value::Int64(0)),
+                                },
+                            ],
+                        },
+                    };
+                }
+            }
+        }
         let group_by = bind_group_by(
             &select.group_by,
-            &select.projection,
+            &projection_items,
             &tables,
             Some(&resolve_subquery),
         )?;
@@ -673,6 +733,175 @@ impl<'catalog> Binder<'catalog> {
             condition: Some(condition),
         });
         Ok(())
+    }
+
+    /// Rewrites one correlated scalar aggregate subquery from the select
+    /// list into a LEFT JOIN against a derived per-key aggregate when it is
+    /// the canonical single-table form: one COUNT/SUM/MIN/MAX/AVG
+    /// projection, inner-only conjuncts, and correlation equalities pairing
+    /// an inner column with an outer expression. Returns the replacement
+    /// expression and whether the caller must fold NULL to zero (COUNT
+    /// over an absent group).
+    fn decorrelate_scalar(
+        &self,
+        subquery: &Query,
+        from: &mut [BoundFrom],
+        tables: &mut Vec<BoundTable>,
+        ctes: &[BoundCte],
+    ) -> Result<(Expr, bool), BindError> {
+        let unsupported = || BindError::UnsupportedSubquery(subquery.to_string());
+        let SetExpr::Select(inner) = subquery.body.as_ref() else {
+            return Err(unsupported());
+        };
+        let simple = inner.from.len() == 1
+            && inner.from[0].joins.is_empty()
+            && matches!(inner.group_by, GroupByExpr::Expressions(ref exprs, _) if exprs.is_empty())
+            && inner.having.is_none()
+            && inner.distinct.is_none()
+            && subquery.limit_clause.is_none()
+            && subquery.order_by.is_none();
+        if !simple {
+            return Err(unsupported());
+        }
+        let [
+            SelectItem::UnnamedExpr(projected)
+            | SelectItem::ExprWithAlias {
+                expr: projected, ..
+            },
+        ] = inner.projection.as_slice()
+        else {
+            return Err(unsupported());
+        };
+        let Expr::Function(function) = projected else {
+            return Err(unsupported());
+        };
+        let function_name = function.name.to_string().to_ascii_uppercase();
+        let counts = function_name == "COUNT";
+        if !matches!(
+            function_name.as_str(),
+            "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"
+        ) {
+            return Err(unsupported());
+        }
+        let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        if tables.iter().any(|existing| {
+            existing
+                .relation_name
+                .eq_ignore_ascii_case(&probe_table.relation_name)
+        }) {
+            return Err(unsupported());
+        }
+        let Some(selection) = &inner.selection else {
+            return Err(unsupported());
+        };
+        let probe_scope = vec![probe_table.clone()];
+        let mut inner_only: Vec<&Expr> = Vec::new();
+        let mut keys: Vec<(String, &Expr)> = Vec::new();
+        for conjunct in split_and_conjuncts(selection) {
+            if bind_expr(conjunct, &probe_scope, None).is_ok() {
+                inner_only.push(conjunct);
+                continue;
+            }
+            let Expr::BinaryOp {
+                left,
+                op: BinaryOperator::Eq,
+                right,
+            } = conjunct
+            else {
+                return Err(unsupported());
+            };
+            let inner_column = |expr: &Expr| -> Option<String> {
+                let bound = bind_expr(expr, &probe_scope, None).ok()?;
+                match bound.kind {
+                    BoundExprKind::Column(column) => Some(column.name),
+                    _ => None,
+                }
+            };
+            let (key, outer_side) = if let Some(name) = inner_column(left) {
+                (name, right.as_ref())
+            } else if let Some(name) = inner_column(right) {
+                (name, left.as_ref())
+            } else {
+                return Err(unsupported());
+            };
+            if bind_expr(outer_side, tables, None).is_err()
+                || keys
+                    .iter()
+                    .any(|(existing, _)| existing.eq_ignore_ascii_case(&key))
+            {
+                return Err(unsupported());
+            }
+            keys.push((key, outer_side));
+        }
+        if keys.is_empty() {
+            return Err(unsupported());
+        }
+        let mut derived_query = subquery.clone();
+        let SetExpr::Select(derived_select) = derived_query.body.as_mut() else {
+            return Err(unsupported());
+        };
+        derived_select.projection = keys
+            .iter()
+            .map(|(name, _)| SelectItem::UnnamedExpr(Expr::Identifier(Ident::new(name.clone()))))
+            .chain(std::iter::once(SelectItem::ExprWithAlias {
+                expr: projected.clone(),
+                alias: Ident::new(SCALAR_VALUE_COLUMN),
+            }))
+            .collect();
+        derived_select.selection = inner_only
+            .iter()
+            .map(|conjunct| (*conjunct).clone())
+            .reduce(|left, right| Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::And,
+                right: Box::new(right),
+            });
+        derived_select.group_by = GroupByExpr::Expressions(
+            keys.iter()
+                .map(|(name, _)| Expr::Identifier(Ident::new(name.clone())))
+                .collect(),
+            Vec::new(),
+        );
+        let alias = format!("__scalar_{}", tables.len());
+        let input = self.bind_query(&derived_query, ctes)?;
+        let derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
+        tables.push(derived.clone());
+        let condition_ast = keys
+            .iter()
+            .map(|(name, outer_side)| Expr::BinaryOp {
+                left: Box::new(Expr::CompoundIdentifier(vec![
+                    Ident::new(alias.clone()),
+                    Ident::new(name.clone()),
+                ])),
+                op: BinaryOperator::Eq,
+                right: Box::new((*outer_side).clone()),
+            })
+            .reduce(|left, right| Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::And,
+                right: Box::new(right),
+            })
+            .expect("correlation keys are non-empty");
+        let condition = match bind_expr(&condition_ast, tables, None) {
+            Ok(condition) => condition,
+            Err(error) => {
+                tables.pop();
+                return Err(error);
+            }
+        };
+        let Some(last) = from.last_mut() else {
+            tables.pop();
+            return Err(unsupported());
+        };
+        last.joins.push(BoundJoin {
+            kind: BoundJoinKind::Left,
+            table: derived,
+            condition: Some(condition),
+        });
+        Ok((
+            Expr::CompoundIdentifier(vec![Ident::new(alias), Ident::new(SCALAR_VALUE_COLUMN)]),
+            counts,
+        ))
     }
 
     /// Rebinds a decorrelated subquery as a derived relation that keeps its
@@ -3547,6 +3776,9 @@ fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
 
 /// `MySQL` `div_precision_increment` default: division and `AVG` widen the
 /// dividend's scale by four fraction digits.
+/// Aggregate output column of a decorrelated scalar-subquery derived table.
+const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
+
 const DIVISION_SCALE_INCREMENT: u8 = 4;
 /// Pintail v1 decimal bounds (`DataType::is_valid`).
 const MAX_DECIMAL_SCALE: u8 = 30;
@@ -4259,8 +4491,7 @@ mod tests {
         ));
         // USING desugars to the left-right equality with the join column
         // leading the wildcard once and the right copy shadowed.
-        let query =
-            bind("SELECT * FROM Events JOIN users USING (id)").expect("using join binds");
+        let query = bind("SELECT * FROM Events JOIN users USING (id)").expect("using join binds");
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
         assert!(query.from[0].joins[0].condition.is_some());
         let names = query
@@ -4273,6 +4504,38 @@ mod tests {
         // NATURAL resolves the shared column names the same way.
         let query = bind("SELECT id FROM Events NATURAL JOIN users").expect("natural join binds");
         assert!(query.from[0].joins[0].condition.is_some());
+    }
+
+    #[test]
+    fn decorrelates_canonical_scalar_aggregate_subqueries() {
+        let query = bind(
+            "SELECT Name, (SELECT COUNT(*) FROM users WHERE users.id = Events.id) FROM Events",
+        )
+        .expect("scalar subquery decorrelates");
+        assert_eq!(query.from[0].joins.len(), 1);
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+        // COUNT folds the missing-group NULL to zero.
+        assert!(matches!(
+            &query.projection[1].expr.kind,
+            BoundExprKind::Scalar {
+                function: crate::ScalarFunction::Coalesce,
+                ..
+            }
+        ));
+        // SUM keeps NULL for missing groups: a plain derived column.
+        let query = bind(
+            "SELECT (SELECT SUM(users.id) FROM users WHERE users.id = Events.id) AS total \
+             FROM Events",
+        )
+        .expect("scalar sum decorrelates");
+        assert!(matches!(
+            &query.projection[0].expr.kind,
+            BoundExprKind::Column(_)
+        ));
+        // Non-aggregate scalar subqueries keep their unsupported error.
+        assert!(
+            bind("SELECT (SELECT Name FROM users WHERE users.id = Events.id) FROM Events").is_err()
+        );
     }
 
     #[test]
