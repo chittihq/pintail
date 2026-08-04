@@ -704,6 +704,104 @@ async function phaseChurn() {
   if (inTransaction) await mysqlConnection!.commit()
 }
 
+/// Application servers and BI tools reach Pintail through a connection
+/// pool, not a single socket: a fixed set of connections borrowed and
+/// returned, where each borrower assumes it gets a clean session. This
+/// phase drives a real mysql2 pool the way those clients do.
+const POOL_SIZE = 4
+const POOL_BORROWS = 40
+
+async function phasePooling() {
+  await sql(`INSERT INTO audit_log VALUES ('pooling phase')`)
+
+  const settings = {
+    host: '127.0.0.1',
+    port: pintailWirePort,
+    user: DATABASE,
+    password: wireSecret,
+    database: DATABASE,
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    dateStrings: true,
+  }
+  const pool = mysql.createPool({
+    ...settings,
+    connectionLimit: POOL_SIZE,
+    waitForConnections: true,
+  })
+  const phase = 'pooling'
+  try {
+    // Far more borrows than sockets, issued at once: every borrow must get
+    // a working connection and the same answer as the source.
+    const [expected] = await mysqlRows('SELECT COUNT(*) FROM orders')
+    const answers = await Promise.all(
+      Array.from({ length: POOL_BORROWS }, async () => {
+        const [rows] = await pool.query<mysql.RowDataPacket[]>({
+          sql: 'SELECT COUNT(*) FROM orders',
+          rowsAsArray: true,
+        })
+        return String((rows as unknown as unknown[][])[0][0])
+      }),
+    )
+    const wrong = answers.filter((answer) => answer !== String(expected[0]))
+    results.push({
+      phase,
+      check: `pool:concurrent-borrows(${POOL_BORROWS} over ${POOL_SIZE})`,
+      status: wrong.length === 0 ? 'PASS' : 'FAIL',
+      detail: wrong.length === 0 ? undefined : `${wrong.length} borrows disagreed: ${wrong[0]}`,
+    })
+
+    // Prepared statements are per-connection state; a pool prepares on
+    // whichever socket it hands out.
+    const prepared = await Promise.all(
+      Array.from({ length: POOL_BORROWS }, async (_, index) => {
+        const [rows] = await pool.execute<mysql.RowDataPacket[]>({
+          sql: 'SELECT COUNT(*) FROM orders WHERE id > ?',
+          values: [index % 5],
+          rowsAsArray: true,
+        })
+        return (rows as unknown as unknown[][])[0][0]
+      }),
+    )
+    results.push({
+      phase,
+      check: 'pool:prepared-statements',
+      status: prepared.every((value) => value !== undefined && value !== null) ? 'PASS' : 'FAIL',
+    })
+  } finally {
+    await pool.end()
+  }
+
+  // Session state must not survive a borrow. A one-connection pool
+  // guarantees the second borrow is the same socket as the first.
+  const single = mysql.createPool({ ...settings, connectionLimit: 1, waitForConnections: true })
+  try {
+    const first = await single.getConnection()
+    await first.query("SET time_zone = '+05:30'")
+    first.release()
+    const second = await single.getConnection()
+    const [rows] = await second.query<mysql.RowDataPacket[]>({
+      sql: 'SELECT @@session.time_zone',
+      rowsAsArray: true,
+    })
+    second.release()
+    const zone = String((rows as unknown as unknown[][])[0][0])
+    const clean = zone === 'SYSTEM'
+    results.push({
+      phase,
+      check: 'pool:session-reset-between-borrows',
+      // The wire library answers every command it cannot parse with a bare
+      // OK and never forwards it, so COM_RESET_CONNECTION reports success
+      // while nothing is reset (issue #21). Recorded as a documented gap
+      // until the server can see that command; flip to FAIL once it can.
+      status: clean ? 'PASS' : 'WARN',
+      detail: clean ? undefined : `time_zone leaked across borrows as ${zone}`,
+    })
+  } finally {
+    await single.end()
+  }
+}
+
 async function phaseRestart() {
   log('SIGKILLing pintail mid-stream')
   pintailProcess!.kill(9)
@@ -1141,6 +1239,7 @@ async function main() {
     ['type-edges', phaseTypeEdges],
     ['ddl', phaseDdl],
     ['churn', phaseChurn],
+    ['pooling', phasePooling],
     ['restart', phaseRestart],
     ['control-plane', phaseControlPlane],
     ['ddl-documented-gaps', phaseDdlDocumentedGaps],
