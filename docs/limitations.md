@@ -263,6 +263,12 @@ plausible but incorrect result.
   counters. The HTTP surface serializes binary values as lowercase `0x` hex
   strings; JSON columns remain canonical JSON text rather than being silently
   retyped as nested response objects.
+- Point-in-time restore (`point_in_time` + source `dsn` on the restore
+  request) rolls the restored replica forward from the backup's
+  checkpoint to the last source transaction at or before the requested
+  instant, then leaves it paused; it requires the source to still retain
+  the binlog range since that backup. Archiving binlogs to the backup
+  destination for sources that purge early is not implemented.
 - The embedded dashboard is a local control plane, not a multi-tenant security
   boundary. Its first-boot admin and signed sessions protect operations, while
   network exposure and TLS remain deployment responsibilities.

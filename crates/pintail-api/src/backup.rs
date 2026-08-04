@@ -103,6 +103,14 @@ pub(crate) struct BackupResponse {
 pub(crate) struct RestoreRequest {
     backup_id: String,
     name: String,
+    /// Roll the restored replica forward from the backup's checkpoint to
+    /// the last source transaction at or before this RFC 3339 instant.
+    /// Requires `dsn` so the catch-up can read the source binlog.
+    #[serde(default)]
+    point_in_time: Option<String>,
+    /// Source DSN for point-in-time catch-up.
+    #[serde(default)]
+    dsn: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -112,6 +120,8 @@ pub(crate) struct RestoreResponse {
     state: &'static str,
     restored_bytes: u64,
     restored_objects: u64,
+    /// Whether a bounded point-in-time catch-up job was started.
+    catching_up: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -419,6 +429,23 @@ pub(crate) async fn restore(
         serde_json::from_value(manifest.control_plane.clone()).map_err(ApiError::internal)?;
     let restored_id = crate::state::random_identifier("db_", 12);
     let target = state.data_dir()?.join("databases").join(&restored_id);
+    // Validate the point-in-time request shape before any restore work.
+    let catch_up = request
+        .point_in_time
+        .as_deref()
+        .map(|point| {
+            let bound = chrono::DateTime::parse_from_rfc3339(point)
+                .map_err(|error| ApiError::bad_request(format!("invalid point_in_time: {error}")))?
+                .timestamp();
+            let bound = u32::try_from(bound)
+                .map_err(|_| ApiError::bad_request("point_in_time is outside the binlog era"))?;
+            let dsn = request
+                .dsn
+                .as_deref()
+                .ok_or_else(|| ApiError::bad_request("point_in_time requires the source dsn"))?;
+            Ok::<_, ApiError>((bound, dsn.trim().to_owned()))
+        })
+        .transpose()?;
     let restored = restore_backup(store.as_ref(), manifest, &target)
         .await
         .map_err(unavailable)?;
@@ -428,6 +455,16 @@ pub(crate) async fn restore(
         &restored_id,
         format!("restored backup {} side-by-side", record.id),
     ));
+    let catching_up = if let Some((bound, dsn)) = catch_up {
+        let encrypted = state.encrypt_dsn(&dsn)?;
+        metadata
+            .upsert_database(&restored_id, name, &encrypted, &Utc::now().to_rfc3339())
+            .map_err(ApiError::internal)?;
+        spawn_point_in_time_catch_up(state.clone(), restored_id.clone(), bound);
+        true
+    } else {
+        false
+    };
     Ok((
         StatusCode::CREATED,
         Json(RestoreResponse {
@@ -436,8 +473,58 @@ pub(crate) async fn restore(
             state: "restored",
             restored_bytes: restored.restored_bytes,
             restored_objects: restored.restored_objects,
+            catching_up,
         }),
     ))
+}
+
+/// Rolls a restored replica forward from its backup checkpoint to the last
+/// source transaction at or before the bound, then leaves it paused. Each
+/// cycle is the supervisor's own CDC cycle with the stop bound applied;
+/// convergence is a cycle that applies nothing.
+fn spawn_point_in_time_catch_up(state: crate::ApiState, database_id: String, bound: u32) {
+    // The CDC cycle holds non-Send metadata connections across awaits, so
+    // the catch-up runs on its own thread with a current-thread runtime —
+    // the same shape the supervisor uses for its cycles.
+    let _ = std::thread::Builder::new()
+        .name(format!("pintail-pitr-{database_id}"))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            let outcome: Result<(), String> = match runtime {
+                Ok(runtime) => runtime.block_on(async {
+                    const MAX_CYCLES: usize = 10_000;
+                    let database = state
+                        .metadata()
+                        .map_err(|error| error.to_string())?
+                        .database(&database_id)
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| "restored database disappeared".to_owned())?;
+                    for _ in 0..MAX_CYCLES {
+                        let applied =
+                            crate::supervisor::run_cycle(&state, &database, Some(bound)).await?;
+                        if applied == 0 {
+                            return Ok(());
+                        }
+                    }
+                    Err("point-in-time catch-up did not converge".to_owned())
+                }),
+                Err(error) => Err(error.to_string()),
+            };
+            match outcome {
+                Ok(()) => state.publish(ApiEvent::database(
+                    "restore.point_in_time.completed",
+                    &database_id,
+                    "restored replica rolled forward to the requested instant".to_owned(),
+                )),
+                Err(error) => state.publish(ApiEvent::database(
+                    "restore.point_in_time.error",
+                    &database_id,
+                    error,
+                )),
+            }
+        });
 }
 
 async fn complete_backup_job(

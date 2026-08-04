@@ -132,7 +132,7 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
         let _ =
             metadata.start_sync_run(&run_id, &database.id, None, kind, &Utc::now().to_rfc3339());
     }
-    let result = run_cycle(&state, &database).await;
+    let result = run_cycle(&state, &database, None).await;
     match result {
         Ok(rows) => {
             if let Ok(metadata) = state.metadata() {
@@ -184,7 +184,11 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, String> {
+pub(crate) async fn run_cycle(
+    state: &ApiState,
+    database: &DatabaseRecord,
+    stop_at_unix_seconds: Option<u32>,
+) -> Result<u64, String> {
     let report: ProbeReport = serde_json::from_str(
         database
             .probe_json
@@ -221,6 +225,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                 targets,
                 CdcOptions {
                     blocking: false,
+                    stop_at_unix_seconds,
                     new_table_root: Some(root),
                     new_table_includes: includes,
                     new_table_excludes: excludes,

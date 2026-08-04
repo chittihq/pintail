@@ -13,6 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use chrono::Utc as ChronoUtc;
 use mysql_async::{Opts, Pool, prelude::Queryable};
 use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
@@ -25,6 +26,119 @@ use rusqlite::Connection;
 
 const DATABASE_ID: &str = "m4-source";
 const RESTART_WRITER_GATE: &str = "pintail-cdc-restart-writer";
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)] // linear seed->bound->verify sequence
+async fn point_in_time_stop_bound_halts_on_the_transaction_boundary() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE pitr_rows (\
+               id BIGINT UNSIGNED PRIMARY KEY,\
+               label VARCHAR(32) NOT NULL\
+             );\
+             INSERT INTO pitr_rows VALUES (1,'base');",
+        )
+        .expect("pitr source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("pitr DSN"));
+    let report = probe(&pool, "app").await.expect("probe pitr source");
+    let workspace = tempfile::tempdir().expect("pitr workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("pitr metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register pitr source");
+    let source = report.tables.first().expect("pitr table").clone();
+    let schema = source.table_schema().expect("pitr schema");
+    let table_directory = workspace.path().join("pitr_rows");
+    let store = TableStore::open(&table_directory, schema.clone(), StoreOptions::default())
+        .expect("pitr store");
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![SnapshotTarget::new(source, store).expect("pitr snapshot target")],
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("pitr baseline snapshot");
+    let target = snapshot
+        .targets
+        .into_iter()
+        .next()
+        .expect("pitr snapshot target");
+
+    // Binlog timestamps are whole seconds: write A, cross a full second,
+    // record the bound, cross another, then write B.
+    mysql
+        .query_batch("INSERT INTO pitr_rows VALUES (2,'before-bound');")
+        .expect("write before the bound");
+    thread::sleep(Duration::from_millis(1_500));
+    let bound = u32::try_from(ChronoUtc::now().timestamp()).expect("bound fits u32");
+    thread::sleep(Duration::from_millis(1_500));
+    mysql
+        .query_batch("INSERT INTO pitr_rows VALUES (3,'after-bound');")
+        .expect("write after the bound");
+
+    let bounded = run_cdc(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![CdcTarget::new(target.source().clone(), target.into_store()).expect("pitr target")],
+        CdcOptions {
+            blocking: false,
+            stop_at_unix_seconds: Some(bound),
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    .expect("bounded catch-up");
+    let rows = TableSnapshot::open(&table_directory, schema.clone())
+        .expect("open bounded replica")
+        .scan()
+        .expect("scan bounded replica");
+    let labels: Vec<Value> = rows.iter().map(|row| row.values()[1].clone()).collect();
+    assert_eq!(
+        labels,
+        vec![
+            Value::Utf8("base".to_owned()),
+            Value::Utf8("before-bound".to_owned())
+        ],
+        "the bounded run must stop exactly at the point-in-time boundary"
+    );
+
+    // Without the bound, the same runner resumes cleanly past the stop.
+    let resumed_targets = bounded.targets;
+    run_cdc(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        resumed_targets,
+        CdcOptions {
+            blocking: false,
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    .expect("unbounded resume");
+    let rows = TableSnapshot::open(&table_directory, schema)
+        .expect("open resumed replica")
+        .scan()
+        .expect("scan resumed replica");
+    assert_eq!(rows.len(), 3, "resume must apply the post-bound write");
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the configured Docker host and mysql:8.4 image"]

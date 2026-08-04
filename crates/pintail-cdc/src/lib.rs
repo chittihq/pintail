@@ -134,6 +134,12 @@ pub struct CdcOptions {
     pub blocking: bool,
     /// Optional deterministic commit budget for supervisors and tests.
     pub max_commits: Option<usize>,
+    /// Stop cleanly before applying any event stamped after this Unix
+    /// second: the point-in-time bound for bounded catch-up after a
+    /// restore. Pending uncommitted work at the crossing is discarded, so
+    /// the replica lands on the last transaction boundary at or before the
+    /// bound.
+    pub stop_at_unix_seconds: Option<u32>,
     /// Maximum in-memory bytes retained before an uncommitted transaction
     /// spills to an anonymous temporary file.
     pub max_transaction_bytes: usize,
@@ -165,6 +171,7 @@ impl Default for CdcOptions {
             server_id: 0,
             blocking: true,
             max_commits: None,
+            stop_at_unix_seconds: None,
             max_transaction_bytes: 256 * 1024 * 1024,
             max_reconnect_attempts: 8,
             reconnect_initial_delay: Duration::from_millis(100),
@@ -446,6 +453,15 @@ async fn run_cdc_inner(
             };
             let event_position = u64::from(event.header().log_pos());
             let event_type = event.header().event_type_raw();
+            if let Some(bound) = options.stop_at_unix_seconds
+                && event.header().timestamp() > bound
+                && event.header().timestamp() != 0
+            {
+                // Point-in-time bound reached: everything committed so far
+                // is at or before the bound; the event (and any pending
+                // uncommitted rows of its transaction) stays unapplied.
+                break;
+            }
             let Some(data) = event
                 .read_data()
                 .map_err(|error| CdcError::Decode(error.to_string()))?
