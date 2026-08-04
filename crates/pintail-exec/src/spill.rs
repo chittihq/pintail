@@ -393,6 +393,51 @@ pub(crate) fn spill_file(prefix: &str) -> std::io::Result<tempfile::NamedTempFil
 mod directory_tests {
     use super::{reclaim_orphaned_spill, spill_file};
 
+    /// The three operators that spill — sort runs, aggregation runs and
+    /// grace-join partitions — all reach disk through `spill_file`, so
+    /// asserting each prefix lands in the configured directory covers every
+    /// path without running three spilling queries. `set_spill_directory`
+    /// writes a process-wide `OnceLock`, so this is the only test in the
+    /// binary permitted to set it.
+    #[test]
+    fn every_spill_path_lands_in_the_configured_directory() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        super::set_spill_directory(directory.path().to_path_buf()).expect("configure");
+
+        for prefix in [
+            "pintail-sort-spill-",
+            "pintail-aggregate-spill-",
+            "pintail-join-spill-",
+        ] {
+            let file = spill_file(prefix).expect("spill file");
+            assert_eq!(
+                file.path().parent(),
+                Some(directory.path()),
+                "{prefix} must not fall back to the system temp directory"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unwritable_directory_fails_before_any_query_runs() {
+        // A file where the parent directory should be: `create_dir_all`
+        // cannot succeed, which is the startup failure an operator should
+        // see instead of losing a query that had already done its work.
+        let directory = tempfile::tempdir().expect("tempdir");
+        let occupied = directory.path().join("not-a-directory");
+        std::fs::write(&occupied, b"blocked").expect("write blocker");
+
+        let error = super::set_spill_directory(occupied.join("spill"))
+            .expect_err("an unusable spill directory must be rejected");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::NotADirectory | std::io::ErrorKind::AlreadyExists
+            ),
+            "unexpected error kind: {error:?}"
+        );
+    }
+
     #[test]
     fn a_spill_file_lands_in_the_directory_it_is_given() {
         // `set_spill_directory` writes a process-wide OnceLock, so this
