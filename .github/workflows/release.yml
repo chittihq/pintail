@@ -1,0 +1,114 @@
+name: Release
+
+# Publishes the single-binary container to the GitHub Container Registry when
+# a version tag is pushed. Release candidates are tagged but never move
+# `latest`, so pulling `latest` cannot land on a pre-release by accident.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to publish, e.g. 0.0.1-rc1"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive the version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            version="${{ github.event.inputs.tag }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A pre-release must not claim `latest`: anything with a hyphen
+          # after the patch number (-rc1, -beta.2) is one.
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.version.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=pintail
+            org.opencontainers.image.description=Columnar analytical database for MySQL, single binary
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # amd64 and arm64: the deployment target is Linux servers, the
+          # development machines are Apple silicon. Emulated arm64 builds are
+          # slow but a native runner is not available here.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prove the published image starts and answers
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE}:${{ steps.version.outputs.version }}"
+          docker run --detach --name pintail-smoke \
+            --publish 8080:8080 \
+            "$image" --data-dir /var/lib/pintail --http-bind 0.0.0.0:8080
+          for _ in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8080/health >/dev/null; then
+              echo "health check passed"
+              docker logs pintail-smoke | tail -5
+              docker rm --force pintail-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "published image never became healthy" >&2
+          docker logs pintail-smoke >&2
+          docker rm --force pintail-smoke
+          exit 1
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published"
+            echo
+            echo '```'
+            echo "docker pull ${REGISTRY}/${IMAGE}:${{ steps.version.outputs.version }}"
+            echo '```'
+            echo
+            echo "Pre-release: ${{ steps.version.outputs.prerelease }} (a pre-release does not move \`latest\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
