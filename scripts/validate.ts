@@ -61,6 +61,11 @@ interface Stage {
   stallMinutes?: number
   /// Needs the shared Docker host (disk preflight + container capture).
   remote: boolean
+  /// Stages sharing a lane run concurrently. A stage without one runs alone.
+  /// Only correctness stages may share: `bench` and `accept` record timings,
+  /// and a co-tenant on the same host changes the numbers they exist to
+  /// produce.
+  lane?: string
   timeoutMinutes: number
   command: string[]
   cwd?: string
@@ -85,6 +90,10 @@ const STAGES: Stage[] = [
   {
     name: 'oracle',
     remote: true,
+    // Correctness only, and the containers are namespaced apart
+    // (pintail-mysql-oracle-* against pintail-e2e-*), so sharing the host
+    // cannot make either one's result depend on the other.
+    lane: 'correctness',
     timeoutMinutes: 20,
     command: [
       'cargo', 'test', '-p', 'pintail-sqllogic', '--test', 'mysql_oracle', '--', '--ignored', '--nocapture',
@@ -94,6 +103,10 @@ const STAGES: Stage[] = [
   {
     name: 'e2e',
     remote: true,
+    // Correctness only, and the containers are namespaced apart
+    // (pintail-mysql-oracle-* against pintail-e2e-*), so sharing the host
+    // cannot make either one's result depend on the other.
+    lane: 'correctness',
     timeoutMinutes: 60,
     // Builds a container image before it says anything.
     stallMinutes: 25,
