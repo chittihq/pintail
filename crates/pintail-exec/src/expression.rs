@@ -1501,17 +1501,22 @@ fn evaluate_eager_scalar(
             let decimals = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
             let decimals =
                 i32::try_from(decimals.clamp(-308, 308)).map_err(|_| ExecError::NumericOverflow)?;
+            // MySQL rounds an APPROXIMATE operand to nearest-even, deferring
+            // to the C library, and only exact operands round half away from
+            // zero. Rust's f64::round is half-away-from-zero, so ROUND(25E-1)
+            // answered 3 where MySQL answers 2. The exact path above keeps
+            // half-away-from-zero, which is why ROUND(2.5) is still 3.
             let rounded = if decimals >= 0 {
                 let factor = 10_f64.powi(decimals);
                 let scaled = value * factor;
                 if scaled.is_finite() {
-                    scaled.round() / factor
+                    scaled.round_ties_even() / factor
                 } else {
                     value
                 }
             } else {
                 let factor = 10_f64.powi(-decimals);
-                (value / factor).round() * factor
+                (value / factor).round_ties_even() * factor
             };
             if rounded.is_finite() {
                 Ok(Value::float64(rounded))
