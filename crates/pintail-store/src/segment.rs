@@ -2186,6 +2186,12 @@ fn read_segment_columns_header(
 pub(crate) struct ProjectedColumnFetch {
     pub(crate) columns: Vec<DecodedColumn>,
     pub(crate) blocks_decoded: usize,
+    /// Blocks whose payload was fetched, and blocks skipped because no
+    /// requested row range touched them. Counted the same way the merge
+    /// path counts them, so the two paths report comparable statistics
+    /// rather than the direct path silently reporting nothing.
+    pub(crate) blocks_read: usize,
+    pub(crate) blocks_pruned: usize,
     pub(crate) reserved_bytes: usize,
 }
 
@@ -2662,6 +2668,11 @@ pub(crate) fn read_projected_column_ranges(
     let mut found = vec![false; projection.len()];
     let mut reserved_bytes = 0_usize;
     let mut blocks_decoded = 0_usize;
+    // Counted alongside the decode tally so this path reports the same
+    // statistics the merge path does; without them a caller cannot tell a
+    // pruned block from an unreported one.
+    let mut blocks_read = 0_usize;
+    let mut blocks_pruned = 0_usize;
     for _ in 0..header.column_count {
         let id = decoder
             .u32()
@@ -2711,6 +2722,13 @@ pub(crate) fn read_projected_column_ranges(
                 && ranges
                     .iter()
                     .any(|range| block_start < range.end && block_limit > range.start);
+            if projected_position.is_some() {
+                if selected {
+                    blocks_read += 1;
+                } else {
+                    blocks_pruned += 1;
+                }
+            }
             // Block-relative intersections of the requested ranges, clamped
             // to the target block span (the last block may be shorter; row
             // loops clamp naturally).
@@ -2876,6 +2894,8 @@ pub(crate) fn read_projected_column_ranges(
     Ok(ProjectedColumnFetch {
         columns,
         blocks_decoded,
+        blocks_read,
+        blocks_pruned,
         reserved_bytes,
     })
 }

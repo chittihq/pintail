@@ -1440,6 +1440,8 @@ impl ProjectedScanStream {
                     row_count: ranges.iter().map(std::iter::ExactSizeIterator::len).sum(),
                     stats: ScanStats {
                         segments_read: 1,
+                        blocks_read: fetch.blocks_read,
+                        blocks_pruned: fetch.blocks_pruned,
                         blocks_decoded: predicate_blocks + fetch.blocks_decoded,
                         ..ScanStats::default()
                     },
@@ -1718,6 +1720,8 @@ impl ProjectedScanStream {
             stats: ScanStats {
                 segments_read: 1,
                 blocks_decoded: fetch.blocks_decoded,
+                blocks_read: fetch.blocks_read,
+                blocks_pruned: fetch.blocks_pruned,
                 ..ScanStats::default()
             },
             retained_bytes,
@@ -1780,6 +1784,8 @@ impl ProjectedScanStream {
                 stats: ScanStats {
                     segments_read: 1,
                     blocks_decoded: fetch.blocks_decoded,
+                    blocks_read: fetch.blocks_read,
+                    blocks_pruned: fetch.blocks_pruned,
                     ..ScanStats::default()
                 },
                 retained_bytes,
