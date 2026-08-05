@@ -1868,10 +1868,16 @@ fn evaluate_eager_scalar(
             // an object.
             Ok(match found {
                 Some(serde_json::Value::Object(members)) => {
-                    let keys = members
-                        .keys()
-                        .map(|key| serde_json::Value::String(key.clone()))
-                        .collect::<Vec<_>>();
+                    // MySQL's binary JSON stores object keys shortest-first,
+                    // then bytewise, and JSON_KEYS reports that order —
+                    // ["b", "aa"], not ["aa", "b"]. mysql_json_text already
+                    // sorts this way when rendering an object; the key
+                    // extractor has to agree with it.
+                    let mut keys = members.keys().cloned().collect::<Vec<_>>();
+                    keys.sort_by(|left, right| {
+                        left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+                    });
+                    let keys = keys.into_iter().map(serde_json::Value::String).collect();
                     Value::Utf8(mysql_json_text(&serde_json::Value::Array(keys)))
                 }
                 _ => Value::Null,
