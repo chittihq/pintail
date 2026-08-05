@@ -132,17 +132,22 @@ jobs:
           image="${REGISTRY}/${IMAGE}:${{ needs.version.outputs.version }}"
           docker run --detach --name pintail-smoke --publish 8080:8080 \
             "$image" --data-dir /var/lib/pintail --http-bind 0.0.0.0:8080
+          # A first boot mints its own secrets and prints them, and this log is
+          # public. The container is thrown away seconds later so the values are
+          # worthless, but publishing anything shaped like a key teaches the
+          # wrong habit and invites someone to reuse one. Redact on both paths.
+          redacted() { docker logs pintail-smoke 2>&1 | sed -E 's/^(PINTAIL_[A-Z_]+=).*/\1<redacted>/'; }
           for _ in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8080/health >/dev/null; then
               echo "health check passed"
-              docker logs pintail-smoke | tail -5
+              redacted | tail -5
               docker rm --force pintail-smoke
               exit 0
             fi
             sleep 2
           done
           echo "published image never became healthy" >&2
-          docker logs pintail-smoke >&2
+          redacted >&2
           docker rm --force pintail-smoke
           exit 1
 
