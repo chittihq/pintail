@@ -115,18 +115,6 @@ worth refusing.
 
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
 
-#### Measured divergences awaiting repair
-
-Each row below was measured against MySQL 8.4, not inferred. All return a plausible wrong value rather than an error, so they break the rule at the top of this document and are tracked for repair in #17.
-
-| Expression | MySQL 8.4 | Pintail |
-|---|---|---|
-| `ROUND(1.005, 2)` | `1.01` | `1` |
-| `ROUND(25E-1)` | `2` | `3` |
-
-The causes cluster: `ROUND` uses the f64 carrier where MySQL applies exact-value decimal rounding, and rounds half away from zero where MySQL uses nearest-even for approximate operands; the regex engine defines POSIX classes over ASCII where MySQL's ICU engine defines them over Unicode; `LOWER`, `UPPER`, `INSTR` and `LOCATE` fold case unconditionally instead of treating a binary argument as case-sensitive; `TRIM` removes the full Unicode whitespace set rather than only the space character; and `TO_BASE64` omits MySQL's 76-column line wrapping.
-
-
 ### Planning and execution
 
 - Text keys, numeric/string coercions, out-of-range signedness conversions,

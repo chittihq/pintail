@@ -28,6 +28,8 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 
 | Behaviour | Parity |
 |---|---|
+| Numeric literals | A dotted literal is `DECIMAL` (exact); an exponent literal is `DOUBLE` (approximate), as MySQL types them |
+| `ROUND` | Half away from zero for exact operands, nearest-even for approximate ones — the mode follows the operand's type |
 | `DECIMAL` arithmetic | Exact on scaled `i128` units. `/` and `AVG` widen by 4 fraction digits, half away from zero; `SUM` accumulates scaled integers; overflow errors |
 | `BIGINT UNSIGNED` | Native `UInt64` across the full `0..=2^64-1` range |
 | Statement time | `NOW`/`CURDATE`/`CURTIME`/`UNIX_TIMESTAMP()` pinned to one timestamp per statement |
