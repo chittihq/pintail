@@ -359,73 +359,100 @@ async function main() {
       process.exit(2)
     }
 
+    // Consecutive stages sharing a lane run together; everything else keeps
+    // its own group of one. Only correctness stages share a lane — bench and
+    // accept record timings, and a co-tenant on the same host changes the
+    // numbers they exist to produce.
+    const groups: (typeof STAGES)[] = []
     for (const stage of STAGES) {
       if (!requested.includes(stage.name)) continue
-      // Earlier stages rewrite harness artifacts and the benchmark
-      // refuses dirty trees: bank artifacts before every remote stage.
-      if (stage.remote && !(await commitHarnessArtifacts(stage.name))) {
-        status(`ABORT before ${stage.name}: working tree has non-artifact changes — commit first`)
-        results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
-        break
+      const previous = groups.at(-1)
+      if (stage.lane && previous?.at(-1)?.lane === stage.lane) {
+        previous.push(stage)
+      } else {
+        groups.push([stage])
       }
-      if (stage.remote) {
-        const problem = await dockerHostPreflight()
-        if (problem) {
-          status(`ABORT before ${stage.name}: ${problem}`)
-          results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: problem })
-          break
+    }
+
+    /// Runs one stage to a verdict. `null` means the run must stop before it
+    /// started — a dirty tree or an unusable host.
+    const runStage = async (stage: (typeof STAGES)[number]) => {
+        // Earlier stages rewrite harness artifacts and the benchmark
+        // refuses dirty trees: bank artifacts before every remote stage.
+        if (stage.remote && !(await commitHarnessArtifacts(stage.name))) {
+          status(`ABORT before ${stage.name}: working tree has non-artifact changes — commit first`)
+          results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
+          return undefined
         }
-      }
-      let verdict = 'FAIL'
-      let note = ''
-      const started = Date.now()
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        status(`${stage.name}: attempt ${attempt} starting`)
-        const outcome = await run(stage.command, {
-          cwd: stage.cwd,
-          env: stage.env,
-          timeoutMinutes: stage.timeoutMinutes,
-          stallMinutes: stage.stallMinutes,
-          label: stage.name,
-        })
-        writeFileSync(join(reportDir, `${stage.name}-attempt${attempt}.log`), outcome.output)
-        if (outcome.stalled) {
-          // Distinct from a timeout: the stage was not slow, it stopped
-          // making progress. Two hangs in one session looked like this —
-          // a vanished container and a wedged docker link — and both spent
-          // the whole budget in silence.
-          note = `stalled — no output for ${stage.stallMinutes ?? 20} minutes`
-          status(`${stage.name}: no output for ${stage.stallMinutes ?? 20} minutes — killing`)
+        if (stage.remote) {
+          const problem = await dockerHostPreflight()
+          if (problem) {
+            status(`ABORT before ${stage.name}: ${problem}`)
+            results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: problem })
+            return undefined
+          }
+        }
+        let verdict = 'FAIL'
+        let note = ''
+        const started = Date.now()
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          status(`${stage.name}: attempt ${attempt} starting`)
+          const outcome = await run(stage.command, {
+            cwd: stage.cwd,
+            env: stage.env,
+            timeoutMinutes: stage.timeoutMinutes,
+            stallMinutes: stage.stallMinutes,
+            label: stage.name,
+          })
+          writeFileSync(join(reportDir, `${stage.name}-attempt${attempt}.log`), outcome.output)
+          if (outcome.stalled) {
+            // Distinct from a timeout: the stage was not slow, it stopped
+            // making progress. Two hangs in one session looked like this —
+            // a vanished container and a wedged docker link — and both spent
+            // the whole budget in silence.
+            note = `stalled — no output for ${stage.stallMinutes ?? 20} minutes`
+            status(`${stage.name}: no output for ${stage.stallMinutes ?? 20} minutes — killing`)
+            await captureContainerEvidence(stage.name)
+            break
+          }
+          if (outcome.timedOut) {
+            note = `timed out after ${stage.timeoutMinutes} minutes`
+            await captureContainerEvidence(stage.name)
+            break
+          }
+          if (outcome.code === 0) {
+            verdict = 'PASS'
+            break
+          }
           await captureContainerEvidence(stage.name)
+          const kind = classify(outcome.output)
+          note = `exit ${outcome.code} (${kind})`
+          if (kind === 'host') {
+            status(`${stage.name}: host-level failure — aborting the run`)
+            attempt = 2
+            break
+          }
+          if (kind === 'transient' && attempt === 1) {
+            status(`${stage.name}: transient failure, retrying once`)
+            continue
+          }
           break
         }
-        if (outcome.timedOut) {
-          note = `timed out after ${stage.timeoutMinutes} minutes`
-          await captureContainerEvidence(stage.name)
-          break
-        }
-        if (outcome.code === 0) {
-          verdict = 'PASS'
-          break
-        }
-        await captureContainerEvidence(stage.name)
-        const kind = classify(outcome.output)
-        note = `exit ${outcome.code} (${kind})`
-        if (kind === 'host') {
-          status(`${stage.name}: host-level failure — aborting the run`)
-          attempt = 2
-          break
-        }
-        if (kind === 'transient' && attempt === 1) {
-          status(`${stage.name}: transient failure, retrying once`)
-          continue
-        }
-        break
+        const minutes = (Date.now() - started) / 60_000
+        results.push({ name: stage.name, verdict, minutes, note })
+        status(`${stage.name}: ${verdict}${note ? ` — ${note}` : ''} (${minutes.toFixed(1)}m)`)
+    }
+
+    for (const group of groups) {
+      if (group.length > 1) {
+        status(`lane ${group[0].lane}: ${group.map((one) => one.name).join(' + ')} together`)
       }
-      const minutes = (Date.now() - started) / 60_000
-      results.push({ name: stage.name, verdict, minutes, note })
-      status(`${stage.name}: ${verdict}${note ? ` — ${note}` : ''} (${minutes.toFixed(1)}m)`)
-      if (verdict !== 'PASS') break
+      const outcomes = (await Promise.all(group.map(runStage))).filter(
+        (outcome) => outcome !== undefined,
+      )
+      results.push(...outcomes)
+      if (outcomes.length !== group.length) break
+      if (outcomes.some((outcome) => outcome.verdict !== 'PASS')) break
     }
   } finally {
     rmSync(lockPath, { force: true })
