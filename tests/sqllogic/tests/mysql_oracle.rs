@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 772;
+const EXPECTED_CASES: usize = 773;
 
 struct OracleCase {
     family: &'static str,
@@ -1015,6 +1015,14 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written named windows partitioned",
             "SELECT id, active, SUM(score) OVER w, LAG(score) OVER w FROM events \
              WINDOW w AS (PARTITION BY active ORDER BY id) ORDER BY id",
+        ),
+        // Isolating where the FROM_BASE64 vertical-tab divergence comes
+        // from: CHAR, the concatenation, or the decoder itself.
+        ordered(
+            "diagnose from_base64 vertical tab",
+            "SELECT HEX(CHAR(11)), HEX(CONCAT('YQ==', CHAR(11))), \
+             HEX(FROM_BASE64('YQ==')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11)))), \
+             HEX(FROM_BASE64('YQ== ')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(9))))",
         ),
         ordered(
             "repaired binary case sensitivity",
