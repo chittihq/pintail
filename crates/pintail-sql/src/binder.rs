@@ -3348,6 +3348,20 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         other => other,
     };
     let (data_type, nullable) = match function {
+        // LOWER/UPPER over a binary argument return it unchanged, so the
+        // result stays binary — declaring Utf8 here made the output column
+        // reject the value it was handed.
+        ScalarFunction::Lower | ScalarFunction::Upper
+            if matches!(
+                args.first().and_then(|argument| argument.data_type),
+                Some(DataType::Binary)
+            ) =>
+        {
+            (
+                Some(DataType::Binary),
+                args.iter().any(|argument| argument.nullable),
+            )
+        }
         ScalarFunction::Concat
         | ScalarFunction::Substring
         | ScalarFunction::Lower
