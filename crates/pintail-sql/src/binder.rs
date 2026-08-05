@@ -2211,33 +2211,63 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
 }
 
 fn bind_literal(value: &SqlValue) -> Result<BoundExpr, BindError> {
-    let value = match value {
-        SqlValue::Null => Value::Null,
-        SqlValue::Boolean(value) => Value::Boolean(*value),
-        SqlValue::SingleQuotedString(value) => Value::Utf8(value.clone()),
+    let (value, declared) = match value {
+        SqlValue::Null => (Value::Null, None),
+        SqlValue::Boolean(value) => (Value::Boolean(*value), None),
+        SqlValue::SingleQuotedString(value) => (Value::Utf8(value.clone()), None),
         SqlValue::Number(value, _) => parse_number(value)?,
         _ => return Err(BindError::UnsupportedLiteral(value.to_string())),
     };
     Ok(BoundExpr {
-        data_type: value.data_type(),
+        data_type: declared.or_else(|| value.data_type()),
         nullable: matches!(value, Value::Null),
         kind: BoundExprKind::Literal(value),
     })
 }
 
-fn parse_number(value: &str) -> Result<Value, BindError> {
-    if value.contains(['.', 'e', 'E']) {
+/// Types a numeric literal the way `MySQL` does.
+///
+/// An exponent makes the literal approximate (`DOUBLE`); a bare decimal point
+/// keeps it exact (`DECIMAL`). Typing every dotted literal as `Float64` meant
+/// exact-value rounding never applied to one, so `ROUND(1.005, 2)` answered 1
+/// where `MySQL` answers 1.01 — the f64 nearest to 1.005 is below it, and no
+/// amount of care in the rounding kernel recovers a digit the carrier lost.
+///
+/// The declared type rides alongside the value because a decimal travels on
+/// the canonical-text carrier, whose own `data_type()` is `Utf8`.
+fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
+    if value.contains(['e', 'E']) {
         return value
             .parse::<f64>()
-            .map(Value::float64)
+            .map(|number| (Value::float64(number), Some(DataType::Float64)))
             .map_err(|_| BindError::InvalidNumericLiteral(value.to_owned()));
     }
-    if let Ok(value) = value.parse::<i64>() {
-        return Ok(Value::Int64(value));
+    if let Some((integer, fraction)) = value.split_once('.') {
+        // Reject anything that is not digits with an optional sign, rather
+        // than silently accepting a shape the decimal carrier cannot hold.
+        let digits = integer.trim_start_matches(['-', '+']);
+        if !fraction.chars().all(|character| character.is_ascii_digit())
+            || !digits.chars().all(|character| character.is_ascii_digit())
+        {
+            return Err(BindError::InvalidNumericLiteral(value.to_owned()));
+        }
+        let scale = u8::try_from(fraction.len())
+            .map_err(|_| BindError::InvalidNumericLiteral(value.to_owned()))?
+            .min(MAX_DECIMAL_SCALE);
+        let precision = u8::try_from(digits.len().saturating_add(fraction.len()))
+            .unwrap_or(MAX_DECIMAL_PRECISION)
+            .clamp(scale.max(1), MAX_DECIMAL_PRECISION);
+        return Ok((
+            Value::Utf8(value.to_owned()),
+            Some(DataType::Decimal { precision, scale }),
+        ));
+    }
+    if let Ok(parsed) = value.parse::<i64>() {
+        return Ok((Value::Int64(parsed), Some(DataType::Int64)));
     }
     value
         .parse::<u64>()
-        .map(Value::UInt64)
+        .map(|parsed| (Value::UInt64(parsed), Some(DataType::UInt64)))
         .map_err(|_| BindError::InvalidNumericLiteral(value.to_owned()))
 }
 
@@ -4807,7 +4837,13 @@ mod tests {
         let query =
             bind("SELECT 1 + 2.5 AS total, NULL AS absent, 'hi' AS greeting").expect("bind");
         let total = &query.projection[0].expr;
-        assert_eq!(total.data_type, Some(DataType::Float64));
+        // INT + DECIMAL unifies to DECIMAL, as MySQL does. This asserted
+        // Float64 only because a dotted literal used to be typed Float64.
+        assert!(
+            matches!(total.data_type, Some(DataType::Decimal { scale: 1, .. })),
+            "expected a decimal total, got {:?}",
+            total.data_type
+        );
         assert!(matches!(
             total.kind,
             BoundExprKind::Binary {

@@ -10107,7 +10107,7 @@ mod tests {
                 Value::Int64(12),
                 Value::Int64(34),
                 Value::Utf8("MiXeD".to_owned()),
-                Value::float64(12.35),
+                Value::Utf8("12.35".into()),
                 Value::float64(100.0),
             ]
         );

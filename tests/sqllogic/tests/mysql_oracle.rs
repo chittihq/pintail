@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 773;
+const EXPECTED_CASES: usize = 774;
 
 struct OracleCase {
     family: &'static str,
@@ -1023,6 +1023,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT HEX(CHAR(11)), HEX(CONCAT('YQ==', CHAR(11))), \
              HEX(FROM_BASE64('YQ==')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11)))), \
              HEX(FROM_BASE64('YQ== ')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(9))))",
+        ),
+        ordered(
+            "repaired exact literal rounding",
+            "SELECT ROUND(1.005, 2), ROUND(25E-1), ROUND(2.5), ROUND(-2.5), \
+             ROUND(1.005E0, 2), CEIL(1.2), FLOOR(-1.2), 1 + 2.5, \
+             ROUND(12.345, 2), TRUNCATE(1.999, 2)",
         ),
         ordered(
             "repaired binary case sensitivity",

@@ -3363,6 +3363,18 @@ pub(crate) fn evaluate_unary(
     match op {
         UnaryOp::Not => Ok(mysql_truth(value)?.map_or(Value::Null, |value| Value::Boolean(!value))),
         UnaryOp::Plus => cast_numeric(value, data_type),
+        // A decimal travels on the canonical-text carrier, so the storage
+        // collapse below would send it to the Utf8 arm and reject it.
+        // Negating the text keeps the value exact, which is the whole point
+        // of carrying decimals as text.
+        UnaryOp::Minus if matches!(data_type, Some(DataType::Decimal { .. })) => {
+            let text = scalar_string(value)?;
+            let negated = match text.strip_prefix('-') {
+                Some(positive) => positive.to_owned(),
+                None => format!("-{text}"),
+            };
+            Ok(Value::Utf8(negated))
+        }
         UnaryOp::Minus => match data_type.map(DataType::storage_type) {
             Some(DataType::Float64) => Ok(Value::float64(-mysql_f64(value)?)),
             Some(DataType::Int64) => mysql_i64(value)?

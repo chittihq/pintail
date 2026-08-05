@@ -3401,8 +3401,11 @@ mod tests {
             &catalog,
             &provider,
         );
-        assert_eq!(rows[0][0], Value::float64(2.0), "CEIL");
-        assert_eq!(rows[0][1], Value::float64(-2.0), "FLOOR");
+        // Exact-valued arguments make CEIL/FLOOR return an integer, as
+        // MySQL does; they were f64 only because dotted literals used to be
+        // typed Float64.
+        assert_eq!(rows[0][0], Value::Int64(2), "CEIL");
+        assert_eq!(rows[0][1], Value::Int64(-2), "FLOOR");
         assert_eq!(rows[0][2], Value::Int64(330), "TIMESTAMPDIFF SECOND");
         assert_eq!(rows[0][3], Value::Int64(0), "TIMESTAMPDIFF MONTH boundary");
         assert_eq!(rows[0][4], Value::Int64(-10), "negative direction");
