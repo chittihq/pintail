@@ -77,39 +77,19 @@ worth refusing.
 - `ENUM` values compare and sort as their text, not as MySQL's
   declaration-index order. `CAST(col AS CHAR)` on the MySQL side produces
   matching orderings.
-- The default collation approximation is not MySQL's UCA weight tables, locale
-  tailoring, coercibility rules, or pad-space behaviour. The
-  `PINTAIL_COLLATION` flag reads once at process start and cannot change per
-  session.
-- The HTTP endpoint has no session time zone. The session zone does not affect
-  `CONVERT_TZ` or stored temporal values.
-- Compound intervals (`INTERVAL '1-2' YEAR_MONTH`,
-  `INTERVAL '3 4:00:00' DAY_SECOND`, and the other nine MySQL forms) are
-  rejected by the SQL parser rather than by Pintail: sqlparser 0.62 gates
-  interval qualifiers on a keyword list holding only the simple units, so a
-  compound qualifier fails with `INTERVAL requires a unit after the literal
-  value` before binding begins. Supporting them needs the parser to accept the
-  qualifier first, which is an upstream change, not an engine one (#13).
-- `EXTRACT` rejects compound units explicitly.
-- `STR_TO_DATE` translates the MySQL format string into the underlying parser's
-  dialect, mapping `%c %e %M %k %l %i %s %f %%` and forwarding the rest.
-  Several letters mean something different there, so a directive outside that
-  set parses against the wrong field rather than raising. This is the same
-  defect `DATE_FORMAT` carried until it was rewritten; rendering cannot be
-  reused here, because parsing needs a real parser rather than a formatter run
-  backwards (#13).
-- Date parsing accepts only the canonical date and date-time forms implemented
-  by the M2 evaluator.
-- Pintail maps an empty scalar-subquery result to `NULL`. MySQL 8.4's constant
-  `SELECT` with `LIMIT 0` produced a special-case result that does not follow
-  this; that MySQL-only corner is excluded from the common-workload corpus.
-- Integer and floating arithmetic use `Int64`, `UInt64` and `Float64` execution
-  types. Chained expressions whose intermediates are division results
-  (`a / b / c`, `(a / b) * c`) round each step to its own result scale, while
-  MySQL carries extra unrounded digits between steps.
-- `REPEAT`, `SPACE`, `LPAD` and `RPAD` cap their result at 4096 bytes and error
-  beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US
-  grouping only, with no locale argument.
+- Text comparison, grouping, hashing, `LIKE`, and ordering use a case-insensitive Unicode-lowercase approximation by default. Setting `PINTAIL_COLLATION=utf8mb4_0900_ai_ci` opts every text comparison into an accent-insensitive approximation of MySQL's default collation (NFD with combining marks stripped, then lowercased) — closer to `utf8mb4_0900_ai_ci` for Latin scripts, but still not the UCA weight tables, locale tailoring, coercibility rules, or pad-space behavior. The flag reads once at process start and cannot change per session. Binary values remain bytewise.
+
+- `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
+
+- Date parsing accepts the canonical date and date-time forms implemented by the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not implemented (#13). Compound qualifiers are rejected early by the SQL parser rather than during engine binding: sqlparser 0.62 only accepts simple interval unit keywords, so a compound qualifier fails with `INTERVAL requires a unit after the literal value`; supporting them requires the parser to accept the qualifier first (an upstream change). `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER` and `WEEK`; compound units reject explicitly.
+
+- `STR_TO_DATE` translates the MySQL format string into the underlying parser's dialect, mapping `%c %e %M %k %l %i %s %f %%` and forwarding the rest. Several letters mean something different there, so a directive outside that set parses against the wrong field rather than raising — the same defect `DATE_FORMAT` carried until it was rewritten to render each directive itself. Rendering cannot be reused here: parsing needs a real parser, not a formatter run backwards. `DATE_FORMAT` now implements MySQL's full directive inventory, including the four `WEEK` numbering modes behind `%U %u %V %v` and their paired years `%X %x`, and copies an unrecognized directive's bare character the way MySQL does.
+
+- Pintail maps an empty scalar-subquery result to `NULL`. During oracle development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a special-case result that did not follow this behavior; that MySQL-only corner is excluded from the common-workload corpus.
+
+- Integer and floating arithmetic use Pintail's current `Int64`, `UInt64`, and `Float64` execution types. `DECIMAL` values are stored losslessly, and the operations MySQL keeps exact over exact numerics are exact here too: division (`/`) and `AVG` produce a DECIMAL widened by four fraction digits with half-away-from-zero rounding, `SUM` accumulates scaled integers, and CASE/IF/COALESCE branches that mix decimals with integers unify to a decimal instead of truncating; `+`/`-`/`*` over decimal columns, casts, and literals compute exactly on scaled units, and `CAST(x AS DECIMAL(p, s))` rounds half away from zero. Remaining gap: chained expressions whose intermediates are division results (`a / b / c`, `(a / b) * c`) round each step to its own result scale while MySQL carries extra unrounded digits between steps. Numeric overflow returns an error.
+
+- `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
 
 ### Planning and execution
 
