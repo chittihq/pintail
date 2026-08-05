@@ -964,3 +964,43 @@ updates underneath. It says the storage layer's growth curves are linear and
 ingest holds; it does not say a terabyte-scale replica under live replication
 behaves the same. The next questions are churn mode at this size and a scan
 under a predicate rather than a full table read.
+
+## e26 — `unique_keys` on flushed segments, enabled and measured
+
+The one item e25 named as the ceiling. A flushed segment provably holds one
+row per key, because the memtable is a map; marking it `unique_keys` lets the
+scan classifier take the columnar direct path instead of merging row by row.
+It was measured at 6.9× and reverted, because the direct path decoded a whole
+segment in one reservation and a query with a small ceiling that used to
+stream through the chunked merge path failed outright
+(`MemoryLimitExceeded { requested: 263280, limit: 65536 }`).
+
+That blocker is gone. Sizing the direct decode to the query's remaining budget
+removed the failure, and the storage suite now passes with the flag on.
+
+Both runs below are the same host, same session, same 20M-row dataset, same
+60 segments and 224,867,282 bytes on disk — only the flag differs. `columns`
+is the columnar path; `+rows` also materializes per-row values.
+
+| Query | merge (off) | direct (on) | speedup |
+| --- | ---: | ---: | ---: |
+| amount only | 5145.1 ms | 791.8 ms | 6.50× |
+| amount + day | 6075.6 ms | 1016.8 ms | 5.98× |
+| status only (dict) | 6296.3 ms | 825.6 ms | 7.63× |
+| all five columns | 10872.9 ms | 1884.3 ms | 5.77× |
+| all five, `+rows` | 12541.4 ms | 4551.2 ms | 2.76× |
+
+The dictionary column gains most (7.63×) and the row-materializing variant
+least (2.76×), which is what the shapes predict: the merge path's cost is per
+row, so removing it helps most where the per-row work that remains is
+smallest. Ingest is untouched (156k rows/s in both runs) — the flag is one
+`all(...)` over rows the flush already holds.
+
+### The correctness condition
+
+`unique_keys` promises two things, not one: one row per key **and** no
+tombstones, because the direct path applies no tombstone filter. A flush
+carrying a delete would resurrect it. So the flag is
+`rows.iter().all(|row| !row.is_deleted())`, and `tests/suite/direct_scan.rs`
+pins the boundary — every case there passes with the flag hardcoded false,
+which is the point: what they catch is the flag being set when it must not be.
