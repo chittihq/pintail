@@ -545,6 +545,9 @@ pub enum BoundFrameBound {
 /// would silently answer a different question.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoundWindowFrame {
+    /// Whether `CURRENT ROW` means the whole peer group (`RANGE`) rather
+    /// than the single row (`ROWS`).
+    pub range: bool,
     /// Frame start, relative to the current row.
     pub start: BoundFrameBound,
     /// Frame end, relative to the current row.

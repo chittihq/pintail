@@ -1988,6 +1988,18 @@ mod tests {
                 "SELECT LAST_VALUE(id) OVER () FROM events",
                 vec![u(5), u(5), u(5), u(5), u(5)],
             ),
+            // An explicit RANGE frame with offsetless bounds is the default
+            // frame written out, so it must equal the running total.
+            (
+                "SELECT SUM(id) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING \
+                 AND CURRENT ROW) FROM events",
+                vec![u(1), u(3), u(6), u(10), u(15)],
+            ),
+            (
+                "SELECT SUM(id) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING \
+                 AND UNBOUNDED FOLLOWING) FROM events",
+                vec![u(15), u(15), u(15), u(15), u(15)],
+            ),
         ] {
             assert_eq!(
                 execute_values_with_limit(sql, &catalog, &provider, 4 * 1024 * 1024),

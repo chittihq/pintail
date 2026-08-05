@@ -13,7 +13,7 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 | Callable functions | 110 — `bun run scripts/function-surface.ts` reads them from the binder |
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG` |
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
-| Window frames | explicit `ROWS BETWEEN` with all bound forms, plus the `ROWS n PRECEDING` shorthand; `RANGE`/`GROUPS` reject |
+| Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; `RANGE BETWEEN` with offsetless bounds, where `CURRENT ROW` covers the peer group; `RANGE` with an offset and `GROUPS` reject |
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; the extending form `OVER (w …)` rejects |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities |
 | Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form, decorrelated to semi/anti joins |

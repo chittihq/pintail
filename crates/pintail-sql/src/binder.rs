@@ -4091,8 +4091,29 @@ fn bind_window_frame(
         return Ok(None);
     };
     let unsupported = || BindError::UnsupportedQueryClause(format!("window frame on {function}"));
-    if !matches!(frame.units, sqlparser::ast::WindowFrameUnits::Rows) {
-        return Err(unsupported());
+    // RANGE is accepted only with non-numeric bounds, where it differs from
+    // ROWS solely in treating CURRENT ROW as the whole peer group. RANGE with
+    // a numeric offset compares the ordering key's own VALUES, which needs
+    // typed arithmetic on that key; approximating it with row counts answers
+    // a different question, so it still rejects. GROUPS counts peer groups
+    // and rejects for the same reason.
+    let range = match frame.units {
+        sqlparser::ast::WindowFrameUnits::Rows => false,
+        sqlparser::ast::WindowFrameUnits::Range => true,
+        sqlparser::ast::WindowFrameUnits::Groups => return Err(unsupported()),
+    };
+    if range {
+        let offsetless = |edge: &sqlparser::ast::WindowFrameBound| {
+            matches!(
+                edge,
+                sqlparser::ast::WindowFrameBound::CurrentRow
+                    | sqlparser::ast::WindowFrameBound::Preceding(None)
+                    | sqlparser::ast::WindowFrameBound::Following(None)
+            )
+        };
+        if !offsetless(&frame.start_bound) || !frame.end_bound.as_ref().is_none_or(offsetless) {
+            return Err(unsupported());
+        }
     }
     let bound = |edge: &sqlparser::ast::WindowFrameBound, preceding_side: bool| {
         use sqlparser::ast::WindowFrameBound as Edge;
@@ -4126,7 +4147,7 @@ fn bind_window_frame(
         None => BoundFrameBound::CurrentRow,
         Some(edge) => bound(edge, false)?,
     };
-    Ok(Some(BoundWindowFrame { start, end }))
+    Ok(Some(BoundWindowFrame { range, start, end }))
 }
 
 fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Result<(), BindError> {

@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 774;
+const EXPECTED_CASES: usize = 776;
 
 struct OracleCase {
     family: &'static str,
@@ -1001,6 +1001,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT SEC_TO_TIME(1.5), SEC_TO_TIME(1), SEC_TO_TIME(90)",
         ),
         // A named window must resolve to exactly what the inline form means.
+        // An explicit RANGE frame with offsetless bounds differs from ROWS
+        // only in treating CURRENT ROW as the whole peer group. The tied
+        // ORDER BY key is what distinguishes the two readings.
+        ordered(
+            "hand-written window range frames",
+            "SELECT id, \
+             SUM(score) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), \
+             SUM(score) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING \
+             AND UNBOUNDED FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written window range peer groups",
+            "SELECT id, active, \
+             SUM(score) OVER (ORDER BY active RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), \
+             SUM(score) OVER (ORDER BY active RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) \
+             FROM events ORDER BY id",
+        ),
         ordered(
             "hand-written named windows",
             "SELECT id, SUM(score) OVER w, ROW_NUMBER() OVER w FROM events \

@@ -8673,14 +8673,37 @@ fn compute_window_column(
                     // window recomputed over its own width. MIN/MAX cannot be
                     // un-accumulated, so a bounded start has no cheaper form
                     // without a monotonic deque per aggregate kind.
+                    // The incremental path needs the frame end to advance
+                    // monotonically, which holds for both ROWS and RANGE when
+                    // the start is anchored — peer-group ends are also
+                    // non-decreasing across a sorted partition.
                     let running = matches!(frame.start, Edge::UnboundedPreceding);
                     let mut state = AggregateState::new(aggregate);
                     let mut accumulated = 0_usize;
                     let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
                     for index in 0..len {
+                        // Under RANGE, CURRENT ROW covers the whole peer
+                        // group rather than the single row: the frame is
+                        // defined over the ordering key's values, and peers
+                        // share one value.
+                        let peer_start = |from: usize| {
+                            let mut first = from;
+                            while first > 0 && same_peers(partition[first - 1], partition[from]) {
+                                first -= 1;
+                            }
+                            first
+                        };
+                        let peer_end = |from: usize| {
+                            let mut last = from + 1;
+                            while last < len && same_peers(partition[from], partition[last]) {
+                                last += 1;
+                            }
+                            last
+                        };
                         let start = match frame.start {
                             Edge::UnboundedPreceding => 0,
                             Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
+                            Edge::CurrentRow if frame.range => peer_start(index),
                             Edge::CurrentRow => index,
                             Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
                             Edge::UnboundedFollowing => len,
@@ -8690,6 +8713,7 @@ fn compute_window_column(
                             Edge::Preceding(offset) => {
                                 index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
                             }
+                            Edge::CurrentRow if frame.range => peer_end(index),
                             Edge::CurrentRow => index + 1,
                             Edge::Following(offset) => index
                                 .saturating_add(clamp(offset))
