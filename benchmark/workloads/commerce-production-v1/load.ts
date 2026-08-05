@@ -165,9 +165,22 @@ async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise
   // attributes that a Linux daemon cannot restore (lsetxattr fails).
   const pipeline = `set -o pipefail; tar --no-xattrs --no-mac-metadata -C ${JSON.stringify(txtDir)} -cf - . | gzip -1 | ssh ${JSON.stringify(target)} 'gzip -dc | docker cp - ${JSON.stringify(`${o.mysqlName}:/var/lib/mysql-files/ds`)}'`
   const child = Bun.spawn(['bash', '-c', pipeline], { stdout: 'ignore', stderr: 'pipe' })
-  if ((await child.exited) !== 0) {
-    throw new Error(`ssh dataset copy failed: ${await new Response(child.stderr).text()}`)
+  // The transfer emits nothing until it finishes, which can be many minutes
+  // on a loaded link. A driver watching for a stalled stage cannot tell that
+  // apart from a wedge, so report elapsed time while it runs: silence then
+  // means stuck rather than merely slow.
+  const started = performance.now()
+  const heartbeat = setInterval(() => {
+    o.log(`still copying dataset (${Math.round((performance.now() - started) / 1000)}s elapsed)`)
+  }, 30_000)
+  try {
+    if ((await child.exited) !== 0) {
+      throw new Error(`ssh dataset copy failed: ${await new Response(child.stderr).text()}`)
+    }
+  } finally {
+    clearInterval(heartbeat)
   }
+  o.log(`dataset copied in ${Math.round((performance.now() - started) / 1000)}s`)
 }
 
 export async function loadDataset(conn: mysql.Connection, o: LoadOptions): Promise<SeedResult> {

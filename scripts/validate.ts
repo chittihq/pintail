@@ -112,9 +112,10 @@ const STAGES: Stage[] = [
     name: 'accept',
     remote: true,
     timeoutMinutes: 120,
-    // The stage that hung twice. It reports snapshot progress while
-    // working, so a long silence means it is stuck, not busy.
-    stallMinutes: 15,
+    // The stage that hung twice. Its dataset copy and snapshot both report
+    // progress while working, so a long silence here means stuck rather
+    // than busy — but leave room for a slow link between heartbeats.
+    stallMinutes: 20,
     command: [
       'bun', 'run', 'run-production.ts',
       '--profile', 'ci', '--dataset', 'ci',
@@ -180,7 +181,7 @@ async function run(
       }
       // Heartbeat so a long stage is visibly alive in the status log, and
       // so a reader can see what it was doing when it stopped.
-      if (Date.now() - lastHeartbeat >= 60_000) {
+      if (child.exitCode === null && Date.now() - lastHeartbeat >= 60_000) {
         lastHeartbeat = Date.now()
         const quietFor = Math.round(quiet / 1000)
         status(`${options.label ?? 'stage'}: alive, ${quietFor}s since output — ${lastLine.slice(0, 120)}`)
