@@ -164,7 +164,21 @@ async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise
   // --no-xattrs/--no-mac-metadata: macOS tar embeds Apple extended
   // attributes that a Linux daemon cannot restore (lsetxattr fails).
   const pipeline = `set -o pipefail; tar --no-xattrs --no-mac-metadata -C ${JSON.stringify(txtDir)} -cf - . | gzip -1 | ssh ${JSON.stringify(target)} 'gzip -dc | docker cp - ${JSON.stringify(`${o.mysqlName}:/var/lib/mysql-files/ds`)}'`
-  const child = Bun.spawn(['bash', '-c', pipeline], { stdout: 'ignore', stderr: 'pipe' })
+  // Job control puts the pipeline in its own process group so the whole
+  // chain can be signalled. Killing the shell alone leaves tar and ssh
+  // orphaned to PPID 1, still holding the transfer open — measured, after a
+  // deadline fired and the copy carried on regardless.
+  const supervised = [
+    'set -m',
+    `{ ${pipeline} ; } &`,
+    'PIPELINE=$!',
+    `trap 'kill -TERM -$PIPELINE 2>/dev/null; exit 143' TERM INT`,
+    'wait $PIPELINE',
+  ].join('\n')
+  const child = Bun.spawn(['bash', '-c', supervised], {
+    stdout: 'ignore',
+    stderr: 'pipe',
+  })
   // The transfer emits nothing until it finishes, so report elapsed time to
   // prove the process is alive — but liveness is not progress. A timer keeps
   // printing whether or not a byte moves, which is how a wedged copy used to
@@ -174,9 +188,15 @@ async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise
   // takes, far short of the 120-minute stage budget it used to burn.
   const COPY_DEADLINE_SECONDS = 45 * 60
   const started = performance.now()
-  const heartbeat = setInterval(() => {
+  let heartbeat: ReturnType<typeof setInterval>
+  // eslint-disable-next-line prefer-const
+  heartbeat = setInterval(() => {
     const elapsed = Math.round((performance.now() - started) / 1000)
     if (elapsed > COPY_DEADLINE_SECONDS) {
+      // Stop the timer before signalling: leaving it armed re-fired every
+      // 30 seconds, and that stream of output also kept the stage's stall
+      // watchdog from ever noticing the copy had stopped progressing.
+      clearInterval(heartbeat)
       o.log(`dataset copy exceeded ${COPY_DEADLINE_SECONDS}s — killing it`)
       child.kill()
       return
