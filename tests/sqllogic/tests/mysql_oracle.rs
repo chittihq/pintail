@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 755;
+const EXPECTED_CASES: usize = 761;
 
 struct OracleCase {
     family: &'static str,
@@ -919,6 +919,37 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written maketime",
             "SELECT MAKETIME(12, 15, 30), MAKETIME(0, 0, 0), MAKETIME(-1, 30, 0), \
              MAKETIME(1, 60, 0), MAKETIME(1, 0, 60)",
+        ),
+        // Claims from a Codex semantic-parity review, all of which were
+        // INFERRED from reading rather than measured. These cases let MySQL
+        // decide which are real before anything is changed on their account.
+        ordered(
+            "codex-claim rounding",
+            "SELECT ROUND(1.005, 2), ROUND(25E-1), ROUND(2.5), ROUND(-2.5), \
+             ROUND(1.005E0, 2)",
+        ),
+        ordered(
+            "codex-claim regexp unicode classes",
+            "SELECT REGEXP_LIKE('\u{e9}', '[[:alpha:]]'), REGEXP_LIKE('a', '[[:alpha:]]'), \
+             REGEXP_LIKE('\u{e9}', '\\\\w')",
+        ),
+        ordered(
+            "codex-claim binary case sensitivity",
+            "SELECT LOWER(CAST('ABC' AS BINARY)), UPPER(CAST('abc' AS BINARY)), \
+             INSTR(CAST('A' AS BINARY), 'a'), LOCATE('a', CAST('A' AS BINARY))",
+        ),
+        ordered(
+            "codex-claim trim whitespace class",
+            "SELECT HEX(TRIM(CHAR(9))), HEX(TRIM(' a ')), HEX(TRIM(CONCAT(CHAR(9), 'a')))",
+        ),
+        ordered(
+            "codex-claim base64 framing",
+            "SELECT TO_BASE64(REPEAT('a', 58)), LENGTH(TO_BASE64(REPEAT('a', 58))), \
+             HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11))))",
+        ),
+        ordered(
+            "codex-claim fractional seconds",
+            "SELECT TIME_TO_SEC('00:00:00.5'), SEC_TO_TIME(1.5), SEC_TO_TIME(1)",
         ),
         ordered(
             "hand-written conditionals",
