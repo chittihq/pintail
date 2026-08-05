@@ -3978,6 +3978,90 @@ mod tests {
         );
     }
 
+    /// Hostile arguments must return or error, never abort the process.
+    ///
+    /// Three defects this session were invisible to a value-comparison
+    /// suite because they were bad ARGUMENTS rather than wrong answers:
+    /// `UNHEX` sliced a multibyte string mid-character, `CONV` called `abs()` on
+    /// `i64::MIN`, and `NTILE` walked 2^64 buckets. This sweeps the scalar
+    /// surface with the argument shapes that produced them.
+    ///
+    /// Each function is exercised only at an arity its binder accepts —
+    /// calling one with too few arguments proves nothing, because the
+    /// binder rejects that before evaluation ever runs.
+    #[test]
+    fn hostile_arguments_never_abort_the_process() {
+        use pintail_types::{DataType, Value};
+        let hostile = [
+            Value::Utf8(String::new()),
+            Value::Utf8("\u{e9}a".into()),
+            Value::Utf8("\u{1f600}\u{1f600}".into()),
+            Value::Utf8("-".into()),
+            Value::Utf8(".".into()),
+            Value::Utf8("1e999".into()),
+            Value::Int64(i64::MIN),
+            Value::Int64(i64::MAX),
+            Value::Int64(-1),
+            Value::UInt64(u64::MAX),
+            Value::float64(f64::NAN),
+            Value::float64(f64::INFINITY),
+            Value::Binary(vec![0xFF, 0xFE]),
+        ];
+        // (function, arity the binder accepts)
+        let surface = [
+            (ScalarFunction::SubstringIndex, 3),
+            (ScalarFunction::Conv, 3),
+            (ScalarFunction::MakeTime, 3),
+            (ScalarFunction::Lpad, 3),
+            (ScalarFunction::Rpad, 3),
+            (ScalarFunction::Substring, 3),
+            (ScalarFunction::Left, 2),
+            (ScalarFunction::Right, 2),
+            (ScalarFunction::Repeat, 2),
+            (ScalarFunction::Locate, 2),
+            (ScalarFunction::Instr, 2),
+            (ScalarFunction::LogBase, 2),
+            (ScalarFunction::Power, 2),
+            (ScalarFunction::Round { decimal: false }, 2),
+            (ScalarFunction::Truncate { decimal: false }, 2),
+            (ScalarFunction::DateFormat, 2),
+            (ScalarFunction::StrToDate, 2),
+            (ScalarFunction::JsonLength, 2),
+            (ScalarFunction::JsonKeys, 2),
+            (ScalarFunction::JsonContains, 2),
+            (ScalarFunction::Unhex, 1),
+            (ScalarFunction::Hex, 1),
+            (ScalarFunction::FromBase64, 1),
+            (ScalarFunction::ToBase64, 1),
+            (ScalarFunction::SecToTime, 1),
+            (ScalarFunction::JsonValid, 1),
+            (ScalarFunction::JsonType, 1),
+            (ScalarFunction::Ceil { decimal: false }, 1),
+            (ScalarFunction::Abs { decimal: false }, 1),
+            (ScalarFunction::Space, 1),
+            (ScalarFunction::Reverse, 1),
+        ];
+        for (function, arity) in surface {
+            for first in &hostile {
+                for second in &hostile {
+                    let args: Vec<Value> = (0..arity)
+                        .map(|position| {
+                            if position == 0 {
+                                first.clone()
+                            } else {
+                                second.clone()
+                            }
+                        })
+                        .collect();
+                    let outcome = std::panic::catch_unwind(|| {
+                        super::evaluate_eager_scalar(function, &args, Some(DataType::Utf8))
+                    });
+                    assert!(outcome.is_ok(), "{function:?} aborted on {args:?}");
+                }
+            }
+        }
+    }
+
     /// A multibyte argument used to panic here: the odd-length pad made the
     /// fixed two-byte slice land inside a character. Reachable from any
     /// client query, so it is a crash rather than a wrong answer.

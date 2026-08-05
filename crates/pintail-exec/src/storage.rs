@@ -1887,6 +1887,85 @@ mod tests {
         );
     }
 
+    /// The same aggregate must answer identically whether it runs against a
+    /// memtable, a settled snapshot that engages the SMA fold, or a spill.
+    ///
+    /// This is the gap that hid a wrong answer: the SMA fold only engages
+    /// for a settled snapshot, and every oracle case runs against freshly
+    /// ingested rows still in the memtable, so nothing ever entered that
+    /// path. A disagreement between paths is a defect even when both look
+    /// plausible on their own.
+    #[test]
+    fn aggregates_agree_across_memtable_settled_and_spilled_paths() {
+        let queries = [
+            "SELECT COUNT(id) FROM events",
+            "SELECT SUM(id) FROM events",
+            "SELECT MIN(id) FROM events",
+            "SELECT MAX(id) FROM events",
+            "SELECT VAR_POP(id) FROM events",
+            "SELECT STDDEV_POP(id) FROM events",
+            "SELECT BIT_AND(id) FROM events",
+            "SELECT BIT_OR(id) FROM events",
+            "SELECT BIT_XOR(id) FROM events",
+            "SELECT COUNT(*) FROM events",
+        ];
+
+        let answers = |flush: bool, memory: usize| -> Vec<Vec<Value>> {
+            let directory = tempfile::tempdir().expect("temporary table");
+            let schema = schema();
+            let mut table =
+                TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+                    .expect("open table");
+            table
+                .ingest((1..=64_u64).map(|id| row(id, "value")).collect())
+                .expect("ingest");
+            if flush {
+                // A flushed, checkpointed table leaves the rows in segments
+                // with an empty memtable — the shape the SMA fold requires.
+                table.flush().expect("flush");
+                table.checkpoint().expect("checkpoint");
+            }
+            let snapshot = table.snapshot();
+            let database_id = DatabaseId::new(81);
+            let table_id = TableId::new(83);
+            let entry = TableEntry::new(
+                table_id,
+                "events",
+                schema,
+                TableStatistics::with_row_count(64),
+            )
+            .expect("table entry");
+            let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+            let catalog = CatalogSnapshot::new([database]).expect("catalog");
+            let provider =
+                SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+            queries
+                .iter()
+                .map(|sql| execute_values_with_limit(sql, &catalog, &provider, memory))
+                .collect()
+        };
+
+        let memtable = answers(false, 64 * 1024 * 1024);
+        let settled = answers(true, 64 * 1024 * 1024);
+        // A ceiling this tight forces the spilling operators onto disk.
+        let spilled = answers(true, 256 * 1024);
+
+        for (index, sql) in queries.iter().enumerate() {
+            assert_eq!(
+                memtable[index], settled[index],
+                "memtable and settled snapshot disagree on {sql}"
+            );
+            assert_eq!(
+                memtable[index], spilled[index],
+                "memtable and spilled execution disagree on {sql}"
+            );
+        }
+        // Guard the guard: a fold that silently answered from empty state
+        // would return NULL here and match nothing real.
+        assert_eq!(memtable[0], vec![Value::UInt64(64)], "COUNT sanity");
+        assert_ne!(memtable[4], vec![Value::Null], "VAR_POP must not be NULL");
+    }
+
     /// A named window resolves to its definition before binding.
     #[test]
     fn named_windows_resolve_to_their_definition() {
