@@ -8329,6 +8329,8 @@ struct CompiledWindow {
     partition: Vec<CompiledExpr>,
     /// Order keys with `(ascending, nulls_first, decimal)`.
     order: Vec<(CompiledExpr, bool, bool, bool)>,
+    /// Explicit `ROWS` frame; `None` keeps `MySQL`'s default frame.
+    frame: Option<pintail_sql::BoundWindowFrame>,
 }
 
 enum CompiledWindowFunction {
@@ -8338,11 +8340,43 @@ enum CompiledWindowFunction {
     /// The aggregate plus its compiled argument; `COUNT(*)` compiles a
     /// constant 1 so every row counts.
     Aggregate(CompiledAggregate, CompiledExpr),
+    /// `LAG`/`LEAD` with its compiled value expression; the default is
+    /// compiled alongside so the edge substitution is a plain lookup.
+    Offset {
+        lead: bool,
+        offset: u64,
+        argument: CompiledExpr,
+        default: Option<CompiledExpr>,
+    },
+    NTile(u64),
+    Extreme {
+        last: bool,
+        argument: CompiledExpr,
+    },
 }
 
 impl CompiledWindow {
     fn compile(window: &BoundWindow, columns: &[BoundColumn]) -> Result<Self, ExecError> {
         let function = match &window.function {
+            WindowFunction::Offset {
+                lead,
+                expr,
+                offset,
+                default,
+            } => CompiledWindowFunction::Offset {
+                lead: *lead,
+                offset: *offset,
+                argument: CompiledExpr::compile(expr, columns)?,
+                default: default
+                    .as_ref()
+                    .map(|value| CompiledExpr::compile(value, columns))
+                    .transpose()?,
+            },
+            WindowFunction::NTile(buckets) => CompiledWindowFunction::NTile(*buckets),
+            WindowFunction::Extreme { last, expr } => CompiledWindowFunction::Extreme {
+                last: *last,
+                argument: CompiledExpr::compile(expr, columns)?,
+            },
             WindowFunction::RowNumber => CompiledWindowFunction::RowNumber,
             WindowFunction::Rank => CompiledWindowFunction::Rank,
             WindowFunction::DenseRank => CompiledWindowFunction::DenseRank,
@@ -8383,6 +8417,7 @@ impl CompiledWindow {
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
+            frame: window.frame,
         })
     }
 }
@@ -8419,8 +8454,25 @@ fn build_window(
                 for (expr, _, _, _) in &window.order {
                     row_keys.push(expr.evaluate(&batch, row)?);
                 }
-                if let CompiledWindowFunction::Aggregate(_, argument) = &window.function {
-                    row_keys.push(argument.evaluate(&batch, row)?);
+                match &window.function {
+                    CompiledWindowFunction::Aggregate(_, argument)
+                    | CompiledWindowFunction::Extreme { argument, .. } => {
+                        row_keys.push(argument.evaluate(&batch, row)?);
+                    }
+                    // LAG/LEAD carry the value and, when present, the edge
+                    // default, so both are read positionally later.
+                    CompiledWindowFunction::Offset {
+                        argument, default, ..
+                    } => {
+                        row_keys.push(argument.evaluate(&batch, row)?);
+                        if let Some(default) = default {
+                            row_keys.push(default.evaluate(&batch, row)?);
+                        }
+                    }
+                    CompiledWindowFunction::RowNumber
+                    | CompiledWindowFunction::Rank
+                    | CompiledWindowFunction::DenseRank
+                    | CompiledWindowFunction::NTile(_) => {}
                 }
                 memory.reserve(estimated_row_payload_bytes(&row_keys))?;
                 keys[index].push(row_keys);
@@ -8532,9 +8584,140 @@ fn compute_window_column(
                     });
                 }
             }
+            CompiledWindowFunction::Offset {
+                lead,
+                offset,
+                default,
+                ..
+            } => {
+                let value_position = partition_len + window.order.len();
+                let offset = usize::try_from(*offset).unwrap_or(usize::MAX);
+                for (index, row) in partition.iter().enumerate() {
+                    let source = if *lead {
+                        index.checked_add(offset)
+                    } else {
+                        index.checked_sub(offset)
+                    };
+                    let value = match source.filter(|source| *source < partition.len()) {
+                        Some(source) => keys[partition[source]][value_position].clone(),
+                        // Past the partition edge MySQL substitutes the
+                        // default, evaluated on the current row, and NULL
+                        // when none was given.
+                        None if default.is_some() => keys[*row][value_position + 1].clone(),
+                        None => Value::Null,
+                    };
+                    memory.reserve(value.heap_bytes())?;
+                    results[*row] = value;
+                }
+            }
+            CompiledWindowFunction::NTile(buckets) => {
+                // MySQL gives the larger buckets to the earlier positions:
+                // the first (len % buckets) buckets take one extra row.
+                let buckets = usize::try_from(*buckets).unwrap_or(1).max(1);
+                let base = partition.len() / buckets;
+                let wide = partition.len() % buckets;
+                let mut assigned = 0;
+                for bucket in 0..buckets {
+                    let size = base + usize::from(bucket < wide);
+                    for row in partition.iter().skip(assigned).take(size) {
+                        results[*row] = Value::UInt64(bucket as u64 + 1);
+                    }
+                    assigned += size;
+                }
+            }
+            CompiledWindowFunction::Extreme { last, .. } => {
+                let value_position = partition_len + window.order.len();
+                if !*last || window.order.is_empty() {
+                    // FIRST_VALUE reads the partition's first row; without
+                    // ORDER BY the frame is the whole partition, so
+                    // LAST_VALUE reads its last.
+                    let source = if *last {
+                        *partition.last().expect("partitions are non-empty")
+                    } else {
+                        partition[0]
+                    };
+                    let value = keys[source][value_position].clone();
+                    for row in partition {
+                        memory.reserve(value.heap_bytes())?;
+                        results[*row] = value.clone();
+                    }
+                } else {
+                    // Under MySQL's default frame LAST_VALUE is the last row
+                    // of the CURRENT PEER GROUP, not of the partition. This
+                    // surprises people, and matching it is the whole point of
+                    // pinning it against the oracle.
+                    let mut group_start = 0;
+                    while group_start < partition.len() {
+                        let mut group_end = group_start + 1;
+                        while group_end < partition.len()
+                            && same_peers(partition[group_start], partition[group_end])
+                        {
+                            group_end += 1;
+                        }
+                        let value = keys[partition[group_end - 1]][value_position].clone();
+                        for row in &partition[group_start..group_end] {
+                            memory.reserve(value.heap_bytes())?;
+                            results[*row] = value.clone();
+                        }
+                        group_start = group_end;
+                    }
+                }
+            }
             CompiledWindowFunction::Aggregate(aggregate, _) => {
                 let argument_position = partition_len + window.order.len();
-                if window.order.is_empty() {
+                if let Some(frame) = window.frame {
+                    use pintail_sql::BoundFrameBound as Edge;
+                    let len = partition.len();
+                    // A frame anchored at UNBOUNDED PRECEDING accumulates
+                    // once across the partition; anything else is a sliding
+                    // window recomputed over its own width. MIN/MAX cannot be
+                    // un-accumulated, so a bounded start has no cheaper form
+                    // without a monotonic deque per aggregate kind.
+                    let running = matches!(frame.start, Edge::UnboundedPreceding);
+                    let mut state = AggregateState::new(aggregate);
+                    let mut accumulated = 0_usize;
+                    let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
+                    for index in 0..len {
+                        let start = match frame.start {
+                            Edge::UnboundedPreceding => 0,
+                            Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
+                            Edge::CurrentRow => index,
+                            Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
+                            Edge::UnboundedFollowing => len,
+                        };
+                        let end = match frame.end {
+                            Edge::UnboundedPreceding => 0,
+                            Edge::Preceding(offset) => {
+                                index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
+                            }
+                            Edge::CurrentRow => index + 1,
+                            Edge::Following(offset) => index
+                                .saturating_add(clamp(offset))
+                                .saturating_add(1)
+                                .min(len),
+                            Edge::UnboundedFollowing => len,
+                        };
+                        let value = if running {
+                            while accumulated < end {
+                                state.update(
+                                    aggregate,
+                                    &keys[partition[accumulated]][argument_position],
+                                    memory,
+                                )?;
+                                accumulated += 1;
+                            }
+                            state.clone().finish(memory)?
+                        } else {
+                            let mut framed = AggregateState::new(aggregate);
+                            for row in partition.iter().take(end).skip(start) {
+                                framed.update(aggregate, &keys[*row][argument_position], memory)?;
+                            }
+                            framed.finish(memory)?
+                        };
+                        memory.reserve(value.heap_bytes())?;
+                        results[partition[index]] = value;
+                    }
+                } else if window.order.is_empty() {
                     // Whole-partition frame.
                     let mut state = AggregateState::new(aggregate);
                     for row in partition {

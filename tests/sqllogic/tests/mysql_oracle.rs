@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 755;
+const EXPECTED_CASES: usize = 768;
 
 struct OracleCase {
     family: &'static str,
@@ -919,6 +919,84 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written maketime",
             "SELECT MAKETIME(12, 15, 30), MAKETIME(0, 0, 0), MAKETIME(-1, 30, 0), \
              MAKETIME(1, 60, 0), MAKETIME(1, 0, 60)",
+        ),
+        // The offset window functions. LAST_VALUE is the case worth pinning:
+        // under MySQL's default frame it reads the last row of the CURRENT
+        // PEER GROUP, not of the partition, so with a unique ORDER BY key it
+        // returns the current row's own value. Reading it as "last row of the
+        // partition" is the common mistake and these cases would catch it.
+        ordered(
+            "hand-written lag lead",
+            "SELECT id, LAG(score) OVER (ORDER BY id), LEAD(score) OVER (ORDER BY id) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written lag lead offset default",
+            "SELECT id, LAG(score, 2, -1) OVER (ORDER BY id), \
+             LEAD(score, 3, -1) OVER (ORDER BY id), \
+             LAG(score, 0) OVER (ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written lag lead partitioned",
+            "SELECT id, active, LAG(score) OVER (PARTITION BY active ORDER BY id), \
+             LEAD(score) OVER (PARTITION BY active ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written ntile",
+            "SELECT id, NTILE(3) OVER (ORDER BY id), NTILE(4) OVER (ORDER BY id), \
+             NTILE(1) OVER (ORDER BY id), NTILE(20) OVER (ORDER BY id) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written first last value unique order",
+            "SELECT id, FIRST_VALUE(score) OVER (ORDER BY id), \
+             LAST_VALUE(score) OVER (ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written first last value peer groups",
+            "SELECT id, active, FIRST_VALUE(score) OVER (ORDER BY active), \
+             LAST_VALUE(score) OVER (ORDER BY active) FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written first last value no order",
+            "SELECT id, FIRST_VALUE(score) OVER (PARTITION BY active), \
+             LAST_VALUE(score) OVER (PARTITION BY active) FROM events ORDER BY id",
+        ),
+        // Explicit ROWS frames: running totals and moving windows.
+        ordered(
+            "hand-written window rows frames",
+            "SELECT id, \
+             SUM(score) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), \
+             SUM(score) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), \
+             SUM(score) OVER (ORDER BY id ROWS 2 PRECEDING), \
+             SUM(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "hand-written window rows frames unbounded",
+            "SELECT id, \
+             MAX(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), \
+             COUNT(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), \
+             SUM(score) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) \
+             FROM events ORDER BY id",
+        ),
+        // The four divergences repaired this batch.
+        ordered(
+            "repaired trim whitespace class",
+            "SELECT HEX(TRIM(CHAR(9))), HEX(TRIM(' a ')), HEX(TRIM(CONCAT(CHAR(9), 'a')))",
+        ),
+        ordered(
+            "repaired base64 wrapping",
+            "SELECT LENGTH(TO_BASE64(REPEAT('a', 58))), TO_BASE64(REPEAT('a', 58))",
+        ),
+        ordered(
+            "repaired sec_to_time fraction",
+            "SELECT SEC_TO_TIME(1.5), SEC_TO_TIME(1), SEC_TO_TIME(90)",
+        ),
+        ordered(
+            "repaired regexp unicode classes",
+            "SELECT REGEXP_LIKE('\u{e9}', '[[:alpha:]]'), REGEXP_LIKE('a', '[[:alpha:]]'), \
+             REGEXP_LIKE('1', '[[:alpha:]]'), REGEXP_LIKE('1', '[[:digit:]]')",
         ),
         ordered(
             "hand-written conditionals",

@@ -12,10 +12,11 @@ use sqlparser::ast::{
 };
 
 use crate::bound::{
-    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
-    BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery,
-    BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart,
-    IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
+    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
+    BoundFrameBound, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey,
+    BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow,
+    BoundWindowFrame, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, UnaryOp,
+    WindowFunction,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -2549,8 +2550,9 @@ fn bind_window_function(
     let Some(WindowType::WindowSpec(spec)) = &function.over else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
-    if spec.window_name.is_some() || spec.window_frame.is_some() {
-        // v1 windows run MySQL's default frames only.
+    // Named windows still reject; explicit frames are bound below and
+    // narrowed to ROWS there.
+    if spec.window_name.is_some() {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     }
     let name_parts = object_name_parts(&function.name)?;
@@ -2575,6 +2577,86 @@ fn bind_window_function(
             return Err(BindError::UnsupportedExpression(function.to_string()));
         }
         (window_function, Some(DataType::UInt64), false)
+    } else if matches!(upper.as_str(), "LAG" | "LEAD") {
+        // MySQL takes (expr), (expr, offset) or (expr, offset, default), and
+        // requires the offset to be a constant non-negative integer.
+        if arguments.args.is_empty() || arguments.args.len() > 3 {
+            return Err(BindError::UnsupportedExpression(function.to_string()));
+        }
+        let mut bound = Vec::new();
+        for argument in &arguments.args {
+            let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = argument else {
+                return Err(BindError::UnsupportedExpression(function.to_string()));
+            };
+            bound.push(bind_expr_inner(
+                expr, tables, aggregates, &mut None, subqueries,
+            )?);
+        }
+        let offset = match bound.get(1) {
+            None => 1,
+            Some(BoundExpr {
+                kind: BoundExprKind::Literal(Value::Int64(count)),
+                ..
+            }) if *count >= 0 => u64::try_from(*count).unwrap_or(1),
+            Some(BoundExpr {
+                kind: BoundExprKind::Literal(Value::UInt64(count)),
+                ..
+            }) => *count,
+            Some(_) => return Err(BindError::UnsupportedExpression(function.to_string())),
+        };
+        let value_type = bound[0].data_type;
+        // MySQL coerces the default to the value's type. Without this a
+        // literal 0 defaulting a BIGINT UNSIGNED column yields a signed
+        // value, and the output column rejects the mixed types.
+        let default = match (bound.get(2).cloned(), value_type) {
+            (Some(expr), Some(target)) if expr.data_type != Some(target) => {
+                Some(bind_scalar(ScalarFunction::Cast(target), vec![expr])?)
+            }
+            (other, _) => other,
+        };
+        (
+            WindowFunction::Offset {
+                lead: upper == "LEAD",
+                expr: Box::new(bound[0].clone()),
+                offset,
+                default: default.map(Box::new),
+            },
+            value_type,
+            // A default only removes the edge NULL when it is itself
+            // non-NULL, and the value expression may be NULL regardless.
+            true,
+        )
+    } else if upper == "NTILE" {
+        let [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] = arguments.args.as_slice() else {
+            return Err(BindError::UnsupportedExpression(function.to_string()));
+        };
+        let bound = bind_expr_inner(expr, tables, aggregates, &mut None, subqueries)?;
+        let buckets = match &bound.kind {
+            BoundExprKind::Literal(Value::Int64(count)) if *count > 0 => {
+                u64::try_from(*count).unwrap_or(1)
+            }
+            BoundExprKind::Literal(Value::UInt64(count)) if *count > 0 => *count,
+            _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+        };
+        (
+            WindowFunction::NTile(buckets),
+            Some(DataType::UInt64),
+            false,
+        )
+    } else if matches!(upper.as_str(), "FIRST_VALUE" | "LAST_VALUE") {
+        let [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] = arguments.args.as_slice() else {
+            return Err(BindError::UnsupportedExpression(function.to_string()));
+        };
+        let bound = bind_expr_inner(expr, tables, aggregates, &mut None, subqueries)?;
+        let value_type = bound.data_type;
+        (
+            WindowFunction::Extreme {
+                last: upper == "LAST_VALUE",
+                expr: Box::new(bound),
+            },
+            value_type,
+            true,
+        )
     } else {
         {
             let aggregate_function = aggregate_function_name(function)
@@ -2629,10 +2711,19 @@ fn bind_window_function(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let frame = bind_window_frame(spec, function)?;
+    if frame.is_some() && !matches!(window_function, WindowFunction::Aggregate(_)) {
+        // Ranking and offset functions ignore or forbid a frame in MySQL;
+        // rejecting is safer than silently dropping it.
+        return Err(BindError::UnsupportedQueryClause(format!(
+            "window frame on {function}"
+        )));
+    }
     let window = BoundWindow {
         function: window_function,
         partition_by,
         order_by,
+        frame,
         data_type,
         nullable,
     };
@@ -3865,6 +3956,56 @@ fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Resu
         | BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_) => Ok(()),
     }
+}
+
+/// Binds an explicit window frame, accepting only `ROWS` with constant
+/// offsets. `RANGE` with a numeric offset compares the ordering key's values
+/// rather than counting rows, and `GROUPS` counts peer groups; approximating
+/// either with row counts answers a different question, so both reject.
+fn bind_window_frame(
+    spec: &sqlparser::ast::WindowSpec,
+    function: &Function,
+) -> Result<Option<BoundWindowFrame>, BindError> {
+    let Some(frame) = &spec.window_frame else {
+        return Ok(None);
+    };
+    let unsupported = || BindError::UnsupportedQueryClause(format!("window frame on {function}"));
+    if !matches!(frame.units, sqlparser::ast::WindowFrameUnits::Rows) {
+        return Err(unsupported());
+    }
+    let bound = |edge: &sqlparser::ast::WindowFrameBound, preceding_side: bool| {
+        use sqlparser::ast::WindowFrameBound as Edge;
+        let offset = |value: &Option<Box<Expr>>| -> Result<u64, BindError> {
+            let Some(expr) = value else {
+                return Err(unsupported());
+            };
+            match expr.as_ref() {
+                Expr::Value(value) => match &value.value {
+                    sqlparser::ast::Value::Number(text, _) => {
+                        text.parse::<u64>().map_err(|_| unsupported())
+                    }
+                    _ => Err(unsupported()),
+                },
+                _ => Err(unsupported()),
+            }
+        };
+        match edge {
+            Edge::CurrentRow => Ok(BoundFrameBound::CurrentRow),
+            Edge::Preceding(None) if preceding_side => Ok(BoundFrameBound::UnboundedPreceding),
+            Edge::Preceding(None) => Err(unsupported()),
+            Edge::Preceding(value) => Ok(BoundFrameBound::Preceding(offset(value)?)),
+            Edge::Following(None) if preceding_side => Err(unsupported()),
+            Edge::Following(None) => Ok(BoundFrameBound::UnboundedFollowing),
+            Edge::Following(value) => Ok(BoundFrameBound::Following(offset(value)?)),
+        }
+    };
+    let start = bound(&frame.start_bound, true)?;
+    // The shorthand `ROWS <n> PRECEDING` means `... AND CURRENT ROW`.
+    let end = match &frame.end_bound {
+        None => BoundFrameBound::CurrentRow,
+        Some(edge) => bound(edge, false)?,
+    };
+    Ok(Some(BoundWindowFrame { start, end }))
 }
 
 fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Result<(), BindError> {

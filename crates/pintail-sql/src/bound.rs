@@ -498,6 +498,57 @@ pub enum WindowFunction {
     /// without `ORDER BY`, or the running frame up to the current row's
     /// peers with it (`MySQL`'s default frame).
     Aggregate(BoundAggregate),
+    /// `LAG` / `LEAD`: a positional read a fixed distance from the current
+    /// row inside the partition, falling back to `default` (or NULL) past
+    /// the edge.
+    Offset {
+        /// Whether the read moves forward (`LEAD`) rather than back.
+        lead: bool,
+        /// Value expression read at the offset row.
+        expr: Box<BoundExpr>,
+        /// Row distance; `MySQL` requires a constant non-negative integer.
+        offset: u64,
+        /// Value substituted past the partition edge.
+        default: Option<Box<BoundExpr>>,
+    },
+    /// `NTILE(buckets)`: the current row's bucket, 1-based.
+    NTile(u64),
+    /// `FIRST_VALUE` / `LAST_VALUE` over the frame.
+    Extreme {
+        /// Whether the last framed row is taken rather than the first.
+        last: bool,
+        /// Value expression.
+        expr: Box<BoundExpr>,
+    },
+}
+
+/// One edge of an explicit window frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundFrameBound {
+    /// `UNBOUNDED PRECEDING`.
+    UnboundedPreceding,
+    /// `<n> PRECEDING`.
+    Preceding(u64),
+    /// `CURRENT ROW`.
+    CurrentRow,
+    /// `<n> FOLLOWING`.
+    Following(u64),
+    /// `UNBOUNDED FOLLOWING`.
+    UnboundedFollowing,
+}
+
+/// An explicit `ROWS BETWEEN ... AND ...` frame.
+///
+/// Only `ROWS` is represented. `RANGE` with a numeric offset needs arithmetic
+/// on the ordering key's own values, and `GROUPS` needs peer counting; both
+/// reject during binding rather than being approximated by row counts, which
+/// would silently answer a different question.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundWindowFrame {
+    /// Frame start, relative to the current row.
+    pub start: BoundFrameBound,
+    /// Frame end, relative to the current row.
+    pub end: BoundFrameBound,
 }
 
 /// One window computation over partitioned, ordered source rows.
@@ -509,6 +560,8 @@ pub struct BoundWindow {
     pub partition_by: Vec<BoundExpr>,
     /// In-partition ordering.
     pub order_by: Vec<BoundWindowOrderKey>,
+    /// Explicit `ROWS` frame; `None` uses `MySQL`'s default frame.
+    pub frame: Option<BoundWindowFrame>,
     /// Result type.
     pub data_type: Option<DataType>,
     /// Whether the result can be NULL.

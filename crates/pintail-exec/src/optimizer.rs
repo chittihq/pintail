@@ -979,10 +979,28 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
         }
         LogicalPlan::Window { input, windows, .. } => {
             for window in windows {
-                if let pintail_sql::WindowFunction::Aggregate(aggregate) = &window.function
-                    && let Some(expr) = &aggregate.expr
-                {
-                    collect_expr_columns(expr, required);
+                // Every window function's value expression has to be
+                // collected, or projection pushdown prunes the column it
+                // reads and binding fails with MissingColumn.
+                match &window.function {
+                    pintail_sql::WindowFunction::Aggregate(aggregate) => {
+                        if let Some(expr) = &aggregate.expr {
+                            collect_expr_columns(expr, required);
+                        }
+                    }
+                    pintail_sql::WindowFunction::Offset { expr, default, .. } => {
+                        collect_expr_columns(expr, required);
+                        if let Some(default) = default {
+                            collect_expr_columns(default, required);
+                        }
+                    }
+                    pintail_sql::WindowFunction::Extreme { expr, .. } => {
+                        collect_expr_columns(expr, required);
+                    }
+                    pintail_sql::WindowFunction::RowNumber
+                    | pintail_sql::WindowFunction::Rank
+                    | pintail_sql::WindowFunction::DenseRank
+                    | pintail_sql::WindowFunction::NTile(_) => {}
                 }
                 for expr in &window.partition_by {
                     collect_expr_columns(expr, required);

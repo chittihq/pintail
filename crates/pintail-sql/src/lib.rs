@@ -14,10 +14,11 @@ pub use sqlparser::ast::Statement;
 
 pub use binder::{BindError, Binder};
 pub use bound::{
-    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundFrom,
-    BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey, BoundProjection, BoundQuery,
-    BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow, BoundWindowOrderKey, DatePart,
-    IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
+    AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
+    BoundFrameBound, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey,
+    BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow,
+    BoundWindowFrame, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, UnaryOp,
+    WindowFunction,
 };
 pub use metadata::{
     ColumnFacts, ForeignKeyFacts, IndexFacts, MetadataError, MetadataField, MetadataResult,

@@ -165,13 +165,23 @@ async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise
   // attributes that a Linux daemon cannot restore (lsetxattr fails).
   const pipeline = `set -o pipefail; tar --no-xattrs --no-mac-metadata -C ${JSON.stringify(txtDir)} -cf - . | gzip -1 | ssh ${JSON.stringify(target)} 'gzip -dc | docker cp - ${JSON.stringify(`${o.mysqlName}:/var/lib/mysql-files/ds`)}'`
   const child = Bun.spawn(['bash', '-c', pipeline], { stdout: 'ignore', stderr: 'pipe' })
-  // The transfer emits nothing until it finishes, which can be many minutes
-  // on a loaded link. A driver watching for a stalled stage cannot tell that
-  // apart from a wedge, so report elapsed time while it runs: silence then
-  // means stuck rather than merely slow.
+  // The transfer emits nothing until it finishes, so report elapsed time to
+  // prove the process is alive — but liveness is not progress. A timer keeps
+  // printing whether or not a byte moves, which is how a wedged copy used to
+  // consume the whole stage budget while looking healthy. Counting bytes
+  // would need a second local copy of a multi-gigabyte stream, so instead the
+  // copy gets its own deadline: well past the ~17 minutes a healthy transfer
+  // takes, far short of the 120-minute stage budget it used to burn.
+  const COPY_DEADLINE_SECONDS = 45 * 60
   const started = performance.now()
   const heartbeat = setInterval(() => {
-    o.log(`still copying dataset (${Math.round((performance.now() - started) / 1000)}s elapsed)`)
+    const elapsed = Math.round((performance.now() - started) / 1000)
+    if (elapsed > COPY_DEADLINE_SECONDS) {
+      o.log(`dataset copy exceeded ${COPY_DEADLINE_SECONDS}s — killing it`)
+      child.kill()
+      return
+    }
+    o.log(`still copying dataset (${elapsed}s elapsed, deadline ${COPY_DEADLINE_SECONDS}s)`)
   }, 30_000)
   try {
     if ((await child.exited) !== 0) {

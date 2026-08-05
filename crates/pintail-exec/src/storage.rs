@@ -1794,6 +1794,161 @@ mod tests {
         );
     }
 
+    /// Explicit ROWS frames: the running total and the moving window that
+    /// every dashboard needs. Without the frame plumbed through evaluation
+    /// these would silently compute `MySQL`'s default frame instead.
+    #[test]
+    fn explicit_rows_frames_bound_the_aggregate() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest((1..=5_u64).map(|id| row(id, "value")).collect())
+            .expect("ingest");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(51);
+        let table_id = TableId::new(53);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let u = Value::UInt64;
+        for (sql, expected) in [
+            // Running total: 1, 3, 6, 10, 15.
+            (
+                "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) \
+                 FROM events",
+                vec![u(1), u(3), u(6), u(10), u(15)],
+            ),
+            // Moving window of three: 1, 3, 6, 9, 12.
+            (
+                "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) \
+                 FROM events",
+                vec![u(1), u(3), u(6), u(9), u(12)],
+            ),
+            // Shorthand form means the same as ... AND CURRENT ROW.
+            (
+                "SELECT SUM(id) OVER (ORDER BY id ROWS 2 PRECEDING) FROM events",
+                vec![u(1), u(3), u(6), u(9), u(12)],
+            ),
+            // Centred window: 3, 6, 9, 12, 9.
+            (
+                "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) \
+                 FROM events",
+                vec![u(3), u(6), u(9), u(12), u(9)],
+            ),
+            // Whole partition regardless of position.
+            (
+                "SELECT SUM(id) OVER (ORDER BY id \
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM events",
+                vec![u(15), u(15), u(15), u(15), u(15)],
+            ),
+            // Strictly future rows: 14, 12, 9, 5, NULL (empty frame).
+            (
+                "SELECT SUM(id) OVER (ORDER BY id \
+                 ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) FROM events",
+                vec![u(14), u(12), u(9), u(5), Value::Null],
+            ),
+            // COUNT over a bounded frame counts framed rows only.
+            (
+                "SELECT COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+                 FROM events",
+                vec![u(1), u(2), u(2), u(2), u(2)],
+            ),
+            // MIN/MAX cannot be un-accumulated; the sliding path recomputes.
+            (
+                "SELECT MAX(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+                 FROM events",
+                vec![u(1), u(2), u(3), u(4), u(5)],
+            ),
+        ] {
+            assert_eq!(
+                execute_values_with_limit(sql, &catalog, &provider, 4 * 1024 * 1024),
+                expected,
+                "{sql}"
+            );
+        }
+    }
+
+    /// The offset window functions, including the `LAST_VALUE` subtlety: under
+    /// `MySQL`'s default frame it reads the last row of the current PEER
+    /// GROUP, so with a unique ORDER BY key every row returns its own value
+    /// rather than the partition's last.
+    #[test]
+    fn offset_window_functions_read_positionally() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest((1..=5_u64).map(|id| row(id, "value")).collect())
+            .expect("ingest");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(41);
+        let table_id = TableId::new(43);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let u = Value::UInt64;
+        for (sql, expected) in [
+            (
+                "SELECT LAG(id) OVER (ORDER BY id) FROM events",
+                vec![Value::Null, u(1), u(2), u(3), u(4)],
+            ),
+            (
+                "SELECT LEAD(id) OVER (ORDER BY id) FROM events",
+                vec![u(2), u(3), u(4), u(5), Value::Null],
+            ),
+            (
+                "SELECT LAG(id, 2, 0) OVER (ORDER BY id) FROM events",
+                vec![u(0), u(0), u(1), u(2), u(3)],
+            ),
+            // 5 rows into 2 buckets: the remainder goes to the earlier one.
+            (
+                "SELECT NTILE(2) OVER (ORDER BY id) FROM events",
+                vec![u(1), u(1), u(1), u(2), u(2)],
+            ),
+            (
+                "SELECT FIRST_VALUE(id) OVER (ORDER BY id) FROM events",
+                vec![u(1), u(1), u(1), u(1), u(1)],
+            ),
+            (
+                "SELECT LAST_VALUE(id) OVER (ORDER BY id) FROM events",
+                vec![u(1), u(2), u(3), u(4), u(5)],
+            ),
+            // Without ORDER BY the frame is the whole partition, so
+            // LAST_VALUE really is the partition's last row.
+            (
+                "SELECT LAST_VALUE(id) OVER () FROM events",
+                vec![u(5), u(5), u(5), u(5), u(5)],
+            ),
+        ] {
+            assert_eq!(
+                execute_values_with_limit(sql, &catalog, &provider, 4 * 1024 * 1024),
+                expected,
+                "{sql}"
+            );
+        }
+    }
+
     #[test]
     fn executes_queries_against_pinned_storage_snapshots() {
         let directory = tempfile::tempdir().expect("temporary table");

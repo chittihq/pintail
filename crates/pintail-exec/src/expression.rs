@@ -1125,7 +1125,13 @@ fn evaluate_eager_scalar(
         }
         ScalarFunction::Lower => Ok(Value::Utf8(scalar_string(&values[0])?.to_lowercase())),
         ScalarFunction::Upper => Ok(Value::Utf8(scalar_string(&values[0])?.to_uppercase())),
-        ScalarFunction::Trim => Ok(Value::Utf8(scalar_string(&values[0])?.trim().to_owned())),
+        ScalarFunction::Trim => Ok(Value::Utf8(
+            // MySQL's default TRIM removes the space character only. Rust's
+            // trim() removes the whole Unicode whitespace class, so a
+            // leading tab used to disappear: HEX(TRIM(CHAR(9))) answered ''
+            // where MySQL answers '09'.
+            scalar_string(&values[0])?.trim_matches(' ').to_owned(),
+        )),
         ScalarFunction::Length => Ok(Value::UInt64(
             u64::try_from(scalar_string(&values[0])?.len())
                 .map_err(|_| ExecError::NumericOverflow)?,
@@ -1422,7 +1428,17 @@ fn evaluate_eager_scalar(
         }
         ScalarFunction::ToBase64 => {
             let text = scalar_string(&values[0])?;
-            Ok(Value::Utf8(base64_encode(text.as_bytes())))
+            // MySQL breaks the encoding every 76 characters, so a 58-byte
+            // subject encodes to 81 characters rather than 80.
+            let encoded = base64_encode(text.as_bytes());
+            let mut wrapped = String::with_capacity(encoded.len() + encoded.len() / 76);
+            for (index, chunk) in encoded.as_bytes().chunks(76).enumerate() {
+                if index > 0 {
+                    wrapped.push('\n');
+                }
+                wrapped.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+            }
+            Ok(Value::Utf8(wrapped))
         }
         ScalarFunction::FromBase64 => {
             let text = scalar_string(&values[0])?;
@@ -1634,13 +1650,31 @@ fn evaluate_eager_scalar(
             Ok(Value::Int64(if negative { -total } else { total }))
         }
         ScalarFunction::SecToTime => {
+            // MySQL keeps the argument's fractional seconds: SEC_TO_TIME(1.5)
+            // is '00:00:01.5', not '00:00:01'. The fraction is rendered from
+            // the original text so its digit count survives.
+            let fraction = match &values[0] {
+                Value::Utf8(text) => text
+                    .split_once('.')
+                    .map(|(_, digits)| digits.trim_end_matches('0').to_owned())
+                    .filter(|digits| !digits.is_empty()),
+                Value::Float64(number) => {
+                    let rendered = format!("{}", number.get());
+                    rendered
+                        .split_once('.')
+                        .map(|(_, digits)| digits.trim_end_matches('0').to_owned())
+                        .filter(|digits| !digits.is_empty())
+                }
+                _ => None,
+            };
             let seconds = mysql_i64(&values[0])?;
             // MySQL clamps TIME to +/- 838:59:59.
             let clamped = seconds.clamp(-3_020_399, 3_020_399);
             let magnitude = clamped.unsigned_abs();
             let sign = if clamped < 0 { "-" } else { "" };
+            let suffix = fraction.map_or_else(String::new, |digits| format!(".{digits}"));
             Ok(Value::Utf8(format!(
-                "{sign}{:02}:{:02}:{:02}",
+                "{sign}{:02}:{:02}:{:02}{suffix}",
                 magnitude / 3600,
                 magnitude / 60 % 60,
                 magnitude % 60
@@ -2791,13 +2825,43 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// Rewrites POSIX bracket classes to their Unicode equivalents.
+///
+/// `MySQL` 8.4 runs ICU, where `[[:alpha:]]` matches any alphabetic character;
+/// Rust's regex crate defines the POSIX classes over ASCII, so
+/// `REGEXP_LIKE('e-acute', '[[:alpha:]]')` answered 0 where `MySQL` answers 1.
+/// Only the classes whose ASCII and Unicode definitions actually differ are
+/// rewritten; `[:xdigit:]` and the punctuation classes are ASCII in both.
+fn unicode_posix_classes(pattern: &str) -> String {
+    const CLASSES: [(&str, &str); 7] = [
+        ("[:alpha:]", "\\p{Alphabetic}"),
+        ("[:alnum:]", "\\p{Alphabetic}\\p{Nd}"),
+        ("[:digit:]", "\\p{Nd}"),
+        ("[:lower:]", "\\p{Lowercase}"),
+        ("[:upper:]", "\\p{Uppercase}"),
+        ("[:space:]", "\\s"),
+        ("[:word:]", "\\w"),
+    ];
+    if !pattern.contains("[:") {
+        return pattern.to_owned();
+    }
+    let mut rewritten = pattern.to_owned();
+    for (posix, unicode) in CLASSES {
+        if rewritten.contains(posix) {
+            rewritten = rewritten.replace(posix, unicode);
+        }
+    }
+    rewritten
+}
+
 fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
     REGEX_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(compiled) = cache.get(pattern) {
             return Ok(*compiled);
         }
-        let compiled = regex::RegexBuilder::new(pattern)
+        let translated = unicode_posix_classes(pattern);
+        let compiled = regex::RegexBuilder::new(&translated)
             .case_insensitive(true)
             .size_limit(1 << 20)
             .build()
@@ -3708,6 +3772,74 @@ mod tests {
                 .expect("time");
             assert_eq!(mysql_date_format(value, "%D"), expected);
         }
+    }
+
+    /// Three divergences measured against `MySQL` 8.4 and now repaired.
+    #[test]
+    fn repaired_divergences_match_mysql() {
+        use pintail_types::{DataType, Value};
+        let call = |function, args: Vec<Value>| {
+            super::evaluate_eager_scalar(function, &args, Some(DataType::Utf8)).expect("evaluate")
+        };
+        // TRIM removes the space character only, not the tab.
+        println!(
+            "probe trim space = {:?}",
+            call(ScalarFunction::Trim, vec![Value::Utf8("  a  ".into())])
+        );
+        assert_eq!(
+            call(ScalarFunction::Trim, vec![Value::Utf8("\t".into())]),
+            Value::Utf8("\t".into())
+        );
+        assert_eq!(
+            call(ScalarFunction::Trim, vec![Value::Utf8("  a  ".into())]),
+            Value::Utf8("a".into())
+        );
+        assert_eq!(
+            call(ScalarFunction::Trim, vec![Value::Utf8("\ta ".into())]),
+            Value::Utf8("\ta".into())
+        );
+        // TO_BASE64 wraps every 76 characters: 58 bytes -> 81 characters.
+        let Value::Utf8(encoded) =
+            call(ScalarFunction::ToBase64, vec![Value::Utf8("a".repeat(58))])
+        else {
+            panic!("expected text");
+        };
+        assert_eq!(encoded.chars().count(), 81);
+        assert!(encoded.contains('\n'));
+        // POSIX classes follow ICU's Unicode definitions, not ASCII.
+        assert_eq!(
+            call(
+                ScalarFunction::RegexpLike { negated: false },
+                vec![
+                    Value::Utf8("\u{e9}".into()),
+                    Value::Utf8("[[:alpha:]]".into())
+                ]
+            ),
+            Value::Utf8("1".into())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::RegexpLike { negated: false },
+                vec![Value::Utf8("a".into()), Value::Utf8("[[:alpha:]]".into())]
+            ),
+            Value::Utf8("1".into())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::RegexpLike { negated: false },
+                vec![Value::Utf8("1".into()), Value::Utf8("[[:alpha:]]".into())]
+            ),
+            Value::Utf8("0".into())
+        );
+        // SEC_TO_TIME keeps the argument's fraction.
+        assert_eq!(
+            call(ScalarFunction::SecToTime, vec![Value::Utf8("1.5".into())]),
+            Value::Utf8("00:00:01.5".into())
+        );
+        assert_eq!(
+            call(ScalarFunction::SecToTime, vec![Value::Int64(1)]),
+            Value::Utf8("00:00:01".into())
+        );
     }
 
     /// A multibyte argument used to panic here: the odd-length pad made the
