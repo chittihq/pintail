@@ -55,6 +55,10 @@ const HOST_FAILURE_SIGNATURES = [
 
 interface Stage {
   name: string
+  /// Kill the stage after this long without output. Defaults to 20
+  /// minutes; raise it for stages with legitimately silent stretches, such
+  /// as a container image build.
+  stallMinutes?: number
   /// Needs the shared Docker host (disk preflight + container capture).
   remote: boolean
   timeoutMinutes: number
@@ -91,6 +95,8 @@ const STAGES: Stage[] = [
     name: 'e2e',
     remote: true,
     timeoutMinutes: 60,
+    // Builds a container image before it says anything.
+    stallMinutes: 25,
     command: ['bun', 'run', 'run.ts'],
     cwd: join(repository, 'tests', 'e2e'),
   },
@@ -98,6 +104,7 @@ const STAGES: Stage[] = [
     name: 'bench',
     remote: true,
     timeoutMinutes: 90,
+    stallMinutes: 25,
     command: ['bun', 'run', 'run.ts'],
     cwd: join(repository, 'benchmark'),
   },
@@ -105,6 +112,9 @@ const STAGES: Stage[] = [
     name: 'accept',
     remote: true,
     timeoutMinutes: 120,
+    // The stage that hung twice. It reports snapshot progress while
+    // working, so a long silence means it is stuck, not busy.
+    stallMinutes: 15,
     command: [
       'bun', 'run', 'run-production.ts',
       '--profile', 'ci', '--dataset', 'ci',
@@ -122,8 +132,21 @@ function status(line: string) {
 
 async function run(
   command: string[],
-  options: { cwd?: string; env?: Record<string, string>; timeoutMinutes?: number } = {},
-): Promise<{ code: number | null; output: string; timedOut: boolean }> {
+  options: {
+    cwd?: string
+    env?: Record<string, string>
+    timeoutMinutes?: number
+    /// Kill a stage that has produced no output for this long. The total
+    /// budget catches a stage that is slow; this catches one that is stuck,
+    /// which is the failure we actually keep hitting — a wedged docker link
+    /// or a vanished container leaves the harness waiting in silence, and
+    /// silence is indistinguishable from progress until the whole budget is
+    /// gone.
+    stallMinutes?: number
+    /// Stage name, so heartbeats say which stage is alive.
+    label?: string
+  } = {},
+): Promise<{ code: number | null; output: string; timedOut: boolean; stalled: boolean }> {
   return new Promise((resolvePromise) => {
     // Some machines wrap `cargo`; honor CARGO and default the target dir
     // so builds land in-repo instead of on a slow external volume.
@@ -136,25 +159,52 @@ async function run(
     })
     let output = ''
     let timedOut = false
+    let stalled = false
+    let lastActivity = Date.now()
+    let lastLine = ''
+    let lastHeartbeat = Date.now()
     const budget = (options.timeoutMinutes ?? 30) * 60_000
+    const stallBudget = (options.stallMinutes ?? 20) * 60_000
     const timer = setTimeout(() => {
       timedOut = true
       child.kill('SIGKILL')
     }, budget)
+    // Poll rather than reset a timer per chunk: a chatty stage would
+    // otherwise rebuild the timer thousands of times a second.
+    const watchdog = setInterval(() => {
+      const quiet = Date.now() - lastActivity
+      if (quiet > stallBudget) {
+        stalled = true
+        child.kill('SIGKILL')
+        return
+      }
+      // Heartbeat so a long stage is visibly alive in the status log, and
+      // so a reader can see what it was doing when it stopped.
+      if (Date.now() - lastHeartbeat >= 60_000) {
+        lastHeartbeat = Date.now()
+        const quietFor = Math.round(quiet / 1000)
+        status(`${options.label ?? 'stage'}: alive, ${quietFor}s since output — ${lastLine.slice(0, 120)}`)
+      }
+    }, 15_000)
     const capture = (chunk: Buffer) => {
-      output += chunk.toString()
+      const text = chunk.toString()
+      output += text
       if (output.length > 4_000_000) output = output.slice(-2_000_000)
+      lastActivity = Date.now()
+      const lines = text.split('\n').filter((line) => line.trim().length > 0)
+      if (lines.length > 0) lastLine = lines[lines.length - 1]
     }
     child.stdout?.on('data', capture)
     child.stderr?.on('data', capture)
-    child.on('close', (code) => {
+    const finish = (result: { code: number | null; output: string }) => {
       clearTimeout(timer)
-      resolvePromise({ code, output, timedOut })
-    })
-    child.on('error', (error) => {
-      clearTimeout(timer)
-      resolvePromise({ code: null, output: `${output}\nspawn error: ${error}`, timedOut })
-    })
+      clearInterval(watchdog)
+      resolvePromise({ ...result, timedOut, stalled })
+    }
+    child.on('close', (code) => finish({ code, output }))
+    child.on('error', (error) =>
+      finish({ code: null, output: `${output}\nspawn error: ${error}` }),
+    )
   })
 }
 
@@ -334,8 +384,20 @@ async function main() {
           cwd: stage.cwd,
           env: stage.env,
           timeoutMinutes: stage.timeoutMinutes,
+          stallMinutes: stage.stallMinutes,
+          label: stage.name,
         })
         writeFileSync(join(reportDir, `${stage.name}-attempt${attempt}.log`), outcome.output)
+        if (outcome.stalled) {
+          // Distinct from a timeout: the stage was not slow, it stopped
+          // making progress. Two hangs in one session looked like this —
+          // a vanished container and a wedged docker link — and both spent
+          // the whole budget in silence.
+          note = `stalled — no output for ${stage.stallMinutes ?? 20} minutes`
+          status(`${stage.name}: no output for ${stage.stallMinutes ?? 20} minutes — killing`)
+          await captureContainerEvidence(stage.name)
+          break
+        }
         if (outcome.timedOut) {
           note = `timed out after ${stage.timeoutMinutes} minutes`
           await captureContainerEvidence(stage.name)
