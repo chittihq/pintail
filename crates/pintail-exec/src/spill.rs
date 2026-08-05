@@ -401,8 +401,13 @@ mod directory_tests {
     /// binary permitted to set it.
     #[test]
     fn every_spill_path_lands_in_the_configured_directory() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        super::set_spill_directory(directory.path().to_path_buf()).expect("configure");
+        // The OnceLock outlives this test, so the directory it points at must
+        // outlive it too. A TempDir guard deletes on drop, which left every
+        // later spilling test writing into a directory that no longer
+        // existed — it surfaced as an intermittent ENOENT in the grace-join
+        // test, dependent on which test happened to run first.
+        let directory = tempfile::tempdir().expect("tempdir").keep();
+        super::set_spill_directory(directory.clone()).expect("configure");
 
         for prefix in [
             "pintail-sort-spill-",
@@ -412,7 +417,7 @@ mod directory_tests {
             let file = spill_file(prefix).expect("spill file");
             assert_eq!(
                 file.path().parent(),
-                Some(directory.path()),
+                Some(directory.as_path()),
                 "{prefix} must not fall back to the system temp directory"
             );
         }
