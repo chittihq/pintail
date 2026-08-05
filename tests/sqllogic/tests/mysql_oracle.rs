@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 748;
+const EXPECTED_CASES: usize = 752;
 
 struct OracleCase {
     family: &'static str,
@@ -867,6 +867,36 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written cast targets",
             "SELECT CAST(42 AS CHAR), CAST('42' AS SIGNED), CAST('42' AS UNSIGNED), \
              CAST(-1 AS SIGNED), CAST('3.7' AS DECIMAL(10,2)), CAST(1 AS CHAR(4))",
+        ),
+        // JSON containment is asymmetric and recursive, which is the part
+        // most likely to be subtly wrong: an array contains a bare scalar
+        // when any element does, an object contains an object when every
+        // candidate key matches, and scalars must be equal.
+        ordered(
+            "hand-written json contains",
+            "SELECT JSON_CONTAINS('[1,2,3]', '2'), JSON_CONTAINS('[1,2,3]', '[1,3]'), \
+             JSON_CONTAINS('[1,2,3]', '[1,4]'), JSON_CONTAINS('{\"a\":1,\"b\":2}', '{\"a\":1}'), \
+             JSON_CONTAINS('{\"a\":1}', '{\"a\":2}'), JSON_CONTAINS('1', '1'), \
+             JSON_CONTAINS('[[1,2]]', '[[1]]')",
+        ),
+        ordered(
+            "hand-written json contains path",
+            "SELECT JSON_CONTAINS_PATH('{\"a\":1,\"b\":2}', 'one', '$.a', '$.z'), \
+             JSON_CONTAINS_PATH('{\"a\":1,\"b\":2}', 'all', '$.a', '$.z'), \
+             JSON_CONTAINS_PATH('{\"a\":1,\"b\":2}', 'all', '$.a', '$.b')",
+        ),
+        ordered(
+            "hand-written json length keys type",
+            "SELECT JSON_LENGTH('[1,2,3]'), JSON_LENGTH('{\"a\":1,\"b\":2}'), \
+             JSON_LENGTH('7'), JSON_LENGTH('{\"a\":[1,2,3]}', '$.a'), \
+             JSON_KEYS('{\"b\":1,\"a\":2}'), JSON_KEYS('[1,2]'), \
+             JSON_TYPE('[1]'), JSON_TYPE('{}'), JSON_TYPE('\"x\"'), \
+             JSON_TYPE('1'), JSON_TYPE('1.5'), JSON_TYPE('true'), JSON_TYPE('null')",
+        ),
+        ordered(
+            "hand-written json valid",
+            "SELECT JSON_VALID('{\"a\":1}'), JSON_VALID('not json'), JSON_VALID('[1,2]'), \
+             JSON_VALID('')",
         ),
         ordered(
             "hand-written conditionals",

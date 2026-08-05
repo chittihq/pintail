@@ -666,7 +666,11 @@ impl CompiledExpr {
                     | ScalarFunction::RegexpSubstr
                     | ScalarFunction::JsonExtract { .. }
                     | ScalarFunction::JsonUnquote
+                    // JSON_KEYS is bounded by the document it reads.
+                    | ScalarFunction::JsonKeys
                     | ScalarFunction::Cast(_) => first,
+                    // JSON_TYPE returns one of a handful of fixed names.
+                    ScalarFunction::JsonType => 16,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate => string_arguments.saturating_mul(12),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
@@ -734,7 +738,13 @@ impl CompiledExpr {
                     | ScalarFunction::TimeToSec
                     | ScalarFunction::RegexpLike { .. }
                     | ScalarFunction::RegexpInstr
-                    | ScalarFunction::TimestampDiff { .. } => 0,
+                    | ScalarFunction::TimestampDiff { .. }
+                    // The JSON predicates answer numerically and retain
+                    // nothing on the heap.
+                    | ScalarFunction::JsonValid
+                    | ScalarFunction::JsonLength
+                    | ScalarFunction::JsonContains
+                    | ScalarFunction::JsonContainsPath => 0,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
@@ -792,7 +802,11 @@ impl CompiledExpr {
                     | ScalarFunction::RegexpSubstr
                     | ScalarFunction::JsonExtract { .. }
                     | ScalarFunction::JsonUnquote
+                    // JSON_KEYS is bounded by the document it reads.
+                    | ScalarFunction::JsonKeys
                     | ScalarFunction::Cast(_) => first,
+                    // JSON_TYPE returns one of a handful of fixed names.
+                    ScalarFunction::JsonType => 16,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(bound(2)))
@@ -855,7 +869,13 @@ impl CompiledExpr {
                     | ScalarFunction::TimeToSec
                     | ScalarFunction::RegexpLike { .. }
                     | ScalarFunction::RegexpInstr
-                    | ScalarFunction::TimestampDiff { .. } => 24,
+                    | ScalarFunction::TimestampDiff { .. }
+                    // The JSON predicates answer numerically; the same
+                    // scalar bound covers them.
+                    | ScalarFunction::JsonValid
+                    | ScalarFunction::JsonLength
+                    | ScalarFunction::JsonContains
+                    | ScalarFunction::JsonContainsPath => 24,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
@@ -1715,6 +1735,87 @@ fn evaluate_eager_scalar(
                 serde_json::Value::String(text) if unquote => text.clone(),
                 other => mysql_json_text(other),
             }))
+        }
+        ScalarFunction::JsonValid => {
+            // JSON_VALID answers 0 or 1 for any non-NULL input rather than
+            // raising, which is what makes it usable as a guard ahead of the
+            // functions below.
+            let text = scalar_string(&values[0])?;
+            Ok(Value::Int64(i64::from(
+                serde_json::from_str::<serde_json::Value>(&text).is_ok(),
+            )))
+        }
+        ScalarFunction::JsonType => {
+            let parsed = parse_json_argument(&values[0])?;
+            Ok(Value::Utf8(json_type_name(&parsed).to_owned()))
+        }
+        ScalarFunction::JsonLength => {
+            let parsed = parse_json_argument(&values[0])?;
+            let found = match values.get(1) {
+                None => Some(&parsed),
+                Some(path) => json_path_lookup(&parsed, &scalar_string(path)?)?,
+            };
+            Ok(found.map_or(Value::Null, |value| {
+                // A scalar has length 1; only containers count members.
+                Value::UInt64(match value {
+                    serde_json::Value::Array(items) => items.len() as u64,
+                    serde_json::Value::Object(members) => members.len() as u64,
+                    _ => 1,
+                })
+            }))
+        }
+        ScalarFunction::JsonKeys => {
+            let parsed = parse_json_argument(&values[0])?;
+            let found = match values.get(1) {
+                None => Some(&parsed),
+                Some(path) => json_path_lookup(&parsed, &scalar_string(path)?)?,
+            };
+            // MySQL answers NULL rather than raising when the target is not
+            // an object.
+            Ok(match found {
+                Some(serde_json::Value::Object(members)) => {
+                    let keys = members
+                        .keys()
+                        .map(|key| serde_json::Value::String(key.clone()))
+                        .collect::<Vec<_>>();
+                    Value::Utf8(mysql_json_text(&serde_json::Value::Array(keys)))
+                }
+                _ => Value::Null,
+            })
+        }
+        ScalarFunction::JsonContains => {
+            let target = parse_json_argument(&values[0])?;
+            let candidate = parse_json_argument(&values[1])?;
+            let scoped = match values.get(2) {
+                None => Some(&target),
+                Some(path) => json_path_lookup(&target, &scalar_string(path)?)?,
+            };
+            Ok(scoped.map_or(Value::Null, |value| {
+                Value::Int64(i64::from(json_contains(value, &candidate)))
+            }))
+        }
+        ScalarFunction::JsonContainsPath => {
+            let parsed = parse_json_argument(&values[0])?;
+            let mode = scalar_string(&values[1])?;
+            let require_all = if mode.eq_ignore_ascii_case("all") {
+                true
+            } else if mode.eq_ignore_ascii_case("one") {
+                false
+            } else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            let mut found = 0_usize;
+            let paths = &values[2..];
+            for path in paths {
+                if json_path_lookup(&parsed, &scalar_string(path)?)?.is_some() {
+                    found += 1;
+                }
+            }
+            Ok(Value::Int64(i64::from(if require_all {
+                found == paths.len()
+            } else {
+                found > 0
+            })))
         }
         ScalarFunction::JsonObject => {
             let mut members = serde_json::Map::new();
@@ -2764,6 +2865,57 @@ pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
 
 /// Resolves a `MySQL` JSON path of the `$.key.nested[0]` form. Wildcards
 /// and range selectors are unsupported and error explicitly.
+/// Parses a JSON-valued argument, raising rather than guessing when the text
+/// is not JSON — every function except `JSON_VALID` requires a real document.
+fn parse_json_argument(value: &Value) -> Result<serde_json::Value, ExecError> {
+    serde_json::from_str::<serde_json::Value>(&scalar_string(value)?)
+        .map_err(|_| ExecError::InvalidExpressionType)
+}
+
+/// `MySQL` `JSON_TYPE` names. The engine has no typed JSON carrier, so an
+/// integral number reports INTEGER and everything else numeric reports
+/// DOUBLE; `MySQL`'s DECIMAL, DATE and BLOB categories need typed JSON
+/// storage to distinguish and are recorded as a gap.
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "NULL",
+        serde_json::Value::Bool(_) => "BOOLEAN",
+        serde_json::Value::Number(number) => {
+            if number.is_i64() || number.is_u64() {
+                "INTEGER"
+            } else {
+                "DOUBLE"
+            }
+        }
+        serde_json::Value::String(_) => "STRING",
+        serde_json::Value::Array(_) => "ARRAY",
+        serde_json::Value::Object(_) => "OBJECT",
+    }
+}
+
+/// `MySQL` `JSON_CONTAINS` containment, which is asymmetric and recursive:
+/// an array contains a non-array candidate when any element contains it, an
+/// object contains an object when every candidate key is present and its
+/// value contained, and scalars must be equal.
+fn json_contains(target: &serde_json::Value, candidate: &serde_json::Value) -> bool {
+    match (target, candidate) {
+        (serde_json::Value::Array(items), serde_json::Value::Array(wanted)) => wanted
+            .iter()
+            .all(|entry| items.iter().any(|item| json_contains(item, entry))),
+        (serde_json::Value::Array(items), _) => {
+            items.iter().any(|item| json_contains(item, candidate))
+        }
+        (serde_json::Value::Object(members), serde_json::Value::Object(wanted)) => {
+            wanted.iter().all(|(key, entry)| {
+                members
+                    .get(key)
+                    .is_some_and(|member| json_contains(member, entry))
+            })
+        }
+        (left, right) => left == right,
+    }
+}
+
 fn json_path_lookup<'a>(
     document: &'a serde_json::Value,
     path: &str,

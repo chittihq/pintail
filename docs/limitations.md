@@ -32,9 +32,13 @@ stays readable as a list of things to fix.
 - Aggregates are limited to `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`,
   `GROUP_CONCAT` and `JSON_ARRAYAGG`. `ANY_VALUE`, the `STDDEV`/`VARIANCE`
   families and `BIT_AND`/`BIT_OR`/`BIT_XOR` are missing (#17).
-- JSON has no predicate functions: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`,
-  `JSON_LENGTH`, `JSON_KEYS`, `JSON_TYPE`, `JSON_VALID`, `JSON_SET` and
+- `JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`, `JSON_MERGE*`, `JSON_REMOVE` and
   `JSON_TABLE` are unimplemented (#8).
+- `JSON_TYPE` reports `INTEGER` or `DOUBLE` for every number and never
+  `DECIMAL`, `DATE`, `DATETIME`, `TIME`, `BLOB` or `OPAQUE`, because the
+  executor has no typed JSON carrier — a JSON document is UTF-8 text there,
+  so the distinctions MySQL draws from its binary JSON format are not
+  recoverable (#8).
 - `JSON_OBJECT`/`JSON_ARRAY`/`JSON_ARRAYAGG` encode DECIMAL and temporal
   values as JSON strings where MySQL emits numbers or datetime scalars, because
   there is no JSON column type in the executor.

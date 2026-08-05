@@ -2799,6 +2799,12 @@ fn bind_scalar_function(
         "REGEXP_REPLACE" if args.len() == 3 => ScalarFunction::RegexpReplace,
         "JSON_EXTRACT" if args.len() == 2 => ScalarFunction::JsonExtract { unquote: false },
         "JSON_UNQUOTE" if args.len() == 1 => ScalarFunction::JsonUnquote,
+        "JSON_VALID" if args.len() == 1 => ScalarFunction::JsonValid,
+        "JSON_TYPE" if args.len() == 1 => ScalarFunction::JsonType,
+        "JSON_LENGTH" if matches!(args.len(), 1 | 2) => ScalarFunction::JsonLength,
+        "JSON_KEYS" if matches!(args.len(), 1 | 2) => ScalarFunction::JsonKeys,
+        "JSON_CONTAINS" if matches!(args.len(), 2 | 3) => ScalarFunction::JsonContains,
+        "JSON_CONTAINS_PATH" if args.len() >= 3 => ScalarFunction::JsonContainsPath,
         "JSON_OBJECT" if args.len() % 2 == 0 => ScalarFunction::JsonObject,
         "JSON_ARRAY" => ScalarFunction::JsonArray,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
@@ -3389,7 +3395,11 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::ConvertTz
         | ScalarFunction::RegexpSubstr
         | ScalarFunction::JsonExtract { .. }
-        | ScalarFunction::JsonUnquote => (Some(DataType::Utf8), true),
+        | ScalarFunction::JsonUnquote
+        // JSON_TYPE raises on a non-JSON document; JSON_KEYS answers NULL for
+        // a target that is not an object.
+        | ScalarFunction::JsonType
+        | ScalarFunction::JsonKeys => (Some(DataType::Utf8), true),
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),
@@ -3410,6 +3420,13 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         ),
         // NULL arguments become JSON nulls, never a NULL result.
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Utf8), false),
+        // JSON_VALID answers 0/1 for any input, so it is the one predicate
+        // here that never yields NULL for a non-NULL argument.
+        ScalarFunction::JsonValid => (Some(DataType::Int64), true),
+        ScalarFunction::JsonContains | ScalarFunction::JsonContainsPath => {
+            (Some(DataType::Int64), true)
+        }
+        ScalarFunction::JsonLength => (Some(DataType::UInt64), true),
         ScalarFunction::RegexpInstr => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),

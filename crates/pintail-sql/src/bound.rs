@@ -303,6 +303,18 @@ pub enum ScalarFunction {
     },
     /// `JSON_UNQUOTE(json)`.
     JsonUnquote,
+    /// `JSON_VALID(doc)`.
+    JsonValid,
+    /// `JSON_TYPE(doc)`.
+    JsonType,
+    /// `JSON_LENGTH(doc[, path])`.
+    JsonLength,
+    /// `JSON_KEYS(doc[, path])`.
+    JsonKeys,
+    /// `JSON_CONTAINS(target, candidate[, path])`.
+    JsonContains,
+    /// `JSON_CONTAINS_PATH(doc, 'one'|'all', path, ...)`.
+    JsonContainsPath,
     /// `JSON_OBJECT(key, value, ...)`: alternating key/value arguments.
     JsonObject,
     /// `JSON_ARRAY(value, ...)`.
