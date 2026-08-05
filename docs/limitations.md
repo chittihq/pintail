@@ -111,18 +111,18 @@ enough to be worth refusing.
 - Date parsing accepts the canonical date and date-time forms implemented by
   the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a
   time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not
-  implemented. `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`,
+  implemented (#13). `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`,
   `SECOND`, `QUARTER` and `WEEK`; compound units reject explicitly.
-- `DATE_FORMAT` implements `%c %e %M %k %l %i %s %f %%` and forwards every
-  other directive to the underlying formatter, where several letters mean
-  something different — so unsupported directives return a wrong value
-  instead of an error. Measured on `2024-02-29 12:34:56`: `%W` returns `09`
-  rather than `Thursday`, `%D` returns `02/29/24` rather than `29th`, `%v`
-  returns `29-Feb-2024` rather than `09`, `%u` returns `4` rather than `09`,
-  and `%X`/`%x` return `12:34:56`/`02/29/24` rather than `2024`. `%a %b %j
-  %p %r %T` coincide with MySQL and are correct. This is the one place the
-  engine returns a plausible incompatible result rather than failing, and it
-  is tracked for repair in #13.
+- `STR_TO_DATE` translates the MySQL format string into the underlying
+  parser's dialect, mapping `%c %e %M %k %l %i %s %f %%` and forwarding the
+  rest. Several letters mean something different there, so a directive
+  outside that set parses against the wrong field rather than raising — the
+  same defect `DATE_FORMAT` carried until it was rewritten to render each
+  directive itself. Rendering cannot be reused here: parsing needs a real
+  parser, not a formatter run backwards. `DATE_FORMAT` now implements
+  MySQL's full directive inventory, including the four `WEEK` numbering
+  modes behind `%U %u %V %v` and their paired years `%X %x`, and copies an
+  unrecognized directive's bare character the way MySQL does.
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle
   development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a
   special-case result that did not follow this behavior; that MySQL-only

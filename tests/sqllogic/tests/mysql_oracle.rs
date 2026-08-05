@@ -759,6 +759,33 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT DATE_FORMAT('2024-02-29 12:34:56', '%c/%e/%Y %k:%i:%s'), \
              DATE('2024-02-29 12:34:56')",
         ),
+        // Every DATE_FORMAT directive MySQL defines, adjudicated by MySQL
+        // itself. The previous coverage used only %c %e %Y %k %i %s — exactly
+        // the directives that were either mapped or coincided with chrono's
+        // dialect — which is why %W returning a week number and %v returning
+        // a formatted date went unnoticed. Two dates: a leap day mid-year and
+        // a January 1st that belongs to the previous week-year.
+        ordered(
+            "hand-written date format directives",
+            "SELECT DATE_FORMAT('2024-02-29 12:34:56', \
+             '%a|%b|%c|%D|%d|%e|%H|%h|%I|%i|%j|%k|%l|%M|%m|%p|%r|%S|%s|%T|%W|%w|%Y|%y')",
+        ),
+        ordered(
+            "hand-written date format week numbering",
+            "SELECT DATE_FORMAT('2024-02-29 12:34:56', '%U|%u|%V|%v|%X|%x'), \
+             DATE_FORMAT('2021-01-01 00:00:00', '%U|%u|%V|%v|%X|%x'), \
+             DATE_FORMAT('2023-01-01 00:00:00', '%U|%u|%V|%v|%X|%x'), \
+             DATE_FORMAT('2019-12-30 00:00:00', '%U|%u|%V|%v|%X|%x')",
+        ),
+        ordered(
+            "hand-written date format edges",
+            "SELECT DATE_FORMAT('2024-01-01 00:05:00', '%h %l %p %k %H'), \
+             DATE_FORMAT('2024-01-11 12:00:00', '%D %p'), \
+             DATE_FORMAT('2024-01-21 23:59:59', '%D %r'), \
+             DATE_FORMAT('2024-02-29 12:34:56', '%q'), \
+             DATE_FORMAT('2024-02-29 12:34:56', '100%%'), \
+             DATE_FORMAT('2024-02-29 12:34:56', 'no directives')",
+        ),
         ordered(
             "hand-written conditionals",
             "SELECT IF(NULL, 'yes', 'no'), COALESCE(NULL, 'first', 'second'), \

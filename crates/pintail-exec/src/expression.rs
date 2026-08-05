@@ -1505,8 +1505,10 @@ fn evaluate_eager_scalar(
         }
         ScalarFunction::DateFormat => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            let format = mysql_date_format(&scalar_string(&values[1])?);
-            Ok(Value::Utf8(value.format(&format).to_string()))
+            Ok(Value::Utf8(mysql_date_format(
+                value,
+                &scalar_string(&values[1])?,
+            )))
         }
         ScalarFunction::DateInterval { unit, subtract } => {
             let input = scalar_string(&values[0])?;
@@ -1638,7 +1640,7 @@ fn evaluate_eager_scalar(
         )),
         ScalarFunction::StrToDate => {
             let text = scalar_string(&values[0])?;
-            let format = mysql_date_format(&scalar_string(&values[1])?);
+            let format = chrono_parse_format(&scalar_string(&values[1])?);
             if let Ok(value) = NaiveDateTime::parse_from_str(&text, &format) {
                 return Ok(Value::Utf8(value.format("%Y-%m-%d %H:%M:%S").to_string()));
             }
@@ -1976,7 +1978,18 @@ fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
     Some(format!("{base}.{}", &micros[..fraction_digits]))
 }
 
-fn mysql_date_format(value: &str) -> String {
+/// Translates a `MySQL` format string into a chrono *parse* format for
+/// `STR_TO_DATE`.
+///
+/// This is the direction `DATE_FORMAT` used to share, and it carries the same
+/// defect: directives outside the mapped set are forwarded to chrono, whose
+/// dialect assigns several of the same letters different meanings, so an
+/// unmapped directive parses against the wrong field instead of erroring.
+/// Emitting output could be fixed by rendering each directive directly;
+/// parsing cannot borrow that fix, because it needs a real parser rather than
+/// a renderer. Tracked separately — see the `STR_TO_DATE` note in
+/// `docs/limitations.md`.
+fn chrono_parse_format(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut characters = value.chars();
     while let Some(character) = characters.next() {
@@ -2004,6 +2017,227 @@ fn mysql_date_format(value: &str) -> String {
                 continue;
             }
         });
+    }
+    output
+}
+
+const WEEK_MONDAY_FIRST: u32 = 1;
+const WEEK_YEAR: u32 = 2;
+const WEEK_FIRST_WEEKDAY: u32 = 4;
+
+/// `MySQL`'s mode-to-flag mapping: a mode without `WEEK_MONDAY_FIRST` flips
+/// `WEEK_FIRST_WEEKDAY`, which is why modes 0/2 and 1/3 pair up the way they
+/// do.
+const fn week_mode(mode: u32) -> u32 {
+    let format = mode & 7;
+    if format & WEEK_MONDAY_FIRST == 0 {
+        format ^ WEEK_FIRST_WEEKDAY
+    } else {
+        format
+    }
+}
+
+const fn days_in_year(year: i32) -> i32 {
+    if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+        366
+    } else {
+        365
+    }
+}
+
+/// `MySQL`'s `calc_week`, returning `(year, week)`.
+///
+/// Ported rather than approximated. The four modes disagree about both the
+/// first day of the week and whether week 1 must contain four days of the new
+/// year, and chrono's ISO week matches only mode 3 — so `%U %u %V %v` cannot
+/// be served by borrowing another library's week number. The paired year
+/// (`%X`, `%x`) is why this returns the year too: a date in early January can
+/// belong to the last week of the previous year.
+fn mysql_calc_week(date: NaiveDate, mode: u32) -> (i32, u32) {
+    let flags = week_mode(mode);
+    let monday_first = flags & WEEK_MONDAY_FIRST != 0;
+    let mut week_year = flags & WEEK_YEAR != 0;
+    let first_weekday = flags & WEEK_FIRST_WEEKDAY != 0;
+
+    let daynr = date.num_days_from_ce();
+    let mut year = date.year();
+    let first = NaiveDate::from_ymd_opt(year, 1, 1).expect("january 1 is valid");
+    let mut first_daynr = first.num_days_from_ce();
+    // MySQL's `calc_weekday`: 0 is Sunday under a Sunday-first mode and
+    // Monday otherwise.
+    let mut weekday = if monday_first {
+        first.weekday().num_days_from_monday()
+    } else {
+        first.weekday().num_days_from_sunday()
+    };
+
+    if date.month() == 1 && date.day() <= 7 - weekday {
+        if !week_year && ((first_weekday && weekday != 0) || (!first_weekday && weekday >= 4)) {
+            return (year, 0);
+        }
+        week_year = true;
+        year -= 1;
+        let length = days_in_year(year);
+        first_daynr -= length;
+        weekday = (weekday + 53 * 7 - u32::try_from(length).unwrap_or(365)) % 7;
+    }
+
+    let offset = i32::try_from(weekday).unwrap_or(0);
+    let days = if (first_weekday && weekday != 0) || (!first_weekday && weekday >= 4) {
+        daynr - (first_daynr + (7 - offset))
+    } else {
+        daynr - (first_daynr - offset)
+    };
+
+    if week_year && days >= 52 * 7 {
+        weekday = (weekday + u32::try_from(days_in_year(year)).unwrap_or(365)) % 7;
+        if (!first_weekday && weekday < 4) || (first_weekday && weekday == 0) {
+            return (year + 1, 1);
+        }
+    }
+    (year, u32::try_from(days / 7 + 1).unwrap_or(0))
+}
+
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+const WEEKDAYS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+
+/// `MySQL`'s ordinal suffix for `%D`: 11th/12th/13th are the exceptions to
+/// the last-digit rule.
+const fn ordinal_suffix(day: u32) -> &'static str {
+    match (day % 100, day % 10) {
+        (11..=13, _) => "th",
+        (_, 1) => "st",
+        (_, 2) => "nd",
+        (_, 3) => "rd",
+        _ => "th",
+    }
+}
+
+/// Renders one `MySQL` `DATE_FORMAT` directive inventory.
+///
+/// This used to translate the format string into a chrono format string and
+/// hand it over, mapping nine directives and forwarding the rest unchanged.
+/// That silently produced wrong output wherever the two dialects use the same
+/// letter differently: `%W` returned a week number rather than a weekday
+/// name, `%D` returned `02/29/24` rather than `29th`, and `%v` returned a
+/// whole formatted date rather than a week number. None of it errored, which
+/// broke the rule that a query fails explicitly rather than returning a
+/// plausible incompatible result. Emitting directly is the only way to be
+/// sure a directive means what `MySQL` says it means.
+///
+/// Unknown directives copy the bare character, which is `MySQL`'s documented
+/// behaviour — `%q` is `q`, not an error.
+fn mysql_date_format(value: NaiveDateTime, format: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::with_capacity(format.len());
+    let mut characters = format.chars();
+    let hour12 = match value.hour() % 12 {
+        0 => 12,
+        other => other,
+    };
+    let meridiem = if value.hour() < 12 { "AM" } else { "PM" };
+    // Writing into the buffer rather than building a String per directive
+    // keeps a row-loop format free of per-directive allocation.
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            output.push(character);
+            continue;
+        }
+        let Some(specifier) = characters.next() else {
+            output.push('%');
+            break;
+        };
+        let written = match specifier {
+            'a' => {
+                output.push_str(&WEEKDAYS[value.weekday().num_days_from_monday() as usize][..3]);
+                Ok(())
+            }
+            'b' => {
+                output.push_str(&MONTHS[value.month0() as usize][..3]);
+                Ok(())
+            }
+            'c' => write!(output, "{}", value.month()),
+            'D' => write!(output, "{}{}", value.day(), ordinal_suffix(value.day())),
+            'd' => write!(output, "{:02}", value.day()),
+            'e' => write!(output, "{}", value.day()),
+            'f' => write!(output, "{:06}", value.and_utc().timestamp_subsec_micros()),
+            'H' => write!(output, "{:02}", value.hour()),
+            'h' | 'I' => write!(output, "{hour12:02}"),
+            'i' => write!(output, "{:02}", value.minute()),
+            'j' => write!(output, "{:03}", value.ordinal()),
+            'k' => write!(output, "{}", value.hour()),
+            'l' => write!(output, "{hour12}"),
+            'M' => {
+                output.push_str(MONTHS[value.month0() as usize]);
+                Ok(())
+            }
+            'm' => write!(output, "{:02}", value.month()),
+            'p' => {
+                output.push_str(meridiem);
+                Ok(())
+            }
+            'r' => write!(
+                output,
+                "{hour12:02}:{:02}:{:02} {meridiem}",
+                value.minute(),
+                value.second()
+            ),
+            'S' | 's' => write!(output, "{:02}", value.second()),
+            'T' => write!(
+                output,
+                "{:02}:{:02}:{:02}",
+                value.hour(),
+                value.minute(),
+                value.second()
+            ),
+            'U' => write!(output, "{:02}", mysql_calc_week(value.date(), 0).1),
+            'u' => write!(output, "{:02}", mysql_calc_week(value.date(), 1).1),
+            'V' => write!(output, "{:02}", mysql_calc_week(value.date(), 2).1),
+            'v' => write!(output, "{:02}", mysql_calc_week(value.date(), 3).1),
+            'W' => {
+                output.push_str(WEEKDAYS[value.weekday().num_days_from_monday() as usize]);
+                Ok(())
+            }
+            'w' => write!(output, "{}", value.weekday().num_days_from_sunday()),
+            'X' => write!(output, "{:04}", mysql_calc_week(value.date(), 2).0),
+            'x' => write!(output, "{:04}", mysql_calc_week(value.date(), 3).0),
+            'Y' => write!(output, "{:04}", value.year()),
+            'y' => write!(output, "{:02}", value.year().rem_euclid(100)),
+            '%' => {
+                output.push('%');
+                Ok(())
+            }
+            other => {
+                output.push(other);
+                Ok(())
+            }
+        };
+        // Writing into a String is infallible; the Result exists only because
+        // fmt::Write is generic over sinks that can fail.
+        debug_assert!(written.is_ok(), "writing into a String cannot fail");
     }
     output
 }
@@ -3052,7 +3286,118 @@ mod tests {
     use pintail_sql::{BinaryOp, ScalarFunction};
     use pintail_types::{DataType, Value};
 
-    use super::{CompiledExpr, compare_mysql, parse_mysql_number};
+    use super::{CompiledExpr, compare_mysql, mysql_date_format, parse_mysql_number};
+
+    /// The directives that used to be forwarded to chrono, where the same
+    /// letters mean something else. Every expectation here is `MySQL` 8.4
+    /// behaviour for a Thursday; before the rewrite `%W` returned `09`, `%D`
+    /// returned `02/29/24` and `%v` returned `29-Feb-2024`, all without an
+    /// error.
+    #[test]
+    fn date_format_directives_mean_what_mysql_says() {
+        let value = chrono::NaiveDate::from_ymd_opt(2024, 2, 29)
+            .expect("leap day")
+            .and_hms_opt(12, 34, 56)
+            .expect("time");
+        for (format, expected) in [
+            ("%W", "Thursday"),
+            ("%a", "Thu"),
+            ("%D", "29th"),
+            ("%w", "4"),
+            ("%M", "February"),
+            ("%b", "Feb"),
+            ("%j", "060"),
+            ("%U", "08"),
+            ("%u", "09"),
+            ("%V", "08"),
+            ("%v", "09"),
+            ("%X", "2024"),
+            ("%x", "2024"),
+            ("%Y", "2024"),
+            ("%y", "24"),
+            ("%T", "12:34:56"),
+            ("%r", "12:34:56 PM"),
+            ("%p", "PM"),
+            ("%c", "2"),
+            ("%e", "29"),
+            ("%d", "29"),
+            ("%m", "02"),
+            ("%H", "12"),
+            ("%k", "12"),
+            ("%i", "34"),
+            ("%s", "56"),
+            ("%Y-%m-%d %H:%i:%s", "2024-02-29 12:34:56"),
+        ] {
+            assert_eq!(
+                mysql_date_format(value, format),
+                expected,
+                "DATE_FORMAT(…, '{format}')"
+            );
+        }
+    }
+
+    /// Midnight and noon are where a 12-hour clock goes wrong, and the
+    /// ordinal suffix has three exceptions that a last-digit rule misses.
+    #[test]
+    fn date_format_handles_the_clock_and_suffix_edges() {
+        let midnight = chrono::NaiveDate::from_ymd_opt(2024, 1, 11)
+            .expect("date")
+            .and_hms_opt(0, 5, 0)
+            .expect("time");
+        assert_eq!(
+            mysql_date_format(midnight, "%h %l %p %k %H"),
+            "12 12 AM 0 00"
+        );
+        // 11th/12th/13th are "th" despite ending in 1, 2, 3.
+        for (day, expected) in [
+            (1, "1st"),
+            (2, "2nd"),
+            (3, "3rd"),
+            (4, "4th"),
+            (11, "11th"),
+            (12, "12th"),
+            (13, "13th"),
+            (21, "21st"),
+            (22, "22nd"),
+            (23, "23rd"),
+            (31, "31st"),
+        ] {
+            let value = chrono::NaiveDate::from_ymd_opt(2024, 1, day)
+                .expect("date")
+                .and_hms_opt(0, 0, 0)
+                .expect("time");
+            assert_eq!(mysql_date_format(value, "%D"), expected);
+        }
+    }
+
+    /// `MySQL` copies an unrecognized directive's bare character to the output
+    /// rather than raising — so this one deliberately does not error.
+    #[test]
+    fn date_format_copies_unknown_directives_like_mysql() {
+        let value = chrono::NaiveDate::from_ymd_opt(2024, 2, 29)
+            .expect("date")
+            .and_hms_opt(1, 2, 3)
+            .expect("time");
+        assert_eq!(mysql_date_format(value, "%q"), "q");
+        assert_eq!(mysql_date_format(value, "100%%"), "100%");
+        assert_eq!(mysql_date_format(value, "a%"), "a%");
+        assert_eq!(mysql_date_format(value, "no directives"), "no directives");
+    }
+
+    /// A date in the first days of January can belong to the previous year's
+    /// last week, which is the whole reason the week helper returns a year.
+    #[test]
+    fn date_format_week_year_rolls_back_across_january() {
+        // 2021-01-01 was a Friday, so under the Monday-first four-day rule it
+        // falls in the final week of 2020.
+        let value = chrono::NaiveDate::from_ymd_opt(2021, 1, 1)
+            .expect("date")
+            .and_hms_opt(0, 0, 0)
+            .expect("time");
+        assert_eq!(mysql_date_format(value, "%x-%v"), "2020-53");
+        assert_eq!(mysql_date_format(value, "%u"), "00");
+    }
+
     use crate::{ColumnVector, RecordBatch};
 
     #[test]
