@@ -17,9 +17,15 @@ stays readable as a list of things to fix.
   membership sides to be provably non-nullable: with a possible NULL, MySQL's
   three-valued `NOT IN` diverges from an anti join, so those shapes reject.
 - Non-equality join conditions are rejected.
-- Window functions have no explicit frames (`ROWS`/`RANGE BETWEEN`), no named
-  windows, no `LAG`/`LEAD`/`NTILE`/`FIRST_VALUE`/`LAST_VALUE`, and no
-  combination with `DISTINCT` (#25).
+- Window functions have no named windows (`WINDOW w AS (…)`), no `RANGE` frame
+  with a numeric offset, no `GROUPS` frame, and no combination with `DISTINCT`
+  (#25). `RANGE` with an offset compares the ordering key's own values rather
+  than counting rows, so it is not approximated with row offsets.
+- A window frame with a bounded start recomputes its aggregate over the frame
+  width rather than sliding incrementally, because `MIN`/`MAX` cannot be
+  un-accumulated when a row leaves the window. Cost is proportional to the
+  frame width, so a very wide bounded frame is expensive; a frame anchored at
+  `UNBOUNDED PRECEDING` accumulates once and is linear.
 - A distinct union under a later `UNION ALL` rejects explicitly.
 - `WITH RECURSIVE` accepts only one recursive member, which must scan the CTE
   exactly once in its `FROM`, with no aggregates, windows, `DISTINCT`,
@@ -115,14 +121,10 @@ Each row below was measured against MySQL 8.4, not inferred. All return a plausi
 |---|---|---|
 | `ROUND(1.005, 2)` | `1.01` | `1` |
 | `ROUND(25E-1)` | `2` | `3` |
-| `REGEXP_LIKE('é', '[[:alpha:]]')` | `1` | `0` |
 | `LOWER(CAST('ABC' AS BINARY))` | `ABC` | `abc` |
 | `UPPER(CAST('abc' AS BINARY))` | `abc` | `ABC` |
 | `INSTR(CAST('A' AS BINARY), 'a')` | `0` | `1` |
 | `LOCATE('a', CAST('A' AS BINARY))` | `0` | `1` |
-| `HEX(TRIM(CHAR(9)))` | `09` | empty string |
-| `LENGTH(TO_BASE64(REPEAT('a', 58)))` | `81` | `80` |
-| `SEC_TO_TIME(1.5)` | `00:00:01.5` | `00:00:01` |
 | `HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11))))` | `61` | `NULL` |
 
 The causes cluster: `ROUND` uses the f64 carrier where MySQL applies exact-value decimal rounding, and rounds half away from zero where MySQL uses nearest-even for approximate operands; the regex engine defines POSIX classes over ASCII where MySQL's ICU engine defines them over Unicode; `LOWER`, `UPPER`, `INSTR` and `LOCATE` fold case unconditionally instead of treating a binary argument as case-sensitive; `TRIM` removes the full Unicode whitespace set rather than only the space character; and `TO_BASE64` omits MySQL's 76-column line wrapping.

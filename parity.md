@@ -12,7 +12,8 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 |---|---|
 | Callable functions | 110 — `bun run scripts/function-surface.ts` reads them from the binder |
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG` |
-| Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`; default frames only |
+| Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
+| Window frames | explicit `ROWS BETWEEN` with all bound forms, plus the `ROWS n PRECEDING` shorthand; `RANGE`/`GROUPS` and named windows reject |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities |
 | Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form, decorrelated to semi/anti joins |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
@@ -66,17 +67,12 @@ From `scripts/function-surface.ts` against `tests/corpus/bi-shapes.sql`.
 
 | Function | Needed by | Issue |
 |---|---|---|
-| `LAG`, `LEAD` | Superset, Metabase — period-over-period | #25 |
-| `FIRST_VALUE`, `LAST_VALUE`, `NTILE` | Superset, Looker — cohorts, quartiles | #25 |
-| Window frames, named windows | all four — running totals, moving averages | #25 |
 | `STDDEV[_POP\|_SAMP]`, `VARIANCE`, `VAR_[POP\|SAMP]` | Tableau | #17 |
 | `ANY_VALUE` | Looker, Metabase — `ONLY_FULL_GROUP_BY` | #17 |
 | `BIT_AND`, `BIT_OR`, `BIT_XOR` | Tableau | #17 |
-| `SUBSTRING_INDEX` | all four — URL/UTM splitting | #17 |
-| `MD5` + `CONV` | Looker — symmetric aggregate, one unit with `DECIMAL(38,0)` casts | #17 |
-| `JSON_CONTAINS`, `JSON_LENGTH`, `JSON_KEYS`, `JSON_TYPE`, `JSON_VALID` | all four — JSON dimension filters | #8 |
-| `MAKETIME` | Superset | #13 |
+| `MD5` | Looker — the last piece of the symmetric aggregate; `CONV` and wide `DECIMAL` casts are in place | #17 |
 | Compound intervals | Superset — blocked in sqlparser, not the engine | #13 |
+| Named windows | `WINDOW w AS (…)` | #25 |
 
 `tests/corpus/bi-shapes.sql` is **reconstructed** from documented BI-tool
 behaviour, not a captured query log. It establishes which functions are needed,
