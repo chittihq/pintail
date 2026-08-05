@@ -3233,6 +3233,13 @@ impl AggregateState {
                 let delta = observation - *mean;
                 *mean += delta / n;
                 *m2 = delta.mul_add(observation - *mean, *m2);
+                // Values near the f64 ceiling drive delta to infinity and m2
+                // to -infinity, which would surface as a negative variance
+                // or a NaN standard deviation. Average and Sum already
+                // reject non-finite intermediates; so does this.
+                if !mean.is_finite() || !m2.is_finite() {
+                    return Err(ExecError::NumericOverflow);
+                }
             }
             AggregateValue::BitFold { accumulator, seen } => {
                 // MySQL coerces the argument to BIGINT UNSIGNED before
@@ -3494,6 +3501,68 @@ impl AggregateState {
                 };
                 if replace {
                     replace_retained_value(left, right, memory)?;
+                }
+            }
+            (AggregateValue::AnyValue(left), AggregateValue::AnyValue(right)) => {
+                // Any one value satisfies ANY_VALUE, so an existing one wins
+                // and an empty side takes the other's.
+                if left.is_none()
+                    && let Some(value) = right
+                {
+                    replace_retained_value(left, value, memory)?;
+                }
+            }
+            (
+                AggregateValue::BitFold { accumulator, seen },
+                AggregateValue::BitFold {
+                    accumulator: other,
+                    seen: other_seen,
+                },
+            ) => {
+                // The identity of an unseen side would corrupt the fold —
+                // all-ones for BIT_AND — so an empty side is skipped rather
+                // than combined.
+                if other_seen {
+                    if *seen {
+                        *accumulator = match aggregate.function {
+                            AggregateFunction::BitAnd => *accumulator & other,
+                            AggregateFunction::BitXor => *accumulator ^ other,
+                            _ => *accumulator | other,
+                        };
+                    } else {
+                        *accumulator = other;
+                        *seen = true;
+                    }
+                }
+            }
+            (
+                AggregateValue::Moments {
+                    count, mean, m2, ..
+                },
+                AggregateValue::Moments {
+                    count: other_count,
+                    mean: other_mean,
+                    m2: other_m2,
+                    ..
+                },
+            ) => {
+                // Chan's parallel form. Adding m2 directly would be wrong:
+                // the combined spread includes the distance between the two
+                // means, which neither partial state carries.
+                if other_count > 0 {
+                    let total = count
+                        .checked_add(other_count)
+                        .ok_or(ExecError::NumericOverflow)?;
+                    #[allow(clippy::cast_precision_loss)]
+                    let (left_n, right_n, total_n) =
+                        (*count as f64, other_count as f64, total as f64);
+                    let delta = other_mean - *mean;
+                    *mean = (left_n * *mean + right_n * other_mean) / total_n;
+                    *m2 += other_m2 + delta * delta * left_n * right_n / total_n;
+                    *count = total;
+                    if !mean.is_finite() || !m2.is_finite() {
+                        return Err(ExecError::NumericOverflow);
+                    }
                 }
             }
             _ => {
@@ -4205,13 +4274,16 @@ fn try_sma_fold(
         let mut state = AggregateState::new(aggregate);
         let synthetic = match aggregate.function {
             // Segment summaries carry count/sum/min/max only, so none of
-            // these can be folded without reading rows.
+            // these can be folded without reading rows. Declining the whole
+            // optimization is the point: returning None here would only mean
+            // "no synthetic value", and the fold would go on to answer from
+            // an empty state — NULL for a variance, all-ones for BIT_AND.
             AggregateFunction::AnyValue
             | AggregateFunction::StdDev { .. }
             | AggregateFunction::Variance { .. }
             | AggregateFunction::BitAnd
             | AggregateFunction::BitOr
-            | AggregateFunction::BitXor => None,
+            | AggregateFunction::BitXor => return Ok(None),
             AggregateFunction::Count => {
                 let total = match column {
                     None => live_rows,
@@ -8613,7 +8685,13 @@ fn compute_window_column(
             CompiledWindowFunction::NTile(buckets) => {
                 // MySQL gives the larger buckets to the earlier positions:
                 // the first (len % buckets) buckets take one extra row.
-                let buckets = usize::try_from(*buckets).unwrap_or(1).max(1);
+                // More buckets than rows means every row is its own bucket
+                // and the rest are empty; capping at the row count keeps
+                // NTILE(18446744073709551615) from walking 2^64 of them.
+                let buckets = usize::try_from(*buckets)
+                    .unwrap_or(usize::MAX)
+                    .max(1)
+                    .min(partition.len().max(1));
                 let base = partition.len() / buckets;
                 let wide = partition.len() % buckets;
                 let mut assigned = 0;
@@ -8627,7 +8705,60 @@ fn compute_window_column(
             }
             CompiledWindowFunction::Extreme { last, .. } => {
                 let value_position = partition_len + window.order.len();
-                if !*last || window.order.is_empty() {
+                if let Some(frame) = window.frame {
+                    // An explicit frame governs which row is read. Binding a
+                    // frame and then ignoring it would answer the default
+                    // frame's question under the caller's syntax.
+                    use pintail_sql::BoundFrameBound as Edge;
+                    let len = partition.len();
+                    let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
+                    let peer_start = |from: usize| {
+                        let mut first = from;
+                        while first > 0 && same_peers(partition[first - 1], partition[from]) {
+                            first -= 1;
+                        }
+                        first
+                    };
+                    let peer_end = |from: usize| {
+                        let mut last_row = from + 1;
+                        while last_row < len && same_peers(partition[from], partition[last_row]) {
+                            last_row += 1;
+                        }
+                        last_row
+                    };
+                    for index in 0..len {
+                        let start = match frame.start {
+                            Edge::UnboundedPreceding => 0,
+                            Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
+                            Edge::CurrentRow if frame.range => peer_start(index),
+                            Edge::CurrentRow => index,
+                            Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
+                            Edge::UnboundedFollowing => len,
+                        };
+                        let end = match frame.end {
+                            Edge::UnboundedPreceding => 0,
+                            Edge::Preceding(offset) => {
+                                index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
+                            }
+                            Edge::CurrentRow if frame.range => peer_end(index),
+                            Edge::CurrentRow => index + 1,
+                            Edge::Following(offset) => index
+                                .saturating_add(clamp(offset))
+                                .saturating_add(1)
+                                .min(len),
+                            Edge::UnboundedFollowing => len,
+                        };
+                        // An empty frame has no value to read.
+                        let value = if start >= end {
+                            Value::Null
+                        } else {
+                            let source = if *last { end - 1 } else { start };
+                            keys[partition[source]][value_position].clone()
+                        };
+                        memory.reserve(value.heap_bytes())?;
+                        results[partition[index]] = value;
+                    }
+                } else if !*last || window.order.is_empty() {
                     // FIRST_VALUE reads the partition's first row; without
                     // ORDER BY the frame is the whole partition, so
                     // LAST_VALUE reads its last.

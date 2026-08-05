@@ -1794,6 +1794,99 @@ mod tests {
         );
     }
 
+    /// The defects a robustness review found in the window and aggregate
+    /// work. Each of these bound or answered wrongly before the fix.
+    #[test]
+    fn reviewed_window_and_aggregate_defects_are_repaired() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest((1..=5_u64).map(|id| row(id, "value")).collect())
+            .expect("ingest");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(71);
+        let table_id = TableId::new(73);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let u = Value::UInt64;
+        // FIRST_VALUE/LAST_VALUE read the frame, so a frame on them binds.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT LAST_VALUE(id) OVER (ORDER BY id \
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM events",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(5), u(5), u(5), u(5), u(5)]
+        );
+        // A named window nested inside a scalar function resolves. The cast
+        // keeps COALESCE's own type unification out of the assertion.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT COALESCE(LAG(id) OVER w, CAST(0 AS UNSIGNED)) FROM events \
+                 WINDOW w AS (ORDER BY id)",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(0), u(1), u(2), u(3), u(4)]
+        );
+        // NTILE with more buckets than rows terminates promptly.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT NTILE(18446744073709551615) OVER (ORDER BY id) FROM events",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(1), u(2), u(3), u(4), u(5)]
+        );
+    }
+
+    /// An inverted frame must reject rather than answer NULL for every row.
+    #[test]
+    fn an_inverted_window_frame_rejects() {
+        let statement = parse_statement(
+            "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING \
+                 AND 1 PRECEDING) FROM events",
+        )
+        .expect("parse");
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(75);
+        let table_id = TableId::new(77);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(0),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let _ = &snapshot;
+        assert!(
+            Binder::new(&catalog, Some("app")).bind(&statement).is_err(),
+            "a frame whose start follows its end must not bind"
+        );
+    }
+
     /// A named window resolves to its definition before binding.
     #[test]
     fn named_windows_resolve_to_their_definition() {

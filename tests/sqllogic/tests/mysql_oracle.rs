@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 776;
+const EXPECTED_CASES: usize = 782;
 
 struct OracleCase {
     family: &'static str,
@@ -1046,6 +1046,41 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT ROUND(1.005, 2), ROUND(25E-1), ROUND(2.5), ROUND(-2.5), \
              ROUND(1.005E0, 2), CEIL(1.2), FLOOR(-1.2), 1 + 2.5, \
              ROUND(12.345, 2), TRUNCATE(1.999, 2)",
+        ),
+        // Defects a robustness review found in this batch, each adjudicated
+        // rather than assumed. The two inferred claims are here too: CONV's
+        // saturation on overflow, and JSON_KEYS's key ordering.
+        ordered(
+            "reviewed conv edges",
+            "SELECT CONV('10000000000000000', 16, 10), CONV('ff', 16, 10), \
+             CONV('zz', 36, 10), CONV('-17', 10, -18), CONV('1', 1, 10), CONV('1', 37, 10)",
+        ),
+        ordered(
+            "reviewed maketime fraction",
+            "SELECT MAKETIME(12, 15, 30.5), MAKETIME(12, 15, 30), MAKETIME(1, 60, 0)",
+        ),
+        ordered(
+            "reviewed json keys ordering",
+            "SELECT JSON_KEYS('{\"aa\":1,\"b\":2}'), JSON_KEYS('{\"b\":1,\"aa\":2}'), \
+             JSON_KEYS('{\"c\":1,\"a\":2,\"bb\":3}')",
+        ),
+        ordered(
+            "reviewed frame on extremes",
+            "SELECT id, \
+             LAST_VALUE(score) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING \
+             AND UNBOUNDED FOLLOWING), \
+             FIRST_VALUE(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "reviewed named window in arguments",
+            "SELECT id, COALESCE(LAG(score) OVER w, 0) FROM events \
+             WINDOW w AS (ORDER BY id) ORDER BY id",
+        ),
+        ordered(
+            "reviewed grouped statistical aggregates",
+            "SELECT active, STDDEV_POP(score), VAR_POP(score), BIT_OR(id), ANY_VALUE(active) \
+             FROM events GROUP BY active ORDER BY active",
         ),
         ordered(
             "repaired binary case sensitivity",

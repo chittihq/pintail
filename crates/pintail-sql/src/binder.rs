@@ -2756,9 +2756,16 @@ fn bind_window_function(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let frame = bind_window_frame(spec, function)?;
-    if frame.is_some() && !matches!(window_function, WindowFunction::Aggregate(_)) {
-        // Ranking and offset functions ignore or forbid a frame in MySQL;
-        // rejecting is safer than silently dropping it.
+    // FIRST_VALUE and LAST_VALUE read the frame by definition — LAST_VALUE's
+    // whole reputation for surprise comes from the default frame — so a
+    // frame on them is meaningful. Ranking and offset functions ignore or
+    // forbid one, and rejecting beats silently dropping it.
+    if frame.is_some()
+        && !matches!(
+            window_function,
+            WindowFunction::Aggregate(_) | WindowFunction::Extreme { .. }
+        )
+    {
         return Err(BindError::UnsupportedQueryClause(format!(
             "window frame on {function}"
         )));
@@ -4070,10 +4077,43 @@ fn substitute_named_windows(
                     }
                 }
             }
+            // The walk must continue into the arguments: the binder recurses
+            // into them, so an OVER w nested inside COALESCE(...) would
+            // otherwise reach binding unresolved.
+            if let FunctionArguments::List(arguments) = &mut function.args {
+                for argument in &mut arguments.args {
+                    if let FunctionArg::Unnamed(FunctionArgExpr::Expr(inner))
+                    | FunctionArg::Named {
+                        arg: FunctionArgExpr::Expr(inner),
+                        ..
+                    } = argument
+                    {
+                        substitute_named_windows(inner, definitions)?;
+                    }
+                }
+            }
             Ok(())
         }
         Expr::UnaryOp { expr, .. } | Expr::Nested(expr) | Expr::Cast { expr, .. } => {
             substitute_named_windows(expr, definitions)
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(operand) = operand {
+                substitute_named_windows(operand, definitions)?;
+            }
+            for arm in conditions {
+                substitute_named_windows(&mut arm.condition, definitions)?;
+                substitute_named_windows(&mut arm.result, definitions)?;
+            }
+            if let Some(otherwise) = else_result {
+                substitute_named_windows(otherwise, definitions)?;
+            }
+            Ok(())
         }
         Expr::BinaryOp { left, right, .. } => {
             substitute_named_windows(left, definitions)?;
@@ -4147,6 +4187,21 @@ fn bind_window_frame(
         None => BoundFrameBound::CurrentRow,
         Some(edge) => bound(edge, false)?,
     };
+    // MySQL rejects a frame whose start follows its end. Accepting it here
+    // produced an empty frame and a NULL for every row — a plausible answer
+    // to a query that should not have bound.
+    let ordinal = |edge: BoundFrameBound| match edge {
+        BoundFrameBound::UnboundedPreceding => (0_u8, 0_i128),
+        BoundFrameBound::Preceding(offset) => (1, -i128::from(offset)),
+        BoundFrameBound::CurrentRow => (1, 0),
+        BoundFrameBound::Following(offset) => (1, i128::from(offset)),
+        BoundFrameBound::UnboundedFollowing => (2, 0),
+    };
+    if ordinal(start) > ordinal(end) {
+        return Err(BindError::UnsupportedQueryClause(format!(
+            "window frame start follows its end on {function}"
+        )));
+    }
     Ok(Some(BoundWindowFrame { range, start, end }))
 }
 

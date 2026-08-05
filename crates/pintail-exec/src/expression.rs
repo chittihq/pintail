@@ -1814,8 +1814,21 @@ fn evaluate_eager_scalar(
         ScalarFunction::MakeTime => {
             let hour = mysql_i64(&values[0])?;
             let minute = mysql_i64(&values[1])?;
+            // MySQL keeps a fractional second: MAKETIME(12,15,30.5) is
+            // 12:15:30.500000. The fraction is read from the argument's own
+            // text so its digit count survives the integer conversion.
+            let seconds_text = scalar_string(&values[2]).unwrap_or_default();
+            let fraction = seconds_text
+                .split_once('.')
+                .map(|(_, digits)| digits.trim_end_matches('0').to_owned())
+                .filter(|digits| !digits.is_empty());
             let second = mysql_i64(&values[2])?;
-            Ok(make_time(hour, minute, second).map_or(Value::Null, Value::Utf8))
+            Ok(make_time(hour, minute, second)
+                .map(|rendered| match fraction {
+                    Some(digits) => format!("{rendered}.{digits}"),
+                    None => rendered,
+                })
+                .map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::JsonValid => {
             // JSON_VALID answers 0 or 1 for any non-NULL input rather than
@@ -3042,12 +3055,14 @@ fn substring_index(text: &str, delimiter: &str, count: i64) -> String {
 /// Parsing stops at the first digit invalid for the source base, matching
 /// `MySQL` rather than rejecting the whole string.
 fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
-    let from_base = u32::try_from(from.abs()).ok()?;
-    let signed_output = to < 0;
-    let to_base = u32::try_from(to.abs()).ok()?;
-    if !(2..=36).contains(&from_base) || !(2..=36).contains(&to_base) {
+    // Range-check before abs(): i64::MIN has no positive counterpart, so
+    // abs() on it overflows — a panic in debug, a wrap in release.
+    if !(2..=36).contains(&from.unsigned_abs()) || !(2..=36).contains(&to.unsigned_abs()) {
         return None;
     }
+    let from_base = u32::try_from(from.unsigned_abs()).ok()?;
+    let signed_output = to < 0;
+    let to_base = u32::try_from(to.unsigned_abs()).ok()?;
     let trimmed = subject.trim();
     let (negative, digits) = match trimmed.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -3058,9 +3073,12 @@ fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
         let Some(digit) = character.to_digit(from_base) else {
             break;
         };
+        // MySQL saturates an overlong source at the unsigned ceiling rather
+        // than wrapping to a small number.
         magnitude = magnitude
-            .wrapping_mul(u64::from(from_base))
-            .wrapping_add(u64::from(digit));
+            .checked_mul(u64::from(from_base))
+            .and_then(|scaled| scaled.checked_add(u64::from(digit)))
+            .unwrap_or(u64::MAX);
     }
     // A leading minus wraps in the 64-bit space, exactly as MySQL's
     // unsigned reading does; these are reinterpretations, not conversions.
@@ -3835,6 +3853,7 @@ mod tests {
 
     /// Three divergences measured against `MySQL` 8.4 and now repaired.
     #[test]
+    #[allow(clippy::too_many_lines)] // a flat list of measured cases reads best whole
     fn repaired_divergences_match_mysql() {
         use pintail_types::{DataType, Value};
         let call = |function, args: Vec<Value>| {
@@ -3865,6 +3884,32 @@ mod tests {
         };
         assert_eq!(encoded.chars().count(), 81);
         assert!(encoded.contains('\n'));
+        // CONV must range-check before abs(): i64::MIN has no positive
+        // counterpart, so abs() on it overflows.
+        assert_eq!(
+            super::conv_base("1", i64::MIN, 10),
+            None,
+            "CONV with an i64::MIN base"
+        );
+        assert_eq!(super::conv_base("1", 10, i64::MIN), None);
+        assert_eq!(super::conv_base("ff", 16, 10), Some("255".to_owned()));
+        // An overlong source saturates rather than wrapping to zero.
+        assert_eq!(
+            super::conv_base("10000000000000000", 16, 10),
+            Some("18446744073709551615".to_owned())
+        );
+        // MAKETIME keeps a fractional second.
+        assert_eq!(
+            call(
+                ScalarFunction::MakeTime,
+                vec![
+                    Value::Int64(12),
+                    Value::Int64(15),
+                    Value::Utf8("30.5".into())
+                ]
+            ),
+            Value::Utf8("12:15:30.5".into())
+        );
         // A binary operand is compared byte-exact: LOWER/UPPER leave it
         // alone and INSTR/LOCATE stop folding case.
         assert_eq!(

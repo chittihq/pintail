@@ -376,6 +376,16 @@ async function main() {
     // its own group of one. Only correctness stages share a lane — bench and
     // accept record timings, and a co-tenant on the same host changes the
     // numbers they exist to produce.
+    // A name that matches no stage would otherwise be dropped in silence and
+    // the run would still report PASS — a typo in --stages must not look
+    // like a green gate.
+    const unknown = requested.filter(
+      (name) => !STAGES.some((stage) => stage.name === name),
+    )
+    if (unknown.length > 0) {
+      status(`ABORT: unknown stage(s) requested: ${unknown.join(', ')}`)
+      process.exit(2)
+    }
     const groups: (typeof STAGES)[] = []
     for (const stage of STAGES) {
       if (!requested.includes(stage.name)) continue
