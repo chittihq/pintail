@@ -439,18 +439,19 @@ async function main() {
           break
         }
         const minutes = (Date.now() - started) / 60_000
-        results.push({ name: stage.name, verdict, minutes, note })
         status(`${stage.name}: ${verdict}${note ? ` — ${note}` : ''} (${minutes.toFixed(1)}m)`)
+        return { name: stage.name, verdict, minutes, note }
     }
 
     for (const group of groups) {
       if (group.length > 1) {
         status(`lane ${group[0].lane}: ${group.map((one) => one.name).join(' + ')} together`)
       }
-      const outcomes = (await Promise.all(group.map(runStage))).filter(
-        (outcome) => outcome !== undefined,
-      )
+      const settled = await Promise.all(group.map((one) => runStage(one)))
+      const outcomes = settled.filter((outcome) => outcome !== undefined)
       results.push(...outcomes)
+      // A stage that returned nothing aborted before starting and has
+      // already recorded its own ABORTED row; either way the run stops.
       if (outcomes.length !== group.length) break
       if (outcomes.some((outcome) => outcome.verdict !== 'PASS')) break
     }
