@@ -24,7 +24,7 @@ plausible but incorrect result.
   `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` over `PARTITION BY` / `ORDER BY` with
   MySQL's default frames, nested anywhere in projection expressions and
   over grouped output. Explicit frames (`ROWS`/`RANGE BETWEEN`), named
-  windows, `LAG`/`LEAD`/`NTILE`/`FIRST_VALUE`/`LAST_VALUE`, and windows
+  windows, `LAG`/`LEAD`/`NTILE`/`FIRST_VALUE`/`LAST_VALUE` (#25), and windows
   combined with `DISTINCT` are not implemented. `UNION [ALL | DISTINCT]`,
   `INTERSECT [ALL]`, and `EXCEPT [ALL]` follow MySQL's left-associative
   set semantics, including exact `ALL` multiset counts (a distinct union
@@ -103,13 +103,26 @@ enough to be worth refusing.
   tables, locale tailoring, coercibility rules, or pad-space behavior.
   The flag reads once at process start. Binary values remain bytewise.
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are
-  pinned to one timestamp per statement, read from the host clock and
-  timezone at plan time. Pintail does not yet expose a MySQL session
-  timezone.
+  pinned to one timestamp per statement, read at plan time from the session
+  time zone where one is set and the host clock and timezone otherwise. The
+  MySQL wire endpoint implements `SET time_zone` per connection; the HTTP
+  endpoint has no equivalent session state, and the session zone does not
+  affect `CONVERT_TZ` or stored temporal values.
 - Date parsing accepts the canonical date and date-time forms implemented by
   the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a
-  time; compound intervals and the full `DATE_FORMAT` directive inventory are
-  not implemented.
+  time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not
+  implemented. `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`,
+  `SECOND`, `QUARTER` and `WEEK`; compound units reject explicitly.
+- `DATE_FORMAT` implements `%c %e %M %k %l %i %s %f %%` and forwards every
+  other directive to the underlying formatter, where several letters mean
+  something different — so unsupported directives return a wrong value
+  instead of an error. Measured on `2024-02-29 12:34:56`: `%W` returns `09`
+  rather than `Thursday`, `%D` returns `02/29/24` rather than `29th`, `%v`
+  returns `29-Feb-2024` rather than `09`, `%u` returns `4` rather than `09`,
+  and `%X`/`%x` return `12:34:56`/`02/29/24` rather than `2024`. `%a %b %j
+  %p %r %T` coincide with MySQL and are correct. This is the one place the
+  engine returns a plausible incompatible result rather than failing, and it
+  is tracked for repair in #13.
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle
   development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a
   special-case result that did not follow this behavior; that MySQL-only
