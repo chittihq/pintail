@@ -232,6 +232,18 @@ async function setupPintail(mysqlHost: string, mysqlPort: number): Promise<void>
     if (attempt % 60 === 0) {
       const total = status.tables.reduce((a, t) => a + t.rows, 0)
       log(`snapshot progress: ${total.toLocaleString()} rows`)
+      // A snapshot cannot finish once its source container is gone, but
+      // pintail keeps polling a server that no longer answers — that is how
+      // this stage once sat silent for 54 minutes. One inspect per minute
+      // turns it into an immediate, named failure.
+      const alive = await docker('inspect', '-f', '{{.State.Running}}', mysqlName).catch(
+        () => 'missing',
+      )
+      if (alive.trim() !== 'true') {
+        throw new Error(
+          `snapshot source container ${mysqlName} is no longer running (${alive.trim()})`,
+        )
+      }
     }
     await Bun.sleep(1000)
   }
