@@ -3656,6 +3656,16 @@ fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
         "MAX" => Some(AggregateFunction::Maximum),
         "GROUP_CONCAT" => Some(AggregateFunction::GroupConcat),
         "JSON_ARRAYAGG" => Some(AggregateFunction::JsonArrayAgg),
+        "ANY_VALUE" => Some(AggregateFunction::AnyValue),
+        // MySQL spells the population forms three ways and the sample form
+        // one; VARIANCE and VAR_POP are likewise the same function.
+        "STDDEV" | "STD" | "STDDEV_POP" => Some(AggregateFunction::StdDev { sample: false }),
+        "STDDEV_SAMP" => Some(AggregateFunction::StdDev { sample: true }),
+        "VARIANCE" | "VAR_POP" => Some(AggregateFunction::Variance { sample: false }),
+        "VAR_SAMP" => Some(AggregateFunction::Variance { sample: true }),
+        "BIT_AND" => Some(AggregateFunction::BitAnd),
+        "BIT_OR" => Some(AggregateFunction::BitOr),
+        "BIT_XOR" => Some(AggregateFunction::BitXor),
         _ => None,
     }
 }
@@ -3721,6 +3731,23 @@ fn aggregate_result_type(
             if is_mysql_scalar(input_type) =>
         {
             Ok((Some(DataType::Utf8), true))
+        }
+        // ANY_VALUE is a passthrough: it returns one of the input's own
+        // values, so it keeps the input's type.
+        AggregateFunction::AnyValue if is_mysql_scalar(input_type) => Ok((input_type, true)),
+        // MySQL returns DOUBLE for both families regardless of input type.
+        AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. }
+            if is_numeric(input_type) =>
+        {
+            Ok((Some(DataType::Float64), true))
+        }
+        // The bit folds coerce their argument to BIGINT UNSIGNED and return
+        // it, including for an empty group where the answer is the fold's
+        // identity rather than NULL.
+        AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor
+            if is_numeric(input_type) =>
+        {
+            Ok((Some(DataType::UInt64), false))
         }
         _ => Err(BindError::InvalidAggregateType {
             function,

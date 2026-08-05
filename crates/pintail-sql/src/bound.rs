@@ -420,6 +420,21 @@ pub enum AggregateFunction {
     GroupConcat,
     /// Collect values (including NULLs) into a JSON array.
     JsonArrayAgg,
+    /// Any one non-NULL value from the group. Clients emit this to satisfy
+    /// `ONLY_FULL_GROUP_BY` for a column they know is functionally dependent
+    /// on the grouping key, so which row wins is not observable to them.
+    AnyValue,
+    /// Standard deviation. `sample` selects `STDDEV_SAMP` (divide by n-1)
+    /// over the `STDDEV`/`STD`/`STDDEV_POP` population form (divide by n).
+    StdDev { sample: bool },
+    /// Variance, with the same population/sample split as [`Self::StdDev`].
+    Variance { sample: bool },
+    /// Bitwise fold over the group, as `BIGINT UNSIGNED`.
+    BitAnd,
+    /// Bitwise OR fold over the group.
+    BitOr,
+    /// Bitwise XOR fold over the group.
+    BitXor,
 }
 
 /// One deduplicated aggregate computation.

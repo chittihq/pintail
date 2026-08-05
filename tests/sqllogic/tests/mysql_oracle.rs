@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 734;
+const EXPECTED_CASES: usize = 743;
 
 struct OracleCase {
     family: &'static str,
@@ -785,6 +785,55 @@ fn hand_written_cases() -> Vec<OracleCase> {
              DATE_FORMAT('2024-02-29 12:34:56', '%q'), \
              DATE_FORMAT('2024-02-29 12:34:56', '100%%'), \
              DATE_FORMAT('2024-02-29 12:34:56', 'no directives')",
+        ),
+        // The aggregates added for BI parity. MySQL adjudicates the edge
+        // semantics that are easy to assume wrongly: BIT_AND over an empty
+        // group is the fold identity (all ones) rather than NULL, and the
+        // sample forms divide by n-1 so a single row is NULL while the
+        // population forms are 0.
+        ordered(
+            "hand-written statistical aggregates",
+            "SELECT STDDEV(score), STDDEV_POP(score), STDDEV_SAMP(score), \
+             VARIANCE(score), VAR_POP(score), VAR_SAMP(score), STD(score) FROM events",
+        ),
+        ordered(
+            "hand-written statistical aggregates grouped",
+            "SELECT active, STDDEV_POP(score), VAR_SAMP(score) FROM events \
+             GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "hand-written statistical aggregate single row",
+            "SELECT STDDEV_POP(score), STDDEV_SAMP(score), VAR_POP(score), VAR_SAMP(score) \
+             FROM events WHERE id = 1",
+        ),
+        ordered(
+            "hand-written statistical aggregate empty group",
+            "SELECT STDDEV_POP(score), STDDEV_SAMP(score), VARIANCE(score) \
+             FROM events WHERE id > 1000",
+        ),
+        ordered(
+            "hand-written bit aggregates",
+            "SELECT BIT_AND(score), BIT_OR(score), BIT_XOR(score) FROM events",
+        ),
+        ordered(
+            "hand-written bit aggregates grouped",
+            "SELECT active, BIT_AND(id), BIT_OR(id), BIT_XOR(id) FROM events \
+             GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "hand-written bit aggregates empty group",
+            "SELECT BIT_AND(score), BIT_OR(score), BIT_XOR(score) FROM events WHERE id > 1000",
+        ),
+        // ANY_VALUE is nondeterministic in MySQL, so it can only be compared
+        // where the column is functionally dependent on the grouping key —
+        // which is also the only shape clients emit it in.
+        ordered(
+            "hand-written any_value",
+            "SELECT id, ANY_VALUE(name), ANY_VALUE(score) FROM events GROUP BY id ORDER BY id",
+        ),
+        ordered(
+            "hand-written any_value empty group",
+            "SELECT ANY_VALUE(name) FROM events WHERE id > 1000",
         ),
         ordered(
             "hand-written conditionals",

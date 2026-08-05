@@ -3066,6 +3066,30 @@ enum AggregateValue {
     },
     Minimum(Option<Value>),
     Maximum(Option<Value>),
+    /// `ANY_VALUE`: the first non-NULL value the group sees. `MySQL` does not
+    /// define which row wins; clients emit this only for columns they know
+    /// are functionally dependent on the grouping key.
+    AnyValue(Option<Value>),
+    /// Welford moments for `STDDEV`/`VARIANCE`. Summing squares and
+    /// subtracting the mean at the end is one operation cheaper per row and
+    /// catastrophically worse: on values far from zero the subtraction
+    /// cancels away most of the significand. Welford costs an extra subtract
+    /// and keeps full precision, which matters when the result lands in a
+    /// dashboard beside the same column read from `MySQL`.
+    Moments {
+        count: u64,
+        mean: f64,
+        m2: f64,
+        sample: bool,
+        stddev: bool,
+    },
+    /// `BIT_AND`/`BIT_OR`/`BIT_XOR`. `seen` exists because `MySQL` folds an
+    /// empty group to the operation's identity rather than to NULL, so
+    /// `BIT_AND` over no rows is all ones.
+    BitFold {
+        accumulator: u64,
+        seen: bool,
+    },
     GroupConcat {
         /// Collected `(order keys, rendered value)` rows.
         items: Vec<(Vec<Value>, String)>,
@@ -3105,6 +3129,29 @@ impl AggregateState {
                     .collect(),
             },
             AggregateFunction::JsonArrayAgg => AggregateValue::JsonArrayAgg { items: Vec::new() },
+            AggregateFunction::AnyValue => AggregateValue::AnyValue(None),
+            AggregateFunction::StdDev { sample } => AggregateValue::Moments {
+                count: 0,
+                mean: 0.0,
+                m2: 0.0,
+                sample,
+                stddev: true,
+            },
+            AggregateFunction::Variance { sample } => AggregateValue::Moments {
+                count: 0,
+                mean: 0.0,
+                m2: 0.0,
+                sample,
+                stddev: false,
+            },
+            AggregateFunction::BitAnd => AggregateValue::BitFold {
+                accumulator: u64::MAX,
+                seen: false,
+            },
+            AggregateFunction::BitOr | AggregateFunction::BitXor => AggregateValue::BitFold {
+                accumulator: 0,
+                seen: false,
+            },
         };
         Self {
             value,
@@ -3170,6 +3217,36 @@ impl AggregateState {
         match &mut self.value {
             AggregateValue::Count(count) => {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+            }
+            AggregateValue::AnyValue(slot) => {
+                if slot.is_none() {
+                    replace_retained_value(slot, value.clone(), memory)?;
+                }
+            }
+            AggregateValue::Moments {
+                count, mean, m2, ..
+            } => {
+                let observation = number.map_or_else(|| mysql_f64(value), Ok)?;
+                *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+                #[allow(clippy::cast_precision_loss)]
+                let n = *count as f64;
+                let delta = observation - *mean;
+                *mean += delta / n;
+                *m2 = delta.mul_add(observation - *mean, *m2);
+            }
+            AggregateValue::BitFold { accumulator, seen } => {
+                // MySQL coerces the argument to BIGINT UNSIGNED before
+                // folding, so a signed or textual input reinterprets rather
+                // than erroring.
+                let bits = mysql_u64(value).unwrap_or_else(|_| {
+                    mysql_i64(value).map_or(0, |signed| u64::from_ne_bytes(signed.to_ne_bytes()))
+                });
+                *accumulator = match aggregate.function {
+                    AggregateFunction::BitAnd => *accumulator & bits,
+                    AggregateFunction::BitXor => *accumulator ^ bits,
+                    _ => *accumulator | bits,
+                };
+                *seen = true;
             }
             AggregateValue::DecimalSum { units, scale, .. } => {
                 let text = match value {
@@ -3593,10 +3670,35 @@ impl AggregateState {
         Ok(())
     }
 
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
+            AggregateValue::BitFold { accumulator, .. } => Value::UInt64(accumulator),
+            AggregateValue::Moments {
+                count,
+                m2,
+                sample,
+                stddev,
+                ..
+            } => {
+                // MySQL returns NULL for an empty or all-NULL group, and for
+                // the sample forms at n = 1 the divisor is zero, which is
+                // also NULL rather than an error. The population forms report
+                // 0 for a single row.
+                let divisor = if sample {
+                    count.saturating_sub(1)
+                } else {
+                    count
+                };
+                if count == 0 || divisor == 0 {
+                    Value::Null
+                } else {
+                    #[allow(clippy::cast_precision_loss)]
+                    let variance = m2 / divisor as f64;
+                    Value::float64(if stddev { variance.sqrt() } else { variance })
+                }
+            }
             AggregateValue::DecimalSum {
                 units,
                 scale,
@@ -3611,7 +3713,8 @@ impl AggregateState {
             }
             AggregateValue::Sum(value)
             | AggregateValue::Minimum(value)
-            | AggregateValue::Maximum(value) => value.unwrap_or(Value::Null),
+            | AggregateValue::Maximum(value)
+            | AggregateValue::AnyValue(value) => value.unwrap_or(Value::Null),
             AggregateValue::Average { sum: _, count: 0 }
             | AggregateValue::DecimalAverage { count: 0, .. } => Value::Null,
             AggregateValue::Average { sum, count } => Value::float64(sum / count as f64),
@@ -3796,6 +3899,25 @@ fn merge_finished_value(
         return Ok(delta.clone());
     }
     match aggregate.function {
+        // ANY_VALUE is satisfied by whichever side already has a value, and
+        // the bit folds are associative, so both merge exactly.
+        AggregateFunction::AnyValue => Ok(current),
+        AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor => {
+            let left = mysql_u64(&current).unwrap_or(0);
+            let right = mysql_u64(delta).unwrap_or(0);
+            Ok(Value::UInt64(match aggregate.function {
+                AggregateFunction::BitAnd => left & right,
+                AggregateFunction::BitXor => left ^ right,
+                _ => left | right,
+            }))
+        }
+        // Two finished standard deviations cannot be combined — the moments
+        // they came from are gone. The eligibility gate keeps these off this
+        // path; this arm exists so a future gate change fails loudly rather
+        // than inventing a number.
+        AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. } => Err(
+            ExecError::InvalidPhysicalPlan("STDDEV/VARIANCE finished values cannot be merged"),
+        ),
         AggregateFunction::Count => {
             add_aggregate_value(Some(current), delta, Some(DataType::UInt64))
         }
@@ -3917,16 +4039,26 @@ fn build_hash_aggregate(
         && aggregates.iter().all(|aggregate| {
             !aggregate.distinct
                 && match aggregate.function {
+                    // COUNT/MIN/MAX, plus the associative folds, all merge
+                    // exactly over the disjoint rows an insert-only delta
+                    // contributes.
                     AggregateFunction::Count
                     | AggregateFunction::Minimum
-                    | AggregateFunction::Maximum => true,
+                    | AggregateFunction::Maximum
+                    | AggregateFunction::AnyValue
+                    | AggregateFunction::BitAnd
+                    | AggregateFunction::BitOr
+                    | AggregateFunction::BitXor => true,
                     AggregateFunction::Sum => matches!(
                         aggregate.data_type,
                         Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
                     ),
                     AggregateFunction::Average
                     | AggregateFunction::GroupConcat
-                    | AggregateFunction::JsonArrayAgg => false,
+                    | AggregateFunction::JsonArrayAgg
+                    // Needs the moments, not the finished value.
+                    | AggregateFunction::StdDev { .. }
+                    | AggregateFunction::Variance { .. } => false,
                 }
         })
     {
@@ -4072,6 +4204,14 @@ fn try_sma_fold(
         };
         let mut state = AggregateState::new(aggregate);
         let synthetic = match aggregate.function {
+            // Segment summaries carry count/sum/min/max only, so none of
+            // these can be folded without reading rows.
+            AggregateFunction::AnyValue
+            | AggregateFunction::StdDev { .. }
+            | AggregateFunction::Variance { .. }
+            | AggregateFunction::BitAnd
+            | AggregateFunction::BitOr
+            | AggregateFunction::BitXor => None,
             AggregateFunction::Count => {
                 let total = match column {
                     None => live_rows,
@@ -4875,6 +5015,18 @@ enum SpilledAggregateValue {
     },
     Minimum(Option<Value>),
     Maximum(Option<Value>),
+    AnyValue(Option<Value>),
+    Moments {
+        count: u64,
+        mean: f64,
+        m2: f64,
+        sample: bool,
+        stddev: bool,
+    },
+    BitFold {
+        accumulator: u64,
+        seen: bool,
+    },
 }
 
 fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState, ExecError> {
@@ -4903,6 +5055,23 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         },
         AggregateValue::Minimum(value) => SpilledAggregateValue::Minimum(value),
         AggregateValue::Maximum(value) => SpilledAggregateValue::Maximum(value),
+        AggregateValue::AnyValue(value) => SpilledAggregateValue::AnyValue(value),
+        AggregateValue::Moments {
+            count,
+            mean,
+            m2,
+            sample,
+            stddev,
+        } => SpilledAggregateValue::Moments {
+            count,
+            mean,
+            m2,
+            sample,
+            stddev,
+        },
+        AggregateValue::BitFold { accumulator, seen } => {
+            SpilledAggregateValue::BitFold { accumulator, seen }
+        }
         AggregateValue::GroupConcat { .. } | AggregateValue::JsonArrayAgg { .. } => {
             return Err(ExecError::InvalidPhysicalPlan(
                 "aggregation spill reached a non-spillable aggregate state",
@@ -4939,6 +5108,23 @@ fn revive_aggregate_state(
     }
     state.value = match spilled.value {
         SpilledAggregateValue::Count(count) => AggregateValue::Count(count),
+        SpilledAggregateValue::AnyValue(value) => AggregateValue::AnyValue(value),
+        SpilledAggregateValue::Moments {
+            count,
+            mean,
+            m2,
+            sample,
+            stddev,
+        } => AggregateValue::Moments {
+            count,
+            mean,
+            m2,
+            sample,
+            stddev,
+        },
+        SpilledAggregateValue::BitFold { accumulator, seen } => {
+            AggregateValue::BitFold { accumulator, seen }
+        }
         SpilledAggregateValue::Sum(sum) => AggregateValue::Sum(sum),
         SpilledAggregateValue::DecimalSum {
             units,
@@ -5047,9 +5233,35 @@ const AGGREGATE_AVERAGE: u8 = 3;
 const AGGREGATE_DECIMAL_AVERAGE: u8 = 4;
 const AGGREGATE_MINIMUM: u8 = 5;
 const AGGREGATE_MAXIMUM: u8 = 6;
+const AGGREGATE_ANY_VALUE: u8 = 7;
+const AGGREGATE_MOMENTS: u8 = 8;
+const AGGREGATE_BIT_FOLD: u8 = 9;
 
 fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregateState) {
     match &state.value {
+        SpilledAggregateValue::AnyValue(value) => {
+            encoder.u8(AGGREGATE_ANY_VALUE);
+            encoder.optional_value(value.as_ref());
+        }
+        SpilledAggregateValue::Moments {
+            count,
+            mean,
+            m2,
+            sample,
+            stddev,
+        } => {
+            encoder.u8(AGGREGATE_MOMENTS);
+            encoder.u64(*count);
+            encoder.f64(*mean);
+            encoder.f64(*m2);
+            encoder.bool(*sample);
+            encoder.bool(*stddev);
+        }
+        SpilledAggregateValue::BitFold { accumulator, seen } => {
+            encoder.u8(AGGREGATE_BIT_FOLD);
+            encoder.u64(*accumulator);
+            encoder.bool(*seen);
+        }
         SpilledAggregateValue::Count(count) => {
             encoder.u8(AGGREGATE_COUNT);
             encoder.u64(*count);
@@ -5106,6 +5318,18 @@ fn decode_aggregate_state(
 ) -> Result<SpilledAggregateState, String> {
     let value = match decoder.u8()? {
         AGGREGATE_COUNT => SpilledAggregateValue::Count(decoder.u64()?),
+        AGGREGATE_ANY_VALUE => SpilledAggregateValue::AnyValue(decoder.optional_value()?),
+        AGGREGATE_MOMENTS => SpilledAggregateValue::Moments {
+            count: decoder.u64()?,
+            mean: decoder.f64()?,
+            m2: decoder.f64()?,
+            sample: decoder.bool()?,
+            stddev: decoder.bool()?,
+        },
+        AGGREGATE_BIT_FOLD => SpilledAggregateValue::BitFold {
+            accumulator: decoder.u64()?,
+            seen: decoder.bool()?,
+        },
         AGGREGATE_SUM => SpilledAggregateValue::Sum(decoder.optional_value()?),
         AGGREGATE_DECIMAL_SUM => SpilledAggregateValue::DecimalSum {
             units: decoder.string()?,
@@ -6199,6 +6423,37 @@ fn two_pass_lanes(
                         column,
                         data_type: storage,
                     })
+                }
+                // ANY_VALUE retains one exact value, exactly like MIN/MAX.
+                AggregateFunction::AnyValue => matches!(
+                    storage,
+                    DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Boolean
+                )
+                .then_some(TwoPassLane::Exact {
+                    column,
+                    data_type: storage,
+                }),
+                // Welford consumes one f64 per row, so the float lane
+                // carries everything the moments need. Riding a lane is the
+                // point: an aggregate with no lane drops its whole query
+                // onto the per-row Value path, which is what costs Q7 its
+                // margin against ClickHouse (issue #6).
+                AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. } => matches!(
+                    storage,
+                    DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Boolean
+                )
+                .then_some(TwoPassLane::Float { column }),
+                // The bit folds need exact integer bits, which the int lane
+                // already carries.
+                AggregateFunction::BitAnd
+                | AggregateFunction::BitOr
+                | AggregateFunction::BitXor => {
+                    matches!(storage, DataType::Int64 | DataType::UInt64).then_some(
+                        TwoPassLane::Int {
+                            column,
+                            data_type: storage,
+                        },
+                    )
                 }
                 AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg => None,
             }
@@ -7537,6 +7792,14 @@ fn update_state_from_typed_column(
         return Ok(false);
     }
     match aggregate.function {
+        // No typed fast path yet; `false` sends the row through the generic
+        // Value update, which handles them correctly.
+        AggregateFunction::AnyValue
+        | AggregateFunction::StdDev { .. }
+        | AggregateFunction::Variance { .. }
+        | AggregateFunction::BitAnd
+        | AggregateFunction::BitOr
+        | AggregateFunction::BitXor => return Ok(false),
         AggregateFunction::Count => {
             state.update_with_number(aggregate, &Value::Boolean(true), None, memory)?;
             return Ok(true);
