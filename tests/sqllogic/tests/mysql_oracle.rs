@@ -985,9 +985,16 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "repaired trim whitespace class",
             "SELECT HEX(TRIM(CHAR(9))), HEX(TRIM(' a ')), HEX(TRIM(CONCAT(CHAR(9), 'a')))",
         ),
+        // The wrapped value carries a newline at column 76, which the
+        // comparison harness cannot represent — it parses MySQL's output one
+        // line per row, so a value containing a newline splits into two. The
+        // length and the substituted form pin the same behaviour without
+        // tripping over that.
         ordered(
             "repaired base64 wrapping",
-            "SELECT LENGTH(TO_BASE64(REPEAT('a', 58))), TO_BASE64(REPEAT('a', 58))",
+            "SELECT LENGTH(TO_BASE64(REPEAT('a', 58))), \
+             REPLACE(TO_BASE64(REPEAT('a', 58)), CHAR(10), '|'), \
+             LENGTH(TO_BASE64(REPEAT('a', 10))), TO_BASE64(REPEAT('a', 10))",
         ),
         ordered(
             "repaired sec_to_time fraction",
