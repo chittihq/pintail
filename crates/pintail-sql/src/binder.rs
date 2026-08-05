@@ -3181,6 +3181,26 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
         let scale = u8::try_from(scale).ok()?.min(30).min(precision);
         return Some(DataType::Decimal { precision, scale });
     }
+    // Temporal and JSON targets, checked before the substring heuristic
+    // below: `DATETIME` contains neither `CHAR` nor `INT`, so it used to fall
+    // through to `None` and reject. Fractional-second precision rides along
+    // where MySQL allows it.
+    match data_type {
+        SqlDataType::Date => return Some(DataType::Date32),
+        SqlDataType::Datetime(fsp) | SqlDataType::Timestamp(fsp, _) => {
+            let fsp = fsp
+                .and_then(|digits| u8::try_from(digits).ok())
+                .unwrap_or(0);
+            return Some(DataType::DateTime64 { fsp: fsp.min(6) });
+        }
+        // CAST AS TIME and CAST AS JSON stay rejected on purpose. MySQL's
+        // TIME spans -838:59:59..=838:59:59, which chrono's NaiveTime cannot
+        // represent, so a partial implementation would answer NULL where
+        // MySQL answers a value; and CAST AS JSON must reject invalid JSON
+        // text rather than pass it through. Both are gaps, not defects — an
+        // explicit rejection beats a plausible wrong answer.
+        _ => {}
+    }
     let name = data_type.to_string().to_ascii_uppercase();
     if name.contains("BINARY") || name.contains("BLOB") {
         Some(DataType::Binary)

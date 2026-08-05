@@ -40,6 +40,11 @@ stays readable as a list of things to fix.
   there is no JSON column type in the executor.
 - `CONVERT(value USING charset)` does not perform byte-level transcoding among
   MySQL character sets.
+- `CAST(value AS TIME)` and `CAST(value AS JSON)` reject. MySQL's `TIME` spans
+  `-838:59:59`..`838:59:59`, which the executor's datetime carrier cannot
+  represent, so a partial implementation would answer `NULL` where MySQL
+  answers a value; and `CAST AS JSON` must reject invalid JSON text rather
+  than pass it through. `CAST AS YEAR` also rejects (#17).
 - `information_schema` does not support joins, aggregates beyond `COUNT(*)`, or
   metadata tables outside the served set.
 - `SUBSTRING_INDEX`, `MD5`, `CONV` and `MAKETIME` are missing (#17).

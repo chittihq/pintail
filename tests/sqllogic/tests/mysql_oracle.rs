@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 745;
+const EXPECTED_CASES: usize = 748;
 
 struct OracleCase {
     family: &'static str,
@@ -846,6 +846,27 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written any_value ungrouped expression",
             "SELECT ANY_VALUE(score) + 1 FROM events WHERE id <= 3 ORDER BY 1",
+        ),
+        // CAST to a temporal target must convert, not relabel: DATE has to
+        // drop the time, and an uninterpretable value is NULL rather than an
+        // error. Before this, DATETIME reached neither the CHAR nor the INT
+        // branch of the target table and rejected outright.
+        ordered(
+            "hand-written cast temporal",
+            "SELECT CAST('2024-02-29 12:34:56' AS DATE), \
+             CAST('2024-02-29' AS DATETIME), \
+             CAST('2024-02-29 12:34:56' AS DATETIME), \
+             CAST('2024-02-29 12:34:56.789' AS DATETIME(3))",
+        ),
+        ordered(
+            "hand-written cast temporal invalid",
+            "SELECT CAST('not-a-date' AS DATE), CAST('' AS DATE), \
+             CAST('2024-13-45' AS DATE)",
+        ),
+        ordered(
+            "hand-written cast targets",
+            "SELECT CAST(42 AS CHAR), CAST('42' AS SIGNED), CAST('42' AS UNSIGNED), \
+             CAST(-1 AS SIGNED), CAST('3.7' AS DECIMAL(10,2)), CAST(1 AS CHAR(4))",
         ),
         ordered(
             "hand-written conditionals",

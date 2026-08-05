@@ -2256,6 +2256,18 @@ fn scalar_string(value: &Value) -> Result<String, ExecError> {
     }
 }
 
+/// Renders a parsed datetime at `MySQL`'s fractional-second precision. A
+/// zero `fsp` prints no decimal point at all, which is what `MySQL` does for
+/// `CAST(x AS DATETIME)` without an explicit precision.
+fn format_with_fraction(value: NaiveDateTime, fsp: u8, pattern: &str) -> String {
+    let base = value.format(pattern).to_string();
+    if fsp == 0 {
+        return base;
+    }
+    let micros = format!("{:06}", value.and_utc().timestamp_subsec_micros());
+    format!("{base}.{}", &micros[..usize::from(fsp).min(6)])
+}
+
 fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, ExecError> {
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
@@ -2264,6 +2276,25 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
     // store as canonical text, so collapsing first would lose the scale.
     if let Some(DataType::Decimal { scale, .. }) = data_type {
         return cast_decimal(value, scale);
+    }
+    // Temporal targets likewise collapse to the Utf8 carrier, so without
+    // this they would pass their input through untouched — `CAST(ts AS DATE)`
+    // has to truncate the time, not merely relabel the column. MySQL answers
+    // NULL for a value it cannot interpret rather than raising.
+    match data_type {
+        Some(DataType::Date32) => {
+            return Ok(parse_mysql_datetime(&scalar_string(value)?)
+                .map_or(Value::Null, |parsed| {
+                    Value::Utf8(parsed.date().format("%Y-%m-%d").to_string())
+                }));
+        }
+        Some(DataType::DateTime64 { fsp }) => {
+            return Ok(parse_mysql_datetime(&scalar_string(value)?)
+                .map_or(Value::Null, |parsed| {
+                    Value::Utf8(format_with_fraction(parsed, fsp, "%Y-%m-%d %H:%M:%S"))
+                }));
+        }
+        _ => {}
     }
     match data_type.map(DataType::storage_type) {
         None => Ok(Value::Null),
