@@ -61,6 +61,34 @@ plausible but incorrect result.
   `columns`, `statistics`, `key_column_usage`, `table_constraints`,
   `referential_constraints`) are deferred.
 
+### What an unsupported construct looks like
+
+Rejection is always an explicit error, never a silently different answer. The
+messages below are what a client receives, so a message seen in `mysql`, a BI
+tool, or the HTTP API can be matched back to the boundary that produced it.
+
+| Message | Raised when |
+|---|---|
+| `unsupported statement: …` | The statement kind has no binding (DDL against the replica, writes, administrative commands) |
+| `unsupported query clause: …` | A clause on a supported statement is out of scope — the recursive-CTE restrictions in this section report here |
+| `unsupported query body: …` | A set-operation shape outside MySQL's left-associative semantics |
+| `unsupported table expression: …` | A `FROM` item that is not a table, derived table, or non-recursive CTE |
+| `unsupported projection: …` | A select item the binder cannot resolve to a column or expression |
+| `unsupported join operator: …` | A join kind outside inner/left/right/semi/anti |
+| `unsupported join constraint: …` | A join condition that is not an `AND` of equality pairs |
+| `unsupported expression: …` | A function, operator, or literal form with no implementation — the window-function gaps in this section report here |
+| `hash join requires one equality between left and right input expressions` | A join condition binds but has no cross-input equality to hash on |
+| `cross join requires known catalog row counts for every input` | An unqualified cross join whose inputs have no exact catalog cardinality |
+| `cross join estimate N exceeds safety limit M` | An unqualified cross join above the one-million-row guard |
+| `scalar subquery produced N rows` | A scalar subquery returned more than one row at execution time |
+| `physical operator X is not implemented` | A logical plan reached a physical operator that does not exist yet |
+| `query memory limit exceeded` | The per-query ceiling was reached by an operator that does not spill (see Planning and execution) |
+
+Two of these are worth reading as capability boundaries rather than bugs: the
+hash-join message means the join is expressible but not with an equality to hash
+on, and the cross-join guard means the query would have been correct but large
+enough to be worth refusing.
+
 ### MySQL semantic differences
 
 - `ENUM` values compare and sort as their text, not as MySQL's

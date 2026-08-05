@@ -1194,7 +1194,7 @@ function describeTable(table: TableSummary) {
 
         <Alert v-if="modeOf(selectedDatabase) === 'polling'" class="border-amber/40 bg-amber-soft text-amber [&>svg]:text-amber mb-4">
           <AlertTriangle />
-          <AlertDescription class="text-amber">Polling mode converges deletes during reconciliation and can miss intermediate states between polls.</AlertDescription>
+          <AlertDescription class="text-amber">Polling mode has no transaction atomicity: a query can observe part of a source transaction. Intermediate states between polls are lost, and deletes converge on the reconcile interval rather than in seconds. Workloads needing cross-table point-in-time correctness should run on a CDC-capable source.</AlertDescription>
         </Alert>
 
         <Tabs v-model="detailTab">
