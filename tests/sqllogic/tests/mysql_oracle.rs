@@ -1016,10 +1016,10 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT id, active, SUM(score) OVER w, LAG(score) OVER w FROM events \
              WINDOW w AS (PARTITION BY active ORDER BY id) ORDER BY id",
         ),
-        // Isolating where the FROM_BASE64 vertical-tab divergence comes
-        // from: CHAR, the concatenation, or the decoder itself.
+        // The isolation that found this: CHAR and CONCAT both agreed with
+        // MySQL, so the decoder's whitespace set was the only suspect left.
         ordered(
-            "diagnose from_base64 vertical tab",
+            "repaired from_base64 whitespace set",
             "SELECT HEX(CHAR(11)), HEX(CONCAT('YQ==', CHAR(11))), \
              HEX(FROM_BASE64('YQ==')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11)))), \
              HEX(FROM_BASE64('YQ== ')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(9))))",

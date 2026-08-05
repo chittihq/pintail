@@ -2800,9 +2800,14 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    // MySQL skips whitespace between encoded groups, and its notion of
+    // whitespace includes the vertical tab. Rust's `is_ascii_whitespace`
+    // follows the WhatWG set, which deliberately excludes it — so
+    // FROM_BASE64 rejected a vertical tab that MySQL accepts. Measured, not
+    // assumed: MySQL answers 61 for CHAR(11) between the group and the end.
     let cleaned = text
         .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
+        .filter(|byte| !byte.is_ascii_whitespace() && *byte != 0x0B)
         .collect::<Vec<_>>();
     if cleaned.len() % 4 != 0 {
         return None;
