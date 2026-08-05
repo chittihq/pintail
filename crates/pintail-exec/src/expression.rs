@@ -2516,16 +2516,35 @@ fn hex_upper(bytes: &[u8]) -> String {
     output
 }
 
+/// `MySQL` `UNHEX`: decode hex pairs, `NULL` on any non-hex character.
+///
+/// This decodes bytes rather than string slices. Slicing the padded `String`
+/// at fixed two-byte offsets panicked whenever the argument held a multibyte
+/// character whose encoding straddled an offset — `UNHEX('éa')` pads to
+/// `"0éa"` and then cuts `é` in half, which is a panic reachable from any
+/// client query rather than the documented `NULL`.
 fn unhex(text: &str) -> Option<Vec<u8>> {
-    let padded = if text.len() % 2 == 0 {
-        text.to_owned()
-    } else {
-        format!("0{text}")
-    };
-    (0..padded.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&padded[index..index + 2], 16).ok())
-        .collect()
+    let bytes = text.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len().div_ceil(2));
+    // An odd-length argument is left-padded with a zero nibble, so seeding
+    // the high nibble with zero makes the first digit complete a byte.
+    let mut high = (bytes.len() % 2 != 0).then_some(0_u8);
+    for byte in bytes {
+        let nibble = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => return None,
+        };
+        match high {
+            None => high = Some(nibble),
+            Some(leading) => {
+                output.push((leading << 4) | nibble);
+                high = None;
+            }
+        }
+    }
+    Some(output)
 }
 
 /// `en_US` thousands grouping with fixed fraction digits, `MySQL` `FORMAT`.
@@ -3368,6 +3387,26 @@ mod tests {
                 .expect("time");
             assert_eq!(mysql_date_format(value, "%D"), expected);
         }
+    }
+
+    /// A multibyte argument used to panic here: the odd-length pad made the
+    /// fixed two-byte slice land inside a character. Reachable from any
+    /// client query, so it is a crash rather than a wrong answer.
+    #[test]
+    fn unhex_returns_null_for_non_hex_instead_of_panicking() {
+        assert_eq!(super::unhex("ff"), Some(vec![0xFF]));
+        assert_eq!(super::unhex("FF"), Some(vec![0xFF]));
+        // Odd length left-pads with a zero nibble, matching MySQL.
+        assert_eq!(super::unhex("aab"), Some(vec![0x0A, 0xAB]));
+        assert_eq!(super::unhex(""), Some(Vec::new()));
+        // The panic cases.
+        assert_eq!(super::unhex("\u{e9}a"), None);
+        assert_eq!(super::unhex("\u{e9}"), None);
+        assert_eq!(super::unhex("a\u{e9}"), None);
+        assert_eq!(super::unhex("\u{4e16}\u{754c}"), None);
+        // Ordinary non-hex text.
+        assert_eq!(super::unhex("zz"), None);
+        assert_eq!(super::unhex("g"), None);
     }
 
     /// `MySQL` copies an unrecognized directive's bare character to the output
