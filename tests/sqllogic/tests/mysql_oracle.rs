@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 743;
+const EXPECTED_CASES: usize = 745;
 
 struct OracleCase {
     family: &'static str,
@@ -831,9 +831,21 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written any_value",
             "SELECT id, ANY_VALUE(name), ANY_VALUE(score) FROM events GROUP BY id ORDER BY id",
         ),
+        // ANY_VALUE is not an aggregate: with no GROUP BY and no other
+        // aggregate, the query is not aggregated, so an empty filter returns
+        // no rows rather than one NULL row, and an unfiltered scan returns
+        // every row rather than one.
         ordered(
             "hand-written any_value empty group",
             "SELECT ANY_VALUE(name) FROM events WHERE id > 1000",
+        ),
+        ordered(
+            "hand-written any_value ungrouped",
+            "SELECT ANY_VALUE(name) FROM events ORDER BY 1",
+        ),
+        ordered(
+            "hand-written any_value ungrouped expression",
+            "SELECT ANY_VALUE(score) + 1 FROM events WHERE id <= 3 ORDER BY 1",
         ),
         ordered(
             "hand-written conditionals",

@@ -467,6 +467,30 @@ impl<'catalog> Binder<'catalog> {
                 "window functions cannot combine with DISTINCT".to_owned(),
             ));
         }
+        // `ANY_VALUE` is not an aggregate in MySQL — it is a passthrough that
+        // exempts its argument from the ONLY_FULL_GROUP_BY check. So a query
+        // whose only aggregate-looking call is `ANY_VALUE`, with no GROUP BY,
+        // is not aggregated at all and yields one row per input row.
+        // Treating it as an aggregate turned `SELECT ANY_VALUE(name) FROM t
+        // WHERE <no matches>` into one NULL row where MySQL returns none.
+        if group_by.is_empty()
+            && !aggregates.is_empty()
+            && aggregates
+                .iter()
+                .all(|aggregate| aggregate.function == AggregateFunction::AnyValue)
+        {
+            let inlined = aggregates
+                .iter()
+                .map(|aggregate| aggregate.expr.clone())
+                .collect::<Vec<_>>();
+            for item in &mut projection {
+                inline_any_value(&mut item.expr, &inlined)?;
+            }
+            if let Some(predicate) = &mut having {
+                inline_any_value(predicate, &inlined)?;
+            }
+            aggregates.clear();
+        }
         if !group_by.is_empty() || !aggregates.is_empty() {
             for item in &mut projection {
                 rewrite_group_references(&mut item.expr, &group_by)?;
@@ -3753,6 +3777,43 @@ fn aggregate_result_type(
             function,
             actual: input_type,
         }),
+    }
+}
+
+/// Replaces `ANY_VALUE` aggregate references with the argument itself, for
+/// the ungrouped case where `MySQL` does not aggregate at all.
+fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Result<(), BindError> {
+    if let BoundExprKind::Aggregate(index) = &expr.kind {
+        let argument = inlined
+            .get(*index)
+            .cloned()
+            .flatten()
+            .ok_or_else(|| BindError::UnsupportedExpression("ANY_VALUE()".to_owned()))?;
+        *expr = argument;
+        return Ok(());
+    }
+    match &mut expr.kind {
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            inline_any_value(expr, inlined)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            inline_any_value(left, inlined)?;
+            inline_any_value(right, inlined)
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                inline_any_value(argument, inlined)?;
+            }
+            Ok(())
+        }
+        BoundExprKind::InSubquery { expr, .. } => inline_any_value(expr, inlined),
+        BoundExprKind::Aggregate(_)
+        | BoundExprKind::Column(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. }
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::GroupKey(_) => Ok(()),
     }
 }
 
