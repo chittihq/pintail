@@ -1794,6 +1794,54 @@ mod tests {
         );
     }
 
+    /// A named window resolves to its definition before binding.
+    #[test]
+    fn named_windows_resolve_to_their_definition() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest((1..=5_u64).map(|id| row(id, "value")).collect())
+            .expect("ingest");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(61);
+        let table_id = TableId::new(63);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let u = Value::UInt64;
+        // The named window carries the same running frame as the inline form.
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT SUM(id) OVER w FROM events \
+                 WINDOW w AS (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(1), u(3), u(6), u(10), u(15)]
+        );
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT ROW_NUMBER() OVER w FROM events WINDOW w AS (ORDER BY id)",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(1), u(2), u(3), u(4), u(5)]
+        );
+    }
+
     /// Explicit ROWS frames: the running total and the moving window that
     /// every dashboard needs. Without the frame plumbed through evaluation
     /// these would silently compute `MySQL`'s default frame instead.

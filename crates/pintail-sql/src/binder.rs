@@ -377,6 +377,19 @@ impl<'catalog> Binder<'catalog> {
         // decorrelate into LEFT JOINs against derived per-key aggregates;
         // non-canonical shapes keep their original unsupported error.
         let mut projection_items: Vec<SelectItem> = select.projection.clone();
+        // `OVER w` resolves against the WINDOW clause before anything is
+        // bound. Substituting here keeps the named-window map out of the
+        // expression walk, which would otherwise have to thread it through
+        // every recursive call to reach the one place that reads it.
+        if !select.named_window.is_empty() {
+            for item in &mut projection_items {
+                let (SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }) = item
+                else {
+                    continue;
+                };
+                substitute_named_windows(expr, &select.named_window)?;
+            }
+        }
         let mut zero_folds: Vec<String> = Vec::new();
         for item in &mut projection_items {
             let (original, alias) = match item {
@@ -1609,7 +1622,8 @@ fn validate_select_shape(select: &Select) -> Result<(), BindError> {
         || !select.cluster_by.is_empty()
         || !select.distribute_by.is_empty()
         || !select.sort_by.is_empty()
-        || !select.named_window.is_empty()
+        // A WINDOW clause is resolved by substitution before binding, so it
+        // is no longer an unsupported shape.
         || select.qualify.is_some()
         || select.value_table_mode.is_some()
     {
@@ -2550,8 +2564,8 @@ fn bind_window_function(
     let Some(WindowType::WindowSpec(spec)) = &function.over else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
-    // Named windows still reject; explicit frames are bound below and
-    // narrowed to ROWS there.
+    // A name surviving to here means substitution did not resolve it —
+    // the WINDOW clause was absent, so the reference is unresolvable.
     if spec.window_name.is_some() {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     }
@@ -3976,6 +3990,69 @@ fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Resu
 /// offsets. `RANGE` with a numeric offset compares the ordering key's values
 /// rather than counting rows, and `GROUPS` counts peer groups; approximating
 /// either with row counts answers a different question, so both reject.
+/// Replaces `OVER w` with the spec `w` names, before binding.
+///
+/// `MySQL` also allows `OVER (w ORDER BY …)`, which inherits from `w` and
+/// extends it. That form rejects: merging an inherited spec with a partial
+/// one has its own precedence rules, and guessing them would answer a
+/// different question than the query asked.
+fn substitute_named_windows(
+    expr: &mut Expr,
+    definitions: &[sqlparser::ast::NamedWindowDefinition],
+) -> Result<(), BindError> {
+    use sqlparser::ast::{NamedWindowExpr, WindowType};
+    match expr {
+        Expr::Function(function) => {
+            // `OVER w` is its own AST variant, not a spec carrying a name.
+            // The spec-with-a-name form is `OVER (w ORDER BY …)`, which
+            // inherits and extends; that rejects below.
+            let named = match &function.over {
+                Some(WindowType::NamedWindow(name)) => Some(name.clone()),
+                Some(WindowType::WindowSpec(spec)) => spec.window_name.clone(),
+                None => None,
+            };
+            if let Some(name) = named {
+                if let Some(WindowType::WindowSpec(spec)) = &function.over
+                    && (!spec.partition_by.is_empty()
+                        || !spec.order_by.is_empty()
+                        || spec.window_frame.is_some())
+                {
+                    return Err(BindError::UnsupportedQueryClause(format!(
+                        "OVER ({name} …) extending a named window"
+                    )));
+                }
+                let resolved = definitions
+                    .iter()
+                    .find(|definition| definition.0.value.eq_ignore_ascii_case(&name.value))
+                    .ok_or_else(|| {
+                        BindError::UnsupportedQueryClause(format!("unknown window {name}"))
+                    })?;
+                match &resolved.1 {
+                    NamedWindowExpr::WindowSpec(named) => {
+                        function.over = Some(WindowType::WindowSpec(named.clone()));
+                    }
+                    // `WINDOW a AS b` chains one name to another; resolving
+                    // it needs cycle detection this does not do.
+                    NamedWindowExpr::NamedWindow(_) => {
+                        return Err(BindError::UnsupportedQueryClause(format!(
+                            "window {name} defined as another window"
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        }
+        Expr::UnaryOp { expr, .. } | Expr::Nested(expr) | Expr::Cast { expr, .. } => {
+            substitute_named_windows(expr, definitions)
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            substitute_named_windows(left, definitions)?;
+            substitute_named_windows(right, definitions)
+        }
+        _ => Ok(()),
+    }
+}
+
 fn bind_window_frame(
     spec: &sqlparser::ast::WindowSpec,
     function: &Function,

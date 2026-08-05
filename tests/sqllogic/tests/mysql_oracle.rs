@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 769;
+const EXPECTED_CASES: usize = 772;
 
 struct OracleCase {
     family: &'static str,
@@ -999,6 +999,22 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "repaired sec_to_time fraction",
             "SELECT SEC_TO_TIME(1.5), SEC_TO_TIME(1), SEC_TO_TIME(90)",
+        ),
+        // A named window must resolve to exactly what the inline form means.
+        ordered(
+            "hand-written named windows",
+            "SELECT id, SUM(score) OVER w, ROW_NUMBER() OVER w FROM events \
+             WINDOW w AS (ORDER BY id) ORDER BY id",
+        ),
+        ordered(
+            "hand-written named windows with frame",
+            "SELECT id, SUM(score) OVER w FROM events \
+             WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) ORDER BY id",
+        ),
+        ordered(
+            "hand-written named windows partitioned",
+            "SELECT id, active, SUM(score) OVER w, LAG(score) OVER w FROM events \
+             WINDOW w AS (PARTITION BY active ORDER BY id) ORDER BY id",
         ),
         ordered(
             "repaired binary case sensitivity",

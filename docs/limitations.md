@@ -17,9 +17,11 @@ stays readable as a list of things to fix.
   membership sides to be provably non-nullable: with a possible NULL, MySQL's
   three-valued `NOT IN` diverges from an anti join, so those shapes reject.
 - Non-equality join conditions are rejected.
-- Window functions have no named windows (`WINDOW w AS (…)`), no `RANGE` frame
-  with a numeric offset, no `GROUPS` frame, and no combination with `DISTINCT`
-  (#25). `RANGE` with an offset compares the ordering key's own values rather
+- Window functions have no `RANGE` frame with a numeric offset, no `GROUPS`
+  frame, and no combination with `DISTINCT` (#25). A named window may be
+  referenced as `OVER w` but not extended as `OVER (w ORDER BY …)`, which
+  inherits from `w` and adds to it; merging an inherited spec with a partial
+  one has precedence rules of its own, so that form rejects. `RANGE` with an offset compares the ordering key's own values rather
   than counting rows, so it is not approximated with row offsets.
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be
