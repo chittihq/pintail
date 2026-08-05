@@ -712,6 +712,20 @@ struct SnapshotStream {
     sma: Option<crate::execution::SmaFoldInput>,
 }
 
+impl SnapshotStream {
+    /// Rows to plan for, given what the query has left to spend. Quoting a
+    /// fixed `DEFAULT_BATCH_ROWS` makes a tight ceiling fail outright — for a
+    /// five-column table that estimate alone is ~263 KB — when the honest
+    /// answer is to hand back a smaller batch. At least one row is always
+    /// planned so a budget below a single row fails on the real reservation
+    /// with a truthful number rather than silently yielding nothing.
+    fn planned_batch_rows(&self, budget: usize) -> usize {
+        let per_row = batch_memory_upper_bound(&self.types, 1).max(1);
+        let affordable = (budget / per_row).max(1);
+        DEFAULT_BATCH_ROWS.min(affordable)
+    }
+}
+
 impl BatchStream for SnapshotStream {
     fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, String)> {
         self.settled.clone()
@@ -734,7 +748,14 @@ impl BatchStream for SnapshotStream {
             && self.remaining != Some(0)
             && let Some(stream) = &mut self.stream
         {
-            let batch_overhead = batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS);
+            // Reserve headroom for the batch this pull will actually build,
+            // not for a full-size one: subtracting the maximum leaves a zero
+            // chunk budget under a tight ceiling, which the store then refuses.
+            let planned_rows = {
+                let per_row = batch_memory_upper_bound(&self.types, 1).max(1);
+                DEFAULT_BATCH_ROWS.min((available_memory / per_row).max(1))
+            };
+            let batch_overhead = batch_memory_upper_bound(&self.types, planned_rows);
             if self.prefetched.is_empty() {
                 let prefetch_width = if self.types.len() <= 2 { 8 } else { 4 };
                 let chunk_budget = available_memory.saturating_sub(batch_overhead);
@@ -811,8 +832,11 @@ impl BatchStream for SnapshotStream {
         } else {
             self.rows.len()
         };
+        // Cap by what the caller can actually afford, matching the number
+        // quoted by next_batch_memory_upper_bound — otherwise the estimate
+        // promises a small batch and the pull delivers a large one.
         let row_count = buffered_rows
-            .min(DEFAULT_BATCH_ROWS)
+            .min(self.planned_batch_rows(available_memory))
             .min(self.remaining.unwrap_or(usize::MAX));
         let columns = if self.column_rows > 0 {
             if self.columns.len() != self.types.len() {
@@ -920,16 +944,14 @@ impl BatchStream for SnapshotStream {
         self.retained_bytes
     }
 
-    fn next_batch_memory_upper_bound(&self) -> usize {
-        let row_count = self
-            .rows
-            .len()
-            .max(self.column_rows)
-            .min(DEFAULT_BATCH_ROWS);
+    fn next_batch_memory_upper_bound(&self, budget: usize) -> usize {
+        let planned = self.planned_batch_rows(budget);
+        let row_count = self.rows.len().max(self.column_rows).min(planned);
         if row_count == 0 {
-            return self.stream.as_ref().map_or(0, |_| {
-                batch_memory_upper_bound(&self.types, DEFAULT_BATCH_ROWS)
-            });
+            return self
+                .stream
+                .as_ref()
+                .map_or(0, |_| batch_memory_upper_bound(&self.types, planned));
         }
         batch_memory_upper_bound(&self.types, row_count)
     }

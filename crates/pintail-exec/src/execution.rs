@@ -617,8 +617,12 @@ pub trait BatchStream: Send {
 
     /// Returns an upper bound for additional memory allocated by the next
     /// pull while the stream's currently retained bytes are still live.
+    ///
+    /// `budget` is what the query has left. A stream that sizes its batches
+    /// should plan one that fits rather than quoting a fixed maximum: a small
+    /// ceiling is a reason to produce smaller batches, not to fail.
     #[must_use]
-    fn next_batch_memory_upper_bound(&self) -> usize;
+    fn next_batch_memory_upper_bound(&self, budget: usize) -> usize;
 
     /// Narrows the stream to rows whose value in the projected column at
     /// `position` lies within `[min, max]`. Best-effort: streams that cannot
@@ -692,7 +696,7 @@ impl BatchStream for OneShotStream {
         0
     }
 
-    fn next_batch_memory_upper_bound(&self) -> usize {
+    fn next_batch_memory_upper_bound(&self, _budget: usize) -> usize {
         0
     }
 }
@@ -1214,7 +1218,7 @@ impl PullOperator {
     /// keep at least this much budget free or the scan itself stops pulling.
     fn scan_transient_floor(&self) -> usize {
         match self {
-            Self::Scan { stream, .. } => stream.next_batch_memory_upper_bound(),
+            Self::Scan { stream, .. } => stream.next_batch_memory_upper_bound(usize::MAX),
             Self::Filter { input, .. } => input.scan_transient_floor(),
             _ => 0,
         }
@@ -1237,7 +1241,8 @@ impl PullOperator {
                 stream,
                 expected_types,
             } => {
-                memory.ensure_transient(stream.next_batch_memory_upper_bound())?;
+                memory
+                    .ensure_transient(stream.next_batch_memory_upper_bound(memory.remaining()))?;
                 let retained_before = stream.retained_bytes();
                 let batch = stream.next_batch(memory.remaining())?;
                 let retained_after = stream.retained_bytes();
@@ -8983,7 +8988,7 @@ impl BatchStream for RowsBatchStream {
             .fold(0, usize::saturating_add)
     }
 
-    fn next_batch_memory_upper_bound(&self) -> usize {
+    fn next_batch_memory_upper_bound(&self, _budget: usize) -> usize {
         let end = (self.cursor + DEFAULT_BATCH_ROWS).min(self.rows.len());
         self.rows[self.cursor..end]
             .iter()
@@ -9502,7 +9507,7 @@ mod tests {
             0
         }
 
-        fn next_batch_memory_upper_bound(&self) -> usize {
+        fn next_batch_memory_upper_bound(&self, _budget: usize) -> usize {
             0
         }
     }
