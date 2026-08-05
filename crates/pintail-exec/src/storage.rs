@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use pintail_catalog::{DatabaseId, TableId};
@@ -22,7 +22,7 @@ use crate::{
 pub struct SnapshotScanProvider<'snapshot> {
     snapshots: BTreeMap<(DatabaseId, TableId), &'snapshot TableSnapshot>,
     unique_visibility: BTreeMap<(DatabaseId, TableId), Vec<Vec<u32>>>,
-    stats: Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>,
+    stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
 }
 
 /// Actual storage work accumulated for one table during query execution.
@@ -96,7 +96,7 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
         Ok(Self {
             snapshots: indexed,
             unique_visibility: BTreeMap::new(),
-            stats: Mutex::new(BTreeMap::new()),
+            stats: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -219,6 +219,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         let Some((start, end)) = storage_key_range(scan, snapshot) else {
             self.record_stats(key, PhysicalScanStats::default());
             return Ok(Box::new(SnapshotStream {
+                stats: Arc::clone(&self.stats),
+                stats_key: key,
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
@@ -319,6 +321,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     },
                 );
             return Ok(Box::new(SnapshotStream {
+                stats: Arc::clone(&self.stats),
+                stats_key: key,
                 rows: VecDeque::new(),
                 columns: Vec::new(),
                 column_rows: 0,
@@ -407,6 +411,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         let retained_bytes =
             projected_values_retained_bytes(rows.capacity(), &rows).saturating_add(stream_overhead);
         Ok(Box::new(SnapshotStream {
+            stats: Arc::clone(&self.stats),
+            stats_key: key,
             rows: rows.into(),
             columns: Vec::new(),
             column_rows: 0,
@@ -683,6 +689,11 @@ struct PrewhereSpec {
 }
 
 struct SnapshotStream {
+    /// Shared with the provider that opened this stream. A scan's block
+    /// counters are only known once chunks are pulled, long after `open_scan`
+    /// returned, so the stream folds each chunk's stats in as it goes.
+    stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
+    stats_key: (DatabaseId, TableId),
     rows: VecDeque<Vec<Value>>,
     /// Batches adopted ahead of time in the worker pool (no-LIMIT scans).
     ready: VecDeque<RecordBatch>,
@@ -713,6 +724,22 @@ struct SnapshotStream {
 }
 
 impl SnapshotStream {
+    /// Folds one chunk's counters into the provider's per-table totals.
+    fn accumulate(&self, stats: ScanStats) {
+        let mut all = self
+            .stats
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        all.entry(self.stats_key)
+            .or_default()
+            .add(PhysicalScanStats {
+                blocks_read: stats.blocks_read(),
+                blocks_pruned: stats.blocks_pruned(),
+                blocks_decoded: stats.blocks_decoded(),
+                ..PhysicalScanStats::default()
+            });
+    }
+
     /// Rows to plan for, given what the query has left to spend. Quoting a
     /// fixed `DEFAULT_BATCH_ROWS` makes a tight ceiling fail outright — for a
     /// five-column table that estimate alone is ~263 KB — when the honest
@@ -786,6 +813,7 @@ impl BatchStream for SnapshotStream {
                             .retained_bytes()
                             .saturating_sub(std::mem::size_of_val(&chunk)),
                     );
+                    self.accumulate(chunk.stats());
                     self.prefetched.push_back(chunk);
                 }
             }
@@ -1695,6 +1723,74 @@ mod tests {
                 1024 * 1024,
             ),
             [Value::UInt64(4000)]
+        );
+    }
+
+    /// The streaming path learns its block counters only as chunks are pulled,
+    /// so `open_scan` cannot record them: it knows the segment counts and
+    /// nothing else. Before the stream folded each chunk's counters back into
+    /// the provider, every streamed scan reported `actual_blocks=0/0` while
+    /// reading thousands of rows, which made the pruning numbers unusable for
+    /// deciding whether a plan change helped.
+    ///
+    /// The predicate is load-bearing: a bare `COUNT` over a settled snapshot is
+    /// answered from the segment summaries without pulling a single chunk, so
+    /// it reports zero blocks *correctly* and would not exercise this at all.
+    #[test]
+    fn a_streamed_scan_reports_the_blocks_it_actually_read() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        for start in [1_u64, 1001, 2001, 3001] {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 1000)
+                        .map(|key| row(key, &format!("value-{key}")))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(4000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT COUNT(name) FROM events WHERE name > 'value-1'",
+                &catalog,
+                &provider,
+                1024 * 1024,
+            ),
+            [Value::UInt64(3999)]
+        );
+
+        let stats = provider
+            .scan_stats(database_id, table_id)
+            .expect("physical scan stats");
+        assert_eq!(stats.segments_read, 4, "all four segments carry the count");
+        assert!(
+            stats.blocks_read > 0,
+            "a scan of 4000 rows must report the blocks it read, got {stats:?}"
+        );
+        assert!(
+            stats.blocks_decoded > 0,
+            "the counted column is decoded, got {stats:?}"
+        );
+        assert!(
+            stats.blocks_read >= stats.blocks_decoded,
+            "a block cannot decode without being read, got {stats:?}"
         );
     }
 
