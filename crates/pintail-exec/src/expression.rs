@@ -668,6 +668,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonUnquote
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
+                    | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(_) => first,
                     // JSON_TYPE returns one of a handful of fixed names.
                     ScalarFunction::JsonType => 16,
@@ -701,7 +702,10 @@ impl CompiledExpr {
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::Char
-                    | ScalarFunction::Rand => 64,
+                    | ScalarFunction::Rand
+                    // CONV and MAKETIME render short fixed-width strings.
+                    | ScalarFunction::Conv
+                    | ScalarFunction::MakeTime => 64,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
                         .iter()
@@ -804,6 +808,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonUnquote
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
+                    | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(_) => first,
                     // JSON_TYPE returns one of a handful of fixed names.
                     ScalarFunction::JsonType => 16,
@@ -837,7 +842,10 @@ impl CompiledExpr {
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::Char
-                    | ScalarFunction::Rand => 64,
+                    | ScalarFunction::Rand
+                    // CONV and MAKETIME render short fixed-width strings.
+                    | ScalarFunction::Conv
+                    | ScalarFunction::MakeTime => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::Locate
@@ -1735,6 +1743,24 @@ fn evaluate_eager_scalar(
                 serde_json::Value::String(text) if unquote => text.clone(),
                 other => mysql_json_text(other),
             }))
+        }
+        ScalarFunction::SubstringIndex => {
+            let text = scalar_string(&values[0])?;
+            let delimiter = scalar_string(&values[1])?;
+            let count = mysql_i64(&values[2])?;
+            Ok(Value::Utf8(substring_index(&text, &delimiter, count)))
+        }
+        ScalarFunction::Conv => {
+            let subject = scalar_string(&values[0])?;
+            let from = mysql_i64(&values[1])?;
+            let to = mysql_i64(&values[2])?;
+            Ok(conv_base(&subject, from, to).map_or(Value::Null, Value::Utf8))
+        }
+        ScalarFunction::MakeTime => {
+            let hour = mysql_i64(&values[0])?;
+            let minute = mysql_i64(&values[1])?;
+            let second = mysql_i64(&values[2])?;
+            Ok(make_time(hour, minute, second).map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::JsonValid => {
             // JSON_VALID answers 0 or 1 for any non-NULL input rather than
@@ -2865,6 +2891,118 @@ pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
 
 /// Resolves a `MySQL` JSON path of the `$.key.nested[0]` form. Wildcards
 /// and range selectors are unsupported and error explicitly.
+/// `MySQL` `SUBSTRING_INDEX`: everything before the `count`-th delimiter from
+/// the left, or after it from the right when `count` is negative. Fewer
+/// occurrences than requested returns the whole subject rather than NULL,
+/// which is what makes it usable for URL and UTM splitting.
+fn substring_index(text: &str, delimiter: &str, count: i64) -> String {
+    if delimiter.is_empty() || count == 0 {
+        return String::new();
+    }
+    if count > 0 {
+        let wanted = usize::try_from(count).unwrap_or(usize::MAX);
+        let mut end = 0;
+        for taken in 0..wanted {
+            match text[end..].find(delimiter) {
+                Some(offset) => {
+                    if taken + 1 == wanted {
+                        return text[..end + offset].to_owned();
+                    }
+                    end += offset + delimiter.len();
+                }
+                None => return text.to_owned(),
+            }
+        }
+        return text.to_owned();
+    }
+    let wanted = usize::try_from(count.unsigned_abs()).unwrap_or(usize::MAX);
+    let mut start = text.len();
+    for taken in 0..wanted {
+        match text[..start].rfind(delimiter) {
+            Some(offset) => {
+                if taken + 1 == wanted {
+                    return text[offset + delimiter.len()..].to_owned();
+                }
+                start = offset;
+            }
+            None => return text.to_owned(),
+        }
+    }
+    text.to_owned()
+}
+
+/// `MySQL` `CONV`: re-base an integer between bases 2..=36. A negative target
+/// base asks for a signed reading; otherwise the value is unsigned 64-bit.
+/// Parsing stops at the first digit invalid for the source base, matching
+/// `MySQL` rather than rejecting the whole string.
+fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
+    let from_base = u32::try_from(from.abs()).ok()?;
+    let signed_output = to < 0;
+    let to_base = u32::try_from(to.abs()).ok()?;
+    if !(2..=36).contains(&from_base) || !(2..=36).contains(&to_base) {
+        return None;
+    }
+    let trimmed = subject.trim();
+    let (negative, digits) = match trimmed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    let mut magnitude = 0_u64;
+    for character in digits.chars() {
+        let Some(digit) = character.to_digit(from_base) else {
+            break;
+        };
+        magnitude = magnitude
+            .wrapping_mul(u64::from(from_base))
+            .wrapping_add(u64::from(digit));
+    }
+    // A leading minus wraps in the 64-bit space, exactly as MySQL's
+    // unsigned reading does; these are reinterpretations, not conversions.
+    let value = if negative {
+        magnitude.wrapping_neg()
+    } else {
+        magnitude
+    };
+    let as_signed = i64::from_ne_bytes(value.to_ne_bytes());
+    let (sign, mut remaining) = if signed_output && as_signed < 0 {
+        ("-", as_signed.unsigned_abs())
+    } else {
+        ("", value)
+    };
+    if remaining == 0 {
+        return Some("0".to_owned());
+    }
+    let mut rendered = Vec::new();
+    while remaining > 0 {
+        let digit = u32::try_from(remaining % u64::from(to_base)).ok()?;
+        rendered.push(char::from_digit(digit, to_base)?.to_ascii_uppercase());
+        remaining /= u64::from(to_base);
+    }
+    rendered.reverse();
+    Some(format!(
+        "{sign}{}",
+        rendered.into_iter().collect::<String>()
+    ))
+}
+
+/// `MySQL` `MAKETIME`. Built by formatting rather than through a clock type:
+/// `MySQL`'s TIME spans -838:59:59..=838:59:59, which no civil-time type
+/// represents, and out-of-range hours clamp to that boundary.
+fn make_time(hour: i64, minute: i64, second: i64) -> Option<String> {
+    if !(0..=59).contains(&minute) || !(0..=59).contains(&second) {
+        return None;
+    }
+    let negative = hour < 0;
+    let magnitude = hour.unsigned_abs();
+    let (hours, minutes, seconds) = if magnitude > 838 {
+        (838, 59, 59)
+    } else {
+        (magnitude, minute.unsigned_abs(), second.unsigned_abs())
+    };
+    let sign = if negative { "-" } else { "" };
+    Some(format!("{sign}{hours:02}:{minutes:02}:{seconds:02}"))
+}
+
 /// Parses a JSON-valued argument, raising rather than guessing when the text
 /// is not JSON — every function except `JSON_VALID` requires a real document.
 fn parse_json_argument(value: &Value) -> Result<serde_json::Value, ExecError> {

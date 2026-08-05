@@ -2799,6 +2799,9 @@ fn bind_scalar_function(
         "REGEXP_REPLACE" if args.len() == 3 => ScalarFunction::RegexpReplace,
         "JSON_EXTRACT" if args.len() == 2 => ScalarFunction::JsonExtract { unquote: false },
         "JSON_UNQUOTE" if args.len() == 1 => ScalarFunction::JsonUnquote,
+        "SUBSTRING_INDEX" if args.len() == 3 => ScalarFunction::SubstringIndex,
+        "CONV" if args.len() == 3 => ScalarFunction::Conv,
+        "MAKETIME" if args.len() == 3 => ScalarFunction::MakeTime,
         "JSON_VALID" if args.len() == 1 => ScalarFunction::JsonValid,
         "JSON_TYPE" if args.len() == 1 => ScalarFunction::JsonType,
         "JSON_LENGTH" if matches!(args.len(), 1 | 2) => ScalarFunction::JsonLength,
@@ -3399,7 +3402,17 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         // JSON_TYPE raises on a non-JSON document; JSON_KEYS answers NULL for
         // a target that is not an object.
         | ScalarFunction::JsonType
-        | ScalarFunction::JsonKeys => (Some(DataType::Utf8), true),
+        | ScalarFunction::JsonKeys
+        // CONV and MAKETIME answer NULL for an unparseable number or an
+        // out-of-range minute/second.
+        | ScalarFunction::Conv
+        | ScalarFunction::MakeTime => (Some(DataType::Utf8), true),
+        // SUBSTRING_INDEX always returns a string for non-NULL input; an
+        // absent delimiter yields the whole subject rather than NULL.
+        ScalarFunction::SubstringIndex => (
+            Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),

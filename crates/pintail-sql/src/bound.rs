@@ -303,6 +303,12 @@ pub enum ScalarFunction {
     },
     /// `JSON_UNQUOTE(json)`.
     JsonUnquote,
+    /// `SUBSTRING_INDEX(text, delimiter, count)`.
+    SubstringIndex,
+    /// `CONV(number, from_base, to_base)`.
+    Conv,
+    /// `MAKETIME(hour, minute, second)`.
+    MakeTime,
     /// `JSON_VALID(doc)`.
     JsonValid,
     /// `JSON_TYPE(doc)`.

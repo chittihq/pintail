@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 752;
+const EXPECTED_CASES: usize = 755;
 
 struct OracleCase {
     family: &'static str,
@@ -897,6 +897,28 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written json valid",
             "SELECT JSON_VALID('{\"a\":1}'), JSON_VALID('not json'), JSON_VALID('[1,2]'), \
              JSON_VALID('')",
+        ),
+        // SUBSTRING_INDEX counts from the right for a negative count and
+        // returns the whole subject when the delimiter appears fewer times
+        // than asked, which is what makes it usable for URL splitting.
+        ordered(
+            "hand-written substring_index",
+            "SELECT SUBSTRING_INDEX('a/b/c', '/', 1), SUBSTRING_INDEX('a/b/c', '/', 2), \
+             SUBSTRING_INDEX('a/b/c', '/', -1), SUBSTRING_INDEX('a/b/c', '/', -2), \
+             SUBSTRING_INDEX('a/b/c', '/', 9), SUBSTRING_INDEX('a/b/c', '/', -9), \
+             SUBSTRING_INDEX('a/b/c', '/', 0), SUBSTRING_INDEX('abc', '/', 1), \
+             SUBSTRING_INDEX('a::b::c', '::', 2), SUBSTRING_INDEX('', '/', 1)",
+        ),
+        ordered(
+            "hand-written conv",
+            "SELECT CONV('a', 16, 2), CONV('6E', 18, 8), CONV(-17, 10, -18), \
+             CONV('ff', 16, 10), CONV('1111', 2, 16), CONV('zz', 36, 10), \
+             CONV('0', 10, 10), CONV('7fffffffffffffff', 16, 10)",
+        ),
+        ordered(
+            "hand-written maketime",
+            "SELECT MAKETIME(12, 15, 30), MAKETIME(0, 0, 0), MAKETIME(-1, 30, 0), \
+             MAKETIME(1, 60, 0), MAKETIME(1, 0, 60)",
         ),
         ordered(
             "hand-written conditionals",
