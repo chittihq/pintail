@@ -107,6 +107,27 @@ worth refusing.
 
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
 
+#### Measured divergences awaiting repair
+
+Each row below was measured against MySQL 8.4, not inferred. All return a plausible wrong value rather than an error, so they break the rule at the top of this document and are tracked for repair in #17.
+
+| Expression | MySQL 8.4 | Pintail |
+|---|---|---|
+| `ROUND(1.005, 2)` | `1.01` | `1` |
+| `ROUND(25E-1)` | `2` | `3` |
+| `REGEXP_LIKE('é', '[[:alpha:]]')` | `1` | `0` |
+| `LOWER(CAST('ABC' AS BINARY))` | `ABC` | `abc` |
+| `UPPER(CAST('abc' AS BINARY))` | `abc` | `ABC` |
+| `INSTR(CAST('A' AS BINARY), 'a')` | `0` | `1` |
+| `LOCATE('a', CAST('A' AS BINARY))` | `0` | `1` |
+| `HEX(TRIM(CHAR(9)))` | `09` | empty string |
+| `LENGTH(TO_BASE64(REPEAT('a', 58)))` | `81` | `80` |
+| `SEC_TO_TIME(1.5)` | `00:00:01.5` | `00:00:01` |
+| `HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11))))` | `61` | `NULL` |
+
+The causes cluster: `ROUND` uses the f64 carrier where MySQL applies exact-value decimal rounding, and rounds half away from zero where MySQL uses nearest-even for approximate operands; the regex engine defines POSIX classes over ASCII where MySQL's ICU engine defines them over Unicode; `LOWER`, `UPPER`, `INSTR` and `LOCATE` fold case unconditionally instead of treating a binary argument as case-sensitive; `TRIM` removes the full Unicode whitespace set rather than only the space character; and `TO_BASE64` omits MySQL's 76-column line wrapping.
+
+
 ### Planning and execution
 
 - Text keys, numeric/string coercions, out-of-range signedness conversions,
