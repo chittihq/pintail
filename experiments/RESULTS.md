@@ -913,3 +913,54 @@ One number worth carrying forward: row materialization now costs as much as the
 entire columnar scan (821 ms → 1615 ms for the same data with `next_chunk`).
 That is the exec layer's "value tax" from e15, not storage, and it is where the
 next scan-side work belongs.
+
+## e25 — 200M rows: the first evidence above the 20M ceiling
+
+Every scale claim until now was extrapolated from 20M rows. This is 200M —
+10× further — on a 16-core Linux host with 30 GB RAM, writing to a dedicated
+1.9 TB volume (not the system SSD). Append mode, 64 MB memtable, engine
+defaults.
+
+| rows | segments | manifest B | disk B | B/row | rows/s |
+|---:|---:|---:|---:|---:|---:|
+| 20M | 57 | 31,535 | 326,274,630 | 16 | 217,051 |
+| 60M | 174 | 96,119 | 939,008,296 | 15 | 216,620 |
+| 100M | 290 | 160,151 | 1,551,737,926 | 15 | 215,900 |
+| 140M | 406 | 224,183 | 2,165,376,017 | 15 | 216,172 |
+| 200M | 581 | 320,783 | 3,074,511,160 | 15 | 216,639 |
+
+Ingest 923.3 s. Full scan of five columns 258.4 s (774k rows/s); two columns
+136.2 s (1.47M rows/s).
+
+### What holds
+
+**Ingest throughput is flat.** 217,051 rows/s at the 20M mark and 216,639 at
+200M — a 0.2% drift across a 10× increase in table size. This was the open
+question after the compaction fix: compaction now actually runs, and the fear
+was that its cost would grow with the table until ingest degraded. It does not.
+
+**Everything grows linearly, nothing compounds.** Segments 57 → 581 (10.2× for
+10× rows), manifest 31,535 → 320,783 B (10.2×), disk 9.4× — very slightly
+sublinear, because compaction is consolidating. Bytes per row is steady at 15.
+
+**Extrapolated to 1e9 rows:** ~2,905 segments and a 1.6 MB manifest over roughly
+15 GB. The manifest is rewritten on every flush, so it was the suspected
+quadratic; at 1.6 MB it is not a problem.
+
+### What does not
+
+**Scan is the ceiling, and it is the thing we reverted.** 774k rows/s over five
+columns means a full 1e9-row scan takes about 21 minutes. This run took the
+row-merge path for every segment, because `unique_keys` on flushed segments is
+currently off — the change measured at 6.9× on a 20M scan and reverted for a
+memory-ceiling regression. At 200M the same path is the dominant cost, which
+moves that fix from a nice optimisation to the single highest-value item on the
+board.
+
+### Honest limits of this result
+
+Append-only, one table, one column shape, no concurrent queries, no CDC applying
+updates underneath. It says the storage layer's growth curves are linear and
+ingest holds; it does not say a terabyte-scale replica under live replication
+behaves the same. The next questions are churn mode at this size and a scan
+under a predicate rather than a full table read.
