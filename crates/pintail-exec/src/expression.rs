@@ -1123,8 +1123,20 @@ fn evaluate_eager_scalar(
                 .unwrap_or(i64::MAX);
             Ok(Value::Utf8(mysql_substring(&value, start, length)))
         }
-        ScalarFunction::Lower => Ok(Value::Utf8(scalar_string(&values[0])?.to_lowercase())),
-        ScalarFunction::Upper => Ok(Value::Utf8(scalar_string(&values[0])?.to_uppercase())),
+        // MySQL's LOWER/UPPER are ineffective on a binary string: case is a
+        // property of a character set, and a binary value has none. Folding
+        // it anyway rewrote bytes the caller asked to keep exact.
+        ScalarFunction::Lower | ScalarFunction::Upper => {
+            if let Value::Binary(bytes) = &values[0] {
+                return Ok(Value::Binary(bytes.clone()));
+            }
+            let text = scalar_string(&values[0])?;
+            Ok(Value::Utf8(if function == ScalarFunction::Lower {
+                text.to_lowercase()
+            } else {
+                text.to_uppercase()
+            }))
+        }
         ScalarFunction::Trim => Ok(Value::Utf8(
             // MySQL's default TRIM removes the space character only. Rust's
             // trim() removes the whole Unicode whitespace class, so a
@@ -1158,8 +1170,11 @@ fn evaluate_eager_scalar(
             Ok(Value::Utf8(value.chars().skip(skip).collect()))
         }
         ScalarFunction::Locate => {
-            let needle = scalar_string(&values[0])?.to_lowercase();
-            let haystack = scalar_string(&values[1])?;
+            // A binary operand makes the comparison case-sensitive, because
+            // there is no collation to fold under.
+            let binary = binary_operand(&values[0..2]);
+            let needle = fold_unless_binary(&scalar_string(&values[0])?, binary);
+            let haystack = fold_unless_binary(&scalar_string(&values[1])?, binary);
             let start = values.get(2).map(mysql_i64).transpose()?.unwrap_or(1);
             Ok(Value::UInt64(locate(&needle, &haystack, start)))
         }
@@ -1350,8 +1365,9 @@ fn evaluate_eager_scalar(
             )
         }
         ScalarFunction::Instr => {
-            let haystack = scalar_string(&values[0])?.to_lowercase();
-            let needle = scalar_string(&values[1])?.to_lowercase();
+            let binary = binary_operand(&values[0..2]);
+            let haystack = fold_unless_binary(&scalar_string(&values[0])?, binary);
+            let needle = fold_unless_binary(&scalar_string(&values[1])?, binary);
             Ok(Value::UInt64(locate(&needle, &haystack, 1)))
         }
         ScalarFunction::FindInSet => {
@@ -2825,6 +2841,22 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// Whether any operand is a binary string, which makes `MySQL` compare the
+/// pair case-sensitively rather than under a collation.
+fn binary_operand(values: &[Value]) -> bool {
+    values.iter().any(|value| matches!(value, Value::Binary(_)))
+}
+
+/// Case-folds for the engine's case-insensitive default, unless a binary
+/// operand demands an exact byte comparison.
+fn fold_unless_binary(text: &str, binary: bool) -> String {
+    if binary {
+        text.to_owned()
+    } else {
+        text.to_lowercase()
+    }
+}
+
 /// Rewrites POSIX bracket classes to their Unicode equivalents.
 ///
 /// `MySQL` 8.4 runs ICU, where `[[:alpha:]]` matches any alphabetic character;
@@ -3193,12 +3225,17 @@ fn mysql_substring(value: &str, start: i64, length: i64) -> String {
     value.chars().skip(start_character).take(length).collect()
 }
 
+/// One-based character position of `needle` in `haystack`, or 0.
+///
+/// Both sides arrive already case-folded or deliberately not: a binary
+/// operand must compare byte-exact, and folding the haystack here defeated
+/// that decision no matter what the caller passed.
 fn locate(needle: &str, haystack: &str, start: i64) -> u64 {
     if start <= 0 {
         return 0;
     }
     let start = usize::try_from(start - 1).unwrap_or(usize::MAX);
-    let haystack_lower = haystack.to_lowercase();
+    let haystack_lower = haystack.to_owned();
     let Some(start_byte) = haystack_lower
         .char_indices()
         .nth(start)
@@ -3806,6 +3843,38 @@ mod tests {
         };
         assert_eq!(encoded.chars().count(), 81);
         assert!(encoded.contains('\n'));
+        // A binary operand is compared byte-exact: LOWER/UPPER leave it
+        // alone and INSTR/LOCATE stop folding case.
+        assert_eq!(
+            call(ScalarFunction::Lower, vec![Value::Binary(b"ABC".to_vec())]),
+            Value::Binary(b"ABC".to_vec())
+        );
+        assert_eq!(
+            call(ScalarFunction::Upper, vec![Value::Binary(b"abc".to_vec())]),
+            Value::Binary(b"abc".to_vec())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::Instr,
+                vec![Value::Binary(b"A".to_vec()), Value::Utf8("a".into())]
+            ),
+            Value::Utf8("0".into())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::Locate,
+                vec![Value::Utf8("a".into()), Value::Binary(b"A".to_vec())]
+            ),
+            Value::Utf8("0".into())
+        );
+        // Text operands keep the case-insensitive default.
+        assert_eq!(
+            call(
+                ScalarFunction::Instr,
+                vec![Value::Utf8("A".into()), Value::Utf8("a".into())]
+            ),
+            Value::Utf8("1".into())
+        );
         // POSIX classes follow ICU's Unicode definitions, not ASCII.
         assert_eq!(
             call(

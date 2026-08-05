@@ -121,10 +121,6 @@ Each row below was measured against MySQL 8.4, not inferred. All return a plausi
 |---|---|---|
 | `ROUND(1.005, 2)` | `1.01` | `1` |
 | `ROUND(25E-1)` | `2` | `3` |
-| `LOWER(CAST('ABC' AS BINARY))` | `ABC` | `abc` |
-| `UPPER(CAST('abc' AS BINARY))` | `abc` | `ABC` |
-| `INSTR(CAST('A' AS BINARY), 'a')` | `0` | `1` |
-| `LOCATE('a', CAST('A' AS BINARY))` | `0` | `1` |
 | `HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11))))` | `61` | `NULL` |
 
 The causes cluster: `ROUND` uses the f64 carrier where MySQL applies exact-value decimal rounding, and rounds half away from zero where MySQL uses nearest-even for approximate operands; the regex engine defines POSIX classes over ASCII where MySQL's ICU engine defines them over Unicode; `LOWER`, `UPPER`, `INSTR` and `LOCATE` fold case unconditionally instead of treating a binary argument as case-sensitive; `TRIM` removes the full Unicode whitespace set rather than only the space character; and `TO_BASE64` omits MySQL's 76-column line wrapping.

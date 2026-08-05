@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 768;
+const EXPECTED_CASES: usize = 769;
 
 struct OracleCase {
     family: &'static str,
@@ -999,6 +999,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "repaired sec_to_time fraction",
             "SELECT SEC_TO_TIME(1.5), SEC_TO_TIME(1), SEC_TO_TIME(90)",
+        ),
+        ordered(
+            "repaired binary case sensitivity",
+            "SELECT LOWER(CAST('ABC' AS BINARY)), UPPER(CAST('abc' AS BINARY)), \
+             INSTR(CAST('A' AS BINARY), 'a'), LOCATE('a', CAST('A' AS BINARY)), \
+             INSTR('A', 'a'), LOCATE('a', 'A'), INSTR(CAST('Aa' AS BINARY), 'a')",
         ),
         ordered(
             "repaired regexp unicode classes",
