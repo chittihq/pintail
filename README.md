@@ -24,7 +24,8 @@ copy is read-only by design. What exists is tested hard: the test suites
 crash Pintail on purpose in the middle of writes and verify nothing is
 lost, and an end-to-end test boots a real MySQL, throws writes, schema
 changes, and a `kill -9` at it, then checks every table still matches
-exactly. Known limits are written down in
+exactly. What Pintail supports of MySQL is tabulated in
+[parity.md](parity.md); known limits are written down in
 [docs/limitations.md](docs/limitations.md). Pintail mirrors your MySQL
 data, so losing a Pintail node loses nothing — but don't make it your
 only copy of anything either.

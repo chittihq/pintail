@@ -161,5 +161,6 @@ objects across incremental generations, and publish the portable manifest
 last. Restore verifies SHA-256 checksums and creates a new detached database;
 it never overwrites the source replica.
 
-Compatibility boundaries that remain by design are listed in
+MySQL parity is tabulated in [`parity.md`](../parity.md); compatibility
+boundaries that remain by design are listed in
 [`limitations.md`](limitations.md).

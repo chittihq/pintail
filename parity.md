@@ -1,0 +1,118 @@
+# MySQL parity
+
+What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
+the two are disjoint on purpose.
+
+Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
+734 cases, all byte-exact.
+
+## Surface
+
+| Area | Status |
+|---|---|
+| Callable functions | 110 — `bun run scripts/function-surface.ts` reads them from the binder |
+| Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG` |
+| Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`; default frames only |
+| Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities |
+| Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form, decorrelated to semi/anti joins |
+| Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
+| CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form |
+| JSON | `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_EXTRACT`, `JSON_UNQUOTE`, `->`, `->>` |
+| Regex | `REGEXP_LIKE`, `REGEXP_INSTR`, `REGEXP_REPLACE`, `REGEXP_SUBSTR`, `REGEXP`/`RLIKE` |
+| Conversion | `CAST`, `CONVERT(value, type)`, `CONVERT(value USING charset)` |
+| `information_schema` | 7 tables, simple projection/filter/order/limit and `COUNT(*)` |
+
+## Semantics
+
+| Behaviour | Parity |
+|---|---|
+| `DECIMAL` arithmetic | Exact on scaled `i128` units. `/` and `AVG` widen by 4 fraction digits, half away from zero; `SUM` accumulates scaled integers; overflow errors |
+| `BIGINT UNSIGNED` | Native `UInt64` across the full `0..=2^64-1` range |
+| Statement time | `NOW`/`CURDATE`/`CURTIME`/`UNIX_TIMESTAMP()` pinned to one timestamp per statement |
+| Session time zone | `SET time_zone` per connection on the MySQL wire endpoint |
+| `DATE_FORMAT` | Full directive inventory, including all four `WEEK` modes (`%U %u %V %v`) and paired years (`%X %x`) via a port of MySQL's `calc_week`; unknown directives copy their bare character |
+| `EXTRACT` | `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER`, `WEEK` |
+| Temporal types | `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` distinctions survive binding and wire metadata |
+| Text collation | Case-insensitive Unicode-lowercase by default; `PINTAIL_COLLATION=utf8mb4_0900_ai_ci` adds accent insensitivity |
+| Generated columns | Stored columns included; virtual skipped |
+| Type fidelity | Exact decimal text, normalized-zero and negative temporals, JSON, Unicode, binary, `BIT`, Boolean, narrow integers — across snapshot, CDC, HTTP and wire |
+| Rejection | Always an explicit error, never a different answer |
+
+## Execution
+
+| Behaviour | Parity |
+|---|---|
+| Memory | Hard per-query cap on joins, aggregation, sort, distinct, subquery materialization and cross joins |
+| Spill | Sort, grouped aggregation and hash-join build sides spill; grace joins re-partition up to 3 times |
+| Parallelism | Segment header and late-materialization work on a Pintail-owned Rayon pool |
+| Merge-on-read | Key/version/tombstone merge in chunks of ≤8,192 rows |
+| Aggregate fold | Per-segment SMAs answer bare `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` without scanning when provably exact |
+| Key pruning | Declared one-column `Int64`/`UInt64` key with a losslessly convertible literal |
+
+## Wire protocol
+
+| Behaviour | Parity |
+|---|---|
+| Mode | Read-only |
+| Auth | `caching_sha2_password` fast-auth, `mysql_native_password` |
+| Session vars | `SET time_zone`, `SET NAMES` (utf8 family), `SET sql_mode` (echoed) |
+| Prepared statements | Numeric, decimal, temporal, JSON, text, binary tags; params incl. binary `DATE`/`DATETIME`/`TIME` |
+| TLS | rustls, default modern policy; `PINTAIL_WIRE_TLS_CERT`/`_KEY` PEM paths or `[wire]` config keys, `PINTAIL_WIRE_REQUIRE_TLS` to refuse plaintext |
+| Client gate | `mysql_async`, MySQL 8.4 CLI, mysql2, PyMySQL |
+
+## Ranked gaps
+
+From `scripts/function-surface.ts` against `tests/corpus/bi-shapes.sql`.
+
+| Function | Needed by | Issue |
+|---|---|---|
+| `LAG`, `LEAD` | Superset, Metabase — period-over-period | #25 |
+| `FIRST_VALUE`, `LAST_VALUE`, `NTILE` | Superset, Looker — cohorts, quartiles | #25 |
+| Window frames, named windows | all four — running totals, moving averages | #25 |
+| `STDDEV[_POP\|_SAMP]`, `VARIANCE`, `VAR_[POP\|SAMP]` | Tableau | #17 |
+| `ANY_VALUE` | Looker, Metabase — `ONLY_FULL_GROUP_BY` | #17 |
+| `BIT_AND`, `BIT_OR`, `BIT_XOR` | Tableau | #17 |
+| `SUBSTRING_INDEX` | all four — URL/UTM splitting | #17 |
+| `MD5` + `CONV` | Looker — symmetric aggregate, one unit with `DECIMAL(38,0)` casts | #17 |
+| `JSON_CONTAINS`, `JSON_LENGTH`, `JSON_KEYS`, `JSON_TYPE`, `JSON_VALID` | all four — JSON dimension filters | #8 |
+| `MAKETIME` | Superset | #13 |
+| Compound intervals | Superset — blocked in sqlparser, not the engine | #13 |
+
+`tests/corpus/bi-shapes.sql` is **reconstructed** from documented BI-tool
+behaviour, not a captured query log. It establishes which functions are needed,
+not how often. #24 tracks capturing a real log; replace this ranking with its
+output rather than merging the two.
+
+## Duckling known-limit parity
+
+| Duckling limitation | Status | Evidence |
+|---|---|---|
+| PeerDB corrupts zero and minimum dates | Fixed | Decoders normalize zero/partial-zero dates to `NULL` and retain `1000-01-01` |
+| PeerDB rejects a pre-populated destination | Fixed by design | One native ownership path; source position persisted before handoff |
+| Polling dumps inconsistent under mid-dump writes | Fixed for CDC sources | Coordinated repeatable-read transactions; degraded guarantee reported, not hidden |
+| Count-neutral delete/insert evades polling | Fixed | Chunk checksums, key reconciliation and secondary-UNIQUE audit |
+| `BIGINT UNSIGNED` overflows a signed carrier | Fixed | Native `UInt64` value and segment carrier |
+| High-precision `DECIMAL` truncates | Fixed | Exact to precision 38 on scaled integer units |
+| Spatial values unusable | Inherited | WKB bytes preserved; no spatial type, index or functions |
+| Binary and BIT break CDC updates | Fixed | Native row decoding; snapshot, CDC, HTTP and wire gates |
+
+## CDC mode versus polling mode
+
+Polling sources are second-class by construction: without a binlog there is no
+record of what happened between two reads.
+
+| Guarantee | CDC | Polling |
+|---|---|---|
+| Transaction atomicity | Visible together at the XID boundary | None — a cycle can expose part of a transaction |
+| Intermediate states | Every row version reaches the replica | Lost; only cycle-boundary state is observed |
+| Hard deletes | Tombstones from the binlog, seconds behind | Invisible until key reconciliation (default 10 min) |
+| Cascaded deletes | Reconciler on the database's interval | Same reconciler, same cadence |
+| Secondary UNIQUE collisions | Cannot occur | Transient on delete-then-reuse; audit repairs in seconds |
+| Soft deletes | Ordinary row updates | Ordinary cursor sync, converge in seconds |
+| Cursor-less tables | n/a | Chunk-checksum sync |
+| PK uniqueness | Merge-on-read, always on | Identical |
+| Cross-table ordering | One binlog position | None |
+
+The dashboard carries a persistent polling-mode banner stating the delete
+latency and intermediate-state loss, so the trade is visible to whoever reads
+the data rather than only to whoever configured it.
