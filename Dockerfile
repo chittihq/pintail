@@ -8,9 +8,25 @@ COPY packages/dashboard/public ./public
 COPY packages/dashboard/nuxt.config.ts ./
 RUN bun run generate
 
-FROM rust:1.94-bookworm AS builder
-
+# Dependencies compile in their own layer, keyed on the manifests alone.
+# Copying sources before building — the obvious shape — puts 472 crates behind
+# a layer that any source edit invalidates, so every image rebuilt the whole
+# dependency graph from scratch. cargo-chef is a build-time tool only; nothing
+# it produces is linked into the binary.
+FROM rust:1.94-bookworm AS chef
+RUN cargo install cargo-chef --locked --version ^0.1
 WORKDIR /source
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY tests/sqllogic ./tests/sqllogic
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /source/recipe.json recipe.json
+# Rebuilds only when Cargo.lock changes.
+RUN cargo chef cook --locked --release --package pintail --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY tests/sqllogic ./tests/sqllogic
