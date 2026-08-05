@@ -110,9 +110,15 @@ enough to be worth refusing.
   affect `CONVERT_TZ` or stored temporal values.
 - Date parsing accepts the canonical date and date-time forms implemented by
   the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a
-  time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not
-  implemented (#13). `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`,
-  `SECOND`, `QUARTER` and `WEEK`; compound units reject explicitly.
+  time. Compound intervals (`INTERVAL '1-2' YEAR_MONTH`,
+  `INTERVAL '3 4:00:00' DAY_SECOND`, and the other nine MySQL forms) are
+  rejected by the SQL parser rather than by Pintail: sqlparser 0.62 gates
+  interval qualifiers on a keyword list holding only the simple units, so a
+  compound qualifier fails with `INTERVAL requires a unit after the literal
+  value` before binding begins. Supporting them needs the parser to accept
+  the qualifier first, which is an upstream change, not an engine one (#13).
+  `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`,
+  `QUARTER` and `WEEK`; compound units reject explicitly.
 - `STR_TO_DATE` translates the MySQL format string into the underlying
   parser's dialect, mapping `%c %e %M %k %l %i %s %f %%` and forwarding the
   rest. Several letters mean something different there, so a directive
