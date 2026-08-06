@@ -7,6 +7,7 @@ import {
   Cable,
   Check,
   ChevronRight,
+  ChevronsUpDown,
   CircleHelp,
   Copy,
   Database,
@@ -790,6 +791,10 @@ function closeDeleteDialog(open: boolean) {
   }
 }
 
+function initials(subject: string) {
+  return subject.split('@')[0]!.slice(0, 2).toUpperCase()
+}
+
 function modeOf(database: DatabaseRecord) {
   return database.effective_mode || database.mode
 }
@@ -901,66 +906,71 @@ function describeTable(table: TableSummary) {
     <span>Opening control plane</span>
   </div>
 
-  <main v-else-if="!session" class="auth-shell">
-    <section class="auth-panel">
-      <div class="auth-brand">
-        <span class="brand-mark">PT</span>
-        <span>Pintail</span>
-      </div>
-      <div>
-        <p class="kicker">{{ authMode === 'setup' ? 'First boot' : 'Local control plane' }}</p>
-        <h1>{{ authMode === 'setup' ? 'Create the operator.' : 'Welcome back.' }}</h1>
-        <p class="muted auth-copy">
-          {{
-            authMode === 'setup'
-              ? 'This one-time account owns source configuration, replication, and access keys.'
-              : 'Authenticate to inspect and operate your live MySQL mirrors.'
-          }}
-        </p>
-      </div>
-      <form class="stack" @submit.prevent="submitAuth">
-        <div class="grid gap-1.5">
-          <Label for="auth-email">Email</Label>
-          <Input id="auth-email" v-model="authForm.email" type="email" autocomplete="email" required placeholder="operator@example.com" />
-        </div>
-        <div class="grid gap-1.5">
-          <Label for="auth-password">Password</Label>
-          <Input
-            id="auth-password"
-            v-model="authForm.password"
-            type="password"
-            :autocomplete="authMode === 'setup' ? 'new-password' : 'current-password'"
-            minlength="12"
-            required
-            placeholder="At least 12 characters"
-          />
-        </div>
-        <p v-if="error" class="inline-error">{{ error }}</p>
-        <Button type="submit" size="lg" class="w-full" :disabled="authenticating">
-          <LoaderCircle v-if="authenticating" class="spin" />
-          {{ authMode === 'setup' ? 'Initialize Pintail' : 'Sign in' }}
-          <ArrowRight v-if="!authenticating" />
-        </Button>
-      </form>
-      <p class="auth-foot">Credentials stay on this Pintail node · Argon2id protected</p>
-    </section>
-    <aside class="auth-visual" aria-hidden="true">
-      <div class="flight-grid">
-        <span v-for="index in 28" :key="index" :class="{ signal: [7, 14, 21, 22].includes(index) }" />
-      </div>
-      <div class="auth-visual-copy">
-        <Radio :size="18" />
-        <span>Source events become durable analytical blocks.</span>
-      </div>
-    </aside>
+  <main v-else-if="!session" class="bg-muted flex min-h-svh items-center justify-center p-6 md:p-10">
+    <div class="w-full max-w-4xl">
+      <Card class="overflow-hidden p-0">
+        <CardContent class="grid p-0 md:grid-cols-2">
+          <form class="p-6 md:p-8" @submit.prevent="submitAuth">
+            <div class="flex flex-col gap-6">
+              <div class="flex flex-col items-center gap-2 text-center">
+                <span class="brand-mark">PT</span>
+                <h1 class="text-xl font-bold">{{ authMode === 'setup' ? 'Create the operator' : 'Welcome back' }}</h1>
+                <p class="text-muted-foreground text-balance">
+                  {{
+                    authMode === 'setup'
+                      ? 'This one-time account owns source configuration, replication, and access keys.'
+                      : 'Authenticate to inspect and operate your live MySQL mirrors.'
+                  }}
+                </p>
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="auth-email">Email</Label>
+                <Input id="auth-email" v-model="authForm.email" type="email" autocomplete="email" required placeholder="operator@example.com" />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="auth-password">Password</Label>
+                <Input
+                  id="auth-password"
+                  v-model="authForm.password"
+                  type="password"
+                  :autocomplete="authMode === 'setup' ? 'new-password' : 'current-password'"
+                  minlength="12"
+                  required
+                  placeholder="At least 12 characters"
+                />
+              </div>
+              <p v-if="error" class="inline-error">{{ error }}</p>
+              <Button type="submit" class="w-full" :disabled="authenticating">
+                <LoaderCircle v-if="authenticating" class="spin" />
+                {{ authMode === 'setup' ? 'Initialize Pintail' : 'Sign in' }}
+                <ArrowRight v-if="!authenticating" />
+              </Button>
+              <p class="text-muted-foreground text-center text-xs">Credentials stay on this Pintail node · Argon2id protected</p>
+            </div>
+          </form>
+          <aside class="auth-visual" aria-hidden="true">
+            <div class="flight-grid">
+              <span v-for="index in 28" :key="index" :class="{ signal: [7, 14, 21, 22].includes(index) }" />
+            </div>
+            <div class="auth-visual-copy">
+              <Radio :size="18" />
+              <span>Source events become durable analytical blocks.</span>
+            </div>
+          </aside>
+        </CardContent>
+      </Card>
+    </div>
   </main>
 
-  <SidebarProvider v-else>
-    <Sidebar collapsible="icon">
+  <SidebarProvider
+    v-else
+    :style="{ '--sidebar-width': 'calc(var(--spacing) * 64)', '--header-height': 'calc(var(--spacing) * 14)' }"
+  >
+    <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" class="font-heading text-base font-extrabold tracking-tight" @click="go('overview')">
+            <SidebarMenuButton size="lg" class="data-[slot=sidebar-menu-button]:!p-1.5 font-heading text-base font-extrabold tracking-tight" @click="go('overview')">
               <span class="brand-mark shrink-0">PT</span>
               <span>Pintail</span>
             </SidebarMenuButton>
@@ -992,45 +1002,69 @@ function describeTable(table: TableSummary) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <div class="border-sidebar-border flex items-center justify-between gap-2 border-t pt-2 group-data-[collapsible=icon]:justify-center">
-          <div class="node-status group-data-[collapsible=icon]:hidden">
-            <span class="health-dot" :class="{ stale: error }" />
-            <div>
-              <strong>{{ error ? 'Attention' : 'Node healthy' }}</strong>
-              <span>v0.1.0 · local</span>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            title="Sign out"
-            @click="logout"
-          >
-            <LogOut />
-          </Button>
-        </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <SidebarMenuButton size="lg" class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+                  <Avatar class="size-8 rounded-md">
+                    <AvatarFallback class="rounded-md">{{ initials(session.subject) }}</AvatarFallback>
+                  </Avatar>
+                  <div class="grid flex-1 text-left text-sm leading-tight">
+                    <span class="flex items-center gap-1.5 truncate font-medium">
+                      <span class="health-dot shrink-0" :class="{ stale: error }" />
+                      {{ error ? 'Attention' : 'Node healthy' }}
+                    </span>
+                    <span class="text-sidebar-foreground/60 truncate text-xs">{{ session.subject }}</span>
+                  </div>
+                  <ChevronsUpDown class="ml-auto size-4" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent class="w-(--reka-dropdown-menu-trigger-width) min-w-56 rounded-lg" side="top" align="start" :side-offset="4">
+                <DropdownMenuLabel class="p-0 font-normal">
+                  <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                    <Avatar class="size-8 rounded-md">
+                      <AvatarFallback class="rounded-md">{{ initials(session.subject) }}</AvatarFallback>
+                    </Avatar>
+                    <div class="grid flex-1 text-left text-sm leading-tight">
+                      <span class="truncate font-medium">{{ session.subject }}</span>
+                      <span class="text-muted-foreground truncate text-xs">{{ session.role }} · v0.1.0</span>
+                    </div>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem @click="go('settings')">
+                  <Settings /> Settings
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem @click="logout">
+                  <LogOut /> Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
 
-    <SidebarInset class="min-w-0 bg-transparent">
-      <header class="topbar">
-        <div class="flex items-center gap-2">
-          <SidebarTrigger />
-          <Separator orientation="vertical" class="!h-4" />
+    <SidebarInset class="min-w-0">
+      <header class="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear">
+        <div class="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
+          <SidebarTrigger class="-ml-1" />
+          <Separator orientation="vertical" class="mx-2 data-[orientation=vertical]:h-4" />
           <div class="breadcrumbs">
             <span>Control plane</span>
             <ChevronRight :size="14" />
             <strong>{{ nav.find((item) => item.id === page)?.label || selectedDatabase?.name }}</strong>
           </div>
-        </div>
-        <div class="top-actions">
-          <Button variant="ghost" size="icon" :title="dark ? 'Use light theme' : 'Use dark theme'" @click="toggleTheme">
-            <Sun v-if="dark" />
-            <Moon v-else />
-          </Button>
-          <Button @click="beginWizard"><Plus /> <span>Add database</span></Button>
+          <div class="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="icon" :title="dark ? 'Use light theme' : 'Use dark theme'" @click="toggleTheme">
+              <Sun v-if="dark" />
+              <Moon v-else />
+            </Button>
+            <Button @click="beginWizard"><Plus /> <span class="hidden sm:inline">Add database</span></Button>
+          </div>
         </div>
       </header>
 
@@ -1038,7 +1072,7 @@ function describeTable(table: TableSummary) {
         <AlertTriangle />
         <AlertDescription class="flex w-full items-center justify-between gap-3">
           <span>{{ error }}</span>
-          <Button variant="ghost" size="icon-xs" class="text-destructive shrink-0" @click="error = ''"><X /></Button>
+          <Button variant="ghost" size="icon-xs" class="shrink-0" @click="error = ''"><X /></Button>
         </AlertDescription>
       </Alert>
 
@@ -1067,23 +1101,57 @@ function describeTable(table: TableSummary) {
               {{ deadLetters.length }} dead-letter event{{ deadLetters.length === 1 ? '' : 's' }};
               {{ databases.filter((item) => item.state === 'needs_resync').length }} mirror{{ databases.filter((item) => item.state === 'needs_resync').length === 1 ? '' : 's' }} need resync.
             </span>
-            <Button variant="outline" size="xs" class="border-amber/40 text-amber hover:text-amber shrink-0 bg-transparent" @click="go('activity')">Inspect</Button>
+            <Button variant="outline" size="xs" class="shrink-0" @click="go('activity')">Inspect</Button>
           </AlertDescription>
         </Alert>
 
-        <div class="metric-grid">
-          <article class="metric-card">
-            <span>Databases</span><strong>{{ databases.length }}</strong><small>{{ activeMirrors }} actively converging</small>
-          </article>
-          <article class="metric-card">
-            <span>Rows mirrored</span><strong>{{ formatNumber(totalRows) }}</strong><small>Deduplicated visible rows</small>
-          </article>
-          <article class="metric-card">
-            <span>Recent ingest</span><strong>{{ formatNumber(activity.slice(0, 20).reduce((sum, run) => sum + run.rows, 0)) }}</strong><small>Rows across 20 latest runs</small>
-          </article>
-          <article class="metric-card signal-card">
-            <span>Storage engine</span><strong>v1</strong><small>Checksummed columnar blocks</small>
-          </article>
+        <div class="@container/main grid grid-cols-1 gap-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card *:data-[slot=card]:shadow-xs @xl/main:grid-cols-2 @5xl/main:grid-cols-4 dark:*:data-[slot=card]:bg-card">
+          <Card class="@container/card">
+            <CardHeader>
+              <CardDescription>Databases</CardDescription>
+              <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{{ databases.length }}</CardTitle>
+              <CardAction v-if="activeMirrors">
+                <Badge variant="outline">{{ activeMirrors }} live</Badge>
+              </CardAction>
+            </CardHeader>
+            <CardFooter class="flex-col items-start gap-1.5 text-sm">
+              <div class="font-medium">{{ activeMirrors }} actively converging</div>
+              <div class="text-muted-foreground">Streaming and polling mirrors</div>
+            </CardFooter>
+          </Card>
+          <Card class="@container/card">
+            <CardHeader>
+              <CardDescription>Rows mirrored</CardDescription>
+              <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{{ formatNumber(totalRows) }}</CardTitle>
+            </CardHeader>
+            <CardFooter class="flex-col items-start gap-1.5 text-sm">
+              <div class="font-medium">Deduplicated visible rows</div>
+              <div class="text-muted-foreground">Merge-on-read across all mirrors</div>
+            </CardFooter>
+          </Card>
+          <Card class="@container/card">
+            <CardHeader>
+              <CardDescription>Recent ingest</CardDescription>
+              <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{{ formatNumber(activity.slice(0, 20).reduce((sum, run) => sum + run.rows, 0)) }}</CardTitle>
+            </CardHeader>
+            <CardFooter class="flex-col items-start gap-1.5 text-sm">
+              <div class="font-medium">Rows across 20 latest runs</div>
+              <div class="text-muted-foreground">Snapshot, stream, and poll work</div>
+            </CardFooter>
+          </Card>
+          <Card class="@container/card">
+            <CardHeader>
+              <CardDescription>Storage engine</CardDescription>
+              <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">v1</CardTitle>
+              <CardAction>
+                <Badge variant="outline" class="tone-positive">Live</Badge>
+              </CardAction>
+            </CardHeader>
+            <CardFooter class="flex-col items-start gap-1.5 text-sm">
+              <div class="font-medium">Checksummed columnar blocks</div>
+              <div class="text-muted-foreground">Bounded size-tier compaction</div>
+            </CardFooter>
+          </Card>
         </div>
 
         <article class="panel replication-line">
@@ -1163,7 +1231,7 @@ function describeTable(table: TableSummary) {
                     <Button variant="ghost" size="icon-sm" :title="database.mode === 'paused' ? 'Resume' : 'Pause'" @click="setMode(database, database.mode === 'paused' ? 'auto' : 'paused')">
                       <Play v-if="database.mode === 'paused'" /><Pause v-else />
                     </Button>
-                    <Button variant="ghost" size="icon-sm" class="text-destructive hover:text-destructive" title="Delete" @click="deleteCandidate = database; deleteText = ''"><Trash2 /></Button>
+                    <Button variant="ghost" size="icon-sm" title="Delete" @click="deleteCandidate = database; deleteText = ''"><Trash2 /></Button>
                   </div>
                 </TableCell>
               </TableRow>
@@ -1272,7 +1340,7 @@ function describeTable(table: TableSummary) {
                   <p>{{ record.error }}</p>
                   <div class="row-actions">
                     <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
-                    <Button variant="link" size="sm" class="text-destructive" @click="discardDlq(record)">Discard</Button>
+                    <Button variant="link" size="sm" @click="discardDlq(record)">Discard</Button>
                   </div>
                 </div>
               </article>
@@ -1495,8 +1563,8 @@ function describeTable(table: TableSummary) {
         <div v-if="revealedSecret" class="secret-banner">
           <AlertTriangle :size="18" />
           <div><strong>Copy this secret now. It cannot be recovered.</strong><code>{{ revealedSecret }}</code></div>
-          <Button variant="ghost" size="icon-sm" class="text-amber hover:text-amber shrink-0" @click="copy(revealedSecret)"><Copy /></Button>
-          <Button variant="ghost" size="icon-sm" class="text-amber hover:text-amber shrink-0" @click="revealedSecret = ''"><X /></Button>
+          <Button variant="ghost" size="icon-sm" class="shrink-0" @click="copy(revealedSecret)"><Copy /></Button>
+          <Button variant="ghost" size="icon-sm" class="shrink-0" @click="revealedSecret = ''"><X /></Button>
         </div>
         <article class="panel table-panel">
           <div v-if="!keys.length" class="empty-state"><KeyRound :size="28" /><h2>No keys for this database</h2><p>Create one for the HTTP API or MySQL wire clients.</p></div>
@@ -1514,7 +1582,7 @@ function describeTable(table: TableSummary) {
                 <TableCell>
                   <div class="row-actions">
                     <Button variant="link" size="sm" @click="toggleKey(key)">{{ key.enabled ? 'Disable' : 'Enable' }}</Button>
-                    <Button variant="ghost" size="icon-sm" class="text-destructive hover:text-destructive" @click="deleteKey(key)"><Trash2 /></Button>
+                    <Button variant="ghost" size="icon-sm" @click="deleteKey(key)"><Trash2 /></Button>
                   </div>
                 </TableCell>
               </TableRow>

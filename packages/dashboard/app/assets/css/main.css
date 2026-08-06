@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/instrument-sans";
+@import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -22,7 +22,7 @@
   --green: #267758;
   --green-soft: #e4f2eb;
   --mono: "SFMono-Regular", "Roboto Mono", "Cascadia Code", Consolas, monospace;
-  --sans: "Instrument Sans Variable", "Instrument Sans", Inter, "Segoe UI", sans-serif;
+  --sans: "Geist Variable", Geist, Arial, ui-sans-serif, system-ui, sans-serif;
   --condensed: var(--sans);
   --background: var(--canvas);
   --foreground: var(--text);
@@ -146,64 +146,10 @@ body.dashboard-body {
   }
 }
 
-.auth-shell {
-  display: grid;
-  min-height: 100vh;
-  grid-template-columns: minmax(22rem, 0.72fr) minmax(28rem, 1.28fr);
-}
-
-.auth-panel {
-  display: flex;
-  min-height: 100vh;
-  flex-direction: column;
-  justify-content: center;
-  padding: clamp(2rem, 7vw, 7rem);
-  background: var(--panel);
-  border-right: 1px solid var(--line);
-}
-
-.auth-brand {
-  display: flex;
-  gap: 0.7rem;
-  align-items: center;
-  font-family: var(--condensed);
-  font-size: 1.2rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.auth-brand {
-  position: absolute;
-  top: 2.2rem;
-  left: clamp(2rem, 7vw, 7rem);
-}
-
-.auth-panel h1 {
-  max-width: 30rem;
-  margin: 0;
-  font-family: var(--condensed);
-  font-size: clamp(2.2rem, 3.5vw, 3.4rem);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
-}
-
-.auth-copy {
-  max-width: 31rem;
-  margin: 1.25rem 0 2.5rem;
-  line-height: 1.65;
-}
-
-.auth-foot {
-  margin: 1.5rem 0 0;
-  color: var(--muted-text);
-  font-family: var(--mono);
-  font-size: 0.65rem;
-}
-
 .auth-visual {
   position: relative;
   display: grid;
+  min-height: 22rem;
   overflow: hidden;
   place-items: center;
   color: #d5dcdf;
@@ -294,20 +240,6 @@ body.dashboard-body {
 .event-dot.neutral {
   background: var(--muted-text);
   box-shadow: none;
-}
-
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 15;
-  display: flex;
-  height: 4rem;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 2rem;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--canvas) 91%, transparent);
-  backdrop-filter: blur(12px);
 }
 
 .breadcrumbs {
@@ -1361,20 +1293,7 @@ td small {
 }
 
 @media (max-width: 50rem) {
-  .auth-shell {
-    grid-template-columns: 1fr;
-  }
-
   .auth-visual {
-    display: none;
-  }
-
-  .topbar {
-    height: 3.5rem;
-    padding: 0 1rem;
-  }
-
-  .topbar .top-actions button span {
     display: none;
   }
 
@@ -1469,7 +1388,7 @@ td small {
     justify-content: stretch;
   }
 
-  .wizard-actions .button {
+  .wizard-actions [data-slot="button"] {
     flex: 1;
   }
 
