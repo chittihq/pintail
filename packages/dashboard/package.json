@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "nuxt dev",
+    "dev": "mkdir -p .data && nuxt dev 2>&1 | tee .data/dev.log",
     "generate": "nuxt generate",
     "typecheck": "nuxt typecheck"
   },
