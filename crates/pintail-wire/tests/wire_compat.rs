@@ -248,9 +248,22 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
 
     let tables: Vec<String> = connection.query("SHOW TABLES").await.expect("SHOW TABLES");
     assert_eq!(tables, vec!["events", "type_fidelity"]);
+    let full_tables: Vec<(String, String)> = connection
+        .query("SHOW FULL TABLES LIKE 'events'")
+        .await
+        .expect("SHOW FULL TABLES");
+    assert_eq!(
+        full_tables,
+        vec![("events".to_owned(), "BASE TABLE".to_owned())]
+    );
     let description: Vec<mysql_async::Row> =
         connection.query("DESCRIBE events").await.expect("DESCRIBE");
     assert_eq!(description.len(), 2);
+    let filtered_description: Vec<mysql_async::Row> = connection
+        .query("SHOW COLUMNS FROM events LIKE 'na%'")
+        .await
+        .expect("SHOW COLUMNS LIKE");
+    assert_eq!(filtered_description.len(), 1);
     let columns: Vec<(String, String, u64)> = connection
         .query(
             "SELECT table_name, column_name, ordinal_position \

@@ -4,8 +4,9 @@ use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
     BinaryOperator, Expr, GroupByExpr, LimitClause, ObjectName, OrderByKind, Query, Select,
-    SelectFlavor, SelectItem, SetExpr, ShowCreateObject, ShowStatementOptions, Statement,
-    TableFactor, Value as SqlValue, WildcardAdditionalOptions,
+    SelectFlavor, SelectItem, SetExpr, ShowCreateObject, ShowStatementFilter,
+    ShowStatementFilterPosition, ShowStatementOptions, Statement, TableFactor, Value as SqlValue,
+    WildcardAdditionalOptions,
 };
 
 /// One metadata result-column description.
@@ -117,44 +118,41 @@ pub fn execute_metadata(
             terse: false,
             history: false,
             show_options,
-        } if empty_options(show_options) => Ok(single_string_result(
-            "Database",
-            catalog.databases().map(DatabaseEntry::name),
-        )),
+        } if database_options(show_options) => apply_show_filter(
+            single_string_result("Database", catalog.databases().map(DatabaseEntry::name)),
+            show_options,
+        ),
         Statement::ShowTables {
             terse: false,
             history: false,
             extended: false,
-            full: false,
+            full,
             external: false,
             show_options,
-        } if simple_options(show_options) => {
+        } if filterable_options(show_options) => {
             let database = resolve_show_database(show_options, catalog, current_database)?;
-            Ok(single_string_result(
-                &format!("Tables_in_{}", database.name()),
-                database.tables().map(TableEntry::name),
-            ))
+            apply_show_filter(show_tables(database, *full), show_options)
         }
         Statement::ShowColumns {
             extended: false,
             full: false,
             show_options,
-        } if simple_options(show_options) => {
+        } if filterable_options(show_options) => {
             let name = show_options
                 .show_in
                 .as_ref()
                 .and_then(|show_in| show_in.parent_name.as_ref())
                 .ok_or_else(|| MetadataError::Unsupported(statement.to_string()))?;
-            let (_, table) = resolve_table(name, catalog, current_database)?;
-            Ok(describe_table(table))
+            let (database, table) = resolve_table(name, catalog, current_database)?;
+            apply_show_filter(describe_table(database, table, facts), show_options)
         }
         Statement::ExplainTable {
             hive_format: None,
             table_name,
             ..
         } => {
-            let (_, table) = resolve_table(table_name, catalog, current_database)?;
-            Ok(describe_table(table))
+            let (database, table) = resolve_table(table_name, catalog, current_database)?;
+            Ok(describe_table(database, table, facts))
         }
         Statement::ShowCreate {
             obj_type: ShowCreateObject::Table,
@@ -360,11 +358,7 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                 // PRI marks physical key membership the way DBeaver-class
                 // tools expect; auto_increment and secondary indexes are
                 // not in the catalog yet.
-                let fact = facts.columns.iter().find(|fact| {
-                    fact.database.eq_ignore_ascii_case(database.name())
-                        && fact.table.eq_ignore_ascii_case(table.name())
-                        && fact.column.eq_ignore_ascii_case(column.name())
-                });
+                let fact = column_fact(database.name(), table.name(), column.name(), facts);
                 let key = if table.key_column_ids().contains(&column.id()) {
                     "PRI"
                 } else if fact.is_some_and(|fact| fact.unique_single) {
@@ -1072,31 +1066,126 @@ fn single_string_result<'a>(
     }
 }
 
-fn describe_table(table: &TableEntry) -> MetadataResult {
-    let fields = ["Field", "Type", "Null", "Key", "Default", "Extra"]
-        .into_iter()
-        .map(|name| MetadataField {
-            name: name.to_owned(),
-            data_type: DataType::Utf8,
-            nullable: false,
-        })
-        .collect();
+fn show_tables(database: &DatabaseEntry, full: bool) -> MetadataResult {
+    if !full {
+        return single_string_result(
+            &format!("Tables_in_{}", database.name()),
+            database.tables().map(TableEntry::name),
+        );
+    }
+    MetadataResult {
+        fields: metadata_fields(&[
+            (
+                &format!("Tables_in_{}", database.name()),
+                DataType::Utf8,
+                false,
+            ),
+            ("Table_type", DataType::Utf8, false),
+        ]),
+        rows: database
+            .tables()
+            .map(|table| vec![utf8(table.name()), utf8("BASE TABLE")])
+            .collect(),
+    }
+}
+
+fn apply_show_filter(
+    mut result: MetadataResult,
+    options: &ShowStatementOptions,
+) -> Result<MetadataResult, MetadataError> {
+    let Some(position) = &options.filter_position else {
+        return Ok(result);
+    };
+    let filter = match position {
+        ShowStatementFilterPosition::Infix(filter)
+        | ShowStatementFilterPosition::Suffix(filter) => filter,
+    };
+    result.rows = match filter {
+        ShowStatementFilter::Like(pattern)
+        | ShowStatementFilter::ILike(pattern)
+        | ShowStatementFilter::NoKeyword(pattern) => result
+            .rows
+            .into_iter()
+            .filter(|row| {
+                let Value::Utf8(value) = &row[0] else {
+                    return false;
+                };
+                metadata_like(value, pattern)
+            })
+            .collect(),
+        ShowStatementFilter::Where(predicate) => {
+            let mut rows = Vec::with_capacity(result.rows.len());
+            for row in result.rows {
+                if evaluate_metadata_predicate(predicate, &result.fields, &row)? {
+                    rows.push(row);
+                }
+            }
+            rows
+        }
+    };
+    Ok(result)
+}
+
+fn describe_table(
+    database: &DatabaseEntry,
+    table: &TableEntry,
+    facts: &SourceFacts,
+) -> MetadataResult {
+    let fields = metadata_fields(&[
+        ("Field", DataType::Utf8, false),
+        ("Type", DataType::Utf8, false),
+        ("Null", DataType::Utf8, false),
+        ("Key", DataType::Utf8, false),
+        ("Default", DataType::Utf8, true),
+        ("Extra", DataType::Utf8, false),
+    ]);
     let rows = table
         .schema()
         .columns()
         .iter()
         .map(|column| {
+            let fact = column_fact(database.name(), table.name(), column.name(), facts);
+            let key = if table.key_column_ids().contains(&column.id()) {
+                "PRI"
+            } else if fact.is_some_and(|fact| fact.unique_single) {
+                "UNI"
+            } else {
+                ""
+            };
+            let extra = fact.map_or("", |fact| {
+                if fact.auto_increment {
+                    "auto_increment"
+                } else if fact.generated_stored {
+                    "STORED GENERATED"
+                } else {
+                    ""
+                }
+            });
             vec![
                 Value::Utf8(column.name().to_owned()),
                 Value::Utf8(mysql_type(column.data_type())),
                 Value::Utf8(if column.is_nullable() { "YES" } else { "NO" }.to_owned()),
-                Value::Utf8(String::new()),
-                Value::Utf8(if column.is_nullable() { "NULL" } else { "" }.to_owned()),
-                Value::Utf8(String::new()),
+                utf8(key),
+                fact.and_then(|fact| fact.default_value.as_deref())
+                    .map_or(Value::Null, utf8),
+                utf8(extra),
             ]
         })
         .collect();
     MetadataResult { fields, rows }
+}
+
+fn column_fact<'facts>(
+    database: &str,
+    table: &str,
+    column: &str,
+    facts: &'facts SourceFacts,
+) -> Option<&'facts ColumnFacts> {
+    facts.columns.iter().find(|fact| {
+        fact.database.eq_ignore_ascii_case(database)
+            && fact.table.eq_ignore_ascii_case(table)
+            && fact.column.eq_ignore_ascii_case(column)
+    })
 }
 
 fn mysql_type(data_type: DataType) -> String {
@@ -1193,15 +1282,12 @@ fn object_name_parts(name: &ObjectName) -> Result<Vec<&str>, MetadataError> {
         .collect()
 }
 
-fn empty_options(options: &ShowStatementOptions) -> bool {
-    options.show_in.is_none() && simple_options(options)
+fn database_options(options: &ShowStatementOptions) -> bool {
+    options.show_in.is_none() && filterable_options(options)
 }
 
-fn simple_options(options: &ShowStatementOptions) -> bool {
-    options.starts_with.is_none()
-        && options.limit.is_none()
-        && options.limit_from.is_none()
-        && options.filter_position.is_none()
+fn filterable_options(options: &ShowStatementOptions) -> bool {
+    options.starts_with.is_none() && options.limit.is_none() && options.limit_from.is_none()
 }
 
 /// Metadata statement failure.
@@ -1290,15 +1376,26 @@ mod tests {
             DatabaseEntry::new(DatabaseId::new(1), "Analytics", [table]).expect("database");
         let catalog = CatalogSnapshot::new([database]).expect("catalog");
         let facts = SourceFacts {
-            columns: vec![crate::ColumnFacts {
-                database: "Analytics".to_owned(),
-                table: "Events".to_owned(),
-                column: "id".to_owned(),
-                default_value: None,
-                auto_increment: true,
-                generated_stored: false,
-                unique_single: false,
-            }],
+            columns: vec![
+                crate::ColumnFacts {
+                    database: "Analytics".to_owned(),
+                    table: "Events".to_owned(),
+                    column: "id".to_owned(),
+                    default_value: None,
+                    auto_increment: true,
+                    generated_stored: false,
+                    unique_single: false,
+                },
+                crate::ColumnFacts {
+                    database: "Analytics".to_owned(),
+                    table: "Events".to_owned(),
+                    column: "name".to_owned(),
+                    default_value: None,
+                    auto_increment: false,
+                    generated_stored: false,
+                    unique_single: true,
+                },
+            ],
             indexes: vec![crate::IndexFacts {
                 database: "Analytics".to_owned(),
                 table: "Events".to_owned(),
@@ -1390,6 +1487,18 @@ mod tests {
         assert!(ddl.contains("PRIMARY KEY (`id`)"), "{ddl}");
         assert!(ddl.contains("UNIQUE KEY `unique_name` (`name`)"), "{ddl}");
         assert!(ddl.contains("AUTO_INCREMENT"), "{ddl}");
+
+        let columns = execute_metadata(
+            &parse_statement("SHOW COLUMNS FROM Analytics.Events").expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("show columns");
+        assert_eq!(columns.rows[0][3], Value::Utf8("PRI".to_owned()));
+        assert_eq!(columns.rows[0][4], Value::Null);
+        assert_eq!(columns.rows[0][5], Value::Utf8("auto_increment".to_owned()));
+        assert_eq!(columns.rows[1][3], Value::Utf8("UNI".to_owned()));
     }
 
     #[test]
@@ -1427,6 +1536,73 @@ mod tests {
             Value::Utf8("bigint unsigned".to_owned())
         );
         assert_eq!(columns.rows[1][2], Value::Utf8("YES".to_owned()));
+    }
+
+    #[test]
+    fn show_full_tables_reports_mysql_table_type() {
+        let result = execute_metadata(
+            &parse_statement("SHOW FULL TABLES FROM Analytics").expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("full tables");
+
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Tables_in_Analytics", "Table_type"]
+        );
+        assert_eq!(
+            result.rows,
+            [vec![
+                Value::Utf8("Events".to_owned()),
+                Value::Utf8("BASE TABLE".to_owned()),
+            ]]
+        );
+    }
+
+    #[test]
+    fn show_tables_like_filters_names_case_insensitively() {
+        let result = execute_metadata(
+            &parse_statement("SHOW TABLES FROM Analytics LIKE 'eve%'").expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("filtered tables");
+
+        assert_eq!(result.rows, [vec![Value::Utf8("Events".to_owned())]]);
+    }
+
+    #[test]
+    fn show_databases_like_filters_names() {
+        let result = execute_metadata(
+            &parse_statement("SHOW DATABASES LIKE 'ana%'").expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("filtered databases");
+
+        assert_eq!(result.rows, [vec![Value::Utf8("Analytics".to_owned())]]);
+    }
+
+    #[test]
+    fn show_columns_like_filters_field_names() {
+        let result = execute_metadata(
+            &parse_statement("SHOW COLUMNS FROM Events FROM Analytics LIKE 'na%'").expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("filtered columns");
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Utf8("name".to_owned()));
     }
 
     #[test]

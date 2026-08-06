@@ -16,3 +16,5 @@ GOAL.md
 /tests/e2e/results-partial.md
 /validate-out/
 REVIEW.md
+# Local dashboard-development data directory (docs/development.md).
+.devdata/
