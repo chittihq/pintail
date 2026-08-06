@@ -1149,7 +1149,13 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written conditionals",
             "SELECT IF(NULL, 'yes', 'no'), COALESCE(NULL, 'first', 'second'), \
-             NULLIF('Alpha', 'alpha')",
+             NULLIF('Alpha', 'alpha'), \
+             IF(1, CAST('1.25' AS DECIMAL(3,2)), 0), \
+             CASE WHEN 0 THEN 0 ELSE CAST('2.50' AS DECIMAL(3,2)) END, \
+             IFNULL(NULL, CAST('3.75' AS DECIMAL(3,2))), \
+             COALESCE(NULL, CAST('4.50' AS DECIMAL(3,2)), 0), \
+             NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740992), \
+             NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740993)",
         ),
         ordered(
             "hand-written derived table",

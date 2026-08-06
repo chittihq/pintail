@@ -10572,6 +10572,41 @@ mod tests {
     }
 
     #[test]
+    fn executes_mysql_conditional_type_coercion_exactly_and_lazily() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT IF(1, CAST('1.25' AS DECIMAL(3,2)), 0), \
+             CASE WHEN 0 THEN 0 ELSE CAST('2.50' AS DECIMAL(3,2)) END, \
+             IFNULL(NULL, CAST('3.75' AS DECIMAL(3,2))), \
+             COALESCE(NULL, CAST('4.50' AS DECIMAL(3,2)), 0), \
+             NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740992), \
+             NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740993), \
+             IF(1, 'selected', CAST('not-a-date' AS DATE))",
+        );
+        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let values = batch
+            .columns()
+            .iter()
+            .map(|column| column.value(0).cloned().expect("value"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                Value::Utf8("1.25".to_owned()),
+                Value::Utf8("2.50".to_owned()),
+                Value::Utf8("3.75".to_owned()),
+                Value::Utf8("4.50".to_owned()),
+                Value::Utf8("9007199254740993".to_owned()),
+                Value::Null,
+                Value::Utf8("selected".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn executes_lowered_constant_scalar_and_in_subqueries() {
         let provider = StaticProvider {
             batches: Mutex::new(Vec::new()),

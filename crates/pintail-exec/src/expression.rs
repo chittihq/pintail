@@ -1134,10 +1134,37 @@ fn evaluate_scalar(
         ScalarFunction::NullIf => {
             let left = args[0].evaluate(batch, row)?;
             let right = args[1].evaluate(batch, row)?;
-            if matches!(
-                evaluate_comparison(BinaryOp::Equal, &left, &right)?,
-                Value::Boolean(true)
-            ) {
+            let equal = if !matches!(left, Value::Null)
+                && !matches!(right, Value::Null)
+                && argument_types.len() == 2
+                && argument_types.iter().all(|data_type| {
+                    matches!(
+                        data_type,
+                        Some(
+                            DataType::Int8
+                                | DataType::Int16
+                                | DataType::Int32
+                                | DataType::Int64
+                                | DataType::UInt8
+                                | DataType::UInt16
+                                | DataType::UInt32
+                                | DataType::UInt64
+                                | DataType::Decimal { .. }
+                        )
+                    )
+                })
+                && argument_types
+                    .iter()
+                    .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. })))
+            {
+                compare_decimal_values(&left, &right)? == Ordering::Equal
+            } else {
+                matches!(
+                    evaluate_comparison(BinaryOp::Equal, &left, &right)?,
+                    Value::Boolean(true)
+                )
+            };
+            if equal {
                 Ok(Value::Null)
             } else {
                 cast_scalar(&left, data_type)
