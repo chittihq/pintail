@@ -17,20 +17,8 @@ stays readable as a list of things to fix.
   membership sides to be provably non-nullable: with a possible NULL, MySQL's
   three-valued `NOT IN` diverges from an anti join, so those shapes reject.
 - Non-equality join conditions are rejected.
-- A `RANGE` frame supports offsetless bounds (`UNBOUNDED PRECEDING`,
-  `CURRENT ROW`, `UNBOUNDED FOLLOWING`) and nonnegative integer offsets over
-  one numeric ordering key, framing by key value rather than row position,
-  plus simple `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, and `SECOND` intervals
-  over one temporal key. Decimal, calendar, and descending-key arithmetic
-  retain their exact ordering, including fractional numeric offsets. Compound
-  temporal interval qualifiers still reject because sqlparser does not accept
-  their MySQL spelling (#13, #25).
-  `GROUPS` frames and `DISTINCT` window aggregates reject as MySQL 8.4 does;
-  they are not compatibility gaps. A named window may be referenced as `OVER w`,
-  extended additively with clauses absent from its base definition, and chained
-  through earlier definitions; forward and cyclic references reject. As in
-  MySQL, a framed base may be used directly as `OVER w`
-  but its frame cannot be inherited through the parenthesized `OVER (w)` form.
+- Compound temporal `RANGE` interval qualifiers reject because sqlparser does
+  not accept their MySQL spelling (#13, #25).
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be
   un-accumulated when a row leaves the window. Cost is proportional to the
@@ -47,11 +35,8 @@ stays readable as a list of things to fix.
   chain. Aliased groups, nested right inputs, and parenthesized groups that
   contain outer/semi/anti joins reject because the current bound plan cannot
   preserve their join tree (#16).
-- `GROUP_CONCAT` honors per-connection `group_concat_max_len` (minimum 4,
-  default 1024), truncates on a UTF-8 boundary, and exposes warning 1260
-  through `SHOW WARNINGS`. Its wire result metadata follows MySQL's threshold:
-  VARCHAR at limits up to 512 and TEXT/BLOB above 512. Other MySQL warning
-  categories are not yet kept in a general diagnostics area.
+- MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
+  retained in a general diagnostics area.
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
   `JSON_MERGE*`, `JSON_REMOVE`) and `JSON_TABLE` are unimplemented and out of
   scope by decision. `JSON_TABLE` is a table-valued function, so it needs a new
@@ -89,20 +74,11 @@ stays readable as a list of things to fix.
   query. Their conservative memory bound and generated replacement output are
   charged to the per-query ceiling; dynamic patterns are deliberately uncached
   so no program can outlive the row that requested it.
-- `CONVERT(value USING charset)` accepts `utf8`, `utf8mb3`, and `utf8mb4` as
-  the engine's UTF-8 carrier plus `binary` as bytes. Other MySQL character
-  sets reject explicitly because Pintail does not perform byte-level
-  transcoding among character sets.
-- `CAST(value AS TIME[(fsp)])` accepts MySQL's interval-shaped, compact, day-
-  prefixed, and datetime inputs, rounds to the declared fractional precision,
-  and clamps to `-838:59:59`..`838:59:59`. `CAST AS JSON` validates and
-  canonicalizes documents. `CAST AS YEAR` preserves MySQL's `YEAR` wire type
-  and its numeric, string-zero, two-digit, and temporal conversion rules (#17).
-- `information_schema` is a deliberately narrow client-discovery interpreter,
-  not the main query engine. It supports aliases, INNER/LEFT/CROSS joins,
-  grouping, and `COUNT`/`MIN`/`MAX`/`SUM` over the eight served tables; CTEs,
-  set operations, DISTINCT, window functions, derived tables, and metadata
-  tables outside that set reject explicitly.
+- Byte-level transcoding among character sets other than UTF-8 and binary is
+  unsupported and rejects explicitly.
+- The `information_schema` client-discovery interpreter rejects CTEs, set
+  operations, DISTINCT, window functions, derived tables, and metadata tables
+  outside the eight served tables.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
   `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
   the BI corpus (#17).
@@ -156,7 +132,10 @@ worth refusing.
 
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a special-case result that did not follow this behavior; that MySQL-only corner is excluded from the common-workload corpus.
 
-- Integer and floating arithmetic use Pintail's current `Int64`, `UInt64`, and `Float64` execution types. `DECIMAL` values up to precision 38 are stored losslessly, and the operations MySQL keeps exact over exact numerics are exact here too: division (`/`) and `AVG` produce a DECIMAL widened by four fraction digits with half-away-from-zero rounding, `SUM` accumulates scaled integers, and CASE/IF/COALESCE branches that mix decimals with integers unify to a decimal instead of truncating; `+`/`-`/`*`/`%` over decimal columns, casts, and literals compute exactly on scaled units, and `CAST(x AS DECIMAL(p, s))` rounds half away from zero. Chained arithmetic preserves MySQL's base-1e9 internal division digits until the enclosing result is materialized. Decimal comparison, `IN`, grouping, `DISTINCT`, join keys, `MIN`, and `MAX` do not cross the binary floating-point carrier. Source `DECIMAL` columns above precision 38 are replicated as text with a probe warning, preserving the source digits while deliberately declining exact-numeric expression semantics. Numeric overflow returns an error rather than an approximation.
+- Source `DECIMAL` columns above precision 38 are replicated as text with a
+  probe warning and deliberately decline exact-numeric expression semantics.
+  Numeric overflow returns an explicit error rather than supporting MySQL's
+  wider, up-to-65-digit DECIMAL range.
 
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
 

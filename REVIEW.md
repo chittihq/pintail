@@ -8,10 +8,10 @@ enforced by tests. The last Docker-backed run covered 794 byte-exact cases; the
 eight newer JSON, temporal-parsing, and DECIMAL-chain cases remain inventoried
 but unexecuted against Docker in this workstation session.
 
-The delivered work now covers the essential read-only tail in issues #8, #9,
+The delivered work covers substantial read-only portions of issues #8, #9,
 #13, #17 and #25: metadata discovery, everyday scalar/aggregate behavior,
 typed casts, exact DECIMAL operations, value-based RANGE frames, chained named
-windows, temporal parsing policy, and complete MySQL result metadata. JSON
+windows, temporal parsing policy, and richer MySQL result metadata. JSON
 mutation/table functions and unsupported binary-JSON semantics remain explicit
 scope exclusions rather than unfinished replica reads.
 
@@ -77,7 +77,7 @@ eight-task review left open. Each row is independently committed and gated.
 | RANGE frames | numeric, exact fractional DECIMAL, and simple temporal interval offsets by ordering-key value | `43f848cd`, `e9ac2ce0`, `5faf6e37` |
 | Named windows | chained earlier definitions with forward/cycle and illegal inheritance rejection | `b8ebfa2c` |
 | Temporal parsing | unsupported `STR_TO_DATE` directives reject instead of taking chrono's different meaning | `177bf7b5` |
-| Wire metadata | actual length, utf8mb4/binary charset, DECIMAL scale and temporal FSP through text/prepared results | `34379b7c` |
+| Wire metadata | type-derived length, utf8mb4/binary charset, DECIMAL scale and temporal FSP through text/prepared results | `34379b7c` |
 
 ## Current JSON function support
 
@@ -187,10 +187,10 @@ available in Git history; this file describes the present branch only.
 
 ## GitHub issue assessment and the next basic read-only SQL work
 
-The issue bodies were epics rather than synchronized completion ledgers. The
-essential read-only portions of #8, #9, #13, #17 and #25 are now complete and
-their closure comments must be read as the scoped ledger. Remaining useful
-work is no longer “basic function tail” work:
+The issue bodies were epics rather than synchronized completion ledgers. Their
+implemented read-only portions are summarized here, but #9, #13, #17, and #25
+remain open until their differential and policy acceptance gates are complete.
+The larger implementation work still includes:
 
 1. **Dependent correlated-subquery fallback (#11):** execute correct shapes
    that cannot be decorrelated and raise MySQL's multi-row scalar error.
@@ -220,8 +220,8 @@ Every future read-only SQL increment should continue the same gate:
 
 ## Conclusion
 
-The essential read-only parity pass is landed in bounded commits. The final
-state has 134 callable names, an 802-case oracle inventory, complete typed wire
-metadata, exact supported DECIMAL semantics, and explicit rejection for every
-deliberate boundary. The remaining roadmap consists of larger collation,
-join-tree, dependent-execution, or parser projects—not missing basic reads.
+The read-only parity pass is landed in bounded commits. The current state has
+134 callable names, an 802-case oracle inventory, richer typed wire metadata,
+exact implemented DECIMAL paths, and explicit rejection for deliberate
+boundaries. Differential execution and remaining policy work are still gates
+for the open epics.

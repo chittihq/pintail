@@ -9,3 +9,9 @@ Pintail's patch adds `column_length`, `character_set`, and `decimals` to
 `Column` and writes those values into result metadata. No command parsing,
 authentication, row encoding, or transport behavior is changed. The original
 Apache-2.0 license is retained in `LICENSE`.
+
+For repository packaging, Pintail omits the upstream examples and development
+dependencies, retains the upstream repository-level README in place of the
+crate-specific README, and formats the vendored Rust sources with the local
+toolchain. Those differences are mechanical and do not change runtime
+behavior.
