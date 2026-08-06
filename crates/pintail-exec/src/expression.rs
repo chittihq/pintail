@@ -1888,7 +1888,9 @@ fn evaluate_eager_scalar_typed(
         )),
         ScalarFunction::StrToDate => {
             let text = scalar_string(&values[0])?;
-            let format = chrono_parse_format(&scalar_string(&values[1])?);
+            let Some(format) = chrono_parse_format(&scalar_string(&values[1])?) else {
+                return Ok(Value::Null);
+            };
             if let Ok(value) = NaiveDateTime::parse_from_str(&text, &format) {
                 return Ok(Value::Utf8(value.format("%Y-%m-%d %H:%M:%S").to_string()));
             }
@@ -2466,7 +2468,7 @@ fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
 /// parsing cannot borrow that fix, because it needs a real parser rather than
 /// a renderer. Tracked separately — see the `STR_TO_DATE` note in
 /// `docs/limitations.md`.
-fn chrono_parse_format(value: &str) -> String {
+fn chrono_parse_format(value: &str) -> Option<String> {
     let mut output = String::with_capacity(value.len());
     let mut characters = value.chars();
     while let Some(character) = characters.next() {
@@ -2476,7 +2478,7 @@ fn chrono_parse_format(value: &str) -> String {
         }
         let Some(specifier) = characters.next() else {
             output.push('%');
-            break;
+            return None;
         };
         output.push_str(match specifier {
             'c' => "%-m",
@@ -2487,15 +2489,24 @@ fn chrono_parse_format(value: &str) -> String {
             'i' => "%M",
             's' => "%S",
             'f' => "%6f",
+            'Y' => "%Y",
+            'y' => "%y",
+            'm' => "%m",
+            'd' => "%d",
+            'H' => "%H",
+            'h' | 'I' => "%I",
+            'p' => "%p",
+            'b' => "%b",
+            'W' => "%A",
+            'a' => "%a",
+            'j' => "%j",
+            'r' => "%I:%M:%S %p",
+            'T' => "%H:%M:%S",
             '%' => "%%",
-            other => {
-                output.push('%');
-                output.push(other);
-                continue;
-            }
+            _ => return None,
         });
     }
-    output
+    Some(output)
 }
 
 const WEEK_MONDAY_FIRST: u32 = 1;

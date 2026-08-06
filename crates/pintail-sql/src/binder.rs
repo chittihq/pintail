@@ -3578,6 +3578,17 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         },
         other => other,
     };
+    if function == ScalarFunction::StrToDate
+        && let Some(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Utf8(format)),
+            ..
+        }) = args.get(1)
+        && !str_to_date_format_supported(format)
+    {
+        return Err(BindError::UnsupportedExpression(format!(
+            "STR_TO_DATE format {format:?}"
+        )));
+    }
     if matches!(
         function,
         ScalarFunction::RegexpLike { .. }
@@ -3839,6 +3850,44 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         data_type,
         nullable,
     })
+}
+
+fn str_to_date_format_supported(format: &str) -> bool {
+    let mut characters = format.chars();
+    while let Some(character) = characters.next() {
+        if character == '%'
+            && !matches!(
+                characters.next(),
+                Some(
+                    'c' | 'e'
+                        | 'M'
+                        | 'k'
+                        | 'l'
+                        | 'i'
+                        | 's'
+                        | 'f'
+                        | 'Y'
+                        | 'y'
+                        | 'm'
+                        | 'd'
+                        | 'H'
+                        | 'h'
+                        | 'I'
+                        | 'p'
+                        | 'b'
+                        | 'W'
+                        | 'a'
+                        | 'j'
+                        | 'r'
+                        | 'T'
+                        | '%'
+                )
+            )
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// A decimal-unified IF/COALESCE/GREATEST/LEAST must also coerce its branch
@@ -5783,6 +5832,10 @@ mod tests {
         assert!(matches!(
             bind("SELECT * FROM Events FETCH FIRST 1 ROW ONLY"),
             Err(BindError::UnsupportedQueryClause(_))
+        ));
+        assert!(matches!(
+            bind("SELECT STR_TO_DATE('29th February 2024', '%D %M %Y')"),
+            Err(BindError::UnsupportedExpression(_))
         ));
     }
 
