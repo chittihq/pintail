@@ -2833,6 +2833,7 @@ fn prepare_hash_join_left(
 struct CompiledAggregate {
     function: AggregateFunction,
     expr: Option<CompiledExpr>,
+    input_type: Option<DataType>,
     distinct: bool,
     data_type: Option<DataType>,
     /// `GROUP_CONCAT` separator (`MySQL` defaults to a comma).
@@ -2843,6 +2844,10 @@ struct CompiledAggregate {
 
 impl CompiledAggregate {
     fn compile(aggregate: &BoundAggregate, columns: &[BoundColumn]) -> Result<Self, ExecError> {
+        let input_type = aggregate
+            .expr
+            .as_ref()
+            .and_then(|expression| expression.data_type);
         Ok(Self {
             function: aggregate.function,
             expr: aggregate
@@ -2850,6 +2855,7 @@ impl CompiledAggregate {
                 .as_ref()
                 .map(|expression| CompiledExpr::compile(expression, columns))
                 .transpose()?,
+            input_type,
             distinct: aggregate.distinct,
             data_type: aggregate.data_type,
             separator: aggregate
@@ -3214,8 +3220,9 @@ impl AggregateState {
             return Ok(());
         }
         if let AggregateValue::JsonArrayAgg { items } = &mut self.value {
-            let fragment =
-                crate::expression::mysql_json_text(&crate::expression::json_value_of(value));
+            let fragment = crate::expression::mysql_json_text(
+                &crate::expression::json_value_of_typed(value, aggregate.input_type)?,
+            );
             reserve_vec_elements(items, 1, 64, memory)?;
             memory.reserve(fragment.len())?;
             items.push(fragment);
@@ -10275,6 +10282,120 @@ mod tests {
         assert_eq!(
             batch.column(2).and_then(|column| column.value(0)),
             Some(&Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn json_constructors_distinguish_json_columns_from_equal_text() {
+        let table = TableEntry::new(
+            TableId::new(1),
+            "documents",
+            TableSchema::new(
+                1,
+                vec![
+                    Column::new(1, "document", DataType::Json, false),
+                    Column::new(2, "text", DataType::Utf8, false),
+                ],
+            )
+            .expect("schema"),
+            TableStatistics::with_row_count(1),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let statement = parse_statement(
+            "SELECT JSON_OBJECT('json', document, 'text', text), \
+                    JSON_ARRAY(document, text) \
+             FROM documents",
+        )
+        .expect("parse");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind");
+        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical JSON constructors");
+        let json_text = Value::Utf8(r#"{"x":1}"#.to_owned());
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    1,
+                    vec![
+                        ColumnVector::new(DataType::Json, vec![json_text.clone()])
+                            .expect("JSON column"),
+                        ColumnVector::new(DataType::Utf8, vec![json_text]).expect("text column"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("JSON execution");
+        assert_eq!(execution.output_fields()[0].data_type, Some(DataType::Json));
+        assert_eq!(execution.output_fields()[1].data_type, Some(DataType::Json));
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Utf8(
+                r#"{"json": {"x": 1}, "text": "{\"x\":1}"}"#.to_owned()
+            ))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8(r#"[{"x": 1}, "{\"x\":1}"]"#.to_owned()))
+        );
+    }
+
+    #[test]
+    fn json_arrayagg_distinguishes_json_columns_from_equal_text() {
+        let table = TableEntry::new(
+            TableId::new(1),
+            "documents",
+            TableSchema::new(
+                1,
+                vec![
+                    Column::new(1, "document", DataType::Json, true),
+                    Column::new(2, "text", DataType::Utf8, true),
+                ],
+            )
+            .expect("schema"),
+            TableStatistics::with_row_count(2),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let statement =
+            parse_statement("SELECT JSON_ARRAYAGG(document), JSON_ARRAYAGG(text) FROM documents")
+                .expect("parse");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind");
+        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical JSON aggregates");
+        let json_text = Value::Utf8(r#"{"x":1}"#.to_owned());
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    2,
+                    vec![
+                        ColumnVector::new(DataType::Json, vec![json_text.clone(), Value::Null])
+                            .expect("JSON column"),
+                        ColumnVector::new(DataType::Utf8, vec![json_text, Value::Null])
+                            .expect("text column"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("JSON execution");
+        assert_eq!(execution.output_fields()[0].data_type, Some(DataType::Json));
+        assert_eq!(execution.output_fields()[1].data_type, Some(DataType::Json));
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Utf8(r#"[{"x": 1}, null]"#.to_owned()))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8(r#"["{\"x\":1}", null]"#.to_owned()))
         );
     }
 

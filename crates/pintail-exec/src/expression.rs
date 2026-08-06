@@ -220,6 +220,7 @@ pub(crate) enum CompiledExpr {
     Scalar {
         function: ScalarFunction,
         args: Vec<Self>,
+        argument_types: Vec<Option<DataType>>,
         data_type: Option<DataType>,
     },
 }
@@ -464,6 +465,7 @@ impl CompiledExpr {
             }),
             BoundExprKind::Scalar { function, args } => Ok(Self::Scalar {
                 function: *function,
+                argument_types: args.iter().map(|argument| argument.data_type).collect(),
                 args: args
                     .iter()
                     .map(|argument| Self::compile(argument, columns))
@@ -510,6 +512,7 @@ impl CompiledExpr {
             Self::Scalar {
                 function,
                 args,
+                argument_types,
                 data_type,
             } => {
                 if matches!(
@@ -526,7 +529,9 @@ impl CompiledExpr {
                     inner.push_str(&arg.deterministic_signature()?);
                     inner.push(',');
                 }
-                Some(format!("s{function:?}({inner}){data_type:?}"))
+                Some(format!(
+                    "s{function:?}({inner}){argument_types:?}{data_type:?}"
+                ))
             }
         }
     }
@@ -566,6 +571,7 @@ impl CompiledExpr {
             Self::Scalar {
                 function,
                 args,
+                argument_types,
                 data_type,
             } => {
                 if let ScalarFunction::DatePart(part) = function
@@ -586,7 +592,7 @@ impl CompiledExpr {
                         return value;
                     }
                 }
-                evaluate_scalar(*function, args, *data_type, batch, row)
+                evaluate_scalar(*function, args, argument_types, *data_type, batch, row)
             }
         }
     }
@@ -628,6 +634,7 @@ impl CompiledExpr {
                 function,
                 args,
                 data_type: _,
+                argument_types: _,
             } => {
                 let string_arguments = args
                     .iter()
@@ -1054,6 +1061,7 @@ fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
 fn evaluate_scalar(
     function: ScalarFunction,
     args: &[CompiledExpr],
+    argument_types: &[Option<DataType>],
     data_type: Option<DataType>,
     batch: &RecordBatch,
     row: usize,
@@ -1095,15 +1103,26 @@ fn evaluate_scalar(
                 .iter()
                 .map(|argument| argument.evaluate(batch, row))
                 .collect::<Result<Vec<_>, _>>()?;
-            evaluate_eager_scalar(function, &values, data_type)
+            evaluate_eager_scalar_typed(function, &values, argument_types, data_type)
         }
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[cfg(test)]
 fn evaluate_eager_scalar(
     function: ScalarFunction,
     values: &[Value],
+    data_type: Option<DataType>,
+) -> Result<Value, ExecError> {
+    let argument_types = vec![None; values.len()];
+    evaluate_eager_scalar_typed(function, values, &argument_types, data_type)
+}
+
+#[allow(clippy::too_many_lines)]
+fn evaluate_eager_scalar_typed(
+    function: ScalarFunction,
+    values: &[Value],
+    argument_types: &[Option<DataType>],
     data_type: Option<DataType>,
 ) -> Result<Value, ExecError> {
     if values.iter().any(|value| matches!(value, Value::Null))
@@ -2026,21 +2045,33 @@ fn evaluate_eager_scalar(
         }
         ScalarFunction::JsonObject => {
             let mut members = serde_json::Map::new();
-            for pair in values.chunks_exact(2) {
+            for (index, pair) in values.chunks_exact(2).enumerate() {
                 // MySQL rejects NULL member names, coerces other key types
                 // to text, and keeps the LAST occurrence of a duplicate key
                 // (verified against 8.4).
                 if matches!(pair[0], Value::Null) {
                     return Err(ExecError::InvalidExpressionType);
                 }
-                members.insert(scalar_string(&pair[0])?, json_value_of(&pair[1]));
+                members.insert(
+                    scalar_string(&pair[0])?,
+                    json_value_of_typed(
+                        &pair[1],
+                        argument_types.get(index * 2 + 1).copied().flatten(),
+                    )?,
+                );
             }
             Ok(Value::Utf8(mysql_json_text(&serde_json::Value::Object(
                 members,
             ))))
         }
         ScalarFunction::JsonArray => Ok(Value::Utf8(mysql_json_text(&serde_json::Value::Array(
-            values.iter().map(json_value_of).collect(),
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    json_value_of_typed(value, argument_types.get(index).copied().flatten())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         )))),
         ScalarFunction::JsonUnquote => {
             let text = scalar_string(&values[0])?;
@@ -3172,6 +3203,20 @@ pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
             serde_json::Value::String(String::from_utf8_lossy(inner).into_owned())
         }
     }
+}
+
+/// Converts a physical value using its retained logical SQL type. JSON and
+/// equal-looking VARCHAR share the UTF-8 carrier, so only this metadata tells
+/// constructors whether to embed a document or quote ordinary text.
+pub(crate) fn json_value_of_typed(
+    value: &Value,
+    data_type: Option<DataType>,
+) -> Result<serde_json::Value, ExecError> {
+    if data_type == Some(DataType::Json) && !matches!(value, Value::Null) {
+        return serde_json::from_str(&scalar_string(value)?)
+            .map_err(|_| ExecError::InvalidExpressionType);
+    }
+    Ok(json_value_of(value))
 }
 
 /// Resolves a `MySQL` JSON path of the `$.key.nested[0]` form. Wildcards
@@ -4509,6 +4554,11 @@ mod tests {
                 CompiledExpr::Literal(Value::Utf8("2023-12-31".to_owned())),
             ],
             data_type: Some(DataType::Boolean),
+            argument_types: vec![
+                Some(DataType::Date32),
+                Some(DataType::Utf8),
+                Some(DataType::Utf8),
+            ],
         };
 
         assert_eq!(

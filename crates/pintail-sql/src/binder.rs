@@ -3666,15 +3666,12 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::StrToDate
         | ScalarFunction::ConvertTz
         | ScalarFunction::RegexpSubstr
-        | ScalarFunction::JsonExtract { .. }
         | ScalarFunction::JsonUnquote
         // JSON_TYPE raises on a non-JSON document; JSON_KEYS answers NULL for
         // a target that is not an object.
         | ScalarFunction::JsonType
-        | ScalarFunction::JsonKeys
         // JSON_SEARCH answers NULL when nothing matches; JSON_VALUE answers
         // NULL for an absent path.
-        | ScalarFunction::JsonSearch
         | ScalarFunction::JsonValue
         // CONV and MAKETIME answer NULL for an unparseable number or an
         // out-of-range minute/second.
@@ -3704,8 +3701,12 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             Some(DataType::Boolean),
             args.iter().any(|argument| argument.nullable),
         ),
+        ScalarFunction::JsonExtract { unquote: false }
+        | ScalarFunction::JsonKeys
+        | ScalarFunction::JsonSearch => (Some(DataType::Json), true),
+        ScalarFunction::JsonExtract { unquote: true } => (Some(DataType::Utf8), true),
         // NULL arguments become JSON nulls, never a NULL result.
-        ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Utf8), false),
+        ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Json), false),
         // JSON_VALID answers 0/1 for any input, so it is the one predicate
         // here that never yields NULL for a non-NULL argument.
         ScalarFunction::JsonValid => (Some(DataType::Int64), true),
@@ -4093,12 +4094,13 @@ fn aggregate_result_type(
         AggregateFunction::Minimum | AggregateFunction::Maximum if is_mysql_scalar(input_type) => {
             Ok((input_type, true))
         }
-        AggregateFunction::GroupConcat
-        | AggregateFunction::JsonArrayAgg
-        | AggregateFunction::JsonObjectAgg
+        AggregateFunction::GroupConcat if is_mysql_scalar(input_type) => {
+            Ok((Some(DataType::Utf8), true))
+        }
+        AggregateFunction::JsonArrayAgg | AggregateFunction::JsonObjectAgg
             if is_mysql_scalar(input_type) =>
         {
-            Ok((Some(DataType::Utf8), true))
+            Ok((Some(DataType::Json), true))
         }
         // ANY_VALUE is a passthrough: it returns one of the input's own
         // values, so it keeps the input's type.
@@ -5277,7 +5279,7 @@ mod tests {
              REGEXP_LIKE(Name, '^x', 'cm') FROM Events",
         )
         .expect("JSON paths and REGEXP match_type bind");
-        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
         assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
     }
 
