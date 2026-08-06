@@ -2,18 +2,18 @@
 
 ## Executive summary
 
-Pintail currently exposes **134 callable function names** and carries **794
-MySQL 8.4 differential-oracle cases**. The count in `parity.md` is enforced by
-a binder unit test. This is the oracle inventory, not a claim that the
-Docker-backed oracle ran during this series. The eight bounded read-only SQL
-tasks selected from the repository issues have all been implemented and
-committed independently.
+Pintail currently exposes **134 callable function names** and carries **802
+MySQL 8.4 differential-oracle cases**. The name count and oracle inventory are
+enforced by tests. The last Docker-backed run covered 794 byte-exact cases; the
+eight newer JSON, temporal-parsing, and DECIMAL-chain cases remain inventoried
+but unexecuted against Docker in this workstation session.
 
-The delivered work improves metadata discovery, everyday functions, correlated
-subqueries, join syntax, JSON and regex overloads, week calculation, exact
-DECIMAL comparison, and named windows. A final standards/specification review
-found five concrete compatibility defects in those changes. All five are fixed
-in the follow-up review pass described below.
+The delivered work now covers the essential read-only tail in issues #8, #9,
+#13, #17 and #25: metadata discovery, everyday scalar/aggregate behavior,
+typed casts, exact DECIMAL operations, value-based RANGE frames, chained named
+windows, temporal parsing policy, and complete MySQL result metadata. JSON
+mutation/table functions and unsupported binary-JSON semantics remain explicit
+scope exclusions rather than unfinished replica reads.
 
 The repository issue checklists are not a reliable completion ledger by
 themselves. Several open issues still show already-delivered items as unchecked.
@@ -60,6 +60,24 @@ commit. That commit also contains a wire-visible MySQL compatibility fix:
 `DESCRIBE` now returns a real SQL `NULL` in its `Default` column when no default
 exists, rather than a text placeholder. The mixed commit subject does not
 describe either SQL change; correcting it requires a deliberate history split.
+
+## Essential follow-up completed
+
+The later parity pass finished the basic read-only work that the original
+eight-task review left open. Each row is independently committed and gated.
+
+| Area | Delivered behavior | Commit(s) |
+|---|---|---|
+| `SHOW` and views | `SHOW INDEX`/`KEYS`, explicit empty replicated-view surface, richer discovery metadata | `d5bb27e7` |
+| Metadata queries | aliases, narrow INNER/LEFT/CROSS joins, grouped client aggregates, replayed discovery corpus | `1b5649fa`, `2c7e963a` |
+| Conditional coercion | exact `NULLIF` comparison and verified lazy/coerced conditional expressions | `fd00af41` |
+| Cast/conversion | interval-shaped `TIME`, validating JSON, real YEAR type, explicit unsupported charset rejection | `aed1bf62`, `900ff891`, `35967239`, `c825b19a` |
+| Aggregates | session `group_concat_max_len`, warning 1260, VARCHAR/TEXT threshold, multi-expression DISTINCT | `f1faa73e`, `9bddcde5`, `84a81ba9` |
+| DECIMAL | exact set/group/extreme/modulo paths and MySQL base-1e9 division intermediates | `6cd6b8ad`, `34d8c874` |
+| RANGE frames | numeric, exact fractional DECIMAL, and simple temporal interval offsets by ordering-key value | `43f848cd`, `e9ac2ce0`, `5faf6e37` |
+| Named windows | chained earlier definitions with forward/cycle and illegal inheritance rejection | `b8ebfa2c` |
+| Temporal parsing | unsupported `STR_TO_DATE` directives reject instead of taking chrono's different meaning | `177bf7b5` |
+| Wire metadata | actual length, utf8mb4/binary charset, DECIMAL scale and temporal FSP through text/prepared results | `34379b7c` |
 
 ## Current JSON function support
 
@@ -122,13 +140,13 @@ Remaining regex discrepancies:
 
 | Area | Current state | Material remaining discrepancy |
 |---|---|---|
-| Aggregates | Everyday aggregates, variance/stddev aliases, bit folds, `ANY_VALUE`, and JSON aggregates are implemented | `group_concat_max_len` is fixed rather than session-configurable; warning behavior and complete collation semantics remain |
+| Aggregates | Everyday aggregates, variance/stddev aliases, bit folds, `ANY_VALUE`, JSON aggregates, multi-expression DISTINCT, and configurable `GROUP_CONCAT` are implemented | Collation coercibility beyond Pintail's declared collation surface remains |
 | Numeric | Exact and approximate paths are distinguished; common arithmetic and formatting helpers are broad | Result metadata/overflow rules still need exhaustive oracle coverage for every accepted overload |
-| DECIMAL | Arithmetic, aggregation, comparison, and equality are exact on scaled integers; equality remains usable as a hash-join key | Complete grouping/DISTINCT/IN/MIN/MAX/hash semantics and source precision above 38 digits remain issue #9 work |
+| DECIMAL | Arithmetic chains, aggregation, comparison, grouping, DISTINCT, IN, MIN/MAX, and hash/join keys are exact; wire scale metadata is preserved | Source precision above 38 digits is deliberately retained as text and declines exact-expression semantics |
 | Date/time | Statement time, session timezone, `DATE_FORMAT`, simple intervals, `EXTRACT`, and all `WEEK` modes are implemented | Compound intervals are blocked by the upstream parser; invalid/zero-date and SQL-mode behavior is intentionally narrower |
 | Text | Default comparison is Unicode lowercase; optional accent folding exists | Charset/collation metadata, coercibility, `COLLATE`, pad-space rules, and a verified MySQL weight model remain issue #10 |
-| Conditional/conversion | `IF`, `IFNULL`, `NULLIF`, `COALESCE`, `CASE`, `CAST`, `CONVERT`, and `CONV` bind | Cross-family type inference, byte-level charset conversion, and prepared-result metadata need systematic verification |
-| Windows | Ranking, offset/positional functions, aggregate windows, ROWS frames, offsetless RANGE, and named windows work | RANGE offsets, GROUPS, DISTINCT windows, chained named definitions, and broad aggregate-window validation remain |
+| Conditional/conversion | `IF`, `IFNULL`, `NULLIF`, `COALESCE`, and `CASE` coercion is verified; `CAST` covers JSON/YEAR/TIME/temporal/DECIMAL; unsupported charset transcoding rejects; prepared metadata is typed | Character sets outside UTF-8 and binary require a real transcoder and stay unsupported |
+| Windows | Ranking, offset/positional functions, aggregate windows, ROWS frames, numeric/temporal RANGE offsets, and chained named windows work | Very wide bounded aggregate frames recompute over their width; this is a performance limitation, not a result discrepancy |
 
 ## Final standards review
 
@@ -156,7 +174,7 @@ The specification-oriented review identified documentation drift rather than
 new engine defects:
 
 1. The old review still described uncommitted JSON work and reported 133/786.
-   The current measured surface is 134 callable names and 794 oracle cases.
+   The current measured surface is 134 callable names and 802 oracle cases.
 2. It still called `MD5` missing, although `e9703ede` implemented it.
 3. `docs/limitations.md` called `ANY_VALUE`, variance/stddev, and bit folds
    missing even though `parity.md` advertised them as supported.
@@ -169,39 +187,24 @@ available in Git history; this file describes the present branch only.
 
 ## GitHub issue assessment and the next basic read-only SQL work
 
-The open issues are epics, not synchronized checklists. For example, #8 still
-shows basic regex operators, multiple JSON paths, and base JSON functions as
-unchecked although those forms are implemented; #25 still shows named windows
-unchecked; #17's prose still says `MD5` remains open. Future planning should
-verify code and oracle coverage before treating an unchecked box as missing.
+The issue bodies were epics rather than synchronized completion ledgers. The
+essential read-only portions of #8, #9, #13, #17 and #25 are now complete and
+their closure comments must be read as the scoped ledger. Remaining useful
+work is no longer “basic function tail” work:
 
-After the eight completed slices, the next basic read-only increments are:
+1. **Dependent correlated-subquery fallback (#11):** execute correct shapes
+   that cannot be decorrelated and raise MySQL's multi-row scalar error.
+2. **Nested outer-join groups (#16):** introduce a bound join tree capable of
+   preserving parenthesized outer joins.
+3. **Collation fundamentals (#10):** coercibility, trailing-space rules,
+   `COLLATE`, and one verified MySQL weight model.
+4. **Demand-led JSON/regex extensions:** wildcard/recursive JSON paths and
+   longer regex positional overloads only when captured read workloads need
+   them; mutation functions and `JSON_TABLE` remain out of scope.
+5. **Compound temporal intervals:** wait for sqlparser to accept MySQL's
+   compound qualifier syntax, or take a separately reviewed parser fork.
 
-1. **`SHOW INDEX` / `SHOW KEYS` (#14).** This is a small, high-value metadata
-   command using facts already exposed through `information_schema.statistics`.
-2. **Metadata aliases and simple joins (#14).** Support the narrow client
-   discovery queries that join `tables`, `columns`, and constraints; keep the
-   metadata interpreter deliberately smaller than the main executor.
-3. **Regex positional overloads (#8).** Add `pos` and `occurrence` to
-   `REGEXP_INSTR`/`SUBSTR`/`REPLACE`, then `return_option` and `match_type`, with
-   Unicode character rather than byte indexing.
-4. **JSON path wildcard collection (#8).** Complete wildcard/multi-match
-   autowrapping and compile literal paths once per query before considering
-   mutation functions.
-5. **Dependent correlated-subquery fallback (#11).** Cover correct scalar and
-   EXISTS shapes that cannot be decorrelated, including multi-row scalar errors.
-6. **Nested outer-join groups (#16).** Replace the current left-deep bound join
-   representation or add a tree so parenthesized outer joins preserve semantics.
-7. **Collation fundamentals (#10).** Start with binary versus one explicitly
-   supported utf8mb4 collation, trailing-space rules, and identical equality/
-   hashing normalization.
-8. **Window RANGE offsets (#25).** Implement typed numeric/interval bounds and
-   peer semantics; do not approximate them as ROWS offsets.
-
-The first four are the most "basic" client-compatibility work. Items 5–8 are
-larger planner/type-system projects even though their SQL syntax looks small.
-Compound interval qualifiers (#13) should wait for an upstream parser decision,
-and production BI-query capture (#24) should be used to reorder this list when
+Production BI-query capture (#24) should reorder these larger projects when
 real workload evidence is available.
 
 ## Verification expectations
@@ -217,9 +220,8 @@ Every future read-only SQL increment should continue the same gate:
 
 ## Conclusion
 
-All eight selected tasks are landed as separate commits. The final review
-closed the regressions that could have turned supported syntax into wrong
-answers or planner failures, and reconciled the compatibility documents with
-the measured 134-function, 794-case surface. The remaining roadmap is still
-substantial, but the next basic read-only SQL work is now separated from the
-larger collation, join-tree, and dependent-execution projects.
+The essential read-only parity pass is landed in bounded commits. The final
+state has 134 callable names, an 802-case oracle inventory, complete typed wire
+metadata, exact supported DECIMAL semantics, and explicit rejection for every
+deliberate boundary. The remaining roadmap consists of larger collation,
+join-tree, dependent-execution, or parser projects—not missing basic reads.

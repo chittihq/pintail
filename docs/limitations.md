@@ -98,8 +98,11 @@ stays readable as a list of things to fix.
   and clamps to `-838:59:59`..`838:59:59`. `CAST AS JSON` validates and
   canonicalizes documents. `CAST AS YEAR` preserves MySQL's `YEAR` wire type
   and its numeric, string-zero, two-digit, and temporal conversion rules (#17).
-- `information_schema` does not support joins, aggregates beyond `COUNT(*)`, or
-  metadata tables outside the served set.
+- `information_schema` is a deliberately narrow client-discovery interpreter,
+  not the main query engine. It supports aliases, INNER/LEFT/CROSS joins,
+  grouping, and `COUNT`/`MIN`/`MAX`/`SUM` over the eight served tables; CTEs,
+  set operations, DISTINCT, window functions, derived tables, and metadata
+  tables outside that set reject explicitly.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
   `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
   the BI corpus (#17).
@@ -285,11 +288,6 @@ worth refusing.
   TLS-capable ingress when exposed across a network.
 - DBeaver and Metabase application-level smokes are not automated on this
   workstation.
-- The vendored `opensrv-mysql` 0.7 patch emits Pintail's real column length,
-  collation/charset, and decimal/FSP metadata. Text results advertise
-  `utf8mb4_0900_ai_ci`; numeric, temporal, JSON, and binary results advertise
-  the binary character set, and raw binary values also carry `BINARY_FLAG`.
-
 ## Operations and backup
 
 - The supervisor is finite-cycle rather than a permanently attached stream, so
