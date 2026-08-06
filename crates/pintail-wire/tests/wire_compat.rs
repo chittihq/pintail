@@ -182,6 +182,21 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("group concat limit probe");
     assert_eq!(concat_limit, Some(5));
+    let mut short_concat_metadata = connection
+        .query_iter("SELECT GROUP_CONCAT('x') FROM events")
+        .await
+        .expect("short group concat metadata");
+    assert_eq!(
+        short_concat_metadata
+            .columns()
+            .expect("short group concat columns")[0]
+            .column_type(),
+        ColumnType::MYSQL_TYPE_VAR_STRING
+    );
+    let _: Vec<mysql_async::Row> = short_concat_metadata
+        .collect()
+        .await
+        .expect("short group concat rows");
     let truncated_concat: Option<String> = connection
         .query_first("SELECT GROUP_CONCAT(name ORDER BY id SEPARATOR '') FROM events")
         .await
@@ -199,6 +214,21 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET SESSION group_concat_max_len = 1024")
         .await
         .expect("restore group concat limit");
+    let mut long_concat_metadata = connection
+        .query_iter("SELECT GROUP_CONCAT('x') FROM events")
+        .await
+        .expect("long group concat metadata");
+    assert_eq!(
+        long_concat_metadata
+            .columns()
+            .expect("long group concat columns")[0]
+            .column_type(),
+        ColumnType::MYSQL_TYPE_BLOB
+    );
+    let _: Vec<mysql_async::Row> = long_concat_metadata
+        .collect()
+        .await
+        .expect("long group concat rows");
     connection
         .query_drop("SET time_zone = 'SYSTEM'")
         .await

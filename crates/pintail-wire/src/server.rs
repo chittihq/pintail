@@ -504,7 +504,12 @@ where
                 colflags: ColumnFlags::empty(),
             })
             .collect::<Vec<_>>();
-        let columns = output.fields.iter().map(mysql_column).collect::<Vec<_>>();
+        let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
+        let columns = output
+            .fields
+            .iter()
+            .map(|field| mysql_column(field, group_concat_max_len))
+            .collect::<Vec<_>>();
         info.reply(statement_id, &params, &columns).await
     }
 
@@ -543,7 +548,8 @@ where
             }
         };
         let query = substitute_parameters(&statement.sql, &parameters).map_err(io_invalid)?;
-        write_query_result(self.execute(&query), results).await
+        let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
+        write_query_result(self.execute(&query), results, group_concat_max_len).await
     }
 
     async fn on_close(&mut self, statement: u32) {
@@ -565,7 +571,8 @@ where
                 }
             };
         }
-        write_query_result(self.execute(query), results).await
+        let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
+        write_query_result(self.execute(query), results, group_concat_max_len).await
     }
 
     async fn on_init<'a>(
@@ -590,6 +597,7 @@ where
 async fn write_query_result<W>(
     result: Result<QueryOutput, QueryError>,
     writer: QueryResultWriter<'_, W>,
+    group_concat_max_len: usize,
 ) -> io::Result<()>
 where
     W: AsyncWrite + Send + Unpin,
@@ -602,7 +610,11 @@ where
                 .await;
         }
     };
-    let columns = output.fields.iter().map(mysql_column).collect::<Vec<_>>();
+    let columns = output
+        .fields
+        .iter()
+        .map(|field| mysql_column(field, group_concat_max_len))
+        .collect::<Vec<_>>();
     let mut rows = writer.start(&columns).await?;
     for row in &output.rows {
         for (field, value) in output.fields.iter().zip(row) {
@@ -763,8 +775,11 @@ impl ToMysqlValue for MysqlTimeValue<'_> {
     }
 }
 
-fn mysql_column(field: &QueryField) -> Column {
+fn mysql_column(field: &QueryField, group_concat_max_len: usize) -> Column {
     let (coltype, unsigned) = match field.data_type {
+        Some(DataType::Utf8) if field.group_concat && group_concat_max_len > 512 => {
+            (ColumnType::MYSQL_TYPE_BLOB, false)
+        }
         Some(DataType::Boolean | DataType::Int8 | DataType::UInt8) => (
             ColumnType::MYSQL_TYPE_TINY,
             matches!(field.data_type, Some(DataType::UInt8)),
@@ -917,16 +932,19 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
                     name: "Level".to_owned(),
                     data_type: Some(DataType::Utf8),
                     nullable: false,
+                    group_concat: false,
                 },
                 QueryField {
                     name: "Code".to_owned(),
                     data_type: Some(DataType::UInt64),
                     nullable: false,
+                    group_concat: false,
                 },
                 QueryField {
                     name: "Message".to_owned(),
                     data_type: Some(DataType::Utf8),
                     nullable: false,
+                    group_concat: false,
                 },
             ],
             rows: (1..=session.group_concat_warnings)
@@ -997,6 +1015,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
             name: name.to_owned(),
             data_type: value.data_type(),
             nullable: false,
+            group_concat: false,
         }],
         rows: vec![vec![value]],
         stats: QueryStats {
@@ -1176,40 +1195,74 @@ mod tests {
 
     #[test]
     fn json_results_advertise_mysql_json_metadata() {
-        let column = mysql_column(&QueryField {
-            name: "document".to_owned(),
-            data_type: Some(DataType::Json),
-            nullable: true,
-        });
+        let column = mysql_column(
+            &QueryField {
+                name: "document".to_owned(),
+                data_type: Some(DataType::Json),
+                nullable: true,
+                group_concat: false,
+            },
+            1024,
+        );
         assert_eq!(column.coltype, ColumnType::MYSQL_TYPE_JSON);
     }
 
     #[test]
     fn result_columns_preserve_numeric_binary_and_nullability_flags() {
-        let unsigned = mysql_column(&QueryField {
-            name: "ordinal_position".to_owned(),
-            data_type: Some(DataType::UInt64),
-            nullable: false,
-        });
+        let unsigned = mysql_column(
+            &QueryField {
+                name: "ordinal_position".to_owned(),
+                data_type: Some(DataType::UInt64),
+                nullable: false,
+                group_concat: false,
+            },
+            1024,
+        );
         assert_eq!(unsigned.coltype, ColumnType::MYSQL_TYPE_LONGLONG);
         assert!(unsigned.colflags.contains(ColumnFlags::UNSIGNED_FLAG));
         assert!(unsigned.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
 
-        let nullable_text = mysql_column(&QueryField {
-            name: "column_default".to_owned(),
-            data_type: Some(DataType::Utf8),
-            nullable: true,
-        });
+        let nullable_text = mysql_column(
+            &QueryField {
+                name: "column_default".to_owned(),
+                data_type: Some(DataType::Utf8),
+                nullable: true,
+                group_concat: false,
+            },
+            1024,
+        );
         assert_eq!(nullable_text.coltype, ColumnType::MYSQL_TYPE_VAR_STRING);
         assert!(!nullable_text.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
 
-        let binary = mysql_column(&QueryField {
-            name: "payload".to_owned(),
-            data_type: Some(DataType::Binary),
-            nullable: true,
-        });
+        let binary = mysql_column(
+            &QueryField {
+                name: "payload".to_owned(),
+                data_type: Some(DataType::Binary),
+                nullable: true,
+                group_concat: false,
+            },
+            1024,
+        );
         assert_eq!(binary.coltype, ColumnType::MYSQL_TYPE_BLOB);
         assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
+    }
+
+    #[test]
+    fn group_concat_metadata_follows_the_session_limit_threshold() {
+        let field = QueryField {
+            name: "labels".to_owned(),
+            data_type: Some(DataType::Utf8),
+            nullable: true,
+            group_concat: true,
+        };
+        assert_eq!(
+            mysql_column(&field, 512).coltype,
+            ColumnType::MYSQL_TYPE_VAR_STRING
+        );
+        assert_eq!(
+            mysql_column(&field, 513).coltype,
+            ColumnType::MYSQL_TYPE_BLOB
+        );
     }
 
     #[test]

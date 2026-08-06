@@ -33,6 +33,9 @@ pub struct QueryField {
     pub name: String,
     pub data_type: Option<DataType>,
     pub nullable: bool,
+    /// Direct `GROUP_CONCAT` projections choose VARCHAR versus TEXT/BLOB on
+    /// the wire from the connection's `group_concat_max_len`.
+    pub group_concat: bool,
 }
 
 /// Physical work observed while executing one query.
@@ -262,6 +265,20 @@ impl ReplicaEngine {
         let bound = Binder::new(catalog, Some(database_name))
             .bind(statement)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
+        let group_concat = bound
+            .projection
+            .iter()
+            .map(|projection| {
+                let pintail_sql::BoundExprKind::Aggregate(slot) = &projection.expr.kind else {
+                    return false;
+                };
+                slot.checked_sub(bound.group_by.len())
+                    .and_then(|index| bound.aggregates.get(index))
+                    .is_some_and(|aggregate| {
+                        aggregate.function == pintail_sql::AggregateFunction::GroupConcat
+                    })
+            })
+            .collect::<Vec<_>>();
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
         let physical = PhysicalPlanner::plan(logical)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
@@ -270,10 +287,12 @@ impl ReplicaEngine {
         let fields = execution
             .output_fields()
             .iter()
-            .map(|field| QueryField {
+            .enumerate()
+            .map(|(index, field)| QueryField {
                 name: field.name.clone(),
                 data_type: field.data_type,
                 nullable: field.nullable,
+                group_concat: group_concat.get(index).copied().unwrap_or(false),
             })
             .collect();
         let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
@@ -316,6 +335,7 @@ impl ReplicaEngine {
                 name: "plan".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
+                group_concat: false,
             }],
             rows: vec![vec![Value::Utf8(plan)]],
             stats,
@@ -418,6 +438,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
                 name: field.name,
                 data_type: Some(field.data_type),
                 nullable: field.nullable,
+                group_concat: false,
             })
             .collect(),
         stats: QueryStats {
