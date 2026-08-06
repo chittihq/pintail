@@ -84,9 +84,9 @@ const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
 type MysqlBaseline = {
   fingerprint: string
   // Cold timings are hardware-bound: a baseline from one docker host must
-  // never be reused on another, so the host is validated separately from
-  // the workload fingerprint.
-  host: string
+  // never be reused on another. Persist only a one-way fingerprint so a
+  // tracked benchmark ledger does not disclose private infrastructure names.
+  hostFingerprint: string
   measuredAt: string
   gitCommit?: string
   queries: Record<string, { ms: number; canonical: string; sqlHash?: string }>
@@ -95,15 +95,15 @@ let baselineProvenance: string | undefined
 let runVolumeCreated = false
 let dockerHostName = ''
 
+const hostFingerprint = () => createHash('sha256').update(dockerHostName).digest('hex')
+
 function loadMysqlBaseline(): MysqlBaseline | undefined {
   if (!existsSync(baselinePath)) return undefined
   try {
     const parsed = JSON.parse(readFileSync(baselinePath, 'utf8')) as MysqlBaseline
     if (parsed.fingerprint !== benchmarkFingerprint) return undefined
-    if (parsed.host !== dockerHostName) {
-      log(
-        `MySQL baseline was measured on host '${parsed.host}', this is '${dockerHostName}': remeasuring`,
-      )
+    if (parsed.hostFingerprint !== hostFingerprint()) {
+      log('MySQL baseline was measured on a different docker host: remeasuring')
       return undefined
     }
     return parsed
@@ -640,7 +640,7 @@ async function runQueries(
   const saveBaseline = async () => {
     const record: MysqlBaseline = {
       fingerprint: benchmarkFingerprint,
-      host: dockerHostName,
+      hostFingerprint: hostFingerprint(),
       measuredAt: new Date().toISOString(),
       gitCommit: (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout,
       queries: { ...(baseline?.queries ?? {}), ...freshBaseline },
