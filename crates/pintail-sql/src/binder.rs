@@ -4001,8 +4001,17 @@ fn bind_aggregate(
     // spill, the two-pass lanes and merging — the pair becomes a single
     // JSON_OBJECT(k, v) per row, reusing its key coercion and escaping. The
     // aggregate then merges those one-member objects.
-    let expected_arity = usize::from(aggregate_function == AggregateFunction::JsonObjectAgg) + 1;
-    if arguments.args.len() != expected_arity {
+    let valid_arity = match aggregate_function {
+        AggregateFunction::JsonObjectAgg => arguments.args.len() == 2,
+        AggregateFunction::GroupConcat => !arguments.args.is_empty(),
+        AggregateFunction::Count
+            if arguments.duplicate_treatment == Some(DuplicateTreatment::Distinct) =>
+        {
+            !arguments.args.is_empty()
+        }
+        _ => arguments.args.len() == 1,
+    };
+    if !valid_arity {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     }
     // GROUP_CONCAT owns SEPARATOR and an aggregate-local ORDER BY; every
@@ -4055,6 +4064,69 @@ fn bind_aggregate(
             pair.push(bind_expr(expr, tables, subqueries)?);
         }
         Some(bind_scalar(ScalarFunction::JsonObject, pair)?)
+    } else if aggregate_function == AggregateFunction::Count && distinct && arguments.args.len() > 1
+    {
+        let mut values = Vec::with_capacity(arguments.args.len());
+        for argument in &arguments.args {
+            let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = argument else {
+                return Err(BindError::UnsupportedAggregate(function.to_string()));
+            };
+            values.push(bind_expr(expr, tables, subqueries)?);
+        }
+        // COUNT(DISTINCT a,b,...) ignores a row when ANY component is NULL.
+        // A canonical JSON array is an unambiguous composite key; the normal
+        // DISTINCT set still applies MySQL text collation to its carrier.
+        let mut null_condition = None;
+        for value in &values {
+            let is_null = BoundExpr {
+                kind: BoundExprKind::IsNull {
+                    expr: Box::new(value.clone()),
+                    negated: false,
+                },
+                data_type: Some(DataType::Boolean),
+                nullable: false,
+            };
+            null_condition = Some(match null_condition {
+                None => is_null,
+                Some(left) => BoundExpr {
+                    kind: BoundExprKind::Binary {
+                        op: BinaryOp::Or,
+                        left: Box::new(left),
+                        right: Box::new(is_null),
+                    },
+                    data_type: Some(DataType::Boolean),
+                    nullable: false,
+                },
+            });
+        }
+        let tuple = bind_scalar(ScalarFunction::JsonArray, values)?;
+        let tuple_or_null = bind_scalar(
+            ScalarFunction::If,
+            vec![
+                null_condition.expect("multi-expression DISTINCT is nonempty"),
+                BoundExpr {
+                    kind: BoundExprKind::Literal(Value::Null),
+                    data_type: None,
+                    nullable: true,
+                },
+                tuple,
+            ],
+        )?;
+        // The JSON rendering is only an internal collision-free tuple
+        // encoding, not a user-visible JSON value requiring JSON equality.
+        Some(bind_scalar(
+            ScalarFunction::Cast(DataType::Utf8),
+            vec![tuple_or_null],
+        )?)
+    } else if aggregate_function == AggregateFunction::GroupConcat && arguments.args.len() > 1 {
+        let mut values = Vec::with_capacity(arguments.args.len());
+        for argument in &arguments.args {
+            let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = argument else {
+                return Err(BindError::UnsupportedAggregate(function.to_string()));
+            };
+            values.push(bind_expr(expr, tables, subqueries)?);
+        }
+        Some(bind_scalar(ScalarFunction::Concat, values)?)
     } else {
         match &arguments.args[0] {
             FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {

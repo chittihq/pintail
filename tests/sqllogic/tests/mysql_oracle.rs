@@ -1181,7 +1181,9 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "hand-written distinct aggregate",
-            "SELECT COUNT(note), COUNT(DISTINCT note), GROUP_CONCAT(note) FROM events",
+            "SELECT COUNT(note), COUNT(DISTINCT note), COUNT(DISTINCT active, note), \
+             GROUP_CONCAT(note), \
+             GROUP_CONCAT(id, ':', name ORDER BY id SEPARATOR '|') FROM events",
         ),
         ordered(
             "hand-written null membership",

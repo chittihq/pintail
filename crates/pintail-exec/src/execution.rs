@@ -11171,6 +11171,54 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_multi_expression_distinct_and_concat_follow_mysql_null_rules() {
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    4,
+                    vec![
+                        ColumnVector::new(
+                            DataType::UInt64,
+                            vec![
+                                Value::UInt64(1),
+                                Value::UInt64(1),
+                                Value::UInt64(2),
+                                Value::UInt64(3),
+                            ],
+                        )
+                        .expect("ids"),
+                        ColumnVector::new(
+                            DataType::Utf8,
+                            vec![
+                                Value::Utf8("Alpha".to_owned()),
+                                Value::Utf8("alpha".to_owned()),
+                                Value::Utf8("beta".to_owned()),
+                                Value::Null,
+                            ],
+                        )
+                        .expect("names"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        let plan = physical(
+            "SELECT COUNT(DISTINCT id, name), \
+             GROUP_CONCAT(id, ':', name ORDER BY id SEPARATOR '|') FROM events",
+        );
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(2))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("1:Alpha|1:alpha|2:beta".to_owned()))
+        );
+    }
+
+    #[test]
     fn global_aggregates_emit_sql_empty_input_results() {
         let provider = StaticProvider {
             batches: Mutex::new(Vec::new()),
