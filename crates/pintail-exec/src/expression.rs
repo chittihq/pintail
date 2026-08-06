@@ -3009,6 +3009,13 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// Hard resource boundaries for the linear-time regex engine. Subject work
+/// is linear in the already-accounted input bytes; these caps bound parser
+/// work, compiled automata, and retained cache entries.
+const MAX_REGEX_PATTERN_BYTES: usize = 64 * 1024;
+const MAX_COMPILED_REGEX_BYTES: usize = 1 << 20;
+const MAX_REGEX_CACHE_ENTRIES: usize = 256;
+
 /// Whether any operand is a binary string, which makes `MySQL` compare the
 /// pair case-sensitively rather than under a collation.
 fn binary_operand(values: &[Value]) -> bool {
@@ -3083,6 +3090,9 @@ fn compiled_regex_with_match_type(
     pattern: &str,
     match_type: &str,
 ) -> Result<std::rc::Rc<regex::Regex>, ExecError> {
+    if pattern.len() > MAX_REGEX_PATTERN_BYTES {
+        return Err(ExecError::InvalidExpressionType);
+    }
     let mut case_insensitive = true;
     let mut multi_line = false;
     let mut dot_matches_new_line = false;
@@ -3115,11 +3125,11 @@ fn compiled_regex_with_match_type(
                 .case_insensitive(case_insensitive)
                 .multi_line(multi_line)
                 .dot_matches_new_line(dot_matches_new_line)
-                .size_limit(1 << 20)
+                .size_limit(MAX_COMPILED_REGEX_BYTES)
                 .build()
                 .map_err(|_| ExecError::InvalidExpressionType)?,
         );
-        if cache.len() >= 256
+        if cache.len() >= MAX_REGEX_CACHE_ENTRIES
             && let Some(evicted) = cache.keys().next().cloned()
         {
             cache.remove(&evicted);
@@ -4348,7 +4358,20 @@ mod tests {
             .iter()
             .filter(|program| program.upgrade().is_some())
             .count();
-        assert_eq!(retained, 256, "only bounded cache entries remain alive");
+        assert_eq!(
+            retained,
+            super::MAX_REGEX_CACHE_ENTRIES,
+            "only bounded cache entries remain alive"
+        );
+    }
+
+    #[test]
+    fn regex_patterns_have_a_hard_input_limit() {
+        let oversized = "a".repeat(super::MAX_REGEX_PATTERN_BYTES + 1);
+        assert!(matches!(
+            super::compiled_regex(&oversized),
+            Err(super::ExecError::InvalidExpressionType)
+        ));
     }
 
     /// Hostile arguments must return or error, never abort the process.

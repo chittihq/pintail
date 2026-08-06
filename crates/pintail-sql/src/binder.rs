@@ -3566,6 +3566,20 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         },
         other => other,
     };
+    if matches!(
+        function,
+        ScalarFunction::RegexpLike { .. }
+            | ScalarFunction::RegexpSubstr
+            | ScalarFunction::RegexpInstr
+            | ScalarFunction::RegexpReplace
+    ) && args
+        .iter()
+        .any(|argument| argument.data_type == Some(DataType::Binary))
+    {
+        return Err(BindError::InvalidScalarFunction(
+            "regular expressions do not accept binary-string operands".to_owned(),
+        ));
+    }
     let (data_type, nullable) = match function {
         // LOWER/UPPER over a binary argument return it unchanged, so the
         // result stays binary — declaring Utf8 here made the output column
@@ -3726,6 +3740,7 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         // JSON_TYPE raises on a non-JSON document; JSON_KEYS answers NULL for
         // a target that is not an object.
         | ScalarFunction::JsonType
+        | ScalarFunction::JsonExtract { unquote: true }
         // JSON_SEARCH answers NULL when nothing matches; JSON_VALUE answers
         // NULL for an absent path.
         | ScalarFunction::JsonValue
@@ -3760,7 +3775,6 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         ScalarFunction::JsonExtract { unquote: false }
         | ScalarFunction::JsonKeys
         | ScalarFunction::JsonSearch => (Some(DataType::Json), true),
-        ScalarFunction::JsonExtract { unquote: true } => (Some(DataType::Utf8), true),
         // NULL arguments become JSON nulls, never a NULL result.
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Json), false),
         // JSON_VALID answers 0/1 for any input, so it is the one predicate
@@ -5362,6 +5376,14 @@ mod tests {
         .expect("JSON paths and REGEXP match_type bind");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
         assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
+        assert!(matches!(
+            bind("SELECT REGEXP_LIKE(CAST(Name AS BINARY), 'x') FROM Events"),
+            Err(BindError::InvalidScalarFunction(_))
+        ));
+        assert!(matches!(
+            bind("SELECT Name REGEXP CAST('x' AS BINARY) FROM Events"),
+            Err(BindError::InvalidScalarFunction(_))
+        ));
     }
 
     #[test]

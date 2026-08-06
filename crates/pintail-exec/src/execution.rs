@@ -10548,6 +10548,19 @@ mod tests {
     }
 
     #[test]
+    fn regexp_replace_output_obeys_the_query_memory_cap() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical("SELECT REGEXP_REPLACE(REPEAT('a', 1000), 'a', 'replacement')");
+        let mut execution = Execution::start(plan, &provider, 4 * 1024).expect("execution");
+        assert!(matches!(
+            execution.next_batch(),
+            Err(ExecError::MemoryLimitExceeded { limit: 4096, .. })
+        ));
+    }
+
+    #[test]
     fn accounts_for_reserved_vector_capacity_before_pushes() {
         let memory = MemoryTracker::new(16 * 1024);
         let mut values = Vec::<String>::new();
