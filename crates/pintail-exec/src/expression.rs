@@ -2352,6 +2352,34 @@ fn apply_interval(
     .ok_or(ExecError::InvalidDateTime)
 }
 
+/// Applies one simple `MySQL` interval to a canonical temporal scalar. Window
+/// `RANGE` bounds use the same calendar arithmetic as `DATE_ADD`/`DATE_SUB`.
+pub(crate) fn shift_temporal_value(
+    value: &Value,
+    amount: u64,
+    unit: IntervalUnit,
+    add: bool,
+) -> Result<Value, ExecError> {
+    let input = scalar_string(value)?;
+    let datetime = parse_mysql_datetime(&input)?;
+    let amount = i64::try_from(amount).map_err(|_| ExecError::NumericOverflow)?;
+    let shifted = apply_interval(datetime, amount, unit, !add)?;
+    let date_only = input.len() <= 10
+        && matches!(
+            unit,
+            IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day
+        );
+    Ok(Value::Utf8(
+        shifted
+            .format(if date_only {
+                "%Y-%m-%d"
+            } else {
+                "%Y-%m-%d %H:%M:%S"
+            })
+            .to_string(),
+    ))
+}
+
 /// A `CONVERT_TZ` zone argument: numeric offset or IANA name.
 enum ZoneSpec {
     Fixed(FixedOffset),

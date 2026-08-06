@@ -544,19 +544,35 @@ pub enum BoundFrameBound {
     /// `UNBOUNDED PRECEDING`.
     UnboundedPreceding,
     /// `<n> PRECEDING`.
-    Preceding(u64),
+    Preceding(BoundFrameOffset),
     /// `CURRENT ROW`.
     CurrentRow,
     /// `<n> FOLLOWING`.
-    Following(u64),
+    Following(BoundFrameOffset),
     /// `UNBOUNDED FOLLOWING`.
     UnboundedFollowing,
 }
 
+/// Constant distance used by a bounded window-frame edge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundFrameOffset {
+    /// Physical row count in a `ROWS` frame.
+    Rows(u64),
+    /// Integer value distance in a numeric `RANGE` frame.
+    Numeric(u64),
+    /// Calendar/time distance in a temporal `RANGE` frame.
+    Interval {
+        /// Nonnegative interval magnitude.
+        value: u64,
+        /// `MySQL` interval unit.
+        unit: IntervalUnit,
+    },
+}
+
 /// An explicit `ROWS` or `RANGE BETWEEN ... AND ...` frame.
 ///
-/// A bounded `RANGE` applies its offset to the single numeric ordering key.
-/// `GROUPS` rejects during binding, matching `MySQL` 8.4.
+/// A bounded `RANGE` applies its numeric or calendar offset to one compatible
+/// ordering key. `GROUPS` rejects during binding, matching `MySQL` 8.4.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoundWindowFrame {
     /// Whether `CURRENT ROW` means the whole peer group (`RANGE`) rather

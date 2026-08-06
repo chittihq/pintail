@@ -8845,7 +8845,7 @@ fn numeric_range_bound(
     preceding: bool,
     upper: bool,
 ) -> Result<usize, ExecError> {
-    let Some((_, ascending, nulls_first, decimal)) = window.order.first() else {
+    let Some((_, ascending, _, decimal)) = window.order.first() else {
         return Err(ExecError::InvalidExpressionType);
     };
     let key_position = window.partition.len();
@@ -8856,6 +8856,49 @@ fn numeric_range_bound(
         if *ascending { !preceding } else { preceding },
         *decimal,
     )?;
+    range_bound_for_target(window, keys, partition, &target, upper)
+}
+
+fn temporal_range_bound(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    partition: &[usize],
+    current: usize,
+    interval: (u64, pintail_sql::IntervalUnit),
+    preceding: bool,
+    upper: bool,
+) -> Result<usize, ExecError> {
+    let Some((_, ascending, _, _)) = window.order.first() else {
+        return Err(ExecError::InvalidExpressionType);
+    };
+    let key_position = window.partition.len();
+    let current_value = &keys[partition[current]][key_position];
+    let target = crate::expression::shift_temporal_value(
+        current_value,
+        interval.0,
+        interval.1,
+        if *ascending { !preceding } else { preceding },
+    )?;
+    range_bound_for_target(
+        window,
+        keys,
+        partition,
+        &NumericRangeTarget::Value(target),
+        upper,
+    )
+}
+
+fn range_bound_for_target(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    partition: &[usize],
+    target: &NumericRangeTarget,
+    upper: bool,
+) -> Result<usize, ExecError> {
+    let Some((_, ascending, nulls_first, decimal)) = window.order.first() else {
+        return Err(ExecError::InvalidExpressionType);
+    };
+    let key_position = window.partition.len();
     let compare = |candidate: &Value| {
         if matches!(candidate, Value::Null) {
             return if *nulls_first {
@@ -8994,9 +9037,31 @@ fn compute_window_column(
         let frame_extent = |frame: pintail_sql::BoundWindowFrame,
                             index: usize|
          -> Result<(usize, usize), ExecError> {
-            use pintail_sql::BoundFrameBound as Edge;
+            use pintail_sql::{BoundFrameBound as Edge, BoundFrameOffset as Offset};
             let len = partition.len();
-            let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
+            let row_offset = |offset: Offset| match offset {
+                Offset::Rows(value) => Ok(usize::try_from(value).unwrap_or(usize::MAX)),
+                _ => Err(ExecError::InvalidPhysicalPlan(
+                    "non-row offset reached a ROWS frame",
+                )),
+            };
+            let range_bound = |offset: Offset, preceding: bool, upper: bool| match offset {
+                Offset::Numeric(value) => {
+                    numeric_range_bound(window, keys, partition, index, value, preceding, upper)
+                }
+                Offset::Interval { value, unit } => temporal_range_bound(
+                    window,
+                    keys,
+                    partition,
+                    index,
+                    (value, unit),
+                    preceding,
+                    upper,
+                ),
+                Offset::Rows(_) => Err(ExecError::InvalidPhysicalPlan(
+                    "row offset reached a RANGE frame",
+                )),
+            };
             let current_is_null = window
                 .order
                 .first()
@@ -9006,16 +9071,12 @@ fn compute_window_column(
                 Edge::Preceding(_) | Edge::Following(_) if frame.range && current_is_null => {
                     peer_start(index)
                 }
-                Edge::Preceding(offset) if frame.range => {
-                    numeric_range_bound(window, keys, partition, index, offset, true, false)?
-                }
-                Edge::Following(offset) if frame.range => {
-                    numeric_range_bound(window, keys, partition, index, offset, false, false)?
-                }
-                Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
+                Edge::Preceding(offset) if frame.range => range_bound(offset, true, false)?,
+                Edge::Following(offset) if frame.range => range_bound(offset, false, false)?,
+                Edge::Preceding(offset) => index.saturating_sub(row_offset(offset)?),
                 Edge::CurrentRow if frame.range => peer_start(index),
                 Edge::CurrentRow => index,
-                Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
+                Edge::Following(offset) => index.saturating_add(row_offset(offset)?).min(len),
                 Edge::UnboundedFollowing => len,
             };
             let end = match frame.end {
@@ -9023,19 +9084,15 @@ fn compute_window_column(
                 Edge::Preceding(_) | Edge::Following(_) if frame.range && current_is_null => {
                     peer_end(index)
                 }
-                Edge::Preceding(offset) if frame.range => {
-                    numeric_range_bound(window, keys, partition, index, offset, true, true)?
-                }
-                Edge::Following(offset) if frame.range => {
-                    numeric_range_bound(window, keys, partition, index, offset, false, true)?
-                }
-                Edge::Preceding(offset) => {
-                    index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
-                }
+                Edge::Preceding(offset) if frame.range => range_bound(offset, true, true)?,
+                Edge::Following(offset) if frame.range => range_bound(offset, false, true)?,
+                Edge::Preceding(offset) => index
+                    .checked_sub(row_offset(offset)?)
+                    .map_or(0, |row| row + 1),
                 Edge::CurrentRow if frame.range => peer_end(index),
                 Edge::CurrentRow => index + 1,
                 Edge::Following(offset) => index
-                    .saturating_add(clamp(offset))
+                    .saturating_add(row_offset(offset)?)
                     .saturating_add(1)
                     .min(len),
                 Edge::UnboundedFollowing => len,
@@ -10669,6 +10726,49 @@ mod tests {
         assert_eq!(
             batch.column(1).expect("counts").values(),
             [Value::UInt64(1), Value::UInt64(1), Value::UInt64(2)]
+        );
+    }
+
+    #[test]
+    fn temporal_range_offsets_apply_calendar_intervals() {
+        let table = TableEntry::new(
+            TableId::new(1),
+            "events",
+            TableSchema::new(
+                1,
+                vec![Column::new(1, "occurred_on", DataType::Date32, false)],
+            )
+            .expect("schema"),
+            TableStatistics::with_row_count(3),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let statement = parse_statement(
+            "SELECT COUNT(*) OVER (ORDER BY occurred_on \
+             RANGE BETWEEN INTERVAL 2 DAY PRECEDING AND CURRENT ROW) FROM events",
+        )
+        .expect("parse");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind temporal range");
+        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical");
+        let dates = ColumnVector::new(
+            DataType::Date32,
+            ["2024-01-01", "2024-01-02", "2024-01-10"]
+                .map(|date| Value::Utf8(date.to_owned()))
+                .to_vec(),
+        )
+        .expect("dates");
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(3, vec![dates]).expect("batch")]),
+        };
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("batch");
+        assert_eq!(
+            batch.column(0).expect("counts").values(),
+            [Value::UInt64(1), Value::UInt64(2), Value::UInt64(1)]
         );
     }
 

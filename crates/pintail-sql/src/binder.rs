@@ -13,10 +13,10 @@ use sqlparser::ast::{
 
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundFrameBound, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit, BoundOrderKey,
-    BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable, BoundWindow,
-    BoundWindowFrame, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, UnaryOp,
-    WindowFunction,
+    BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
+    BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
+    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction,
+    UnaryOp, WindowFunction,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -4451,6 +4451,15 @@ fn substitute_named_windows(
     }
 }
 
+fn window_frame_offset_expr(edge: &sqlparser::ast::WindowFrameBound) -> Option<&Expr> {
+    use sqlparser::ast::WindowFrameBound as Edge;
+    match edge {
+        Edge::Preceding(Some(expr)) | Edge::Following(Some(expr)) => Some(expr.as_ref()),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn bind_window_frame(
     spec: &sqlparser::ast::WindowSpec,
     function: &Function,
@@ -4468,55 +4477,88 @@ fn bind_window_frame(
         sqlparser::ast::WindowFrameUnits::Range => true,
         sqlparser::ast::WindowFrameUnits::Groups => return Err(unsupported()),
     };
-    let has_offset = |edge: &sqlparser::ast::WindowFrameBound| {
-        matches!(
-            edge,
-            sqlparser::ast::WindowFrameBound::Preceding(Some(_))
-                | sqlparser::ast::WindowFrameBound::Following(Some(_))
-        )
-    };
-    if range
-        && (has_offset(&frame.start_bound) || frame.end_bound.as_ref().is_some_and(has_offset))
-        && !matches!(
-            order_by,
-            [BoundWindowOrderKey {
-                expr: BoundExpr {
-                    data_type: Some(
-                        DataType::Boolean
-                            | DataType::Int8
-                            | DataType::Int16
-                            | DataType::Int32
-                            | DataType::Int64
-                            | DataType::UInt8
-                            | DataType::UInt16
-                            | DataType::UInt32
-                            | DataType::UInt64
-                            | DataType::Float32
-                            | DataType::Float64
-                            | DataType::Decimal { .. }
-                            | DataType::Year
-                    ),
-                    ..
-                },
-                ..
-            }]
-        )
-    {
-        return Err(unsupported());
+    let offsets = [
+        window_frame_offset_expr(&frame.start_bound),
+        frame.end_bound.as_ref().and_then(window_frame_offset_expr),
+    ];
+    if range && offsets.iter().any(Option::is_some) {
+        let [order] = order_by else {
+            return Err(unsupported());
+        };
+        let valid = |expr: &Expr| match expr {
+            Expr::Interval(_) => matches!(
+                order.expr.data_type,
+                Some(DataType::Date32 | DataType::DateTime64 { .. })
+            ),
+            Expr::Value(_) => matches!(
+                order.expr.data_type,
+                Some(
+                    DataType::Boolean
+                        | DataType::Int8
+                        | DataType::Int16
+                        | DataType::Int32
+                        | DataType::Int64
+                        | DataType::UInt8
+                        | DataType::UInt16
+                        | DataType::UInt32
+                        | DataType::UInt64
+                        | DataType::Float32
+                        | DataType::Float64
+                        | DataType::Decimal { .. }
+                        | DataType::Year
+                )
+            ),
+            _ => false,
+        };
+        if offsets.into_iter().flatten().any(|expr| !valid(expr)) {
+            return Err(unsupported());
+        }
     }
     let bound = |edge: &sqlparser::ast::WindowFrameBound, preceding_side: bool| {
         use sqlparser::ast::WindowFrameBound as Edge;
-        let offset = |value: &Option<Box<Expr>>| -> Result<u64, BindError> {
+        let offset = |value: &Option<Box<Expr>>| -> Result<BoundFrameOffset, BindError> {
             let Some(expr) = value else {
                 return Err(unsupported());
             };
             match expr.as_ref() {
                 Expr::Value(value) => match &value.value {
                     sqlparser::ast::Value::Number(text, _) => {
-                        text.parse::<u64>().map_err(|_| unsupported())
+                        let value = text.parse::<u64>().map_err(|_| unsupported())?;
+                        Ok(if range {
+                            BoundFrameOffset::Numeric(value)
+                        } else {
+                            BoundFrameOffset::Rows(value)
+                        })
                     }
                     _ => Err(unsupported()),
                 },
+                Expr::Interval(interval)
+                    if range
+                        && interval.leading_precision.is_none()
+                        && interval.last_field.is_none()
+                        && interval.fractional_seconds_precision.is_none() =>
+                {
+                    let value = match interval.value.as_ref() {
+                        Expr::Value(value) => match &value.value {
+                            sqlparser::ast::Value::Number(text, _)
+                            | sqlparser::ast::Value::SingleQuotedString(text) => {
+                                text.parse::<u64>().map_err(|_| unsupported())?
+                            }
+                            _ => return Err(unsupported()),
+                        },
+                        _ => return Err(unsupported()),
+                    };
+                    let unit = match interval.leading_field {
+                        Some(DateTimeField::Year) => IntervalUnit::Year,
+                        Some(DateTimeField::Month) => IntervalUnit::Month,
+                        Some(DateTimeField::Day) => IntervalUnit::Day,
+                        Some(DateTimeField::Hour) => IntervalUnit::Hour,
+                        Some(DateTimeField::Minute) => IntervalUnit::Minute,
+                        Some(DateTimeField::Second) => IntervalUnit::Second,
+                        _ => return Err(unsupported()),
+                    };
+                    Ok(BoundFrameOffset::Interval { value, unit })
+                }
                 _ => Err(unsupported()),
             }
         };
@@ -4539,14 +4581,31 @@ fn bind_window_frame(
     // MySQL rejects a frame whose start follows its end. Accepting it here
     // produced an empty frame and a NULL for every row — a plausible answer
     // to a query that should not have bound.
-    let ordinal = |edge: BoundFrameBound| match edge {
-        BoundFrameBound::UnboundedPreceding => (0_u8, 0_i128),
-        BoundFrameBound::Preceding(offset) => (1, -i128::from(offset)),
-        BoundFrameBound::CurrentRow => (1, 0),
-        BoundFrameBound::Following(offset) => (1, i128::from(offset)),
-        BoundFrameBound::UnboundedFollowing => (2, 0),
+    let rank = |edge: BoundFrameBound| match edge {
+        BoundFrameBound::UnboundedPreceding => 0_u8,
+        BoundFrameBound::Preceding(_) => 1,
+        BoundFrameBound::CurrentRow => 2,
+        BoundFrameBound::Following(_) => 3,
+        BoundFrameBound::UnboundedFollowing => 4,
     };
-    if ordinal(start) > ordinal(end) {
+    let comparable_value = |offset: BoundFrameOffset| match offset {
+        BoundFrameOffset::Rows(value) | BoundFrameOffset::Numeric(value) => Some(value),
+        BoundFrameOffset::Interval { .. } => None,
+    };
+    let reversed_within_side = match (start, end) {
+        (BoundFrameBound::Preceding(start), BoundFrameBound::Preceding(end)) => {
+            comparable_value(start)
+                .zip(comparable_value(end))
+                .is_some_and(|(start, end)| start < end)
+        }
+        (BoundFrameBound::Following(start), BoundFrameBound::Following(end)) => {
+            comparable_value(start)
+                .zip(comparable_value(end))
+                .is_some_and(|(start, end)| start > end)
+        }
+        _ => false,
+    };
+    if rank(start) > rank(end) || reversed_within_side {
         return Err(BindError::UnsupportedQueryClause(format!(
             "window frame start follows its end on {function}"
         )));

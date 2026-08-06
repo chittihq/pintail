@@ -1056,6 +1056,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
              FROM events ORDER BY id",
         ),
         ordered(
+            "hand-written window temporal range offsets",
+            "SELECT id, COUNT(*) OVER (ORDER BY DATE_ADD('2024-01-01', INTERVAL id DAY) \
+             RANGE BETWEEN INTERVAL 2 DAY PRECEDING AND CURRENT ROW) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
             "hand-written named windows",
             "SELECT id, SUM(score) OVER w, ROW_NUMBER() OVER w FROM events \
              WINDOW w AS (ORDER BY id) ORDER BY id",

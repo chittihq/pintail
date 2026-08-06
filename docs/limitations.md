@@ -19,9 +19,11 @@ stays readable as a list of things to fix.
 - Non-equality join conditions are rejected.
 - A `RANGE` frame supports offsetless bounds (`UNBOUNDED PRECEDING`,
   `CURRENT ROW`, `UNBOUNDED FOLLOWING`) and nonnegative integer offsets over
-  one numeric ordering key, framing by key value rather than row position.
-  Decimal and descending keys retain their exact ordering. Temporal
-  `INTERVAL` offsets and fractional numeric offsets still reject (#25).
+  one numeric ordering key, framing by key value rather than row position,
+  plus simple `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, and `SECOND` intervals
+  over one temporal key. Decimal, calendar, and descending-key arithmetic
+  retain their exact ordering. Fractional numeric offsets and compound
+  temporal interval qualifiers still reject (#25).
   `GROUPS` frames and `DISTINCT` window aggregates reject as MySQL 8.4 does;
   they are not compatibility gaps. A named window may be referenced as `OVER w` and extended
   additively with clauses absent from its base definition. Chained named
