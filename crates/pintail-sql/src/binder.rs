@@ -6113,6 +6113,49 @@ mod tests {
     }
 
     #[test]
+    fn decimal_arithmetic_keeps_mysql_precision_and_scale() {
+        let query = bind(
+            "SELECT CAST(12.34 AS DECIMAL(5,2)) + CAST(1.234 AS DECIMAL(4,3)), \
+             CAST(12.34 AS DECIMAL(5,2)) - CAST(1.234 AS DECIMAL(4,3)), \
+             CAST(12.34 AS DECIMAL(5,2)) * CAST(1.234 AS DECIMAL(4,3)), \
+             CAST(12.34 AS DECIMAL(5,2)) / CAST(1.234 AS DECIMAL(4,3)), \
+             -CAST(12.34 AS DECIMAL(5,2))",
+        )
+        .expect("decimal arithmetic bind");
+
+        let result_types = query
+            .projection
+            .iter()
+            .map(|projection| projection.expr.data_type)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            result_types,
+            vec![
+                Some(DataType::Decimal {
+                    precision: 7,
+                    scale: 3,
+                }),
+                Some(DataType::Decimal {
+                    precision: 7,
+                    scale: 3,
+                }),
+                Some(DataType::Decimal {
+                    precision: 9,
+                    scale: 5,
+                }),
+                Some(DataType::Decimal {
+                    precision: 12,
+                    scale: 6,
+                }),
+                Some(DataType::Decimal {
+                    precision: 5,
+                    scale: 2,
+                }),
+            ]
+        );
+    }
+
+    #[test]
     fn deduplicates_aggregates_and_enforces_full_grouping() {
         let query =
             bind("SELECT COUNT(*) AS first, COUNT(*) + 1 AS second FROM Events").expect("bind");

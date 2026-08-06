@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
-const EXPECTED_CASES: usize = 802;
+const EXPECTED_CASES: usize = 806;
 
 struct OracleCase {
     family: &'static str,
@@ -1920,6 +1920,42 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "decimal average",
             "SELECT active, AVG(score), COUNT(*) FROM events \
              GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "decimal mixed precision boundaries",
+            "SELECT CAST('999.99' AS DECIMAL(5,2)) + CAST('0.01' AS DECIMAL(3,2)), \
+             CAST('-5.50' AS DECIMAL(3,2)) + CAST('2.125' AS DECIMAL(4,3)), \
+             CAST('-12.34' AS DECIMAL(4,2)) * CAST('1.50' AS DECIMAL(3,2)), \
+             CAST('12.34' AS DECIMAL(5,2)) / CAST('1.234' AS DECIMAL(4,3))",
+        ),
+        ordered(
+            "decimal exact grouping distinct and extremes",
+            "SELECT CAST(active AS DECIMAL(20,0)) + \
+                    CAST('9007199254740992' AS DECIMAL(20,0)) AS amount, \
+                    COUNT(*), MIN(CAST(id AS DECIMAL(20,0)) + \
+                    CAST('9007199254740992' AS DECIMAL(20,0))), \
+                    MAX(CAST(id AS DECIMAL(20,0)) + \
+                    CAST('9007199254740992' AS DECIMAL(20,0))) \
+             FROM events GROUP BY amount ORDER BY amount",
+        ),
+        ordered(
+            "decimal exact distinct ordering",
+            "SELECT DISTINCT CAST(active AS DECIMAL(20,0)) + \
+                    CAST('9007199254740992' AS DECIMAL(20,0)) AS amount \
+             FROM events ORDER BY amount",
+        ),
+        ordered(
+            "decimal mixed comparison and join keys",
+            "SELECT e.id, u.id, \
+                    CAST('9007199254740993' AS DECIMAL(16,0)) = \
+                        CAST('9007199254740993' AS CHAR), \
+                    CAST('9007199254740993' AS DECIMAL(16,0)) = 9007199254740992e0 \
+             FROM events e JOIN users u ON \
+                  CAST(e.id AS DECIMAL(20,0)) + \
+                      CAST('9007199254740992' AS DECIMAL(20,0)) = \
+                  CAST(u.id AS DECIMAL(21,1)) + \
+                      CAST('9007199254740992.0' AS DECIMAL(21,1)) \
+             ORDER BY e.id",
         ),
         ordered(
             "datetime helpers",
