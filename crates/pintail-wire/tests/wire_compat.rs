@@ -394,6 +394,35 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
     assert_eq!(fidelity_columns[4].character_set(), 63);
     assert_eq!(fidelity_columns[5].character_set(), 255);
     assert_eq!(fidelity_columns[6].character_set(), 63);
+    let decimal_expression_statement = connection
+        .prep(
+            "SELECT CAST(12.34 AS DECIMAL(5,2)) + CAST(1.234 AS DECIMAL(4,3)), \
+                    CAST(12.34 AS DECIMAL(5,2)) * CAST(1.234 AS DECIMAL(4,3)), \
+                    CAST(12.34 AS DECIMAL(5,2)) / CAST(1.234 AS DECIMAL(4,3)), \
+                    -CAST(12.34 AS DECIMAL(5,2))",
+        )
+        .await
+        .expect("prepare decimal-expression query");
+    let decimal_expression_columns = decimal_expression_statement.columns();
+    assert_eq!(decimal_expression_columns.len(), 4);
+    assert!(decimal_expression_columns.iter().all(|column| {
+        column.column_type() == mysql_async::consts::ColumnType::MYSQL_TYPE_NEWDECIMAL
+            && column.character_set() == 63
+    }));
+    assert_eq!(
+        decimal_expression_columns
+            .iter()
+            .map(mysql_async::Column::decimals)
+            .collect::<Vec<_>>(),
+        vec![3, 5, 6, 2]
+    );
+    assert_eq!(
+        decimal_expression_columns
+            .iter()
+            .map(mysql_async::Column::column_length)
+            .collect::<Vec<_>>(),
+        vec![9, 11, 14, 7]
+    );
     let fidelity = connection
         .exec_first::<mysql_async::Row, _, _>(&fidelity_statement, (1_u64,))
         .await
