@@ -5104,6 +5104,15 @@ mod tests {
         )
         .expect("left join");
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+
+        let query = bind(
+            "SELECT e.Name, u.email FROM \
+             (Events e INNER JOIN users u ON e.id = u.id)",
+        )
+        .expect("parenthesized inner join group");
+        assert_eq!(query.from.len(), 1);
+        assert_eq!(query.from[0].joins.len(), 1);
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
     }
 
     #[test]

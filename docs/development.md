@@ -31,14 +31,29 @@ docker run -d --name pintail-dev -p 8080:8080 <image> \
 cd packages/dashboard && bun run dev
 ```
 
-If the daemon is remote — a `docker context` over SSH — then `localhost:8080`
-on your machine is not the container's port. Forward it first, then point the
-proxy at the local end of the tunnel:
+If the daemon is remote — `DOCKER_HOST=ssh://<host>` or a `docker context`
+over SSH — then `localhost:8080` on your machine is not the container's port.
+Forward it first, then point the proxy at the local end of the tunnel:
 
 ```sh
-ssh -N -L 8080:127.0.0.1:8080 <your-docker-host> &
-PINTAIL_API_URL=http://127.0.0.1:8080 bun run dev
+# Publish on the remote host, then bring that port to this machine.
+docker run -d --name pintail-dev -p 18080:8080 <image> \
+  --data-dir /var/lib/pintail --http-bind 0.0.0.0:8080
+ssh -N -L 18080:127.0.0.1:18080 <your-docker-host> &
+PINTAIL_API_URL=http://127.0.0.1:18080 bun run dev
 ```
+
+Two details decide whether this works, and both are easy to get wrong:
+
+- The container must bind `0.0.0.0` **inside** the container. Binding
+  `127.0.0.1` there means the published port forwards to nothing.
+- `-p` must publish the port on the host. Without it the tunnel finds no
+  listener, and the symptom is a connection refused rather than an error that
+  names the cause.
+
+Verified end to end against a container on a remote SSH daemon: a request to
+the dev server's `/status` was answered by the container, through the tunnel
+and the proxy.
 
 Any reachable address works the same way:
 
