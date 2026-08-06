@@ -1142,6 +1142,10 @@ fn resolve_expr_subqueries(
             negated,
         } => {
             resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+            let projection_type = query
+                .projection
+                .first()
+                .and_then(|projection| projection.expr.data_type);
             let values = materialize_subquery(
                 (**query).clone(),
                 provider,
@@ -1151,7 +1155,7 @@ fn resolve_expr_subqueries(
             let mut args = Vec::with_capacity(values.len() + 1);
             args.push((**expr).clone());
             args.extend(values.into_iter().map(|value| BoundExpr {
-                data_type: value.data_type(),
+                data_type: projection_type.or_else(|| value.data_type()),
                 nullable: matches!(value, Value::Null),
                 kind: BoundExprKind::Literal(value),
             }));
@@ -8314,7 +8318,7 @@ fn compare_aggregate_values(
     compare_mysql(left, right)
 }
 
-fn compare_decimal_text(left: &str, right: &str) -> Result<Ordering, ExecError> {
+pub(crate) fn compare_decimal_text(left: &str, right: &str) -> Result<Ordering, ExecError> {
     let (left_negative, left_integer, left_fraction) = decimal_parts(left)?;
     let (right_negative, right_integer, right_fraction) = decimal_parts(right)?;
     if left_negative != right_negative {
@@ -10414,6 +10418,117 @@ mod tests {
         assert_eq!(
             batch.column(2).and_then(|column| column.value(0)),
             Some(&Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn decimal_in_and_modulo_do_not_cross_the_f64_carrier() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT \
+             CAST('9007199254740993' AS DECIMAL(16,0)) \
+                 IN (9007199254740992), \
+             CAST('9007199254740993' AS DECIMAL(16,0)) % 2",
+        );
+        let mut execution =
+            Execution::start(plan, &provider, 4 * 1024).expect("decimal set execution");
+        let batch = execution.next_batch().expect("pull").expect("batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Boolean(false))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn decimal_grouping_distinct_and_extremes_stay_exact() {
+        let table = TableEntry::new(
+            TableId::new(1),
+            "payments",
+            TableSchema::new(
+                1,
+                vec![Column::new(
+                    1,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 16,
+                        scale: 0,
+                    },
+                    true,
+                )],
+            )
+            .expect("schema"),
+            TableStatistics::with_row_count(4),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let plan = |sql: &str| {
+            let statement = parse_statement(sql).expect("parse");
+            let bound = Binder::new(&catalog, Some("app"))
+                .bind(&statement)
+                .expect("bind");
+            PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+                .expect("physical")
+        };
+        let amounts = || {
+            ColumnVector::new(
+                DataType::Decimal {
+                    precision: 16,
+                    scale: 0,
+                },
+                vec![
+                    Value::Utf8("9007199254740992".to_owned()),
+                    Value::Utf8("9007199254740993".to_owned()),
+                    Value::Utf8("9007199254740993".to_owned()),
+                    Value::Null,
+                ],
+            )
+            .expect("amounts")
+        };
+
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(4, vec![amounts()]).expect("batch")]),
+        };
+        let mut aggregate = Execution::start(
+            plan("SELECT COUNT(DISTINCT amount), MIN(amount), MAX(amount) FROM payments"),
+            &provider,
+            64 * 1024,
+        )
+        .expect("aggregate execution");
+        let batch = aggregate.next_batch().expect("pull").expect("batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::UInt64(2))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("9007199254740992".to_owned()))
+        );
+        assert_eq!(
+            batch.column(2).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("9007199254740993".to_owned()))
+        );
+
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(4, vec![amounts()]).expect("batch")]),
+        };
+        let mut grouped = Execution::start(
+            plan("SELECT amount, COUNT(*) FROM payments GROUP BY amount ORDER BY amount"),
+            &provider,
+            64 * 1024,
+        )
+        .expect("grouped execution");
+        let batch = grouped.next_batch().expect("pull").expect("batch");
+        assert_eq!(batch.visible_row_count(), 3);
+        assert_eq!(
+            batch.column(1).expect("counts").values(),
+            [Value::UInt64(1), Value::UInt64(1), Value::UInt64(2)]
         );
     }
 

@@ -4640,8 +4640,10 @@ fn arithmetic_type(
     {
         return Some(result);
     }
-    if matches!(op, BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply)
-        && (matches!(left, DataType::Decimal { .. }) || matches!(right, DataType::Decimal { .. }))
+    if matches!(
+        op,
+        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Modulo
+    ) && (matches!(left, DataType::Decimal { .. }) || matches!(right, DataType::Decimal { .. }))
         && let (Some((left_scale, left_integer)), Some((right_scale, right_integer))) =
             (exact_numeric_digits(left), exact_numeric_digits(right))
     {
@@ -4652,6 +4654,8 @@ fn arithmetic_type(
                     .min(MAX_DECIMAL_SCALE),
                 left_integer.saturating_add(right_integer),
             )
+        } else if op == BinaryOp::Modulo {
+            (left_scale.max(right_scale), left_integer.min(right_integer))
         } else {
             (
                 left_scale.max(right_scale),
@@ -5911,6 +5915,30 @@ mod tests {
             Some(DataType::Decimal {
                 precision: 16,
                 scale: 6
+            })
+        );
+    }
+
+    #[test]
+    fn decimal_modulo_keeps_mysql_precision_and_scale() {
+        let query = bind(
+            "SELECT CAST(12.50 AS DECIMAL(4,2)) % CAST(0.70 AS DECIMAL(3,2)), \
+             MOD(CAST(9007199254740993 AS DECIMAL(16,0)), 2)",
+        )
+        .expect("decimal modulo bind");
+
+        assert_eq!(
+            query.projection[0].expr.data_type,
+            Some(DataType::Decimal {
+                precision: 3,
+                scale: 2,
+            })
+        );
+        assert_eq!(
+            query.projection[1].expr.data_type,
+            Some(DataType::Decimal {
+                precision: 16,
+                scale: 0,
             })
         );
     }

@@ -1302,7 +1302,32 @@ fn evaluate_eager_scalar_typed(
             let matched = like_matches(&value, &pattern, escape);
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
-        ScalarFunction::InList { negated } => evaluate_in_list(values, negated),
+        ScalarFunction::InList { negated } => evaluate_in_list(
+            values,
+            negated,
+            argument_types.len() == values.len()
+                && argument_types.iter().all(|data_type| {
+                    matches!(
+                        data_type,
+                        Some(
+                            DataType::Boolean
+                                | DataType::Int8
+                                | DataType::Int16
+                                | DataType::Int32
+                                | DataType::Int64
+                                | DataType::UInt8
+                                | DataType::UInt16
+                                | DataType::UInt32
+                                | DataType::UInt64
+                                | DataType::Year
+                                | DataType::Decimal { .. }
+                        )
+                    )
+                })
+                && argument_types
+                    .iter()
+                    .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. }))),
+        ),
         ScalarFunction::Between { negated } => evaluate_between(values, negated),
         ScalarFunction::DecimalComparison { op } => {
             let ordering = compare_decimal_values(&values[0], &values[1])?;
@@ -2945,12 +2970,32 @@ fn divide_decimal(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
             )));
         }
     }
-    let dividend = mysql_f64(left)?;
-    let divisor = mysql_f64(right)?;
-    if divisor == 0.0 {
+    Err(ExecError::NumericOverflow)
+}
+
+/// Exact remainder over fixed-point operands. Both operands are aligned to
+/// the result scale before `%`; an overflowing alignment fails explicitly.
+fn decimal_modulo(left: &Value, right: &Value, target: u8) -> Result<Value, ExecError> {
+    let (left_units, left_scale) = decimal_units_of(left).ok_or(ExecError::NumericOverflow)?;
+    let (right_units, right_scale) = decimal_units_of(right).ok_or(ExecError::NumericOverflow)?;
+    if right_units == 0 {
         return Ok(Value::Null);
     }
-    cast_decimal(&Value::float64(dividend / divisor), target)
+    let rescale = |units: i128, scale: u8| {
+        (scale <= target)
+            .then(|| {
+                10_i128
+                    .checked_pow(u32::from(target - scale))
+                    .and_then(|factor| units.checked_mul(factor))
+            })
+            .flatten()
+    };
+    let left = rescale(left_units, left_scale).ok_or(ExecError::NumericOverflow)?;
+    let right = rescale(right_units, right_scale).ok_or(ExecError::NumericOverflow)?;
+    let units = left.checked_rem(right).ok_or(ExecError::NumericOverflow)?;
+    Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+        units, target,
+    )))
 }
 
 /// Exact decimal addition, subtraction, and multiplication on scaled i128
@@ -3013,17 +3058,7 @@ fn decimal_add_sub_mul(
             )));
         }
     }
-    let left = mysql_f64(left)?;
-    let right = mysql_f64(right)?;
-    let value = match op {
-        BinaryOp::Add => left + right,
-        BinaryOp::Subtract => left - right,
-        _ => left * right,
-    };
-    if !value.is_finite() {
-        return Err(ExecError::NumericOverflow);
-    }
-    cast_decimal(&Value::float64(value), target)
+    Err(ExecError::NumericOverflow)
 }
 
 /// Coerces a value to canonical decimal text at `scale`, rounding half away
@@ -3062,8 +3097,8 @@ fn decimal_units_from_i128(value: i128, scale: u8) -> Option<i128> {
     value.checked_mul(10_i128.checked_pow(u32::from(scale))?)
 }
 
-/// Compares two decimal-typed operands numerically on scaled units,
-/// falling back to the f64 carrier when a value cannot carry exact units.
+/// Compares exact decimal operands without crossing the f64 carrier. The
+/// textual fallback avoids overflowing a common scaled-i128 representation.
 fn compare_decimal_values(left: &Value, right: &Value) -> Result<Ordering, ExecError> {
     if let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
         (decimal_units_of(left), decimal_units_of(right))
@@ -3081,7 +3116,16 @@ fn compare_decimal_values(left: &Value, right: &Value) -> Result<Ordering, ExecE
             return Ok(left.cmp(&right));
         }
     }
-    Ok(mysql_f64(left)?.total_cmp(&mysql_f64(right)?))
+    let text = |value: &Value| -> Result<String, ExecError> {
+        match value {
+            Value::Boolean(flag) => Ok(i8::from(*flag).to_string()),
+            Value::Int64(value) => Ok(value.to_string()),
+            Value::UInt64(value) => Ok(value.to_string()),
+            Value::Utf8(value) => Ok(value.clone()),
+            _ => Err(ExecError::InvalidExpressionType),
+        }
+    };
+    crate::execution::compare_decimal_text(&text(left)?, &text(right)?)
 }
 
 /// Splits a value into scaled integer units and the scale it naturally
@@ -3977,13 +4021,22 @@ enum LikeToken {
     AnyMany,
 }
 
-fn evaluate_in_list(values: &[Value], negated: bool) -> Result<Value, ExecError> {
+fn evaluate_in_list(
+    values: &[Value],
+    negated: bool,
+    exact_decimal: bool,
+) -> Result<Value, ExecError> {
     if matches!(values[0], Value::Null) {
         return Ok(Value::Null);
     }
     let mut saw_null = false;
     for candidate in &values[1..] {
-        match evaluate_comparison(BinaryOp::Equal, &values[0], candidate)? {
+        let comparison = if exact_decimal && !matches!(candidate, Value::Null) {
+            Value::Boolean(compare_decimal_values(&values[0], candidate)? == Ordering::Equal)
+        } else {
+            evaluate_comparison(BinaryOp::Equal, &values[0], candidate)?
+        };
+        match comparison {
             Value::Boolean(true) => return Ok(Value::Boolean(!negated)),
             Value::Null => saw_null = true,
             Value::Boolean(false) => {}
@@ -4173,6 +4226,7 @@ fn evaluate_arithmetic(
     if let Some(DataType::Decimal { scale: target, .. }) = data_type {
         match op {
             BinaryOp::Divide => return divide_decimal(left, right, target),
+            BinaryOp::Modulo => return decimal_modulo(left, right, target),
             BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
                 return decimal_add_sub_mul(op, left, right, target);
             }

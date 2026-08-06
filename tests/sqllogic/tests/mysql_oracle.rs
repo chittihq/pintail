@@ -1869,6 +1869,14 @@ fn hand_written_cases() -> Vec<OracleCase> {
              CAST('9007199254740993' AS DECIMAL(16,0)) > 9007199254740992",
         ),
         ordered(
+            "decimal exact set and modulo",
+            "SELECT CAST('9007199254740993' AS DECIMAL(16,0)) \
+                 IN (9007199254740992), \
+             CAST('9007199254740993' AS DECIMAL(16,0)) % 2, \
+             CAST('12.50' AS DECIMAL(4,2)) % CAST('0.70' AS DECIMAL(3,2)), \
+             CAST('12.50' AS DECIMAL(4,2)) % 0",
+        ),
+        ordered(
             "decimal ordering",
             // Lexical text ordering would put 8.5714 above 14.2857.
             "SELECT id, score / 7 AS share FROM events ORDER BY share DESC, id",
