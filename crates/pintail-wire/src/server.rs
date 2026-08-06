@@ -500,8 +500,11 @@ where
             .map(|index| Column {
                 table: String::new(),
                 column: format!("param_{}", index + 1),
+                column_length: 1024,
+                character_set: 255,
                 coltype: ColumnType::MYSQL_TYPE_VAR_STRING,
                 colflags: ColumnFlags::empty(),
+                decimals: 0,
             })
             .collect::<Vec<_>>();
         let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
@@ -817,11 +820,49 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize) -> Column {
         ColumnFlags::BINARY_FLAG,
         matches!(field.data_type, Some(DataType::Binary)),
     );
+    let decimals = match field.data_type {
+        Some(
+            DataType::Decimal { scale, .. }
+            | DataType::DateTime64 { fsp: scale }
+            | DataType::Time64 { fsp: scale },
+        ) => scale,
+        Some(DataType::Float32 | DataType::Float64) => 31,
+        _ => 0,
+    };
+    let column_length = match field.data_type {
+        Some(DataType::Boolean | DataType::Int8 | DataType::UInt8 | DataType::Year) => 4,
+        Some(DataType::Int16 | DataType::UInt16) => 6,
+        Some(DataType::Int32 | DataType::UInt32) => 11,
+        Some(DataType::Int64 | DataType::UInt64) => 20,
+        Some(DataType::Float32) => 12,
+        Some(DataType::Float64) => 22,
+        Some(DataType::Decimal { precision, scale }) => {
+            u32::from(precision) + 1 + u32::from(scale > 0)
+        }
+        Some(DataType::Date32) => 10,
+        Some(DataType::DateTime64 { fsp }) => 19 + u32::from(fsp > 0) + u32::from(fsp),
+        Some(DataType::Time64 { fsp }) => 10 + u32::from(fsp > 0) + u32::from(fsp),
+        Some(DataType::Utf8) if field.group_concat => {
+            u32::try_from(group_concat_max_len).unwrap_or(u32::MAX)
+        }
+        Some(DataType::Utf8 | DataType::Binary | DataType::Json) | None => 1024,
+    };
+    // Text results use utf8mb4_0900_ai_ci (255), matching the advertised
+    // connection collation; numeric, temporal, binary and JSON results use
+    // MySQL's binary character set (63).
+    let character_set = if matches!(field.data_type, Some(DataType::Utf8)) {
+        255
+    } else {
+        63
+    };
     Column {
         table: String::new(),
         column: field.name.clone(),
+        column_length,
+        character_set,
         coltype,
         colflags,
+        decimals,
     }
 }
 
@@ -1245,6 +1286,39 @@ mod tests {
         );
         assert_eq!(binary.coltype, ColumnType::MYSQL_TYPE_BLOB);
         assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
+        assert_eq!(nullable_text.character_set, 255);
+        assert_eq!(binary.character_set, 63);
+    }
+
+    #[test]
+    fn result_columns_report_decimal_and_temporal_scale() {
+        let decimal = mysql_column(
+            &QueryField {
+                name: "amount".to_owned(),
+                data_type: Some(DataType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                }),
+                nullable: false,
+                group_concat: false,
+            },
+            1024,
+        );
+        assert_eq!(decimal.decimals, 4);
+        assert_eq!(decimal.column_length, 20);
+        assert_eq!(decimal.character_set, 63);
+
+        let datetime = mysql_column(
+            &QueryField {
+                name: "created_at".to_owned(),
+                data_type: Some(DataType::DateTime64 { fsp: 6 }),
+                nullable: false,
+                group_concat: false,
+            },
+            1024,
+        );
+        assert_eq!(datetime.decimals, 6);
+        assert_eq!(datetime.column_length, 26);
     }
 
     #[test]

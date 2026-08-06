@@ -18,6 +18,12 @@ members = [
 ]
 resolver = "3"
 
+[patch.crates-io]
+# opensrv-mysql 0.7 hardcodes ColumnDefinition41 length, charset and decimals.
+# The vendored patch exposes those protocol fields until upstream publishes
+# equivalent support; see vendor/opensrv-mysql/README.pintail.md.
+opensrv-mysql = { path = "vendor/opensrv-mysql" }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

@@ -285,10 +285,10 @@ worth refusing.
   TLS-capable ingress when exposed across a network.
 - DBeaver and Metabase application-level smokes are not automated on this
   workstation.
-- Binary result columns carry `BINARY_FLAG`, but `opensrv-mysql` 0.7 hardcodes
-  column charset 33 (utf8) in result metadata, so clients that detect binary
-  columns via charset 63 — mysql2 and most connector libraries — decode raw
-  binary bytes as text. The bytes on the wire are the exact stored value.
+- The vendored `opensrv-mysql` 0.7 patch emits Pintail's real column length,
+  collation/charset, and decimal/FSP metadata. Text results advertise
+  `utf8mb4_0900_ai_ci`; numeric, temporal, JSON, and binary results advertise
+  the binary character set, and raw binary values also carry `BINARY_FLAG`.
 
 ## Operations and backup
 

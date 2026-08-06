@@ -346,13 +346,23 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("prepared TIME parameter");
     assert_eq!(by_time, vec![1]);
-    let fidelity = connection
-        .exec_first::<mysql_async::Row, _, _>(
+    let fidelity_statement = connection
+        .prep(
             "SELECT decimal_exact, date_value, datetime_value, time_value, \
                     json_value, text_value, binary_value, bool_value, signed_value \
              FROM type_fidelity WHERE id = ?",
-            (1_u64,),
         )
+        .await
+        .expect("prepare type-fidelity query");
+    let fidelity_columns = fidelity_statement.columns();
+    assert_eq!(fidelity_columns[0].decimals(), 10);
+    assert_eq!(fidelity_columns[2].decimals(), 6);
+    assert_eq!(fidelity_columns[3].decimals(), 6);
+    assert_eq!(fidelity_columns[4].character_set(), 63);
+    assert_eq!(fidelity_columns[5].character_set(), 255);
+    assert_eq!(fidelity_columns[6].character_set(), 63);
+    let fidelity = connection
+        .exec_first::<mysql_async::Row, _, _>(&fidelity_statement, (1_u64,))
         .await
         .expect("prepared type-fidelity query")
         .expect("type-fidelity row")

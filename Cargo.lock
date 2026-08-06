@@ -2271,8 +2271,6 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "opensrv-mysql"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4148ab944991b0a33be74d2636a815268974578812a9e4cf7dc785325e858154"
 dependencies = [
  "async-trait",
  "byteorder",
