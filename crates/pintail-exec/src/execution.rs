@@ -8757,6 +8757,7 @@ fn build_window(
 
 enum NumericRangeTarget {
     NegativeInfinity,
+    ExactDecimal { units: i128, scale: u8 },
     Value(Value),
     PositiveInfinity,
 }
@@ -8764,7 +8765,8 @@ enum NumericRangeTarget {
 #[allow(clippy::cast_precision_loss)] // Float ordering keys are approximate by definition.
 fn numeric_range_target(
     current: &Value,
-    offset: u64,
+    offset_units: i128,
+    offset_scale: u8,
     add: bool,
     decimal: bool,
 ) -> Result<NumericRangeTarget, ExecError> {
@@ -8776,24 +8778,36 @@ fn numeric_range_target(
         }
     };
     let target = match current {
-        Value::Int64(value) => {
-            let value = i128::from(*value);
-            let offset = i128::from(offset);
-            let value = if add { value + offset } else { value - offset };
-            i64::try_from(value)
-                .map(Value::Int64)
-                .map_or_else(|_| overflow(), NumericRangeTarget::Value)
-        }
-        Value::UInt64(value) => {
-            let value = i128::from(*value);
-            let offset = i128::from(offset);
-            let value = if add { value + offset } else { value - offset };
-            u64::try_from(value)
-                .map(Value::UInt64)
-                .map_or_else(|_| overflow(), NumericRangeTarget::Value)
-        }
+        Value::Int64(value) => 10_i128
+            .checked_pow(u32::from(offset_scale))
+            .and_then(|factor| i128::from(*value).checked_mul(factor))
+            .and_then(|value| {
+                if add {
+                    value.checked_add(offset_units)
+                } else {
+                    value.checked_sub(offset_units)
+                }
+            })
+            .map_or_else(overflow, |units| NumericRangeTarget::ExactDecimal {
+                units,
+                scale: offset_scale,
+            }),
+        Value::UInt64(value) => 10_i128
+            .checked_pow(u32::from(offset_scale))
+            .and_then(|factor| i128::from(*value).checked_mul(factor))
+            .and_then(|value| {
+                if add {
+                    value.checked_add(offset_units)
+                } else {
+                    value.checked_sub(offset_units)
+                }
+            })
+            .map_or_else(overflow, |units| NumericRangeTarget::ExactDecimal {
+                units,
+                scale: offset_scale,
+            }),
         Value::Float64(value) => {
-            let offset = offset as f64;
+            let offset = offset_units as f64 / 10_f64.powi(i32::from(offset_scale));
             let value = if add {
                 value.get() + offset
             } else {
@@ -8806,29 +8820,31 @@ fn numeric_range_target(
             }
         }
         Value::Utf8(text) if decimal => {
-            let scale = text
+            let current_scale = text
                 .split_once('.')
                 .map_or(0, |(_, fraction)| fraction.len());
-            let scale = u8::try_from(scale).map_err(|_| ExecError::NumericOverflow)?;
-            let units = pintail_types::parse_decimal_scaled(text, scale)
+            let current_scale =
+                u8::try_from(current_scale).map_err(|_| ExecError::NumericOverflow)?;
+            let scale = current_scale.max(offset_scale);
+            let units = pintail_types::parse_decimal_scaled(text, current_scale)
                 .ok_or(ExecError::InvalidExpressionType)?;
-            let offset = i128::from(offset)
-                .checked_mul(
-                    10_i128
-                        .checked_pow(u32::from(scale))
-                        .ok_or(ExecError::NumericOverflow)?,
-                )
-                .and_then(|offset| {
+            let rescale = |units: i128, from: u8| {
+                10_i128
+                    .checked_pow(u32::from(scale - from))
+                    .and_then(|factor| units.checked_mul(factor))
+            };
+            let offset = rescale(units, current_scale)
+                .zip(rescale(offset_units, offset_scale))
+                .and_then(|(units, offset)| {
                     if add {
                         units.checked_add(offset)
                     } else {
                         units.checked_sub(offset)
                     }
                 });
-            offset.map_or_else(overflow, |units| {
-                NumericRangeTarget::Value(Value::Utf8(pintail_types::format_decimal_scaled(
-                    units, scale,
-                )))
+            offset.map_or_else(overflow, |units| NumericRangeTarget::ExactDecimal {
+                units,
+                scale,
             })
         }
         _ => return Err(ExecError::InvalidExpressionType),
@@ -8841,7 +8857,7 @@ fn numeric_range_bound(
     keys: &[Vec<Value>],
     partition: &[usize],
     current: usize,
-    offset: u64,
+    offset: (i128, u8),
     preceding: bool,
     upper: bool,
 ) -> Result<usize, ExecError> {
@@ -8852,7 +8868,8 @@ fn numeric_range_bound(
     let current_value = &keys[partition[current]][key_position];
     let target = numeric_range_target(
         current_value,
-        offset,
+        offset.0,
+        offset.1,
         if *ascending { !preceding } else { preceding },
         *decimal,
     )?;
@@ -8910,6 +8927,25 @@ fn range_bound_for_target(
         let natural = match &target {
             NumericRangeTarget::NegativeInfinity => Ordering::Greater,
             NumericRangeTarget::PositiveInfinity => Ordering::Less,
+            NumericRangeTarget::ExactDecimal { units, scale } => {
+                let candidate = match candidate {
+                    Value::Boolean(value) => i8::from(*value).to_string(),
+                    Value::Int64(value) => value.to_string(),
+                    Value::UInt64(value) => value.to_string(),
+                    Value::Utf8(value) if *decimal => value.clone(),
+                    _ => return Ordering::Equal,
+                };
+                let ordering = compare_decimal_text(
+                    &candidate,
+                    &pintail_types::format_decimal_scaled(*units, *scale),
+                )
+                .unwrap_or(Ordering::Equal);
+                if *ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                }
+            }
             NumericRangeTarget::Value(target) => compare_sort_values(
                 candidate,
                 target,
@@ -8922,7 +8958,7 @@ fn range_bound_for_target(
             ),
         };
         match target {
-            NumericRangeTarget::Value(_) => natural,
+            NumericRangeTarget::Value(_) | NumericRangeTarget::ExactDecimal { .. } => natural,
             _ if *ascending => natural,
             _ => natural.reverse(),
         }
@@ -9046,9 +9082,15 @@ fn compute_window_column(
                 )),
             };
             let range_bound = |offset: Offset, preceding: bool, upper: bool| match offset {
-                Offset::Numeric(value) => {
-                    numeric_range_bound(window, keys, partition, index, value, preceding, upper)
-                }
+                Offset::Numeric { units, scale } => numeric_range_bound(
+                    window,
+                    keys,
+                    partition,
+                    index,
+                    (units, scale),
+                    preceding,
+                    upper,
+                ),
                 Offset::Interval { value, unit } => temporal_range_bound(
                     window,
                     keys,

@@ -2179,6 +2179,16 @@ mod tests {
         );
         assert_eq!(
             execute_values_with_limit(
+                "SELECT SUM(id) OVER (ORDER BY id RANGE BETWEEN 0.5 PRECEDING AND CURRENT ROW) \
+                 FROM events",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            [1_u64, 2, 10, 11, 20].map(Value::UInt64)
+        );
+        assert_eq!(
+            execute_values_with_limit(
                 "SELECT SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING), \
                  id FROM events ORDER BY id DESC",
                 &catalog,

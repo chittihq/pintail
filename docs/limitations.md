@@ -22,8 +22,9 @@ stays readable as a list of things to fix.
   one numeric ordering key, framing by key value rather than row position,
   plus simple `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, and `SECOND` intervals
   over one temporal key. Decimal, calendar, and descending-key arithmetic
-  retain their exact ordering. Fractional numeric offsets and compound
-  temporal interval qualifiers still reject (#25).
+  retain their exact ordering, including fractional numeric offsets. Compound
+  temporal interval qualifiers still reject because sqlparser does not accept
+  their MySQL spelling (#13, #25).
   `GROUPS` frames and `DISTINCT` window aggregates reject as MySQL 8.4 does;
   they are not compatibility gaps. A named window may be referenced as `OVER w`,
   extended additively with clauses absent from its base definition, and chained

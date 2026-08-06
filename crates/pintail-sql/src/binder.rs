@@ -4543,12 +4543,20 @@ fn bind_window_frame(
             match expr.as_ref() {
                 Expr::Value(value) => match &value.value {
                     sqlparser::ast::Value::Number(text, _) => {
-                        let value = text.parse::<u64>().map_err(|_| unsupported())?;
-                        Ok(if range {
-                            BoundFrameOffset::Numeric(value)
+                        if range {
+                            let scale = text
+                                .split_once('.')
+                                .map_or(0, |(_, fraction)| fraction.len());
+                            let scale = u8::try_from(scale).map_err(|_| unsupported())?;
+                            let units = pintail_types::parse_decimal_scaled(text, scale)
+                                .filter(|units| *units >= 0)
+                                .ok_or_else(unsupported)?;
+                            Ok(BoundFrameOffset::Numeric { units, scale })
                         } else {
-                            BoundFrameOffset::Rows(value)
-                        })
+                            Ok(BoundFrameOffset::Rows(
+                                text.parse::<u64>().map_err(|_| unsupported())?,
+                            ))
+                        }
                     }
                     _ => Err(unsupported()),
                 },
@@ -4609,19 +4617,27 @@ fn bind_window_frame(
         BoundFrameBound::UnboundedFollowing => 4,
     };
     let comparable_value = |offset: BoundFrameOffset| match offset {
-        BoundFrameOffset::Rows(value) | BoundFrameOffset::Numeric(value) => Some(value),
+        BoundFrameOffset::Rows(value) => Some((i128::from(value), 0_u8)),
+        BoundFrameOffset::Numeric { units, scale } => Some((units, scale)),
         BoundFrameOffset::Interval { .. } => None,
+    };
+    let offset_cmp = |left: BoundFrameOffset, right: BoundFrameOffset| {
+        let ((left, left_scale), (right, right_scale)) =
+            comparable_value(left).zip(comparable_value(right))?;
+        let scale = left_scale.max(right_scale);
+        let rescale = |units: i128, from: u8| {
+            10_i128
+                .checked_pow(u32::from(scale - from))
+                .and_then(|factor| units.checked_mul(factor))
+        };
+        Some(rescale(left, left_scale)?.cmp(&rescale(right, right_scale)?))
     };
     let reversed_within_side = match (start, end) {
         (BoundFrameBound::Preceding(start), BoundFrameBound::Preceding(end)) => {
-            comparable_value(start)
-                .zip(comparable_value(end))
-                .is_some_and(|(start, end)| start < end)
+            offset_cmp(start, end) == Some(std::cmp::Ordering::Less)
         }
         (BoundFrameBound::Following(start), BoundFrameBound::Following(end)) => {
-            comparable_value(start)
-                .zip(comparable_value(end))
-                .is_some_and(|(start, end)| start > end)
+            offset_cmp(start, end) == Some(std::cmp::Ordering::Greater)
         }
         _ => false,
     };

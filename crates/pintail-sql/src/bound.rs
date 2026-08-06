@@ -558,8 +558,13 @@ pub enum BoundFrameBound {
 pub enum BoundFrameOffset {
     /// Physical row count in a `ROWS` frame.
     Rows(u64),
-    /// Integer value distance in a numeric `RANGE` frame.
-    Numeric(u64),
+    /// Exact nonnegative value distance in a numeric `RANGE` frame.
+    Numeric {
+        /// Scaled integer units.
+        units: i128,
+        /// Fraction digits carried by `units`.
+        scale: u8,
+    },
     /// Calendar/time distance in a temporal `RANGE` frame.
     Interval {
         /// Nonnegative interval magnitude.

@@ -1052,7 +1052,8 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written window numeric range offsets",
             "SELECT id, score, \
              SUM(score) OVER (ORDER BY score RANGE BETWEEN 10 PRECEDING AND CURRENT ROW), \
-             COUNT(*) OVER (ORDER BY score DESC RANGE BETWEEN 5 PRECEDING AND 5 FOLLOWING) \
+             COUNT(*) OVER (ORDER BY score DESC RANGE BETWEEN 5 PRECEDING AND 5 FOLLOWING), \
+             SUM(score) OVER (ORDER BY score RANGE BETWEEN 0.5 PRECEDING AND CURRENT ROW) \
              FROM events ORDER BY id",
         ),
         ordered(
