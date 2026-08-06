@@ -3184,14 +3184,21 @@ fn json_contains(target: &serde_json::Value, candidate: &serde_json::Value) -> b
     }
 }
 
-fn json_path_lookup<'a>(
-    document: &'a serde_json::Value,
-    path: &str,
-) -> Result<Option<&'a serde_json::Value>, ExecError> {
+/// One step of a `MySQL` JSON path: an object member or an array position.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum JsonStep {
+    Member(String),
+    Index(usize),
+}
+
+/// Parses `$.a[0].b` into its steps. Every JSON function that walks a path
+/// goes through this, so a path cannot mean one thing in one function and
+/// something else in another.
+fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
     let rest = path
         .strip_prefix('$')
         .ok_or(ExecError::InvalidExpressionType)?;
-    let mut current = document;
+    let mut steps = Vec::new();
     let mut chars = rest.chars().peekable();
     while let Some(step) = chars.next() {
         match step {
@@ -3214,13 +3221,12 @@ fn json_path_lookup<'a>(
                         chars.next();
                     }
                 }
+                // A wildcard selects many targets, which a single-target
+                // mutation cannot express; rejecting beats picking one.
                 if key.is_empty() || key == "*" {
                     return Err(ExecError::InvalidExpressionType);
                 }
-                match current.get(&key) {
-                    Some(next) => current = next,
-                    None => return Ok(None),
-                }
+                steps.push(JsonStep::Member(key));
             }
             '[' => {
                 let mut digits = String::new();
@@ -3230,16 +3236,32 @@ fn json_path_lookup<'a>(
                     }
                     digits.push(inner);
                 }
-                let index: usize = digits
-                    .trim()
-                    .parse()
-                    .map_err(|_| ExecError::InvalidExpressionType)?;
-                match current.get(index) {
-                    Some(next) => current = next,
-                    None => return Ok(None),
-                }
+                steps.push(JsonStep::Index(
+                    digits
+                        .trim()
+                        .parse()
+                        .map_err(|_| ExecError::InvalidExpressionType)?,
+                ));
             }
             _ => return Err(ExecError::InvalidExpressionType),
+        }
+    }
+    Ok(steps)
+}
+
+fn json_path_lookup<'a>(
+    document: &'a serde_json::Value,
+    path: &str,
+) -> Result<Option<&'a serde_json::Value>, ExecError> {
+    let mut current = document;
+    for step in json_path_steps(path)? {
+        let next = match step {
+            JsonStep::Member(key) => current.get(&key),
+            JsonStep::Index(index) => current.get(index),
+        };
+        match next {
+            Some(value) => current = value,
+            None => return Ok(None),
         }
     }
     Ok(Some(current))
