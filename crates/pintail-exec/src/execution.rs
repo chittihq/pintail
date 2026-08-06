@@ -10738,6 +10738,45 @@ mod tests {
     }
 
     #[test]
+    fn casts_mysql_year_with_numeric_string_and_temporal_rules() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT CAST(0 AS YEAR), CAST('0' AS YEAR), CAST(69 AS YEAR), \
+             CAST(70 AS YEAR), CAST(1901 AS YEAR), CAST(2155 AS YEAR), \
+             CAST(2156 AS YEAR), CAST(1944.5 AS YEAR), \
+             CAST(CAST('2024-02-29' AS DATE) AS YEAR), \
+             CAST('11:35:00' AS YEAR), CAST('1979aaa' AS YEAR), \
+             CAST('not-a-year' AS YEAR)",
+        );
+        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let values = batch
+            .columns()
+            .iter()
+            .map(|column| column.value(0).cloned().expect("value"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                Value::UInt64(0),
+                Value::UInt64(2000),
+                Value::UInt64(2069),
+                Value::UInt64(1970),
+                Value::UInt64(1901),
+                Value::UInt64(2155),
+                Value::Null,
+                Value::UInt64(1945),
+                Value::UInt64(2024),
+                Value::UInt64(2011),
+                Value::UInt64(1979),
+                Value::Null,
+            ]
+        );
+    }
+
+    #[test]
     fn enforces_the_hard_query_memory_cap() {
         let provider = StaticProvider {
             batches: Mutex::new(vec![source_batch()]),

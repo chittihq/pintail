@@ -210,6 +210,20 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         ]
     );
 
+    let mut year_result = connection
+        .query_iter("SELECT CAST(69 AS YEAR)")
+        .await
+        .expect("YEAR cast query");
+    assert_eq!(
+        year_result.columns().expect("YEAR result metadata")[0].column_type(),
+        ColumnType::MYSQL_TYPE_YEAR
+    );
+    let year_rows: Vec<mysql_async::Row> = year_result.collect().await.expect("YEAR rows");
+    assert_eq!(
+        year_rows.into_iter().next().expect("YEAR row").unwrap(),
+        vec![mysql_async::Value::Bytes(b"2069".to_vec())]
+    );
+
     let json_statement = connection
         .prep(
             "SELECT JSON_OBJECT('json', json_value, 'text', text_value), \

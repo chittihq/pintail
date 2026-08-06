@@ -1517,12 +1517,12 @@ fn wrap_in_decimal_cast(expr: &mut BoundExpr, unified: DataType) {
 /// number) stay rejected.
 // Outer None = incompatible pair; inner None = still untyped (NULL literals
 // on both branches). A dedicated enum would just restate Option twice.
-#[allow(clippy::option_option)]
+#[allow(clippy::option_option, clippy::too_many_lines)]
 fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<Option<DataType>> {
     fn unsigned_rank(data_type: DataType) -> Option<u8> {
         match data_type {
             DataType::UInt8 => Some(0),
-            DataType::UInt16 => Some(1),
+            DataType::UInt16 | DataType::Year => Some(1),
             DataType::UInt32 => Some(2),
             DataType::UInt64 => Some(3),
             _ => None,
@@ -1544,6 +1544,7 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
         match data_type {
             DataType::Boolean | DataType::Int8 | DataType::UInt8 => Some(3),
             DataType::Int16 | DataType::UInt16 => Some(5),
+            DataType::Year => Some(4),
             DataType::Int32 | DataType::UInt32 => Some(10),
             DataType::Int64 => Some(19),
             DataType::UInt64 => Some(20),
@@ -3530,7 +3531,9 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
         _ => {}
     }
     let name = data_type.to_string().to_ascii_uppercase();
-    if name.contains("BINARY") || name.contains("BLOB") {
+    if name == "YEAR" {
+        Some(DataType::Year)
+    } else if name.contains("BINARY") || name.contains("BLOB") {
         Some(DataType::Binary)
     } else if name.contains("CHAR") || name.contains("TEXT") {
         Some(DataType::Utf8)
@@ -4511,6 +4514,7 @@ fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
         | DataType::UInt16
         | DataType::UInt32
         | DataType::UInt64 => Some((0, 20)),
+        DataType::Year => Some((0, 4)),
         _ => None,
     }
 }
@@ -4629,6 +4633,7 @@ fn is_numeric(data_type: Option<DataType>) -> bool {
                 | DataType::UInt16
                 | DataType::UInt32
                 | DataType::UInt64
+                | DataType::Year
                 | DataType::Float32
                 | DataType::Float64
                 | DataType::Decimal { .. }
@@ -4655,6 +4660,7 @@ fn is_mysql_scalar(data_type: Option<DataType>) -> bool {
                 | DataType::UInt16
                 | DataType::UInt32
                 | DataType::UInt64
+                | DataType::Year
                 | DataType::Float32
                 | DataType::Float64
                 | DataType::Decimal { .. }
@@ -5396,6 +5402,12 @@ mod tests {
                 Err(BindError::InvalidScalarFunction(_))
             ));
         }
+    }
+
+    #[test]
+    fn binds_year_cast_as_a_mysql_year_type() {
+        let query = bind("SELECT CAST(69 AS YEAR) FROM Events").expect("binds");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Year));
     }
 
     #[test]

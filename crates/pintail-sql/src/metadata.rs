@@ -1892,6 +1892,7 @@ fn mysql_type(data_type: DataType) -> String {
         DataType::Date32 => "date".to_owned(),
         DataType::DateTime64 { fsp } => format!("datetime({fsp})"),
         DataType::Time64 { fsp } => format!("time({fsp})"),
+        DataType::Year => "year".to_owned(),
         DataType::Utf8 => "text".to_owned(),
         DataType::Binary => "blob".to_owned(),
         DataType::Json => "json".to_owned(),
@@ -1910,6 +1911,7 @@ const fn mysql_data_type(data_type: DataType) -> &'static str {
         DataType::Date32 => "date",
         DataType::DateTime64 { .. } => "datetime",
         DataType::Time64 { .. } => "time",
+        DataType::Year => "year",
         DataType::Utf8 => "text",
         DataType::Binary => "blob",
         DataType::Json => "json",
@@ -1919,7 +1921,7 @@ const fn mysql_data_type(data_type: DataType) -> &'static str {
 const fn numeric_precision(data_type: DataType) -> Option<u64> {
     match data_type {
         DataType::Boolean | DataType::Int8 | DataType::UInt8 => Some(3),
-        DataType::Int16 | DataType::UInt16 => Some(5),
+        DataType::Int16 | DataType::UInt16 | DataType::Year => Some(4),
         DataType::Int32 | DataType::UInt32 => Some(10),
         DataType::Int64 => Some(19),
         DataType::UInt64 => Some(20),
@@ -1940,7 +1942,8 @@ const fn numeric_scale(data_type: DataType) -> Option<u64> {
         | DataType::UInt8
         | DataType::UInt16
         | DataType::UInt32
-        | DataType::UInt64 => Some(0),
+        | DataType::UInt64
+        | DataType::Year => Some(0),
         DataType::Decimal { scale, .. } => Some(scale as u64),
         _ => None,
     }

@@ -89,7 +89,8 @@ stays readable as a list of things to fix.
 - `CAST(value AS TIME[(fsp)])` accepts MySQL's interval-shaped, compact, day-
   prefixed, and datetime inputs, rounds to the declared fractional precision,
   and clamps to `-838:59:59`..`838:59:59`. `CAST AS JSON` validates and
-  canonicalizes documents. `CAST AS YEAR` still rejects (#17).
+  canonicalizes documents. `CAST AS YEAR` preserves MySQL's `YEAR` wire type
+  and its numeric, string-zero, two-digit, and temporal conversion rules (#17).
 - `information_schema` does not support joins, aggregates beyond `COUNT(*)`, or
   metadata tables outside the served set.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,

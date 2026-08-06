@@ -772,7 +772,11 @@ pub fn map_mysql_value(
                 .map_err(|reason| mapping_error(table, column, reason))?;
             Value::Int64(value)
         }
-        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+        DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64
+        | DataType::Year => {
             let value = mysql_u64(&value)
                 .ok_or_else(|| mapping_error(table, column, "expected an unsigned integer"))?;
             validate_unsigned_range(column.pintail_type, value)
@@ -932,6 +936,7 @@ fn validate_unsigned_range(data_type: DataType, value: u64) -> Result<(), &'stat
         DataType::UInt16 => u16::try_from(value).is_ok(),
         DataType::UInt32 => u32::try_from(value).is_ok(),
         DataType::UInt64 => true,
+        DataType::Year => value == 0 || (1901..=2155).contains(&value),
         _ => false,
     };
     if valid {

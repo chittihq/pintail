@@ -768,6 +768,7 @@ fn mysql_column(field: &QueryField) -> Column {
         Some(DataType::Date32) => (ColumnType::MYSQL_TYPE_DATE, false),
         Some(DataType::DateTime64 { .. }) => (ColumnType::MYSQL_TYPE_DATETIME, false),
         Some(DataType::Time64 { .. }) => (ColumnType::MYSQL_TYPE_TIME, false),
+        Some(DataType::Year) => (ColumnType::MYSQL_TYPE_YEAR, true),
         Some(DataType::Binary) => (ColumnType::MYSQL_TYPE_BLOB, false),
         Some(DataType::Json) => (ColumnType::MYSQL_TYPE_JSON, false),
         Some(DataType::Utf8) | None => (ColumnType::MYSQL_TYPE_VAR_STRING, false),

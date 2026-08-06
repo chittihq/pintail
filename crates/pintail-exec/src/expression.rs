@@ -1155,6 +1155,7 @@ fn evaluate_scalar(
                                 | DataType::UInt16
                                 | DataType::UInt32
                                 | DataType::UInt64
+                                | DataType::Year
                                 | DataType::Decimal { .. }
                         )
                     )
@@ -1314,6 +1315,9 @@ fn evaluate_eager_scalar_typed(
                 BinaryOp::GreaterOrEqual => ordering != Ordering::Less,
                 _ => return Err(ExecError::InvalidExpressionType),
             }))
+        }
+        ScalarFunction::Cast(DataType::Year) => {
+            cast_mysql_year(&values[0], argument_types.first().copied().flatten())
         }
         ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
         ScalarFunction::Abs { decimal } => match &values[0] {
@@ -2795,6 +2799,60 @@ fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
         fraction,
         fsp,
     )
+}
+
+fn cast_mysql_year(value: &Value, source_type: Option<DataType>) -> Result<Value, ExecError> {
+    let (number, string_input) = match source_type {
+        Some(DataType::Date32 | DataType::DateTime64 { .. }) => {
+            let text = scalar_string(value)?;
+            let year = text
+                .get(..4)
+                .and_then(|year| year.parse::<u64>().ok())
+                .filter(|year| *year != 0);
+            return Ok(year.map_or(Value::Null, Value::UInt64));
+        }
+        Some(DataType::Time64 { .. }) => {
+            return Ok(Value::UInt64(
+                u64::try_from(Local::now().year()).unwrap_or(0),
+            ));
+        }
+        Some(DataType::Utf8 | DataType::Binary | DataType::Json) => {
+            let text = scalar_string(value)?;
+            let trimmed = text.trim_start();
+            let unsigned = trimmed
+                .strip_prefix('+')
+                .or_else(|| trimmed.strip_prefix('-'))
+                .unwrap_or(trimmed);
+            let numeric_prefix = unsigned.starts_with(|character: char| character.is_ascii_digit())
+                || unsigned
+                    .strip_prefix('.')
+                    .is_some_and(|fraction| fraction.starts_with(|c: char| c.is_ascii_digit()));
+            if !numeric_prefix {
+                return Ok(Value::Null);
+            }
+            (parse_mysql_number(&text), true)
+        }
+        _ => (mysql_f64(value)?, false),
+    };
+    if !number.is_finite() {
+        return Ok(Value::Null);
+    }
+    let rounded = number.round();
+    if !(0.0..=2155.0).contains(&rounded) {
+        return Ok(Value::Null);
+    }
+    let year = format!("{rounded:.0}")
+        .parse::<u64>()
+        .map_err(|_| ExecError::InvalidExpressionType)?;
+    let year = match year {
+        0 if string_input => 2000,
+        0 => 0,
+        1..=69 => year + 2000,
+        70..=99 => year + 1900,
+        1901..=2155 => year,
+        _ => return Ok(Value::Null),
+    };
+    Ok(Value::UInt64(year))
 }
 
 fn format_mysql_time(

@@ -892,7 +892,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT CAST(42 AS CHAR), CAST('42' AS SIGNED), CAST('42' AS UNSIGNED), \
              CAST(-1 AS SIGNED), CAST('3.7' AS DECIMAL(10,2)), CAST(1 AS CHAR(4)), \
              CAST('{\"aa\":1,\"b\":[true,null]}' AS JSON), \
-             JSON_TYPE(CAST('[1,2]' AS JSON))",
+             JSON_TYPE(CAST('[1,2]' AS JSON)), \
+             CAST(0 AS YEAR), CAST('0' AS YEAR), CAST(69 AS YEAR), \
+             CAST(70 AS YEAR), CAST(1944.5 AS YEAR), CAST(2156 AS YEAR), \
+             CAST(CAST('2024-02-29' AS DATE) AS YEAR), CAST('11:35:00' AS YEAR), \
+             CAST('1979aaa' AS YEAR), CAST('not-a-year' AS YEAR)",
         ),
         // JSON containment is asymmetric and recursive, which is the part
         // most likely to be subtly wrong: an array contains a bare scalar

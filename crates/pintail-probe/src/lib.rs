@@ -805,7 +805,7 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
             warning: None,
         },
         "year" => TypeMapping {
-            data_type: DataType::UInt16,
+            data_type: DataType::Year,
             warning: None,
         },
         "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum" | "set" => {
@@ -882,6 +882,14 @@ mod tests {
         assert_eq!(
             map_mysql_type(&value).expect("mapping").data_type,
             DataType::DateTime64 { fsp: 6 }
+        );
+
+        value.data_type = "year".to_owned();
+        value.column_type = "year".to_owned();
+        value.datetime_precision = None;
+        assert_eq!(
+            map_mysql_type(&value).expect("mapping").data_type,
+            DataType::Year
         );
     }
 

@@ -735,6 +735,7 @@ fn encode_schema_data_type(encoder: &mut Encoder, data_type: DataType) {
             encoder.u8(fsp);
         }
         DataType::Json => encoder.u8(17),
+        DataType::Year => encoder.u8(18),
     }
 }
 

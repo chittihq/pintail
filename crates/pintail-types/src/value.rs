@@ -47,6 +47,8 @@ pub enum DataType {
         /// Fractional-second precision in the range `0..=6`.
         fsp: u8,
     },
+    /// `MySQL` four-digit `YEAR` value, or zero.
+    Year,
     /// UTF-8 string.
     Utf8,
     /// Arbitrary bytes.
@@ -68,7 +70,7 @@ impl DataType {
         match self {
             Self::Boolean => Self::Boolean,
             Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64 => Self::Int64,
-            Self::UInt8 | Self::UInt16 | Self::UInt32 | Self::UInt64 => Self::UInt64,
+            Self::UInt8 | Self::UInt16 | Self::UInt32 | Self::UInt64 | Self::Year => Self::UInt64,
             Self::Float32 | Self::Float64 => Self::Float64,
             Self::Decimal { .. }
             | Self::Date32
