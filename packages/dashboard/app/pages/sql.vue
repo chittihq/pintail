@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Database, LoaderCircle, Play, Search, SquareTerminal } from '@lucide/vue'
-import { csvCell, displayValue, messageOf } from '@/lib/format'
+import { displayValue, messageOf } from '@/lib/format'
 import type { QueryResponse } from '@/types/pintail'
 
 const route = useRoute()
@@ -43,29 +43,6 @@ async function runSql() {
   }
 }
 
-function exportResult(kind: 'json' | 'csv') {
-  if (!sqlResult.value) return
-  const fields = sqlResult.value.fields.map((field) => field.name)
-  const content =
-    kind === 'json'
-      ? JSON.stringify(
-          sqlResult.value.rows.map((row) => Object.fromEntries(fields.map((field, index) => [field, row[index]]))),
-          null,
-          2,
-        )
-      : [
-          fields.map(csvCell).join(','),
-          ...sqlResult.value.rows.map((row) => row.map(csvCell).join(',')),
-        ].join('\n')
-  const blob = new Blob([content], {
-    type: kind === 'json' ? 'application/json' : 'text/csv',
-  })
-  const anchor = document.createElement('a')
-  anchor.href = URL.createObjectURL(blob)
-  anchor.download = `pintail-query.${kind}`
-  anchor.click()
-  URL.revokeObjectURL(anchor.href)
-}
 </script>
 
 <template>
@@ -93,12 +70,9 @@ function exportResult(kind: 'json' | 'csv') {
       </Card>
       <p v-if="sqlError" class="text-destructive my-3 text-sm">{{ sqlError }}</p>
       <Card class="mt-4 overflow-hidden p-0">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-          <div><h2 class="text-base font-semibold">Results</h2><p v-if="sqlResult" class="text-muted-foreground mt-1 font-mono text-xs">{{ sqlResult.stats.rows }} rows · {{ sqlResult.stats.duration_ms }} ms · {{ sqlResult.stats.blocks_read }} blocks read / {{ sqlResult.stats.blocks_pruned }} pruned</p></div>
-          <div v-if="sqlResult" class="flex items-center gap-2">
-            <Button variant="outline" size="sm" @click="exportResult('csv')">CSV</Button>
-            <Button variant="outline" size="sm" @click="exportResult('json')">JSON</Button>
-          </div>
+        <div class="border-b p-4">
+          <h2 class="text-base font-semibold">Results</h2>
+          <p v-if="sqlResult" class="text-muted-foreground mt-1 font-mono text-xs">{{ sqlResult.stats.rows }} rows · {{ sqlResult.stats.duration_ms }} ms · {{ sqlResult.stats.blocks_read }} blocks read / {{ sqlResult.stats.blocks_pruned }} pruned</p>
         </div>
         <div v-if="!sqlResult" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 text-center"><Search :size="24" /><strong class="text-foreground">Run a query</strong><span class="max-w-sm text-sm">Typed fields and physical scan counters appear here.</span></div>
         <div v-else class="max-h-[34rem] overflow-auto">
