@@ -89,5 +89,5 @@ onBeforeUnmount(() => view?.destroy())
 </script>
 
 <template>
-  <div ref="host" class="sql-editor" />
+  <div ref="host" class="min-h-68" />
 </template>
