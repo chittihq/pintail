@@ -722,6 +722,7 @@ impl CompiledExpr {
                         .saturating_mul(12),
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
+                    | ScalarFunction::DecimalComparison { .. }
                     | ScalarFunction::InList { .. }
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
@@ -862,6 +863,7 @@ impl CompiledExpr {
                     | ScalarFunction::MakeTime => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
+                    | ScalarFunction::DecimalComparison { .. }
                     | ScalarFunction::Locate
                     | ScalarFunction::Like { .. }
                     | ScalarFunction::InList { .. }
@@ -1203,6 +1205,18 @@ fn evaluate_eager_scalar(
         }
         ScalarFunction::InList { negated } => evaluate_in_list(values, negated),
         ScalarFunction::Between { negated } => evaluate_between(values, negated),
+        ScalarFunction::DecimalComparison { op } => {
+            let ordering = compare_decimal_values(&values[0], &values[1])?;
+            Ok(Value::Boolean(match op {
+                BinaryOp::Equal => ordering == Ordering::Equal,
+                BinaryOp::NotEqual => ordering != Ordering::Equal,
+                BinaryOp::Less => ordering == Ordering::Less,
+                BinaryOp::LessOrEqual => ordering != Ordering::Greater,
+                BinaryOp::Greater => ordering == Ordering::Greater,
+                BinaryOp::GreaterOrEqual => ordering != Ordering::Less,
+                _ => return Err(ExecError::InvalidExpressionType),
+            }))
+        }
         ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
         ScalarFunction::Abs { decimal } => match &values[0] {
             Value::Int64(signed) => signed

@@ -2461,7 +2461,28 @@ fn bind_binary(
         }
     };
 
-    let (left, right) = coerce_decimal_comparison(op, left, right);
+    if matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) && (matches!(left.data_type, Some(DataType::Decimal { .. }))
+        || matches!(right.data_type, Some(DataType::Decimal { .. })))
+        && left.data_type.and_then(exact_numeric_digits).is_some()
+        && right.data_type.and_then(exact_numeric_digits).is_some()
+    {
+        return Ok(BoundExpr {
+            nullable: left.nullable || right.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::DecimalComparison { op },
+                args: vec![left, right],
+            },
+        });
+    }
 
     Ok(BoundExpr {
         nullable: left.nullable || right.nullable,
@@ -2572,44 +2593,6 @@ fn bind_modulo(mut args: Vec<BoundExpr>) -> BoundExpr {
             left: Box::new(left),
             right: Box::new(right),
         },
-    }
-}
-
-/// Decimal-vs-decimal comparisons: both sides carry canonical text at
-/// runtime, and the generic text comparison would order them lexically.
-/// Route them through the numeric carrier the way `MySQL` compares decimals
-/// as numbers (exact within f64's 15 significant digits).
-fn coerce_decimal_comparison(
-    op: BinaryOp,
-    left: BoundExpr,
-    right: BoundExpr,
-) -> (BoundExpr, BoundExpr) {
-    if matches!(
-        op,
-        BinaryOp::Equal
-            | BinaryOp::NotEqual
-            | BinaryOp::Less
-            | BinaryOp::LessOrEqual
-            | BinaryOp::Greater
-            | BinaryOp::GreaterOrEqual
-    ) && matches!(left.data_type, Some(DataType::Decimal { .. }))
-        && matches!(right.data_type, Some(DataType::Decimal { .. }))
-    {
-        (cast_to_float(left), cast_to_float(right))
-    } else {
-        (left, right)
-    }
-}
-
-fn cast_to_float(expr: BoundExpr) -> BoundExpr {
-    let nullable = expr.nullable;
-    BoundExpr {
-        kind: BoundExprKind::Scalar {
-            function: ScalarFunction::Cast(DataType::Float64),
-            args: vec![expr],
-        },
-        data_type: Some(DataType::Float64),
-        nullable,
     }
 }
 
@@ -3678,7 +3661,7 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::RegexpLike { .. } => (
+        ScalarFunction::RegexpLike { .. } | ScalarFunction::DecimalComparison { .. } => (
             Some(DataType::Boolean),
             args.iter().any(|argument| argument.nullable),
         ),

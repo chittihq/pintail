@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 792;
+const EXPECTED_CASES: usize = 793;
 
 struct OracleCase {
     family: &'static str,
@@ -1815,6 +1815,13 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT CAST(12.567 AS DECIMAL(10, 2)), CAST(12.565 AS DECIMAL(10, 2)), \
              CAST(0 - 12.565 AS DECIMAL(10, 2)), CAST(score AS DECIMAL(10, 3)), \
              CAST('88.4499' AS DECIMAL(6, 2)) FROM events WHERE id = 1",
+        ),
+        ordered(
+            "decimal exact comparison",
+            "SELECT CAST('9007199254740993' AS DECIMAL(16,0)) > \
+             CAST('9007199254740992' AS DECIMAL(16,0)), \
+             CAST('1.00' AS DECIMAL(3,2)) = CAST('1.0' AS DECIMAL(2,1)), \
+             CAST('9007199254740993' AS DECIMAL(16,0)) > 9007199254740992",
         ),
         ordered(
             "decimal ordering",

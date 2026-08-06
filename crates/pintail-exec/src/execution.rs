@@ -10250,6 +10250,32 @@ mod tests {
             compare_decimal_text("-0.00", "0").expect("signed zero comparison"),
             std::cmp::Ordering::Equal
         );
+
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT \
+             CAST('9007199254740993' AS DECIMAL(16,0)) > \
+             CAST('9007199254740992' AS DECIMAL(16,0)), \
+             CAST('1.00' AS DECIMAL(3,2)) = CAST('1.0' AS DECIMAL(2,1)), \
+             CAST('9007199254740993' AS DECIMAL(16,0)) > 9007199254740992",
+        );
+        let mut execution =
+            Execution::start(plan, &provider, 4 * 1024).expect("decimal comparison execution");
+        let batch = execution.next_batch().expect("pull").expect("batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Boolean(true))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Boolean(true))
+        );
+        assert_eq!(
+            batch.column(2).and_then(|column| column.value(0)),
+            Some(&Value::Boolean(true))
+        );
     }
 
     #[test]

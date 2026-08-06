@@ -4,7 +4,7 @@ What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
 Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
-792 cases, all byte-exact.
+793 cases, all byte-exact.
 
 ## Surface
 
@@ -30,7 +30,7 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 |---|---|
 | Numeric literals | A dotted literal is `DECIMAL` (exact); an exponent literal is `DOUBLE` (approximate), as MySQL types them |
 | `ROUND` | Half away from zero for exact operands, nearest-even for approximate ones — the mode follows the operand's type |
-| `DECIMAL` arithmetic | Exact on scaled `i128` units. `/` and `AVG` widen by 4 fraction digits, half away from zero; `SUM` accumulates scaled integers; overflow errors |
+| `DECIMAL` arithmetic | Exact on scaled `i128` units, including relational comparisons beyond f64 precision. `/` and `AVG` widen by 4 fraction digits, half away from zero; `SUM` accumulates scaled integers; overflow errors |
 | `BIGINT UNSIGNED` | Native `UInt64` across the full `0..=2^64-1` range |
 | Statement time | `NOW`/`CURDATE`/`CURTIME`/`UNIX_TIMESTAMP()` pinned to one timestamp per statement |
 | Session time zone | `SET time_zone` per connection on the MySQL wire endpoint |

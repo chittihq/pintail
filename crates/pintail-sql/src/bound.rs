@@ -159,6 +159,11 @@ pub enum ScalarFunction {
     Coalesce,
     /// Return NULL when two arguments compare equal.
     NullIf,
+    /// Exact comparison of two canonical DECIMAL operands.
+    DecimalComparison {
+        /// Relational comparison to apply after exact scale alignment.
+        op: BinaryOp,
+    },
     /// Round a numeric value to an optional decimal precision. `decimal`
     /// marks a canonical-decimal-text operand with a bind-time digit count,
     /// which rounds exactly on scaled units instead of the f64 carrier.
