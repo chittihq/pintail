@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 791;
+const EXPECTED_CASES: usize = 792;
 
 struct OracleCase {
     family: &'static str,
@@ -1692,6 +1692,13 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT QUARTER('2024-05-15'), DAYOFWEEK('2024-05-15'), WEEKDAY('2024-05-15'), \
              DAYOFYEAR('2024-05-15'), WEEK('2024-01-01'), WEEK('2024-01-07'), \
              WEEK('2024-12-31'), WEEKOFYEAR('2024-01-01'), WEEK('2024-06-15', 3)",
+        ),
+        ordered(
+            "datetime week modes",
+            "SELECT WEEK('2008-02-20', 0), WEEK('2008-02-20', 1), \
+             WEEK('2008-02-20', 2), WEEK('2008-02-20', 3), \
+             WEEK('2008-02-20', 4), WEEK('2008-02-20', 5), \
+             WEEK('2008-02-20', 6), WEEK('2008-02-20', 7)",
         ),
         ordered(
             "datetime calendar",

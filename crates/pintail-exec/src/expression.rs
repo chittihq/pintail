@@ -979,7 +979,8 @@ pub(crate) fn evaluate_units_date_part(
         | DatePart::WeekDay
         | DatePart::DayOfYear
         | DatePart::Week
-        | DatePart::IsoWeek => return None,
+        | DatePart::IsoWeek
+        | DatePart::WeekMode(_) => return None,
     };
     Some(Ok(Value::UInt64(value)))
 }
@@ -1010,7 +1011,8 @@ fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Val
         | DatePart::WeekDay
         | DatePart::DayOfYear
         | DatePart::Week
-        | DatePart::IsoWeek => return None,
+        | DatePart::IsoWeek
+        | DatePart::WeekMode(_) => return None,
         DatePart::Year => u64::try_from(year).unwrap_or(0),
         DatePart::Month => u64::from(month),
         DatePart::Day => u64::from(day),
@@ -2089,6 +2091,7 @@ fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {
         DatePart::DayOfYear => u64::from(value.ordinal()),
         DatePart::Week => mysql_week_mode0(value.date()),
         DatePart::IsoWeek => u64::from(value.date().iso_week().week()),
+        DatePart::WeekMode(mode) => u64::from(mysql_calc_week(value.date(), u32::from(mode)).1),
     }
 }
 
@@ -3964,10 +3967,10 @@ mod tests {
     // do not require a catalog.
     use std::cmp::Ordering;
 
-    use pintail_sql::{BinaryOp, ScalarFunction};
+    use pintail_sql::{BinaryOp, DatePart, ScalarFunction};
     use pintail_types::{DataType, Value};
 
-    use super::{CompiledExpr, compare_mysql, mysql_date_format, parse_mysql_number};
+    use super::{CompiledExpr, compare_mysql, date_part, mysql_date_format, parse_mysql_number};
 
     /// The directives that used to be forwarded to chrono, where the same
     /// letters mean something else. Every expectation here is `MySQL` 8.4
@@ -4376,6 +4379,18 @@ mod tests {
             .expect("time");
         assert_eq!(mysql_date_format(value, "%x-%v"), "2020-53");
         assert_eq!(mysql_date_format(value, "%u"), "00");
+    }
+
+    #[test]
+    fn week_modes_match_mysql_mode_inventory() {
+        let value = chrono::NaiveDate::from_ymd_opt(2008, 2, 20)
+            .expect("date")
+            .and_hms_opt(0, 0, 0)
+            .expect("time");
+        let weeks = (0..=7)
+            .map(|mode| date_part(value, DatePart::WeekMode(mode)))
+            .collect::<Vec<_>>();
+        assert_eq!(weeks, [7, 8, 7, 8, 8, 7, 8, 7]);
     }
 
     use crate::{ColumnVector, RecordBatch};

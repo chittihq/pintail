@@ -2988,15 +2988,17 @@ fn bind_scalar_function(
         "DAYOFYEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::DayOfYear),
         "WEEK" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Week),
         "WEEK" if args.len() == 2 => {
-            // Only modes 0 (default) and 3 (ISO) are supported; the mode
-            // must be a literal so the semantics are static.
             let mode = match &args[1].kind {
-                BoundExprKind::Literal(Value::Int64(0) | Value::UInt64(0)) => DatePart::Week,
-                BoundExprKind::Literal(Value::Int64(3) | Value::UInt64(3)) => DatePart::IsoWeek,
+                BoundExprKind::Literal(Value::Int64(mode @ 0..=7)) => {
+                    u8::try_from(*mode).expect("WEEK mode is bounded")
+                }
+                BoundExprKind::Literal(Value::UInt64(mode @ 0..=7)) => {
+                    u8::try_from(*mode).expect("WEEK mode is bounded")
+                }
                 _ => return Err(BindError::UnsupportedExpression(function.to_string())),
             };
             args.truncate(1);
-            ScalarFunction::DatePart(mode)
+            ScalarFunction::DatePart(DatePart::WeekMode(mode))
         }
         "WEEKOFYEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::IsoWeek),
         "DAYNAME" if args.len() == 1 => ScalarFunction::DayName,
@@ -5275,6 +5277,17 @@ mod tests {
         assert_eq!(query.projection[2].expr.data_type, Some(DataType::Float64));
         assert_eq!(query.projection[3].expr.data_type, Some(DataType::Utf8));
         assert_eq!(query.projection[4].expr.data_type, Some(DataType::Utf8));
+        let query = bind(
+            "SELECT WEEK(Name, 1), WEEK(Name, 2), WEEK(Name, 4), WEEK(Name, 5), \
+             WEEK(Name, 6), WEEK(Name, 7) FROM Events",
+        )
+        .expect("all literal WEEK modes bind");
+        assert!(
+            query
+                .projection
+                .iter()
+                .all(|item| item.expr.data_type == Some(DataType::UInt64))
+        );
         // WEEK parses but is outside the supported unit set.
         assert!(matches!(
             bind("SELECT TIMESTAMPDIFF(WEEK, Name, Name) FROM Events"),

@@ -4,7 +4,7 @@ What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
 Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
-791 cases, all byte-exact.
+792 cases, all byte-exact.
 
 ## Surface
 
@@ -35,6 +35,7 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 | Statement time | `NOW`/`CURDATE`/`CURTIME`/`UNIX_TIMESTAMP()` pinned to one timestamp per statement |
 | Session time zone | `SET time_zone` per connection on the MySQL wire endpoint |
 | `DATE_FORMAT` | Full directive inventory, including all four `WEEK` modes (`%U %u %V %v`) and paired years (`%X %x`) via a port of MySQL's `calc_week`; unknown directives copy their bare character |
+| `WEEK(date, mode)` | All literal modes 0–7 via the same MySQL `calc_week` port |
 | `EXTRACT` | `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER`, `WEEK` |
 | Temporal types | `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` distinctions survive binding and wire metadata |
 | Text collation | Case-insensitive Unicode-lowercase by default; `PINTAIL_COLLATION=utf8mb4_0900_ai_ci` adds accent insensitivity |
