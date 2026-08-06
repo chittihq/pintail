@@ -269,6 +269,7 @@ mod tests {
             "SHOW DATABASES",
             "SHOW TABLES FROM `analytics`",
             "SHOW COLUMNS FROM `events`",
+            "SHOW INDEX FROM `events`",
             "DESCRIBE `events`",
             "EXPLAIN SELECT * FROM `events`",
         ];

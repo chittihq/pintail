@@ -161,9 +161,53 @@ pub fn execute_metadata(
             let (database, table) = resolve_table(obj_name, catalog, current_database)?;
             Ok(show_create_table(database, table, facts))
         }
+        Statement::ShowVariable { variable } => {
+            let (database, table) = resolve_show_index(variable, catalog, current_database)?;
+            Ok(show_indexes(database, table, facts))
+        }
         Statement::Query(query) => execute_information_schema(query, catalog, facts),
         _ => Err(MetadataError::Unsupported(statement.to_string())),
     }
+}
+
+fn resolve_show_index<'a>(
+    words: &[sqlparser::ast::Ident],
+    catalog: &'a CatalogSnapshot,
+    current_database: Option<&str>,
+) -> Result<(&'a DatabaseEntry, &'a TableEntry), MetadataError> {
+    let values = words
+        .iter()
+        .map(|word| word.value.as_str())
+        .collect::<Vec<_>>();
+    let show_index = values.first().is_some_and(|word| {
+        word.eq_ignore_ascii_case("INDEX")
+            || word.eq_ignore_ascii_case("INDEXES")
+            || word.eq_ignore_ascii_case("KEYS")
+    });
+    let separator =
+        |word: &&str| word.eq_ignore_ascii_case("FROM") || word.eq_ignore_ascii_case("IN");
+    if !show_index || values.get(1).is_none_or(|word| !separator(word)) {
+        return Err(MetadataError::Unsupported(format!(
+            "SHOW {}",
+            values.join(" ")
+        )));
+    }
+    let name = match values.as_slice() {
+        [_, _, table] => ObjectName::from(vec![sqlparser::ast::Ident::new(*table)]),
+        [_, _, table, second_separator, database] if separator(second_separator) => {
+            ObjectName::from(vec![
+                sqlparser::ast::Ident::new(*database),
+                sqlparser::ast::Ident::new(*table),
+            ])
+        }
+        _ => {
+            return Err(MetadataError::Unsupported(format!(
+                "SHOW {}",
+                values.join(" ")
+            )));
+        }
+    };
+    resolve_table(&name, catalog, current_database)
 }
 
 fn execute_information_schema(
@@ -278,8 +322,31 @@ fn information_schema_table(
         Ok(information_table_constraints(catalog, facts))
     } else if table.eq_ignore_ascii_case("referential_constraints") {
         Ok(information_referential_constraints(catalog, facts))
+    } else if table.eq_ignore_ascii_case("views") {
+        Ok(information_views())
     } else {
         Err(MetadataError::UnknownTable((*table).to_owned()))
+    }
+}
+
+/// Pintail replicates base tables only. Exposing the standard `VIEWS` shape
+/// with no rows lets client inspectors distinguish "no replicated views" from
+/// a missing metadata table without fabricating definitions.
+fn information_views() -> MetadataResult {
+    MetadataResult {
+        fields: metadata_fields(&[
+            ("TABLE_CATALOG", DataType::Utf8, false),
+            ("TABLE_SCHEMA", DataType::Utf8, false),
+            ("TABLE_NAME", DataType::Utf8, false),
+            ("VIEW_DEFINITION", DataType::Utf8, false),
+            ("CHECK_OPTION", DataType::Utf8, false),
+            ("IS_UPDATABLE", DataType::Utf8, false),
+            ("DEFINER", DataType::Utf8, false),
+            ("SECURITY_TYPE", DataType::Utf8, false),
+            ("CHARACTER_SET_CLIENT", DataType::Utf8, false),
+            ("COLLATION_CONNECTION", DataType::Utf8, false),
+        ]),
+        rows: Vec::new(),
     }
 }
 
@@ -474,7 +541,20 @@ fn catalog_key_names(table: &pintail_catalog::TableEntry) -> Vec<String> {
 }
 
 fn information_statistics(catalog: &CatalogSnapshot, facts: &SourceFacts) -> MetadataResult {
-    let fields = metadata_fields(&[
+    let fields = statistics_fields();
+    let rows = catalog
+        .databases()
+        .flat_map(|database| {
+            database
+                .tables()
+                .flat_map(move |table| statistics_rows_for_table(database, table, facts))
+        })
+        .collect();
+    MetadataResult { fields, rows }
+}
+
+fn statistics_fields() -> Vec<MetadataField> {
+    metadata_fields(&[
         ("TABLE_CATALOG", DataType::Utf8, false),
         ("TABLE_SCHEMA", DataType::Utf8, false),
         ("TABLE_NAME", DataType::Utf8, false),
@@ -493,50 +573,111 @@ fn information_statistics(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Met
         ("INDEX_COMMENT", DataType::Utf8, false),
         ("IS_VISIBLE", DataType::Utf8, false),
         ("EXPRESSION", DataType::Utf8, true),
-    ]);
+    ])
+}
+
+fn statistics_rows_for_table(
+    database: &DatabaseEntry,
+    table: &TableEntry,
+    facts: &SourceFacts,
+) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
-    for database in catalog.databases() {
-        for table in database.tables() {
-            let key_names = catalog_key_names(table);
-            for (index_name, columns) in table_indexes(
-                database.name(),
-                table.name(),
-                &key_names,
-                table.schema().key_mode(),
-                facts,
-            ) {
-                for (sequence, column_name) in columns.iter().enumerate() {
-                    let nullable = table
-                        .schema()
-                        .columns()
-                        .iter()
-                        .find(|column| column.name().eq_ignore_ascii_case(column_name))
-                        .is_some_and(pintail_types::Column::is_nullable);
-                    rows.push(vec![
-                        utf8("def"),
-                        utf8(database.name()),
-                        utf8(table.name()),
-                        Value::Int64(0),
-                        utf8(database.name()),
-                        utf8(&index_name),
-                        Value::UInt64(u64::try_from(sequence + 1).expect("sequence fits u64")),
-                        utf8(column_name),
-                        utf8("A"),
-                        Value::Null,
-                        Value::Null,
-                        Value::Null,
-                        utf8(if nullable { "YES" } else { "" }),
-                        utf8("BTREE"),
-                        utf8(""),
-                        utf8(""),
-                        utf8("YES"),
-                        Value::Null,
-                    ]);
-                }
-            }
+    let key_names = catalog_key_names(table);
+    for (index_name, columns) in table_indexes(
+        database.name(),
+        table.name(),
+        &key_names,
+        table.schema().key_mode(),
+        facts,
+    ) {
+        for (sequence, column_name) in columns.iter().enumerate() {
+            let nullable = table
+                .schema()
+                .columns()
+                .iter()
+                .find(|column| column.name().eq_ignore_ascii_case(column_name))
+                .is_some_and(pintail_types::Column::is_nullable);
+            rows.push(vec![
+                utf8("def"),
+                utf8(database.name()),
+                utf8(table.name()),
+                Value::Int64(0),
+                utf8(database.name()),
+                utf8(&index_name),
+                Value::UInt64(u64::try_from(sequence + 1).expect("sequence fits u64")),
+                utf8(column_name),
+                utf8("A"),
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                utf8(if nullable { "YES" } else { "" }),
+                utf8("BTREE"),
+                utf8(""),
+                utf8(""),
+                utf8("YES"),
+                Value::Null,
+            ]);
         }
     }
+    rows
+}
+
+/// Renders the `SHOW INDEX`/`SHOW KEYS` projection from the same rows served
+/// through `information_schema.statistics`, so both metadata interfaces stay
+/// consistent by construction.
+fn show_indexes(
+    database: &DatabaseEntry,
+    table: &TableEntry,
+    facts: &SourceFacts,
+) -> MetadataResult {
+    const COLUMNS: [(usize, &str); 15] = [
+        (2, "Table"),
+        (3, "Non_unique"),
+        (5, "Key_name"),
+        (6, "Seq_in_index"),
+        (7, "Column_name"),
+        (8, "Collation"),
+        (9, "Cardinality"),
+        (10, "Sub_part"),
+        (11, "Packed"),
+        (12, "Null"),
+        (13, "Index_type"),
+        (14, "Comment"),
+        (15, "Index_comment"),
+        (16, "Visible"),
+        (17, "Expression"),
+    ];
+    let statistics = information_statistics_for_table(database, table, facts);
+    let fields = COLUMNS
+        .iter()
+        .map(|(index, name)| {
+            let mut field = statistics.fields[*index].clone();
+            (*name).clone_into(&mut field.name);
+            field
+        })
+        .collect();
+    let rows = statistics
+        .rows
+        .into_iter()
+        .map(|row| {
+            COLUMNS
+                .iter()
+                .map(|(index, _)| row[*index].clone())
+                .collect()
+        })
+        .collect();
     MetadataResult { fields, rows }
+}
+
+fn information_statistics_for_table(
+    database: &DatabaseEntry,
+    table: &TableEntry,
+    facts: &SourceFacts,
+) -> MetadataResult {
+    MetadataResult {
+        fields: statistics_fields(),
+        rows: statistics_rows_for_table(database, table, facts),
+    }
 }
 
 fn information_key_column_usage(catalog: &CatalogSnapshot, facts: &SourceFacts) -> MetadataResult {
@@ -1633,6 +1774,131 @@ mod tests {
                 Value::Utf8("BASE TABLE".to_owned()),
             ]]
         );
+    }
+
+    #[test]
+    fn show_index_exposes_statistics_in_mysql_shape() {
+        let table = TableEntry::new(
+            TableId::new(2),
+            "Events",
+            TableSchema::new(
+                1,
+                vec![
+                    Column::new(1, "id", DataType::UInt64, false),
+                    Column::new(2, "name", DataType::Utf8, true),
+                ],
+            )
+            .expect("schema"),
+            TableStatistics::with_row_count(3),
+        )
+        .expect("table")
+        .with_key_columns([1])
+        .expect("primary key");
+        let database =
+            DatabaseEntry::new(DatabaseId::new(1), "Analytics", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+
+        let result = execute_metadata(
+            &parse_statement("SHOW INDEX FROM Events FROM Analytics").expect("parse"),
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("show index");
+
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Table",
+                "Non_unique",
+                "Key_name",
+                "Seq_in_index",
+                "Column_name",
+                "Collation",
+                "Cardinality",
+                "Sub_part",
+                "Packed",
+                "Null",
+                "Index_type",
+                "Comment",
+                "Index_comment",
+                "Visible",
+                "Expression",
+            ]
+        );
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Utf8("Events".to_owned()));
+        assert_eq!(result.rows[0][1], Value::Int64(0));
+        assert_eq!(result.rows[0][2], Value::Utf8("PRIMARY".to_owned()));
+        assert_eq!(result.rows[0][3], Value::UInt64(1));
+        assert_eq!(result.rows[0][4], Value::Utf8("id".to_owned()));
+    }
+
+    #[test]
+    fn information_schema_views_explicitly_reports_no_replicated_views() {
+        let result = execute_metadata(
+            &parse_statement("SELECT * FROM information_schema.views").expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("views metadata");
+
+        assert!(result.rows.is_empty());
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "VIEW_DEFINITION",
+                "CHECK_OPTION",
+                "IS_UPDATABLE",
+                "DEFINER",
+                "SECURITY_TYPE",
+                "CHARACTER_SET_CLIENT",
+                "COLLATION_CONNECTION",
+            ]
+        );
+    }
+
+    #[test]
+    fn show_index_accepts_mysql_keys_indexes_and_in_synonyms() {
+        let table = TableEntry::new(
+            TableId::new(2),
+            "Events",
+            TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)])
+                .expect("schema"),
+            TableStatistics::default(),
+        )
+        .expect("table")
+        .with_key_columns([1])
+        .expect("primary key");
+        let database =
+            DatabaseEntry::new(DatabaseId::new(1), "Analytics", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+
+        for (sql, current_database) in [
+            ("SHOW KEYS IN Events", Some("Analytics")),
+            ("SHOW INDEXES FROM Events IN Analytics", None),
+        ] {
+            let result = execute_metadata(
+                &parse_statement(sql).expect("parse"),
+                &catalog,
+                current_database,
+                &SourceFacts::default(),
+            )
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+            assert_eq!(result.rows[0][2], Value::Utf8("PRIMARY".to_owned()));
+        }
     }
 
     #[test]

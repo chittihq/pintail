@@ -344,6 +344,33 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             ("events".to_owned(), "name".to_owned(), 2)
         ]
     );
+    let indexes: Vec<mysql_async::Row> = connection
+        .query("SHOW KEYS FROM events")
+        .await
+        .expect("SHOW KEYS");
+    assert_eq!(indexes.len(), 1);
+    assert_eq!(
+        indexes[0].get::<String, _>("Table").as_deref(),
+        Some("events")
+    );
+    assert_eq!(indexes[0].get::<i64, _>("Non_unique"), Some(0));
+    assert_eq!(
+        indexes[0].get::<String, _>("Key_name").as_deref(),
+        Some("PRIMARY")
+    );
+    assert_eq!(indexes[0].get::<u64, _>("Seq_in_index"), Some(1));
+    assert_eq!(
+        indexes[0].get::<String, _>("Column_name").as_deref(),
+        Some("id")
+    );
+    let views: Option<u64> = connection
+        .query_first(
+            "SELECT COUNT(*) FROM information_schema.views \
+             WHERE table_schema = 'analytics'",
+        )
+        .await
+        .expect("information_schema.views");
+    assert_eq!(views, Some(0));
     let total: Option<u64> = connection
         .query_first("SELECT COUNT(*) AS total FROM events")
         .await
