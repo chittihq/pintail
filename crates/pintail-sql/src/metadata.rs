@@ -95,6 +95,8 @@ pub struct ColumnFacts {
     pub column: String,
     /// Raw `COLUMN_DEFAULT`, absent when the column has no default.
     pub default_value: Option<String>,
+    /// Source `IS_NULLABLE`; distinct from the more permissive physical schema.
+    pub nullable: Option<bool>,
     /// Whether the source declares `AUTO_INCREMENT`.
     pub auto_increment: bool,
     /// Whether the column is a stored generated column.
@@ -559,7 +561,11 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                     Value::UInt64(u64::try_from(index + 1).expect("column ordinal fits u64")),
                     fact.and_then(|fact| fact.default_value.as_deref())
                         .map_or(Value::Null, utf8),
-                    utf8(if column.is_nullable() { "YES" } else { "NO" }),
+                    utf8(if source_nullable(column, fact) {
+                        "YES"
+                    } else {
+                        "NO"
+                    }),
                     utf8(data_type),
                     Value::Null,
                     Value::Null,
@@ -722,12 +728,17 @@ fn statistics_rows_for_table(
         facts,
     ) {
         for (sequence, column_name) in columns.iter().enumerate() {
-            let nullable = table
+            let column = table
                 .schema()
                 .columns()
                 .iter()
-                .find(|column| column.name().eq_ignore_ascii_case(column_name))
-                .is_some_and(pintail_types::Column::is_nullable);
+                .find(|column| column.name().eq_ignore_ascii_case(column_name));
+            let nullable = column.is_some_and(|column| {
+                source_nullable(
+                    column,
+                    column_fact(database.name(), table.name(), column.name(), facts),
+                )
+            });
             rows.push(vec![
                 utf8("def"),
                 utf8(database.name()),
@@ -1009,14 +1020,10 @@ fn show_create_table(
             column.name(),
             mysql_type(column.data_type())
         );
-        if !column.is_nullable() {
+        let fact = column_fact(database.name(), table.name(), column.name(), facts);
+        if !source_nullable(column, fact) {
             ddl.push_str(" NOT NULL");
         }
-        let fact = facts.columns.iter().find(|fact| {
-            fact.database.eq_ignore_ascii_case(database.name())
-                && fact.table.eq_ignore_ascii_case(table.name())
-                && fact.column.eq_ignore_ascii_case(column.name())
-        });
         if let Some(fact) = fact {
             if let Some(default) = &fact.default_value {
                 let _ = write!(ddl, " DEFAULT '{}'", default.replace('\'', "''"));
@@ -1836,7 +1843,14 @@ fn describe_table(
             let compact = vec![
                 Value::Utf8(column.name().to_owned()),
                 Value::Utf8(column_type),
-                Value::Utf8(if column.is_nullable() { "YES" } else { "NO" }.to_owned()),
+                Value::Utf8(
+                    if source_nullable(column, fact) {
+                        "YES"
+                    } else {
+                        "NO"
+                    }
+                    .to_owned(),
+                ),
                 utf8(key),
                 fact.and_then(|fact| fact.default_value.as_deref())
                     .map_or(Value::Null, utf8),
@@ -1873,6 +1887,11 @@ fn column_fact<'facts>(
             && fact.table.eq_ignore_ascii_case(table)
             && fact.column.eq_ignore_ascii_case(column)
     })
+}
+
+fn source_nullable(column: &pintail_types::Column, fact: Option<&ColumnFacts>) -> bool {
+    fact.and_then(|fact| fact.nullable)
+        .unwrap_or_else(|| column.is_nullable())
 }
 
 fn mysql_type(data_type: DataType) -> String {
@@ -2113,6 +2132,7 @@ mod tests {
                     table: "Events".to_owned(),
                     column: "id".to_owned(),
                     default_value: None,
+                    nullable: Some(false),
                     auto_increment: true,
                     generated_stored: false,
                     unique_single: false,
@@ -2126,6 +2146,9 @@ mod tests {
                     table: "Events".to_owned(),
                     column: "name".to_owned(),
                     default_value: None,
+                    // The physical schema permits NULL for normalization, but the
+                    // source declaration remains NOT NULL and must win in metadata.
+                    nullable: Some(false),
                     auto_increment: false,
                     generated_stored: false,
                     unique_single: true,
@@ -2166,6 +2189,24 @@ mod tests {
         assert_eq!(statistics.rows[0][5], Value::Utf8("PRIMARY".to_owned()));
         assert_eq!(statistics.rows[0][7], Value::Utf8("id".to_owned()));
         assert_eq!(statistics.rows[1][5], Value::Utf8("unique_name".to_owned()));
+        assert_eq!(statistics.rows[1][12], Value::Utf8(String::new()));
+
+        let source_nullability = execute_metadata(
+            &parse_statement(
+                "SELECT is_nullable FROM information_schema.columns \
+                 WHERE table_schema = 'Analytics' AND table_name = 'Events' \
+                   AND column_name = 'name'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("source nullability");
+        assert_eq!(
+            source_nullability.rows,
+            [vec![Value::Utf8("NO".to_owned())]]
+        );
 
         let usage = execute_metadata(
             &parse_statement("SELECT * FROM information_schema.key_column_usage").expect("parse"),
@@ -2226,6 +2267,7 @@ mod tests {
         assert!(ddl.contains("PRIMARY KEY (`id`)"), "{ddl}");
         assert!(ddl.contains("UNIQUE KEY `unique_name` (`name`)"), "{ddl}");
         assert!(ddl.contains("AUTO_INCREMENT"), "{ddl}");
+        assert!(ddl.contains("`name` text NOT NULL"), "{ddl}");
 
         let columns = execute_metadata(
             &parse_statement("SHOW COLUMNS FROM Analytics.Events").expect("parse"),
@@ -2237,6 +2279,7 @@ mod tests {
         assert_eq!(columns.rows[0][3], Value::Utf8("PRI".to_owned()));
         assert_eq!(columns.rows[0][4], Value::Null);
         assert_eq!(columns.rows[0][5], Value::Utf8("auto_increment".to_owned()));
+        assert_eq!(columns.rows[1][2], Value::Utf8("NO".to_owned()));
         assert_eq!(columns.rows[1][3], Value::Utf8("UNI".to_owned()));
     }
 
