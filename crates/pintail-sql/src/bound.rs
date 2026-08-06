@@ -240,6 +240,8 @@ pub enum ScalarFunction {
     Ord,
     /// `HEX(value)`: uppercase hex of string bytes or integer value.
     Hex,
+    /// `MD5(value)`: lowercase hexadecimal digest of the coerced value bytes.
+    Md5,
     /// `UNHEX(str)`: binary from hex text, NULL when malformed.
     Unhex,
     /// `ELT(n, ...)`: 1-based pick, NULL out of range.

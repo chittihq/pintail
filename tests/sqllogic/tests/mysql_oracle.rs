@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 786;
+const EXPECTED_CASES: usize = 787;
 
 struct OracleCase {
     family: &'static str,
@@ -734,6 +734,10 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written strings",
             "SELECT UPPER('Pintáil'), LOWER('MiXeD'), LENGTH('Pintáil'), \
              CHAR_LENGTH('Pintáil')",
+        ),
+        ordered(
+            "hand-written hashes",
+            "SELECT MD5(''), MD5('abc'), MD5(42), MD5(NULL)",
         ),
         ordered(
             "hand-written strings",

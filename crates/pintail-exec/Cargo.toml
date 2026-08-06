@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 chrono.workspace = true
 chrono-tz.workspace = true
+md-5.workspace = true
 pintail-catalog.workspace = true
 pintail-sql.workspace = true
 pintail-store.workspace = true

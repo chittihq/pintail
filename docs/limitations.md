@@ -69,11 +69,6 @@ stays readable as a list of things to fix.
   than pass it through. `CAST AS YEAR` also rejects (#17).
 - `information_schema` does not support joins, aggregates beyond `COUNT(*)`, or
   metadata tables outside the served set.
-- `MD5` is missing, which leaves Looker's symmetric aggregate incomplete even
-  though `CONV` and wide `DECIMAL` casts are in place: that technique hashes
-  the primary key with `MD5` before re-basing it. Adding it needs either a new
-  dependency or a hand-written hash, so it is an open decision rather than an
-  oversight (#17).
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
   `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
   the BI corpus (#17).

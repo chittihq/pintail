@@ -2917,6 +2917,7 @@ fn bind_scalar_function(
         "ASCII" if args.len() == 1 => ScalarFunction::Ascii,
         "ORD" if args.len() == 1 => ScalarFunction::Ord,
         "HEX" if args.len() == 1 => ScalarFunction::Hex,
+        "MD5" if args.len() == 1 => ScalarFunction::Md5,
         "UNHEX" if args.len() == 1 => ScalarFunction::Unhex,
         "ELT" if args.len() >= 2 => ScalarFunction::Elt,
         "FIELD" if args.len() >= 2 => ScalarFunction::Field,
@@ -3566,6 +3567,7 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         | ScalarFunction::Format
         | ScalarFunction::ToBase64
         | ScalarFunction::Hex
+        | ScalarFunction::Md5
         | ScalarFunction::DayName
         | ScalarFunction::MonthName
         | ScalarFunction::LastDay
@@ -5121,6 +5123,13 @@ mod tests {
         assert_eq!(query.projection.len(), 2);
         // The seeded form stays unsupported.
         assert!(bind("SELECT RAND(3) FROM Events").is_err());
+    }
+
+    #[test]
+    fn binds_the_one_argument_md5_form() {
+        let query = bind("SELECT MD5(Name) FROM Events").expect("MD5 binds");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
+        assert!(bind("SELECT MD5(Name, Name) FROM Events").is_err());
     }
 
     #[test]

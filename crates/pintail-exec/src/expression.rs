@@ -4,6 +4,7 @@ use chrono::{
     Datelike, Duration, FixedOffset, Local, LocalResult, Months, NaiveDate, NaiveDateTime,
     TimeZone, Timelike, Utc,
 };
+use md5::{Digest as _, Md5};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
 use pintail_sql::{DatePart, IntervalUnit};
 use pintail_types::{DataType, Value};
@@ -757,6 +758,7 @@ impl CompiledExpr {
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
                     | ScalarFunction::Rpad => STRING_BUILD_CAP,
+                    ScalarFunction::Md5 => 32,
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
@@ -896,6 +898,7 @@ impl CompiledExpr {
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
                     | ScalarFunction::Rpad => STRING_BUILD_CAP,
+                    ScalarFunction::Md5 => 32,
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
@@ -1414,6 +1417,13 @@ fn evaluate_eager_scalar(
             Value::Binary(bytes) => Ok(Value::Utf8(hex_upper(bytes))),
             value => Ok(Value::Utf8(hex_upper(scalar_string(value)?.as_bytes()))),
         },
+        ScalarFunction::Md5 => {
+            let digest = match &values[0] {
+                Value::Binary(bytes) => Md5::digest(bytes),
+                value => Md5::digest(scalar_string(value)?.as_bytes()),
+            };
+            Ok(Value::Utf8(format!("{digest:x}")))
+        }
         ScalarFunction::Unhex => {
             let text = scalar_string(&values[0])?;
             Ok(unhex(&text).map_or(Value::Null, Value::Binary))
@@ -4117,6 +4127,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn md5_matches_mysql_known_vectors() {
+        use pintail_types::{DataType, Value};
+
+        let digest = |value| {
+            super::evaluate_eager_scalar(ScalarFunction::Md5, &[value], Some(DataType::Utf8))
+                .expect("MD5 evaluates")
+        };
+        assert_eq!(
+            digest(Value::Utf8(String::new())),
+            Value::Utf8("d41d8cd98f00b204e9800998ecf8427e".to_owned())
+        );
+        assert_eq!(
+            digest(Value::Utf8("abc".to_owned())),
+            Value::Utf8("900150983cd24fb0d6963f7d28e17f72".to_owned())
+        );
+        assert_eq!(digest(Value::Null), Value::Null);
+    }
+
     /// Hostile arguments must return or error, never abort the process.
     ///
     /// Three defects this session were invisible to a value-comparison
@@ -4170,6 +4199,7 @@ mod tests {
             (ScalarFunction::JsonContains, 2),
             (ScalarFunction::Unhex, 1),
             (ScalarFunction::Hex, 1),
+            (ScalarFunction::Md5, 1),
             (ScalarFunction::FromBase64, 1),
             (ScalarFunction::ToBase64, 1),
             (ScalarFunction::SecToTime, 1),

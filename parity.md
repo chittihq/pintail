@@ -4,13 +4,13 @@ What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
 Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
-734 cases, all byte-exact.
+787 cases, all byte-exact.
 
 ## Surface
 
 | Area | Status |
 |---|---|
-| Callable functions | 133 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
+| Callable functions | 134 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `ANY_VALUE`, `STDDEV`/`STD`/`STDDEV_POP`/`STDDEV_SAMP`, `VARIANCE`/`VAR_POP`/`VAR_SAMP`, `BIT_AND`/`BIT_OR`/`BIT_XOR` |
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; `RANGE BETWEEN` with offsetless bounds, where `CURRENT ROW` covers the peer group; `RANGE` with an offset and `GROUPS` reject |
@@ -73,7 +73,6 @@ From `scripts/function-surface.ts` against `tests/corpus/bi-shapes.sql`.
 | `STDDEV[_POP\|_SAMP]`, `VARIANCE`, `VAR_[POP\|SAMP]` | Tableau | #17 |
 | `ANY_VALUE` | Looker, Metabase — `ONLY_FULL_GROUP_BY` | #17 |
 | `BIT_AND`, `BIT_OR`, `BIT_XOR` | Tableau | #17 |
-| `MD5` | Looker — the last piece of the symmetric aggregate; `CONV` and wide `DECIMAL` casts are in place | #17 |
 | Compound intervals | Superset — blocked in sqlparser, not the engine | #13 |
 
 `tests/corpus/bi-shapes.sql` is **reconstructed** from documented BI-tool
