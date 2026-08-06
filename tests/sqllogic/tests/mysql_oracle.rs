@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 797;
+const EXPECTED_CASES: usize = 802;
 
 struct OracleCase {
     family: &'static str,
@@ -1437,10 +1437,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "decimal division",
-            // Chained division (1/3/3) is documented-imprecise: MySQL keeps
-            // unrounded internal digits between the two divisions
-            // (docs/limitations.md); single divisions are exact.
             "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
+        ),
+        ordered(
+            "decimal division intermediates",
+            "SELECT (14620 / 9432456) / (24250 / 9432456), \
+             (1 / 3) * 3, 1 / 3 / 3",
         ),
         ordered(
             "json",

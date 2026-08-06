@@ -10685,6 +10685,32 @@ mod tests {
     }
 
     #[test]
+    fn decimal_arithmetic_keeps_unrounded_division_intermediates() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT (14620 / 9432456) / (24250 / 9432456), \
+             (1 / 3) * 3, 1 / 3 / 3",
+        );
+        let mut execution =
+            Execution::start(plan, &provider, 4 * 1024).expect("decimal chain execution");
+        let batch = execution.next_batch().expect("pull").expect("batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("0.60288653".to_owned()))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("1.0000".to_owned()))
+        );
+        assert_eq!(
+            batch.column(2).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("0.11111111".to_owned()))
+        );
+    }
+
+    #[test]
     fn decimal_grouping_distinct_and_extremes_stay_exact() {
         let table = TableEntry::new(
             TableId::new(1),

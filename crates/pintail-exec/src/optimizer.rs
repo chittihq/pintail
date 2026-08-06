@@ -503,6 +503,22 @@ fn statement_time_literal(function: ScalarFunction, now: StatementNow) -> Option
 }
 
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
+    // Keep exact-decimal arithmetic as a tree. The executor evaluates a
+    // chain as one reduced rational so enclosing operations see MySQL's
+    // unrounded division intermediates. Folding the inner node here would
+    // materialize it at its advertised scale and irreversibly lose those
+    // guard digits before the outer operation runs.
+    if matches!(expr.data_type, Some(DataType::Decimal { .. }))
+        && matches!(
+            expr.kind,
+            BoundExprKind::Binary {
+                op: BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide,
+                ..
+            }
+        )
+    {
+        return expr;
+    }
     let folded = match expr.kind {
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)

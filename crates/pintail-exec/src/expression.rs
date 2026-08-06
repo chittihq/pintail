@@ -249,6 +249,164 @@ pub(crate) enum CompiledExpr {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DecimalRational {
+    numerator: i128,
+    denominator: i128,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecimalChainValue {
+    Null,
+    Exact(DecimalRational),
+}
+
+impl DecimalRational {
+    fn new(numerator: i128, denominator: i128) -> Result<Self, ExecError> {
+        if denominator == 0 {
+            return Err(ExecError::NumericOverflow);
+        }
+        let (numerator, denominator) = if denominator < 0 {
+            (
+                numerator.checked_neg().ok_or(ExecError::NumericOverflow)?,
+                denominator
+                    .checked_neg()
+                    .ok_or(ExecError::NumericOverflow)?,
+            )
+        } else {
+            (numerator, denominator)
+        };
+        if numerator == 0 {
+            return Ok(Self {
+                numerator: 0,
+                denominator: 1,
+            });
+        }
+        let divisor = decimal_gcd(numerator, denominator)?;
+        Ok(Self {
+            numerator: numerator / divisor,
+            denominator: denominator / divisor,
+        })
+    }
+
+    fn from_value(value: &Value) -> Result<Option<Self>, ExecError> {
+        let Some((units, scale)) = decimal_units_of(value) else {
+            return Ok(None);
+        };
+        let denominator = 10_i128
+            .checked_pow(u32::from(scale))
+            .ok_or(ExecError::NumericOverflow)?;
+        Self::new(units, denominator).map(Some)
+    }
+
+    fn negated(self) -> Result<Self, ExecError> {
+        Self::new(
+            self.numerator
+                .checked_neg()
+                .ok_or(ExecError::NumericOverflow)?,
+            self.denominator,
+        )
+    }
+
+    fn add_sub(self, other: Self, subtract: bool) -> Result<Self, ExecError> {
+        let shared = decimal_gcd(self.denominator, other.denominator)?;
+        let left_factor = other.denominator / shared;
+        let right_factor = self.denominator / shared;
+        let left = self
+            .numerator
+            .checked_mul(left_factor)
+            .ok_or(ExecError::NumericOverflow)?;
+        let right = other
+            .numerator
+            .checked_mul(right_factor)
+            .ok_or(ExecError::NumericOverflow)?;
+        let numerator = if subtract {
+            left.checked_sub(right)
+        } else {
+            left.checked_add(right)
+        }
+        .ok_or(ExecError::NumericOverflow)?;
+        let denominator = right_factor
+            .checked_mul(other.denominator)
+            .ok_or(ExecError::NumericOverflow)?;
+        Self::new(numerator, denominator)
+    }
+
+    fn multiply(self, other: Self) -> Result<Self, ExecError> {
+        // Cross-cancel before multiplying. Decimal chains commonly contain
+        // reciprocal factors, and multiplying first would overflow i128 even
+        // when the reduced exact result fits comfortably.
+        let left_cancel = decimal_gcd(self.numerator, other.denominator)?;
+        let right_cancel = decimal_gcd(other.numerator, self.denominator)?;
+        Self::new(
+            (self.numerator / left_cancel)
+                .checked_mul(other.numerator / right_cancel)
+                .ok_or(ExecError::NumericOverflow)?,
+            (self.denominator / right_cancel)
+                .checked_mul(other.denominator / left_cancel)
+                .ok_or(ExecError::NumericOverflow)?,
+        )
+    }
+
+    fn divide(self, other: Self) -> Result<Option<Self>, ExecError> {
+        if other.numerator == 0 {
+            return Ok(None);
+        }
+        let numerator_cancel = decimal_gcd(self.numerator, other.numerator)?;
+        let denominator_cancel = decimal_gcd(other.denominator, self.denominator)?;
+        Self::new(
+            (self.numerator / numerator_cancel)
+                .checked_mul(other.denominator / denominator_cancel)
+                .ok_or(ExecError::NumericOverflow)?,
+            (self.denominator / denominator_cancel)
+                .checked_mul(other.numerator / numerator_cancel)
+                .ok_or(ExecError::NumericOverflow)?,
+        )
+        .map(Some)
+    }
+
+    fn truncated(self, scale: u8) -> Result<Self, ExecError> {
+        let factor = 10_i128
+            .checked_pow(u32::from(scale))
+            .ok_or(ExecError::NumericOverflow)?;
+        let cancel = decimal_gcd(factor, self.denominator)?;
+        let numerator = self
+            .numerator
+            .checked_mul(factor / cancel)
+            .ok_or(ExecError::NumericOverflow)?;
+        let units = numerator
+            .checked_div(self.denominator / cancel)
+            .ok_or(ExecError::NumericOverflow)?;
+        Self::new(units, factor)
+    }
+
+    fn rounded(self, scale: u8) -> Result<Value, ExecError> {
+        let factor = 10_i128
+            .checked_pow(u32::from(scale))
+            .ok_or(ExecError::NumericOverflow)?;
+        let cancel = decimal_gcd(factor, self.denominator)?;
+        let numerator = self
+            .numerator
+            .checked_mul(factor / cancel)
+            .ok_or(ExecError::NumericOverflow)?;
+        let denominator = self.denominator / cancel;
+        let units = pintail_types::div_decimal_round_half_up(numerator, denominator)
+            .ok_or(ExecError::NumericOverflow)?;
+        Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+            units, scale,
+        )))
+    }
+}
+
+fn decimal_gcd(left: i128, right: i128) -> Result<i128, ExecError> {
+    let mut left = left.unsigned_abs();
+    let mut right = right.unsigned_abs();
+    while right != 0 {
+        (left, right) = (right, left % right);
+    }
+    i128::try_from(left.max(1)).map_err(|_| ExecError::NumericOverflow)
+}
+
 impl CompiledExpr {
     pub(crate) const fn column_index(&self) -> Option<usize> {
         match self {
@@ -589,6 +747,18 @@ impl CompiledExpr {
                 right,
                 data_type,
             } => {
+                if let Some(DataType::Decimal { scale, .. }) = data_type
+                    && matches!(
+                        op,
+                        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
+                    )
+                    && let Some(value) = self.evaluate_decimal_chain(batch, row)?
+                {
+                    return match value {
+                        DecimalChainValue::Null => Ok(Value::Null),
+                        DecimalChainValue::Exact(value) => value.rounded(*scale),
+                    };
+                }
                 let left = left.evaluate(batch, row)?;
                 let right = right.evaluate(batch, row)?;
                 evaluate_binary(*op, &left, &right, *data_type)
@@ -632,6 +802,100 @@ impl CompiledExpr {
                     row,
                 )
             }
+        }
+    }
+
+    /// Evaluates one exact-numeric arithmetic tree as a reduced rational and
+    /// rounds only when the tree's result is materialized. `MySQL` exposes a
+    /// DECIMAL scale for every division node but retains additional internal
+    /// digits for enclosing arithmetic; formatting each child first loses
+    /// those digits (`(14620/9432456)/(24250/9432456)` is the manual's
+    /// canonical example).
+    fn evaluate_decimal_chain(
+        &self,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<Option<DecimalChainValue>, ExecError> {
+        match self {
+            Self::Column(index) => {
+                let value = batch
+                    .column(*index)
+                    .and_then(|column| column.value(row))
+                    .ok_or(ExecError::InvalidBatch(
+                        "compiled column index is outside the input batch",
+                    ))?;
+                if matches!(value, Value::Null) {
+                    return Ok(Some(DecimalChainValue::Null));
+                }
+                Ok(DecimalRational::from_value(value)?.map(DecimalChainValue::Exact))
+            }
+            Self::Literal(Value::Null) => Ok(Some(DecimalChainValue::Null)),
+            Self::Literal(value) => {
+                Ok(DecimalRational::from_value(value)?.map(DecimalChainValue::Exact))
+            }
+            Self::Unary {
+                op,
+                expr,
+                data_type: Some(DataType::Decimal { .. }),
+            } if matches!(op, UnaryOp::Plus | UnaryOp::Minus) => {
+                let Some(value) = expr.evaluate_decimal_chain(batch, row)? else {
+                    return Ok(None);
+                };
+                match (op, value) {
+                    (_, DecimalChainValue::Null) => Ok(Some(DecimalChainValue::Null)),
+                    (UnaryOp::Plus, exact) => Ok(Some(exact)),
+                    (UnaryOp::Minus, DecimalChainValue::Exact(exact)) => {
+                        Ok(Some(DecimalChainValue::Exact(exact.negated()?)))
+                    }
+                    (UnaryOp::Not, _) => unreachable!("guard excludes logical negation"),
+                }
+            }
+            Self::Binary {
+                op,
+                left,
+                right,
+                data_type: Some(DataType::Decimal { scale, .. }),
+            } if matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
+            ) =>
+            {
+                let left = match left.evaluate_decimal_chain(batch, row)? {
+                    Some(value) => value,
+                    None => decimal_chain_boundary(&left.evaluate(batch, row)?)?,
+                };
+                let right = match right.evaluate_decimal_chain(batch, row)? {
+                    Some(value) => value,
+                    None => decimal_chain_boundary(&right.evaluate(batch, row)?)?,
+                };
+                let (DecimalChainValue::Exact(left), DecimalChainValue::Exact(right)) =
+                    (left, right)
+                else {
+                    return Ok(Some(DecimalChainValue::Null));
+                };
+                let exact = match op {
+                    BinaryOp::Add => Some(left.add_sub(right, false)?),
+                    BinaryOp::Subtract => Some(left.add_sub(right, true)?),
+                    BinaryOp::Multiply => Some(left.multiply(right)?),
+                    BinaryOp::Divide => left
+                        .divide(right)?
+                        .map(|quotient| {
+                            // MySQL's decimal library stores fractional digits in
+                            // base-1e9 words. A division advertised at scale 4,
+                            // for example, retains 9 truncated fractional digits
+                            // for its parent; scales 10..=18 retain 18. The outer
+                            // expression rounds from that bounded internal value.
+                            let internal_scale = scale.max(&1).div_ceil(9).saturating_mul(9);
+                            quotient.truncated(internal_scale)
+                        })
+                        .transpose()?,
+                    _ => unreachable!("guard excludes non-decimal arithmetic"),
+                };
+                Ok(Some(
+                    exact.map_or(DecimalChainValue::Null, DecimalChainValue::Exact),
+                ))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -969,6 +1233,15 @@ impl CompiledExpr {
             }
         }
     }
+}
+
+fn decimal_chain_boundary(value: &Value) -> Result<DecimalChainValue, ExecError> {
+    if matches!(value, Value::Null) {
+        return Ok(DecimalChainValue::Null);
+    }
+    DecimalRational::from_value(value)?
+        .map(DecimalChainValue::Exact)
+        .ok_or(ExecError::InvalidExpressionType)
 }
 
 fn scalar_string_upper_bound(value: &Value) -> usize {
