@@ -1082,6 +1082,14 @@ fn hand_written_cases() -> Vec<OracleCase> {
              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM events \
              WINDOW w AS (PARTITION BY active) ORDER BY id",
         ),
+        ordered(
+            "hand-written chained named windows",
+            "SELECT id, active, SUM(score) OVER rolling FROM events \
+             WINDOW base AS (PARTITION BY active), \
+             ordered AS (base ORDER BY id), \
+             rolling AS (ordered ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) \
+             ORDER BY id",
+        ),
         // The isolation that found this: CHAR and CONCAT both agreed with
         // MySQL, so the decoder's whitespace set was the only suspect left.
         ordered(

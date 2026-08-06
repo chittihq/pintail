@@ -2005,6 +2005,18 @@ mod tests {
         );
         assert_eq!(
             execute_values_with_limit(
+                "SELECT SUM(id) OVER rolling FROM events \
+                 WINDOW base AS (PARTITION BY name), \
+                 ordered AS (base ORDER BY id), \
+                 rolling AS (ordered ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(1), u(3), u(6), u(10), u(15)]
+        );
+        assert_eq!(
+            execute_values_with_limit(
                 "SELECT ROW_NUMBER() OVER w FROM events WINDOW w AS (ORDER BY id)",
                 &catalog,
                 &provider,
@@ -2034,6 +2046,10 @@ mod tests {
              WINDOW w AS (ROWS UNBOUNDED PRECEDING)",
         )
         .expect("parse illegal frame inheritance");
+        assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
+        let statement =
+            parse_statement("SELECT SUM(id) OVER a FROM events WINDOW a AS (b), b AS (a)")
+                .expect("parse cyclic windows");
         assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
     }
 

@@ -25,10 +25,10 @@ stays readable as a list of things to fix.
   retain their exact ordering. Fractional numeric offsets and compound
   temporal interval qualifiers still reject (#25).
   `GROUPS` frames and `DISTINCT` window aggregates reject as MySQL 8.4 does;
-  they are not compatibility gaps. A named window may be referenced as `OVER w` and extended
-  additively with clauses absent from its base definition. Chained named
-  definitions (`WINDOW child AS parent`) still reject; resolving those needs
-  cycle detection. As in MySQL, a framed base may be used directly as `OVER w`
+  they are not compatibility gaps. A named window may be referenced as `OVER w`,
+  extended additively with clauses absent from its base definition, and chained
+  through earlier definitions; forward and cyclic references reject. As in
+  MySQL, a framed base may be used directly as `OVER w`
   but its frame cannot be inherited through the parenthesized `OVER (w)` form.
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be

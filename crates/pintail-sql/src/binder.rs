@@ -4330,21 +4330,80 @@ fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Resu
     }
 }
 
-/// Binds an explicit window frame, accepting only `ROWS` with constant
-/// offsets. `RANGE` with a numeric offset compares the ordering key's values
-/// rather than counting rows, and `GROUPS` counts peer groups; approximating
-/// either with row counts answers a different question, so both reject.
 /// Replaces `OVER w` with the spec `w` names, before binding.
 ///
 /// `MySQL` also allows `OVER (w ORDER BY …)`, which inherits from `w` and
 /// extends it. The merge below accepts only legal additive forms: a derived
 /// spec cannot replace PARTITION BY, ORDER BY, or a frame already supplied by
 /// the base window.
+fn merge_named_window(
+    mut base: sqlparser::ast::WindowSpec,
+    mut extension: sqlparser::ast::WindowSpec,
+    name: &Ident,
+) -> Result<sqlparser::ast::WindowSpec, BindError> {
+    if !extension.partition_by.is_empty()
+        || (!base.order_by.is_empty() && !extension.order_by.is_empty())
+        // A frame may be used by `OVER w` directly, but MySQL forbids
+        // inheriting it into another specification.
+        || base.window_frame.is_some()
+    {
+        return Err(BindError::UnsupportedQueryClause(format!(
+            "window {name} is illegally redefined"
+        )));
+    }
+    if base.order_by.is_empty() {
+        base.order_by = std::mem::take(&mut extension.order_by);
+    }
+    base.window_frame = extension.window_frame.take();
+    base.window_name = None;
+    Ok(base)
+}
+
+fn resolve_named_window(
+    name: &Ident,
+    definitions: &[sqlparser::ast::NamedWindowDefinition],
+    before: Option<usize>,
+    stack: &mut Vec<String>,
+) -> Result<sqlparser::ast::WindowSpec, BindError> {
+    use sqlparser::ast::NamedWindowExpr;
+    let index = definitions
+        .iter()
+        .position(|definition| definition.0.value.eq_ignore_ascii_case(&name.value))
+        .ok_or_else(|| BindError::UnsupportedQueryClause(format!("unknown window {name}")))?;
+    if before.is_some_and(|before| index >= before) {
+        return Err(BindError::UnsupportedQueryClause(format!(
+            "window {name} is a forward or cyclic reference"
+        )));
+    }
+    let folded = name.value.to_ascii_lowercase();
+    if stack.contains(&folded) {
+        return Err(BindError::UnsupportedQueryClause(format!(
+            "cyclic window definition at {name}"
+        )));
+    }
+    stack.push(folded);
+    let resolved = match &definitions[index].1 {
+        NamedWindowExpr::NamedWindow(parent) => {
+            resolve_named_window(parent, definitions, Some(index), stack)
+        }
+        NamedWindowExpr::WindowSpec(spec) => {
+            if let Some(parent) = &spec.window_name {
+                let base = resolve_named_window(parent, definitions, Some(index), stack)?;
+                merge_named_window(base, spec.clone(), parent)
+            } else {
+                Ok(spec.clone())
+            }
+        }
+    };
+    stack.pop();
+    resolved
+}
+
 fn substitute_named_windows(
     expr: &mut Expr,
     definitions: &[sqlparser::ast::NamedWindowDefinition],
 ) -> Result<(), BindError> {
-    use sqlparser::ast::{NamedWindowExpr, WindowType};
+    use sqlparser::ast::WindowType;
     match expr {
         Expr::Function(function) => {
             // `OVER w` is its own AST variant, not a spec carrying a name.
@@ -4360,50 +4419,11 @@ fn substitute_named_windows(
                     Some(WindowType::WindowSpec(spec)) => Some(spec.clone()),
                     _ => None,
                 };
-                let resolved = definitions
-                    .iter()
-                    .find(|definition| definition.0.value.eq_ignore_ascii_case(&name.value))
-                    .ok_or_else(|| {
-                        BindError::UnsupportedQueryClause(format!("unknown window {name}"))
-                    })?;
-                match &resolved.1 {
-                    NamedWindowExpr::WindowSpec(named) => {
-                        if named.window_name.is_some() {
-                            return Err(BindError::UnsupportedQueryClause(format!(
-                                "window {name} defined as another window"
-                            )));
-                        }
-                        let mut merged = named.clone();
-                        if let Some(extension) = extension {
-                            if !extension.partition_by.is_empty()
-                                || (!merged.order_by.is_empty() && !extension.order_by.is_empty())
-                                // MySQL permits `OVER w` for a framed base,
-                                // but forbids inheriting that frame through
-                                // the parenthesized `OVER (w)` form.
-                                || merged.window_frame.is_some()
-                            {
-                                return Err(BindError::UnsupportedQueryClause(format!(
-                                    "OVER ({name} …) illegally redefines a named window"
-                                )));
-                            }
-                            if merged.order_by.is_empty() {
-                                merged.order_by = extension.order_by;
-                            }
-                            if merged.window_frame.is_none() {
-                                merged.window_frame = extension.window_frame;
-                            }
-                            merged.window_name = None;
-                        }
-                        function.over = Some(WindowType::WindowSpec(merged));
-                    }
-                    // `WINDOW a AS b` chains one name to another; resolving
-                    // it needs cycle detection this does not do.
-                    NamedWindowExpr::NamedWindow(_) => {
-                        return Err(BindError::UnsupportedQueryClause(format!(
-                            "window {name} defined as another window"
-                        )));
-                    }
-                }
+                let resolved = resolve_named_window(&name, definitions, None, &mut Vec::new())?;
+                let merged = extension.map_or(Ok(resolved.clone()), |extension| {
+                    merge_named_window(resolved, extension, &name)
+                })?;
+                function.over = Some(WindowType::WindowSpec(merged));
             }
             // The walk must continue into the arguments: the binder recurses
             // into them, so an OVER w nested inside COALESCE(...) would
