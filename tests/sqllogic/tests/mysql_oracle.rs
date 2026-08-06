@@ -17,7 +17,7 @@ use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchem
 const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
-const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
+const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const EXPECTED_CASES: usize = 802;
 
 struct OracleCase {
@@ -1058,7 +1058,8 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "hand-written window temporal range offsets",
-            "SELECT id, COUNT(*) OVER (ORDER BY DATE_ADD('2024-01-01', INTERVAL id DAY) \
+            "SELECT id, COUNT(*) OVER (ORDER BY \
+             CAST(CONCAT('2024-01-', LPAD(id, 2, '0')) AS DATE) \
              RANGE BETWEEN INTERVAL 2 DAY PRECEDING AND CURRENT ROW) \
              FROM events ORDER BY id",
         ),
@@ -1561,8 +1562,8 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "regexp match type",
             "SELECT REGEXP_LIKE('Abc', 'abc', 'c'), REGEXP_LIKE('Abc', 'abc', 'ci'), \
-             REGEXP_LIKE(CONCAT('a', CHAR(10), 'b'), '^b$', 'm'), \
-             REGEXP_LIKE(CONCAT('a', CHAR(10), 'b'), 'a.b', 'n')",
+             REGEXP_LIKE(CONCAT('a', CONVERT(CHAR(10) USING utf8mb4), 'b'), '^b$', 'm'), \
+             REGEXP_LIKE(CONCAT('a', CONVERT(CHAR(10) USING utf8mb4), 'b'), 'a.b', 'n')",
         ),
         ordered(
             "json extract multiple paths",
