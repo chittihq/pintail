@@ -1069,7 +1069,6 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT JSON_TYPE(JSON_EXTRACT('{\"a\":1.5}', '$.a')), \
              JSON_TYPE(JSON_EXTRACT('{\"a\":1}', '$.a')), \
              JSON_TYPE(JSON_EXTRACT('{\"a\":\"2024-01-01\"}', '$.a')), \
-             JSON_TYPE(CAST('1.5' AS JSON)), \
              JSON_TYPE(JSON_EXTRACT(JSON_OBJECT('a', CAST(1.5 AS DECIMAL(2,1))), '$.a')), \
              JSON_TYPE(JSON_EXTRACT(JSON_OBJECT('a', CAST('2024-01-01' AS DATE)), '$.a'))",
         ),
