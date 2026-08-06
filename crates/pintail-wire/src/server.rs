@@ -226,7 +226,9 @@ async fn serve_connection(
 struct Session {
     time_zone: String,
     sql_mode: String,
-    charset: String,
+    charset_client: String,
+    charset_connection: String,
+    charset_results: String,
     group_concat_max_len: usize,
     group_concat_warnings: u64,
 }
@@ -238,7 +240,9 @@ impl Default for Session {
             sql_mode: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
                 .to_owned(),
-            charset: "utf8mb4".to_owned(),
+            charset_client: "utf8mb4".to_owned(),
+            charset_connection: "utf8mb4".to_owned(),
+            charset_results: "utf8mb4".to_owned(),
             group_concat_max_len: 1024,
             group_concat_warnings: 0,
         }
@@ -370,7 +374,9 @@ impl Backend {
             let charset = rest.split_whitespace().next().unwrap_or("");
             let charset = charset.trim_matches(['\'', '"', '`']);
             if matches!(charset, "utf8" | "utf8mb3" | "utf8mb4" | "binary") {
-                charset.clone_into(&mut session.charset);
+                charset.clone_into(&mut session.charset_client);
+                charset.clone_into(&mut session.charset_connection);
+                charset.clone_into(&mut session.charset_results);
                 return Ok(());
             }
             return Err(format!("Unknown character set: '{charset}'"));
@@ -409,6 +415,22 @@ impl Backend {
             "sql_mode" => {
                 session.sql_mode = value;
                 Ok(())
+            }
+            name @ ("character_set_client"
+            | "character_set_connection"
+            | "character_set_results") => {
+                let charset = value.to_ascii_lowercase();
+                if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary") {
+                    match name {
+                        "character_set_client" => session.charset_client = charset,
+                        "character_set_connection" => session.charset_connection = charset,
+                        "character_set_results" => session.charset_results = charset,
+                        _ => unreachable!(),
+                    }
+                    Ok(())
+                } else {
+                    Err(format!("Unknown character set: '{value}'"))
+                }
             }
             "group_concat_max_len" => {
                 let limit = value
@@ -496,22 +518,28 @@ where
                 parameters,
             },
         );
+        let (group_concat_max_len, charset) = {
+            let session = self.session.lock().map_err(io_other)?;
+            (
+                session.group_concat_max_len,
+                session.charset_results.clone(),
+            )
+        };
         let params = (0..parameters)
             .map(|index| Column {
                 table: String::new(),
                 column: format!("param_{}", index + 1),
                 column_length: 1024,
-                character_set: 255,
+                character_set: mysql_text_character_set(&charset),
                 coltype: ColumnType::MYSQL_TYPE_VAR_STRING,
                 colflags: ColumnFlags::empty(),
                 decimals: 0,
             })
             .collect::<Vec<_>>();
-        let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
         let columns = output
             .fields
             .iter()
-            .map(|field| mysql_column(field, group_concat_max_len))
+            .map(|field| mysql_column(field, group_concat_max_len, &charset))
             .collect::<Vec<_>>();
         info.reply(statement_id, &params, &columns).await
     }
@@ -551,8 +579,20 @@ where
             }
         };
         let query = substitute_parameters(&statement.sql, &parameters).map_err(io_invalid)?;
-        let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
-        write_query_result(self.execute(&query), results, group_concat_max_len).await
+        let (group_concat_max_len, charset) = {
+            let session = self.session.lock().map_err(io_other)?;
+            (
+                session.group_concat_max_len,
+                session.charset_results.clone(),
+            )
+        };
+        write_query_result(
+            self.execute(&query),
+            results,
+            group_concat_max_len,
+            &charset,
+        )
+        .await
     }
 
     async fn on_close(&mut self, statement: u32) {
@@ -574,8 +614,14 @@ where
                 }
             };
         }
-        let group_concat_max_len = self.session.lock().map_err(io_other)?.group_concat_max_len;
-        write_query_result(self.execute(query), results, group_concat_max_len).await
+        let (group_concat_max_len, charset) = {
+            let session = self.session.lock().map_err(io_other)?;
+            (
+                session.group_concat_max_len,
+                session.charset_results.clone(),
+            )
+        };
+        write_query_result(self.execute(query), results, group_concat_max_len, &charset).await
     }
 
     async fn on_init<'a>(
@@ -601,6 +647,7 @@ async fn write_query_result<W>(
     result: Result<QueryOutput, QueryError>,
     writer: QueryResultWriter<'_, W>,
     group_concat_max_len: usize,
+    charset: &str,
 ) -> io::Result<()>
 where
     W: AsyncWrite + Send + Unpin,
@@ -616,7 +663,7 @@ where
     let columns = output
         .fields
         .iter()
-        .map(|field| mysql_column(field, group_concat_max_len))
+        .map(|field| mysql_column(field, group_concat_max_len, charset))
         .collect::<Vec<_>>();
     let mut rows = writer.start(&columns).await?;
     for row in &output.rows {
@@ -778,7 +825,15 @@ impl ToMysqlValue for MysqlTimeValue<'_> {
     }
 }
 
-fn mysql_column(field: &QueryField, group_concat_max_len: usize) -> Column {
+fn mysql_text_character_set(charset: &str) -> u16 {
+    match charset {
+        "utf8" | "utf8mb3" => 33,
+        "binary" => 63,
+        _ => 255,
+    }
+}
+
+fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) -> Column {
     let (coltype, unsigned) = match field.data_type {
         Some(DataType::Utf8) if field.group_concat && group_concat_max_len > 512 => {
             (ColumnType::MYSQL_TYPE_BLOB, false)
@@ -813,12 +868,12 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize) -> Column {
     let mut colflags = ColumnFlags::empty();
     colflags.set(ColumnFlags::UNSIGNED_FLAG, unsigned);
     colflags.set(ColumnFlags::NOT_NULL_FLAG, !field.nullable);
-    // opensrv-mysql hardcodes charset 33 in column definitions, so clients
-    // keying binary detection on charset 63 see text; the flag is the only
-    // binary signal this server can emit (docs/limitations.md).
+    // Binary values and a binary result character set carry both charset 63
+    // and the binary flag, matching what clients use for byte-oriented fields.
     colflags.set(
         ColumnFlags::BINARY_FLAG,
-        matches!(field.data_type, Some(DataType::Binary)),
+        matches!(field.data_type, Some(DataType::Binary))
+            || (field.data_type == Some(DataType::Utf8) && charset == "binary"),
     );
     let decimals = match field.data_type {
         Some(
@@ -847,11 +902,10 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize) -> Column {
         }
         Some(DataType::Utf8 | DataType::Binary | DataType::Json) | None => 1024,
     };
-    // Text results use utf8mb4_0900_ai_ci (255), matching the advertised
-    // connection collation; numeric, temporal, binary and JSON results use
-    // MySQL's binary character set (63).
+    // Text results follow the connection's result charset; numeric, temporal,
+    // binary and JSON results use MySQL's binary character set (63).
     let character_set = if matches!(field.data_type, Some(DataType::Utf8)) {
-        255
+        mysql_text_character_set(charset)
     } else {
         63
     };
@@ -1035,21 +1089,8 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         )
     } else if normalized.contains("@@sql_mode") {
         ("@@sql_mode", Value::Utf8(session.sql_mode.clone()))
-    } else if normalized.contains("@@character_set_client")
-        || normalized.contains("@@character_set_connection")
-        || normalized.contains("@@character_set_results")
-    {
-        (
-            "@@character_set_client",
-            Value::Utf8(session.charset.clone()),
-        )
-    } else if normalized.contains("@@collation_connection") {
-        (
-            "@@collation_connection",
-            Value::Utf8("utf8mb4_0900_ai_ci".to_owned()),
-        )
     } else {
-        return None;
+        compatibility_charset_query(&normalized, session)?
     };
     Some(QueryOutput {
         fields: vec![QueryField {
@@ -1065,6 +1106,32 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         },
         truncated: false,
     })
+}
+
+fn compatibility_charset_query(
+    normalized: &str,
+    session: &Session,
+) -> Option<(&'static str, Value)> {
+    let (name, value) = if normalized.contains("@@character_set_client") {
+        ("@@character_set_client", session.charset_client.clone())
+    } else if normalized.contains("@@character_set_connection") {
+        (
+            "@@character_set_connection",
+            session.charset_connection.clone(),
+        )
+    } else if normalized.contains("@@character_set_results") {
+        ("@@character_set_results", session.charset_results.clone())
+    } else if normalized.contains("@@collation_connection") {
+        let collation = match session.charset_connection.as_str() {
+            "utf8" | "utf8mb3" => "utf8mb3_general_ci",
+            "binary" => "binary",
+            _ => "utf8mb4_0900_ai_ci",
+        };
+        ("@@collation_connection", collation.to_owned())
+    } else {
+        return None;
+    };
+    Some((name, Value::Utf8(value)))
 }
 
 fn is_session_command(sql: &str) -> bool {
@@ -1244,6 +1311,7 @@ mod tests {
                 group_concat: false,
             },
             1024,
+            "utf8mb4",
         );
         assert_eq!(column.coltype, ColumnType::MYSQL_TYPE_JSON);
     }
@@ -1258,6 +1326,7 @@ mod tests {
                 group_concat: false,
             },
             1024,
+            "utf8mb4",
         );
         assert_eq!(unsigned.coltype, ColumnType::MYSQL_TYPE_LONGLONG);
         assert!(unsigned.colflags.contains(ColumnFlags::UNSIGNED_FLAG));
@@ -1271,6 +1340,7 @@ mod tests {
                 group_concat: false,
             },
             1024,
+            "utf8mb4",
         );
         assert_eq!(nullable_text.coltype, ColumnType::MYSQL_TYPE_VAR_STRING);
         assert!(!nullable_text.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
@@ -1283,6 +1353,7 @@ mod tests {
                 group_concat: false,
             },
             1024,
+            "utf8mb4",
         );
         assert_eq!(binary.coltype, ColumnType::MYSQL_TYPE_BLOB);
         assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
@@ -1303,6 +1374,7 @@ mod tests {
                 group_concat: false,
             },
             1024,
+            "utf8mb4",
         );
         assert_eq!(decimal.decimals, 4);
         assert_eq!(decimal.column_length, 20);
@@ -1316,6 +1388,7 @@ mod tests {
                 group_concat: false,
             },
             1024,
+            "utf8mb4",
         );
         assert_eq!(datetime.decimals, 6);
         assert_eq!(datetime.column_length, 26);
@@ -1330,13 +1403,28 @@ mod tests {
             group_concat: true,
         };
         assert_eq!(
-            mysql_column(&field, 512).coltype,
+            mysql_column(&field, 512, "utf8mb4").coltype,
             ColumnType::MYSQL_TYPE_VAR_STRING
         );
         assert_eq!(
-            mysql_column(&field, 513).coltype,
+            mysql_column(&field, 513, "utf8mb4").coltype,
             ColumnType::MYSQL_TYPE_BLOB
         );
+    }
+
+    #[test]
+    fn text_result_metadata_follows_the_session_charset() {
+        let field = QueryField {
+            name: "label".to_owned(),
+            data_type: Some(DataType::Utf8),
+            nullable: false,
+            group_concat: false,
+        };
+        assert_eq!(mysql_column(&field, 1024, "utf8mb3").character_set, 33);
+        let binary = mysql_column(&field, 1024, "binary");
+        assert_eq!(binary.character_set, 63);
+        assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
+        assert_eq!(mysql_column(&field, 1024, "utf8mb4").character_set, 255);
     }
 
     #[test]

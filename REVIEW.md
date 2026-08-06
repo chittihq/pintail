@@ -77,7 +77,7 @@ eight-task review left open. Each row is independently committed and gated.
 | RANGE frames | numeric, exact fractional DECIMAL, and simple temporal interval offsets by ordering-key value | `43f848cd`, `e9ac2ce0`, `5faf6e37` |
 | Named windows | chained earlier definitions with forward/cycle and illegal inheritance rejection | `b8ebfa2c` |
 | Temporal parsing | unsupported `STR_TO_DATE` directives reject instead of taking chrono's different meaning | `177bf7b5` |
-| Wire metadata | type-derived length, utf8mb4/binary charset, DECIMAL scale and temporal FSP through text/prepared results | `34379b7c` |
+| Wire metadata | type-derived length, session-aware utf8mb3/utf8mb4/binary charset, DECIMAL scale and temporal FSP through text/prepared results | `34379b7c` plus the final review fix |
 
 ## Current JSON function support
 
@@ -192,16 +192,24 @@ implemented read-only portions are summarized here, but #9, #13, #17, and #25
 remain open until their differential and policy acceptance gates are complete.
 The larger implementation work still includes:
 
-1. **Dependent correlated-subquery fallback (#11):** execute correct shapes
+1. **Differential gates (#9, #13, #17):** run the eight newer oracle cases
+   against MySQL 8.4, extend overload coverage, and add the remaining wire/E2E
+   cases before closing their epics.
+2. **Wire type provenance (#17):** retain declared variable-width lengths and
+   aggregate provenance through wrappers/derived projections; the current 1024
+   fallback and direct-only `GROUP_CONCAT` marker are explicit limitations.
+3. **Temporal policy (#13):** make invalid and zero-date behavior depend on an
+   explicitly supported SQL-mode policy rather than merely storing `sql_mode`.
+4. **Dependent correlated-subquery fallback (#11):** execute correct shapes
    that cannot be decorrelated and raise MySQL's multi-row scalar error.
-2. **Nested outer-join groups (#16):** introduce a bound join tree capable of
+5. **Nested outer-join groups (#16):** introduce a bound join tree capable of
    preserving parenthesized outer joins.
-3. **Collation fundamentals (#10):** coercibility, trailing-space rules,
+6. **Collation fundamentals (#10):** coercibility, trailing-space rules,
    `COLLATE`, and one verified MySQL weight model.
-4. **Demand-led JSON/regex extensions:** wildcard/recursive JSON paths and
+7. **Demand-led JSON/regex extensions:** wildcard/recursive JSON paths and
    longer regex positional overloads only when captured read workloads need
    them; mutation functions and `JSON_TABLE` remain out of scope.
-5. **Compound temporal intervals:** wait for sqlparser to accept MySQL's
+8. **Compound temporal intervals:** wait for sqlparser to accept MySQL's
    compound qualifier syntax, or take a separately reviewed parser fork.
 
 Production BI-query capture (#24) should reorder these larger projects when

@@ -263,6 +263,11 @@ worth refusing.
   the mysql_native_password verifier.
 - The endpoint is read-only. `SET sql_mode` is stored and echoed with no
   semantic effect. Multiple SQL statements in one command are not supported.
+- Variable-width text, binary, and JSON expressions without a retained source
+  declaration report a type-derived `column_length` fallback of 1024. Only a
+  direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB
+  threshold from `group_concat_max_len`; wrappers and derived projections do
+  not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
 - DBeaver and Metabase application-level smokes are not automated on this

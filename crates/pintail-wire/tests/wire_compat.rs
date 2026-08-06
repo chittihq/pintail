@@ -2,7 +2,11 @@ use std::collections::{BTreeMap, hash_map::DefaultHasher};
 use std::hash::{Hash as _, Hasher as _};
 use std::process::Command;
 
-use mysql_async::{Opts, Pool, consts::ColumnType, prelude::Queryable as _};
+use mysql_async::{
+    Opts, Pool,
+    consts::{ColumnFlags, ColumnType},
+    prelude::Queryable as _,
+};
 use pintail_meta::{MetaStore, NewApiKey};
 use pintail_probe::{
     ProbeReport, RecommendedMode, ServerIdentity, SourceCapabilities, SourceColumn, SourceFlavor,
@@ -164,6 +168,35 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         connection.query_drop("SET NAMES latin1").await.is_err(),
         "unsupported charsets must error"
     );
+    connection
+        .query_drop("SET NAMES utf8mb3")
+        .await
+        .expect("set utf8mb3 names");
+    let mut utf8mb3_result = connection
+        .query_iter("SELECT name FROM events LIMIT 1")
+        .await
+        .expect("utf8mb3 result metadata");
+    assert_eq!(
+        utf8mb3_result.columns().expect("utf8mb3 columns")[0].character_set(),
+        33
+    );
+    let _: Vec<mysql_async::Row> = utf8mb3_result.collect().await.expect("utf8mb3 rows");
+    connection
+        .query_drop("SET SESSION character_set_results = 'binary'")
+        .await
+        .expect("set binary result charset");
+    let mut binary_result = connection
+        .query_iter("SELECT name FROM events LIMIT 1")
+        .await
+        .expect("binary result metadata");
+    let binary_column = binary_result.columns().expect("binary columns")[0].clone();
+    assert_eq!(binary_column.character_set(), 63);
+    assert!(binary_column.flags().contains(ColumnFlags::BINARY_FLAG));
+    let _: Vec<mysql_async::Row> = binary_result.collect().await.expect("binary rows");
+    connection
+        .query_drop("SET NAMES utf8mb4")
+        .await
+        .expect("restore utf8mb4 names");
     connection
         .query_drop("SET sql_mode = 'ANSI_QUOTES'")
         .await

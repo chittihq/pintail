@@ -62,8 +62,8 @@ Docker-backed MySQL gate.
 |---|---|
 | Mode | Read-only |
 | Auth | `caching_sha2_password` fast-auth, `mysql_native_password` |
-| Session vars | `SET time_zone`, `SET NAMES` (utf8 family), `SET sql_mode` (echoed) |
-| Prepared statements | Numeric, decimal, temporal, JSON, text, binary tags; params incl. binary `DATE`/`DATETIME`/`TIME`; type-derived length, charset/collation, DECIMAL scale and temporal FSP metadata |
+| Session vars | `SET time_zone`; `SET NAMES`/`character_set_results` (utf8 family and binary, including result metadata); `SET sql_mode` (echoed) |
+| Prepared statements | Numeric, decimal, temporal, JSON, text, binary tags; params incl. binary `DATE`/`DATETIME`/`TIME`; type-derived length, session result charset, DECIMAL scale and temporal FSP metadata |
 | TLS | rustls, default modern policy; `PINTAIL_WIRE_TLS_CERT`/`_KEY` PEM paths or `[wire]` config keys, `PINTAIL_WIRE_REQUIRE_TLS` to refuse plaintext |
 | Client gate | `mysql_async`, MySQL 8.4 CLI, mysql2, PyMySQL |
 
