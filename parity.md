@@ -4,7 +4,7 @@ What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
 Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
-787 cases, all byte-exact.
+788 cases, all byte-exact.
 
 ## Surface
 
@@ -16,7 +16,7 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; `RANGE BETWEEN` with offsetless bounds, where `CURRENT ROW` covers the peer group; `RANGE` with an offset and `GROUPS` reject |
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; the extending form `OVER (w …)` rejects |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities |
-| Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form, decorrelated to semi/anti joins |
+| Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form; correlated scalar aggregates and unique-key lookups, decorrelated to joins |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form |
 | JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`. Read: `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH` |

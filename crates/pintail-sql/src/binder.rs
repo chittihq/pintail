@@ -373,8 +373,8 @@ impl<'catalog> Binder<'catalog> {
                 actual: filter.data_type,
             });
         }
-        // Correlated scalar aggregate subqueries in the select list
-        // decorrelate into LEFT JOINs against derived per-key aggregates;
+        // Correlated scalar subqueries in the select list decorrelate into
+        // LEFT JOINs for per-key aggregates and unique-key lookups;
         // non-canonical shapes keep their original unsupported error.
         let mut projection_items: Vec<SelectItem> = select.projection.clone();
         // `OVER w` resolves against the WINDOW clause before anything is
@@ -777,13 +777,12 @@ impl<'catalog> Binder<'catalog> {
         Ok(())
     }
 
-    /// Rewrites one correlated scalar aggregate subquery from the select
-    /// list into a LEFT JOIN against a derived per-key aggregate when it is
-    /// the canonical single-table form: one COUNT/SUM/MIN/MAX/AVG
-    /// projection, inner-only conjuncts, and correlation equalities pairing
-    /// an inner column with an outer expression. Returns the replacement
-    /// expression and whether the caller must fold NULL to zero (COUNT
-    /// over an absent group).
+    /// Rewrites one correlated scalar subquery from the select list into a
+    /// LEFT JOIN. Aggregate forms group by their correlation keys; a
+    /// non-aggregate lookup is accepted only when those keys cover the inner
+    /// table's complete physical unique key, proving at most one matched row.
+    /// Returns the replacement expression and whether the caller must fold
+    /// NULL to zero (COUNT over an absent group).
     #[allow(clippy::too_many_lines)] // linear canonical-shape validation reads best unsplit
     fn decorrelate_scalar(
         &self,
@@ -815,17 +814,14 @@ impl<'catalog> Binder<'catalog> {
         else {
             return Err(unsupported());
         };
-        let Expr::Function(function) = projected else {
-            return Err(unsupported());
+        let function_name = match projected {
+            Expr::Function(function) => Some(function.name.to_string().to_ascii_uppercase()),
+            _ => None,
         };
-        let function_name = function.name.to_string().to_ascii_uppercase();
-        let counts = function_name == "COUNT";
-        if !matches!(
-            function_name.as_str(),
-            "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"
-        ) {
-            return Err(unsupported());
-        }
+        let aggregate = function_name
+            .as_deref()
+            .is_some_and(|name| matches!(name, "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"));
+        let counts = function_name.as_deref() == Some("COUNT");
         let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
         if tables.iter().any(|existing| {
             existing
@@ -838,6 +834,9 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         };
         let probe_scope = vec![probe_table.clone()];
+        if !aggregate && bind_expr(projected, &probe_scope, None).is_err() {
+            return Err(unsupported());
+        }
         let mut inner_only: Vec<&Expr> = Vec::new();
         let mut keys: Vec<(String, &Expr)> = Vec::new();
         for conjunct in split_and_conjuncts(selection) {
@@ -879,6 +878,24 @@ impl<'catalog> Binder<'catalog> {
         if keys.is_empty() {
             return Err(unsupported());
         }
+        if !aggregate {
+            let mut correlated_ids = keys
+                .iter()
+                .filter_map(|(name, _)| {
+                    probe_table
+                        .columns
+                        .iter()
+                        .find(|column| column.name.eq_ignore_ascii_case(name))
+                        .map(|column| column.column_id)
+                })
+                .collect::<Vec<_>>();
+            let mut unique_ids = probe_table.key_column_ids.clone();
+            correlated_ids.sort_unstable();
+            unique_ids.sort_unstable();
+            if unique_ids.is_empty() || correlated_ids != unique_ids {
+                return Err(unsupported());
+            }
+        }
         let mut derived_query = subquery.clone();
         let SetExpr::Select(derived_select) = derived_query.body.as_mut() else {
             return Err(unsupported());
@@ -899,12 +916,14 @@ impl<'catalog> Binder<'catalog> {
                 op: BinaryOperator::And,
                 right: Box::new(right),
             });
-        derived_select.group_by = GroupByExpr::Expressions(
-            keys.iter()
-                .map(|(name, _)| Expr::Identifier(Ident::new(name.clone())))
-                .collect(),
-            Vec::new(),
-        );
+        if aggregate {
+            derived_select.group_by = GroupByExpr::Expressions(
+                keys.iter()
+                    .map(|(name, _)| Expr::Identifier(Ident::new(name.clone())))
+                    .collect(),
+                Vec::new(),
+            );
+        }
         let alias = format!("__scalar_{}", tables.len());
         let input = self.bind_query(&derived_query, ctes)?;
         let derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
@@ -4928,7 +4947,9 @@ mod tests {
             .expect("schema"),
             TableStatistics::default(),
         )
-        .expect("table");
+        .expect("table")
+        .with_key_columns([1])
+        .expect("users key");
         let payments = TableEntry::new(
             TableId::new(13),
             "payments",
@@ -5158,10 +5179,24 @@ mod tests {
             &query.projection[0].expr.kind,
             BoundExprKind::Column(_)
         ));
-        // Non-aggregate scalar subqueries keep their unsupported error.
+        // Correlation through a non-key column does not prove scalar
+        // cardinality and must keep rejecting instead of picking a row.
         assert!(
-            bind("SELECT (SELECT Name FROM users WHERE users.id = Events.id) FROM Events").is_err()
+            bind("SELECT (SELECT id FROM users WHERE users.email = Events.Name) FROM Events")
+                .is_err()
         );
+        // A lookup correlated through the inner table's complete unique key
+        // is also scalar by construction and lowers to the same LEFT JOIN.
+        let query = bind(
+            "SELECT (SELECT email FROM users WHERE users.id = Events.id) AS user_name FROM Events",
+        )
+        .expect("unique-key scalar lookup decorrelates");
+        assert_eq!(query.from[0].joins.len(), 1);
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+        assert!(matches!(
+            &query.projection[0].expr.kind,
+            BoundExprKind::Column(_)
+        ));
     }
 
     #[test]

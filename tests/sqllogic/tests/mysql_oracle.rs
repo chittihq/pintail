@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 787;
+const EXPECTED_CASES: usize = 788;
 
 struct OracleCase {
     family: &'static str,
@@ -666,6 +666,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written scalar subquery",
             "SELECT e.id, (SELECT AVG(u.id) FROM users u WHERE u.id = e.id) AS mean \
+             FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "hand-written scalar subquery unique lookup",
+            "SELECT e.id, (SELECT u.name FROM users u WHERE u.id = e.id) AS user_name \
              FROM events e ORDER BY e.id",
         ),
         ordered(

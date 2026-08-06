@@ -2666,7 +2666,9 @@ mod tests {
                     users_schema,
                     TableStatistics::with_row_count(2),
                 )
-                .expect("users entry"),
+                .expect("users entry")
+                .with_key_columns([1])
+                .expect("users key"),
             ],
         )
         .expect("database");
@@ -2793,6 +2795,31 @@ mod tests {
         );
         assert_eq!(
             batch.column(1).expect("users").values(),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
+            ]
+        );
+
+        let statement = parse_statement(
+            "SELECT events.id, \
+             (SELECT users.name FROM users WHERE users.id = events.id) AS user_name \
+             FROM events ORDER BY events.id",
+        )
+        .expect("parse correlated scalar lookup");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind correlated scalar lookup");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("correlated scalar lookup plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024)
+            .expect("correlated scalar lookup execution");
+        let batch = execution
+            .next_batch()
+            .expect("correlated scalar lookup pull")
+            .expect("correlated scalar lookup batch");
+        assert_eq!(
+            batch.column(1).expect("lookup names").values(),
             [
                 Value::Utf8("user-a".to_owned()),
                 Value::Utf8("user-b".to_owned()),
