@@ -18,3 +18,4 @@ GOAL.md
 REVIEW.md
 # Local dashboard-development data directory (docs/development.md).
 .devdata/
+/packages/dashboard/target
