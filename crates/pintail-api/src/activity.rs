@@ -6,7 +6,7 @@ use axum::{
 use pintail_meta::{DlqRecord, SyncRunRecord};
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiState, auth::AuthPrincipal, controls::run_reconcile_job, error::ApiError};
+use crate::{ApiState, audit, auth::AuthPrincipal, controls::run_reconcile_job, error::ApiError};
 
 const DEFAULT_LIMIT: u64 = 100;
 const MAX_LIMIT: u64 = 1_000;
@@ -49,13 +49,17 @@ pub(crate) async fn activity(
 ) -> Result<Json<Vec<ActivityResponse>>, ApiError> {
     principal.require_scope("read")?;
     let database = visible_database(&principal, query.db.as_deref())?;
-    let runs = state
-        .metadata()?
-        .sync_runs(database.as_deref(), query.limit.clamp(1, MAX_LIMIT))
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .map(ActivityResponse::from)
-        .collect();
+    let limit = query.limit.clamp(1, MAX_LIMIT);
+    let metadata = state.metadata()?;
+    let runs = if principal.database_id.is_some() {
+        metadata.sync_runs(database.as_deref(), limit)
+    } else {
+        metadata.sync_runs_in_workspace(principal.require_workspace()?, database.as_deref(), limit)
+    }
+    .map_err(ApiError::internal)?
+    .into_iter()
+    .map(ActivityResponse::from)
+    .collect();
     Ok(Json(runs))
 }
 
@@ -66,13 +70,17 @@ pub(crate) async fn dead_letters(
 ) -> Result<Json<Vec<DlqResponse>>, ApiError> {
     principal.require_scope("read")?;
     let database = visible_database(&principal, query.db.as_deref())?;
-    let records = state
-        .metadata()?
-        .dlq_records(database.as_deref(), query.limit.clamp(1, MAX_LIMIT))
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .map(DlqResponse::from)
-        .collect();
+    let limit = query.limit.clamp(1, MAX_LIMIT);
+    let metadata = state.metadata()?;
+    let records = if principal.database_id.is_some() {
+        metadata.dlq_records(database.as_deref(), limit)
+    } else {
+        metadata.dlq_records_in_workspace(principal.require_workspace()?, database.as_deref(), limit)
+    }
+    .map_err(ApiError::internal)?
+    .into_iter()
+    .map(DlqResponse::from)
+    .collect();
     Ok(Json(records))
 }
 
@@ -82,11 +90,24 @@ pub(crate) async fn discard_dead_letter(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     principal.require_operator()?;
-    if state
-        .metadata()?
+    let metadata = state.metadata()?;
+    let record = metadata
+        .dlq_record(&id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("dead-letter record does not exist"))?;
+    principal.authorize_database(&record.database_id)?;
+    crate::databases::load_database(&state, &principal, &record.database_id)?;
+    if metadata
         .delete_dlq_record(&id)
         .map_err(ApiError::internal)?
     {
+        audit::record(
+            &state,
+            &principal,
+            "dead_letter.discard",
+            Some(("database", &record.database_id)),
+            Some(serde_json::json!({"table": record.table_name})),
+        );
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("dead-letter record does not exist"))
@@ -105,6 +126,7 @@ pub(crate) async fn retry_dead_letter(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("dead-letter record does not exist"))?;
     principal.authorize_database(&record.database_id)?;
+    crate::databases::load_database(&state, &principal, &record.database_id)?;
     let table = record.table_name.as_deref().ok_or_else(|| {
         ApiError::conflict("database-level dead letters require a database resnapshot")
     })?;
@@ -119,6 +141,13 @@ pub(crate) async fn retry_dead_letter(
         .delete_dlq_record(&id)
         .map_err(ApiError::internal)?
     {
+        audit::record(
+            &state,
+            &principal,
+            "dead_letter.retry",
+            Some(("database", &record.database_id)),
+            Some(serde_json::json!({"table": table})),
+        );
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found(

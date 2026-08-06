@@ -10,7 +10,7 @@ use pintail_probe::{RecommendedMode, probe};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::{ApiState, auth::AuthPrincipal, error::ApiError, state::random_identifier};
+use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, state::random_identifier};
 
 #[derive(Serialize)]
 pub(crate) struct DatabaseResponse {
@@ -117,18 +117,19 @@ pub(crate) async fn list(
 ) -> Result<Json<Vec<DatabaseResponse>>, ApiError> {
     principal.require_scope("read")?;
     let metadata = state.metadata()?;
-    let records = metadata.databases().map_err(ApiError::internal)?;
-    let records = records
-        .into_iter()
-        .filter(|record| {
-            principal
-                .database_id
-                .as_deref()
-                .is_none_or(|allowed| allowed == record.id)
-        })
-        .map(DatabaseResponse::from)
-        .collect();
-    Ok(Json(records))
+    let records = if let Some(database_id) = principal.database_id.as_deref() {
+        // API-key session: exactly the one database it is scoped to.
+        metadata
+            .database(database_id)
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .collect()
+    } else {
+        metadata
+            .databases_in_workspace(principal.require_workspace()?)
+            .map_err(ApiError::internal)?
+    };
+    Ok(Json(records.into_iter().map(DatabaseResponse::from).collect()))
 }
 
 pub(crate) async fn create(
@@ -137,6 +138,7 @@ pub(crate) async fn create(
     Json(request): Json<CreateDatabaseRequest>,
 ) -> Result<(StatusCode, Json<DatabaseResponse>), ApiError> {
     principal.require_operator()?;
+    let workspace_id = principal.require_workspace()?;
     validate_database_request(&request.name, &request.dsn, &request.mode)?;
     validate_keyless_policy(&request.keyless_policy)?;
     let id = random_identifier("db_", 16);
@@ -149,6 +151,9 @@ pub(crate) async fn create(
     let metadata = state.metadata()?;
     metadata
         .upsert_database(&id, request.name.trim(), &encrypted, &now)
+        .map_err(ApiError::internal)?;
+    metadata
+        .set_database_workspace(&id, workspace_id)
         .map_err(ApiError::internal)?;
     metadata
         .update_database(
@@ -170,6 +175,13 @@ pub(crate) async fn create(
         .database(&id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::internal("created database disappeared"))?;
+    audit::record(
+        &state,
+        &principal,
+        "database.create",
+        Some(("database", &id)),
+        Some(serde_json::json!({"name": record.name, "mode": record.mode})),
+    );
     Ok((StatusCode::CREATED, Json(DatabaseResponse::from(record))))
 }
 
@@ -180,7 +192,7 @@ pub(crate) async fn get(
 ) -> Result<Json<DatabaseResponse>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&id)?;
-    let record = load_database(&state, &id)?;
+    let record = load_database(&state, &principal, &id)?;
     Ok(Json(DatabaseResponse::from(record)))
 }
 
@@ -192,7 +204,7 @@ pub(crate) async fn update(
 ) -> Result<Json<DatabaseResponse>, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&id)?;
-    let existing = load_database(&state, &id)?;
+    let existing = load_database(&state, &principal, &id)?;
     let dsn = request.dsn.as_deref().unwrap_or("");
     validate_database_request(
         &request.name,
@@ -253,6 +265,13 @@ pub(crate) async fn update(
         .map_err(ApiError::internal)?
         .unwrap_or(existing);
     updated.encrypted_dsn.clear();
+    audit::record(
+        &state,
+        &principal,
+        "database.update",
+        Some(("database", &id)),
+        Some(serde_json::json!({"name": updated.name, "mode": updated.mode})),
+    );
     Ok(Json(DatabaseResponse::from(updated)))
 }
 
@@ -263,11 +282,13 @@ pub(crate) async fn delete(
 ) -> Result<StatusCode, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&id)?;
+    load_database(&state, &principal, &id)?;
     if state
         .metadata()?
         .delete_database(&id)
         .map_err(ApiError::internal)?
     {
+        audit::record(&state, &principal, "database.delete", Some(("database", &id)), None);
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("database does not exist"))
@@ -281,7 +302,7 @@ pub(crate) async fn test_connection(
 ) -> Result<Json<TestConnectionResponse>, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&id)?;
-    let record = load_database(&state, &id)?;
+    let record = load_database(&state, &principal, &id)?;
     let dsn = state.decrypt_dsn(&record.encrypted_dsn)?;
     let opts = Opts::from_url(&dsn)
         .map_err(|error| ApiError::bad_request(format!("invalid MySQL DSN: {error}")))?;
@@ -306,7 +327,7 @@ pub(crate) async fn probe_database(
 ) -> Result<Json<JsonValue>, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&id)?;
-    let record = load_database(&state, &id)?;
+    let record = load_database(&state, &principal, &id)?;
     let dsn = state.decrypt_dsn(&record.encrypted_dsn)?;
     let opts = Opts::from_url(&dsn)
         .map_err(|error| ApiError::bad_request(format!("invalid MySQL DSN: {error}")))?;
@@ -359,6 +380,13 @@ pub(crate) async fn set_mode(
         .metadata()?
         .set_database_mode(&id, &request.mode, &Utc::now().to_rfc3339())
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    audit::record(
+        &state,
+        &principal,
+        "database.set_mode",
+        Some(("database", &id)),
+        Some(serde_json::json!({"mode": request.mode})),
+    );
     get(Extension(principal), State(state), Path(id)).await
 }
 
@@ -369,7 +397,7 @@ pub(crate) async fn status(
 ) -> Result<Json<DatabaseStatusResponse>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&id)?;
-    let database = load_database(&state, &id)?;
+    let database = load_database(&state, &principal, &id)?;
     let tables = state.metadata()?.tables(&id).map_err(ApiError::internal)?;
     let rows = tables.iter().map(|table| table.rows_synced).sum();
     Ok(Json(DatabaseStatusResponse {
@@ -379,12 +407,27 @@ pub(crate) async fn status(
     }))
 }
 
-fn load_database(state: &ApiState, id: &str) -> Result<DatabaseRecord, ApiError> {
-    state
-        .metadata()?
-        .database(id)
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("database does not exist"))
+/// Loads a database, enforcing that a dashboard (JWT) session only ever
+/// reaches databases in its own workspace. Also used by other handlers as a
+/// combined existence + workspace-membership check for a `database_id` path
+/// param, after they have already called
+/// [`AuthPrincipal::authorize_database`] for API-key scoping.
+pub(crate) fn load_database(
+    state: &ApiState,
+    principal: &AuthPrincipal,
+    id: &str,
+) -> Result<DatabaseRecord, ApiError> {
+    let metadata = state.metadata()?;
+    let record = if principal.database_id.is_some() {
+        // API-key session: authorize_database already confirmed this is the
+        // one database the key is scoped to.
+        metadata.database(id).map_err(ApiError::internal)?
+    } else {
+        metadata
+            .database_in_workspace(id, principal.require_workspace()?)
+            .map_err(ApiError::internal)?
+    };
+    record.ok_or_else(|| ApiError::not_found("database does not exist"))
 }
 
 fn validate_database_request(name: &str, dsn: &str, mode: &str) -> Result<(), ApiError> {

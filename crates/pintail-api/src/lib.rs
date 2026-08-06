@@ -1,14 +1,17 @@
 //! Pintail's authenticated HTTP routes and embedded dashboard.
 
 mod activity;
+mod audit;
 mod auth;
 mod backup;
 mod controls;
 mod databases;
 mod error;
 mod events;
+mod invites;
 mod keys;
 mod metrics;
+mod oauth;
 
 /// Milliseconds from process start until the API began accepting
 /// connections — manifest load, WAL replay and control-plane open. A
@@ -31,6 +34,7 @@ mod query;
 mod snapshot;
 mod state;
 mod supervisor;
+mod workspaces;
 
 use axum::{
     Json, Router,
@@ -60,13 +64,22 @@ use crate::databases::{
     update as update_database,
 };
 use crate::events::{sse, websocket};
+use crate::invites::{create as create_invite, list as list_invites, revoke as revoke_invite};
 use crate::keys::{
     create as create_api_key, delete as delete_api_key, list as list_api_keys,
     patch as patch_api_key,
 };
 use crate::metrics::metrics;
+use crate::oauth::{
+    callback as google_callback, get_settings as get_google_settings,
+    put_settings as put_google_settings, start as google_start, status as google_status,
+};
 use crate::query::{list_tables, query, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
+use crate::workspaces::{
+    create as create_workspace, list as list_workspaces, members as workspace_members,
+    remove_member as remove_workspace_member, switch as switch_workspace,
+};
 
 /// Builds the public HTTP application without configured control-plane API
 /// state.
@@ -81,6 +94,25 @@ pub fn router() -> Router {
 pub fn router_with_state(state: ApiState) -> Router {
     let protected = Router::new()
         .route("/session", get(session))
+        .route("/workspaces", get(list_workspaces).post(create_workspace))
+        .route("/workspaces/{id}/switch", post(switch_workspace))
+        .route("/workspaces/members", get(workspace_members))
+        .route(
+            "/workspaces/members/{user_id}",
+            axum::routing::delete(remove_workspace_member),
+        )
+        .route(
+            "/workspaces/invites",
+            get(list_invites).post(create_invite),
+        )
+        .route(
+            "/workspaces/invites/{id}",
+            axum::routing::delete(revoke_invite),
+        )
+        .route(
+            "/settings/oauth/google",
+            get(get_google_settings).put(put_google_settings),
+        )
         .route("/databases", get(list_databases).post(create_database))
         .route(
             "/databases/{id}",
@@ -129,6 +161,9 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/auth/setup/status", get(setup_status))
         .route("/auth/setup", post(setup))
         .route("/auth/login", post(login))
+        .route("/auth/google/start", get(google_start))
+        .route("/auth/google/callback", get(google_callback))
+        .route("/auth/google/status", get(google_status))
         .merge(protected);
 
     Router::new()

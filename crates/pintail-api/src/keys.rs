@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest as _, Sha1};
 use sha2::{Digest as _, Sha256};
 
-use crate::{ApiState, auth::AuthPrincipal, error::ApiError, state::random_identifier};
+use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, state::random_identifier};
 
 #[derive(Serialize)]
 pub(crate) struct ApiKeyResponse {
@@ -50,6 +50,7 @@ pub(crate) async fn list(
 ) -> Result<Json<Vec<ApiKeyResponse>>, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     let keys = state
         .metadata()?
         .api_keys(&database_id)
@@ -68,6 +69,7 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<CreatedApiKeyResponse>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     if request.name.trim().is_empty() {
         return Err(ApiError::bad_request("API key name is required"));
     }
@@ -80,14 +82,6 @@ pub(crate) async fn create(
         return Err(ApiError::bad_request(
             "API key expiration must be a future RFC 3339 timestamp",
         ));
-    }
-    if state
-        .metadata()?
-        .database(&database_id)
-        .map_err(ApiError::internal)?
-        .is_none()
-    {
-        return Err(ApiError::not_found("database does not exist"));
     }
     let id = random_identifier("key_", 16);
     let secret = random_identifier("pk_", 32);
@@ -116,6 +110,13 @@ pub(crate) async fn create(
         .into_iter()
         .find(|key| key.id == id)
         .ok_or_else(|| ApiError::internal("created API key disappeared"))?;
+    audit::record(
+        &state,
+        &principal,
+        "api_key.create",
+        Some(("api_key", &id)),
+        Some(serde_json::json!({"database_id": database_id, "name": key.name})),
+    );
     Ok((
         StatusCode::CREATED,
         Json(CreatedApiKeyResponse {
@@ -133,6 +134,7 @@ pub(crate) async fn patch(
 ) -> Result<Json<ApiKeyResponse>, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     let metadata = state.metadata()?;
     ensure_key_belongs_to(&metadata, &database_id, &key_id)?;
     metadata
@@ -144,6 +146,13 @@ pub(crate) async fn patch(
         .into_iter()
         .find(|key| key.id == key_id)
         .ok_or_else(|| ApiError::not_found("API key does not exist"))?;
+    audit::record(
+        &state,
+        &principal,
+        "api_key.set_enabled",
+        Some(("api_key", &key_id)),
+        Some(serde_json::json!({"enabled": request.enabled})),
+    );
     Ok(Json(ApiKeyResponse::try_from(key)?))
 }
 
@@ -154,11 +163,19 @@ pub(crate) async fn delete(
 ) -> Result<StatusCode, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     let metadata = state.metadata()?;
     ensure_key_belongs_to(&metadata, &database_id, &key_id)?;
     metadata
         .delete_api_key(&key_id)
         .map_err(ApiError::internal)?;
+    audit::record(
+        &state,
+        &principal,
+        "api_key.delete",
+        Some(("api_key", &key_id)),
+        None,
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -30,6 +30,7 @@ pintail-store.workspace = true
 pintail-types.workspace = true
 pintail-wire.workspace = true
 rand.workspace = true
+reqwest.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true

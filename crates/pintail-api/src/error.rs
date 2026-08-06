@@ -46,6 +46,10 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
     }
 
+    pub(crate) const fn status(&self) -> StatusCode {
+        self.status
+    }
+
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status,

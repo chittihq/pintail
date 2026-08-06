@@ -11,7 +11,7 @@ use pintail_wire::{QueryError, ReplicaEngine};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value as JsonValue};
 
-use crate::{ApiState, auth::AuthPrincipal, error::ApiError};
+use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError};
 
 const MAX_RESPONSE_ROWS: usize = 10_000;
 const DEFAULT_PREVIEW_ROWS: usize = 100;
@@ -118,7 +118,16 @@ pub(crate) async fn query(
 ) -> Result<Json<QueryResponse>, ApiError> {
     principal.require_scope("query")?;
     principal.authorize_database(&request.db)?;
-    execute_query(&state, &request.db, &request.sql).map(Json)
+    crate::databases::load_database(&state, &principal, &request.db)?;
+    let response = execute_query(&state, &request.db, &request.sql)?;
+    audit::record(
+        &state,
+        &principal,
+        "query.run",
+        Some(("database", &request.db)),
+        Some(serde_json::json!({"sql": request.sql, "rows": response.stats.rows})),
+    );
+    Ok(Json(response))
 }
 
 pub(crate) async fn list_tables(
@@ -128,6 +137,7 @@ pub(crate) async fn list_tables(
 ) -> Result<Json<Vec<TableSummary>>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&query.db)?;
+    crate::databases::load_database(&state, &principal, &query.db)?;
     let database = load_database(&state, &query.db)?;
     let cascaded = cascade_reconciled_tables(database.probe_json.as_deref());
     let tables = state
@@ -153,6 +163,7 @@ pub(crate) async fn table_schema(
 ) -> Result<Json<TableSchemaResponse>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&query.db)?;
+    crate::databases::load_database(&state, &principal, &query.db)?;
     let replica = load_replica(&state, &query.db)?;
     let target = find_target(&replica, &name)?;
     let schema = &target.schema;
@@ -182,6 +193,7 @@ pub(crate) async fn table_data(
 ) -> Result<Json<QueryResponse>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&query.db)?;
+    crate::databases::load_database(&state, &principal, &query.db)?;
     let limit = query.limit.clamp(1, MAX_PREVIEW_ROWS);
     let sql = format!(
         "SELECT * FROM `{}` LIMIT {limit} OFFSET {}",
@@ -199,6 +211,7 @@ pub(crate) async fn table_count(
 ) -> Result<Json<CountResponse>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&query.db)?;
+    crate::databases::load_database(&state, &principal, &query.db)?;
     let sql = format!(
         "SELECT COUNT(*) AS `count` FROM `{}`",
         quote_identifier(&name)

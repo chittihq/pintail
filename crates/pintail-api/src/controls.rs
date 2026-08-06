@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::{
     ApiState,
+    audit,
     auth::AuthPrincipal,
     error::ApiError,
     events::ApiEvent,
@@ -39,6 +40,7 @@ pub(crate) async fn resync(
 ) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
     snapshot::start_forced(Extension(principal), State(state), Path(database_id)).await
 }
@@ -50,6 +52,7 @@ pub(crate) async fn reconcile(
 ) -> Result<(StatusCode, Json<AcceptedReconcile>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
     state.acquire_job(&database_id)?;
 
@@ -105,6 +108,13 @@ pub(crate) async fn reconcile(
         return Err(ApiError::unavailable(message));
     }
 
+    audit::record(
+        &state,
+        &principal,
+        "reconcile.start",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"table": table_name.clone()})),
+    );
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedReconcile {

@@ -16,11 +16,12 @@ pub use backup::{
     RestoredDatabase, RestoredTable,
 };
 pub use control::{
-    ApiKeyRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, NewApiKey, SyncRunRecord, TableRecord,
-    UserRecord,
+    ApiKeyRecord, AuditEventRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, InviteRecord,
+    NewApiKey, NewAuditEvent, NewInvite, SyncRunRecord, TableRecord, UserRecord,
+    WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 14;
+const CURRENT_SCHEMA_VERSION: u32 = 16;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -304,6 +305,23 @@ impl MetaStore {
                 (id, name, encrypted_dsn, now),
             )
             .with_context(|| format!("failed to register source database {id}"))?;
+        Ok(())
+    }
+
+    /// Assigns a database to a workspace. Set once, immediately after
+    /// [`MetaStore::upsert_database`] creates the row via the HTTP API; a
+    /// database never moves workspaces afterward.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database row cannot be updated.
+    pub fn set_database_workspace(&self, id: &str, workspace_id: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE databases SET workspace_id = ?2 WHERE id = ?1",
+                (id, workspace_id),
+            )
+            .with_context(|| format!("failed to assign database {id} to a workspace"))?;
         Ok(())
     }
 
@@ -1360,6 +1378,12 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 14 {
         migration_v14(connection.transaction()?)?;
     }
+    if found < 15 {
+        migration_v15(connection.transaction()?)?;
+    }
+    if found < 16 {
+        migration_v16(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1507,4 +1531,24 @@ fn migration_v14(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 14")
+}
+
+fn migration_v15(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/015_workspaces.sql"))
+        .context("failed to apply metadata migration 15")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 15")
+}
+
+fn migration_v16(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!(
+            "../migrations/016_oauth_invites_audit.sql"
+        ))
+        .context("failed to apply metadata migration 16")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 16")
 }

@@ -30,6 +30,10 @@ pub(crate) struct AuthPrincipal {
     pub(crate) subject: String,
     pub(crate) role: String,
     pub(crate) database_id: Option<String>,
+    /// The workspace this session is scoped to. Present for dashboard-user
+    /// (JWT) sessions; absent for database-scoped API keys, which authorize
+    /// through [`AuthPrincipal::authorize_database`] instead.
+    pub(crate) workspace_id: Option<String>,
     pub(crate) scopes: Vec<String>,
 }
 
@@ -44,6 +48,26 @@ impl AuthPrincipal {
         } else {
             Err(ApiError::forbidden("operator access is required"))
         }
+    }
+
+    pub(crate) fn require_admin(&self) -> Result<(), ApiError> {
+        if self.role == "admin" {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden("admin access is required"))
+        }
+    }
+
+    /// The workspace this dashboard session is scoped to.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when called for an API-key principal, which has no
+    /// workspace of its own.
+    pub(crate) fn require_workspace(&self) -> Result<&str, ApiError> {
+        self.workspace_id
+            .as_deref()
+            .ok_or_else(|| ApiError::forbidden("a dashboard session is required"))
     }
 
     pub(crate) fn authorize_database(&self, database_id: &str) -> Result<(), ApiError> {
@@ -77,6 +101,7 @@ impl AuthPrincipal {
 struct Claims {
     sub: String,
     role: String,
+    workspace_id: String,
     iss: String,
     iat: u64,
     exp: u64,
@@ -110,6 +135,7 @@ struct SessionUser {
     id: String,
     email: String,
     role: String,
+    workspace_id: String,
 }
 
 #[derive(Serialize)]
@@ -117,6 +143,7 @@ pub(crate) struct PrincipalResponse {
     subject: String,
     role: String,
     database_id: Option<String>,
+    workspace_id: Option<String>,
     scopes: Vec<String>,
 }
 
@@ -135,11 +162,13 @@ pub(crate) async fn setup(
 ) -> Result<Json<SessionResponse>, ApiError> {
     validate_credentials(&request.email, &request.password)?;
     let user_id = random_identifier("usr_", 16);
+    let workspace_id = random_identifier("ws_", 16);
     let email = request.email.trim().to_ascii_lowercase();
     let password = request.password;
     let metadata_state = state.clone();
     let created_at = Utc::now().to_rfc3339();
     let user_id_for_insert = user_id.clone();
+    let workspace_id_for_insert = workspace_id.clone();
     let email_for_insert = email.clone();
     tokio::task::spawn_blocking(move || {
         let metadata = metadata_state.metadata()?;
@@ -155,17 +184,30 @@ pub(crate) async fn setup(
                 "admin",
                 &created_at,
             )
+            .map_err(ApiError::internal)?;
+        let slug = workspace_id_for_insert.trim_start_matches("ws_");
+        metadata
+            .create_workspace(&workspace_id_for_insert, "My workspace", slug, &created_at)
+            .map_err(ApiError::internal)?;
+        metadata
+            .add_workspace_member(
+                &workspace_id_for_insert,
+                &user_id_for_insert,
+                "admin",
+                &created_at,
+            )
             .map_err(ApiError::internal)
     })
     .await
     .map_err(ApiError::internal)??;
-    let token = issue_token(&state, &user_id, "admin")?;
+    let token = issue_token(&state, &user_id, "admin", &workspace_id)?;
     Ok(Json(SessionResponse {
         token,
         user: SessionUser {
             id: user_id,
             email,
             role: "admin".to_owned(),
+            workspace_id,
         },
     }))
 }
@@ -178,7 +220,7 @@ pub(crate) async fn login(
     let password = request.password;
     let metadata_state = state.clone();
     let now = Utc::now().to_rfc3339();
-    let user = tokio::task::spawn_blocking(move || {
+    let (user, workspace_id, role) = tokio::task::spawn_blocking(move || {
         let metadata = metadata_state.metadata()?;
         let user = metadata
             .user_by_email(&email)
@@ -187,22 +229,44 @@ pub(crate) async fn login(
         if !user.enabled || !verify_password(&password, &user.argon2_hash) {
             return Err(ApiError::unauthorized("email or password is incorrect"));
         }
+        let (workspace_id, role) = default_workspace_for_user(&metadata, &user.id)?;
         metadata
             .touch_user_login(&user.id, &now)
             .map_err(ApiError::internal)?;
-        Ok(user)
+        Ok((user, workspace_id, role))
     })
     .await
     .map_err(ApiError::internal)??;
-    let token = issue_token(&state, &user.id, &user.role)?;
+    let token = issue_token(&state, &user.id, &role, &workspace_id)?;
     Ok(Json(SessionResponse {
         token,
         user: SessionUser {
             id: user.id,
             email: user.email,
-            role: user.role,
+            role,
+            workspace_id,
         },
     }))
+}
+
+/// Picks the workspace a fresh login lands in: the caller's oldest
+/// membership by name order. They can switch afterward from the sidebar.
+///
+/// # Errors
+///
+/// Returns an error when the user belongs to no workspace at all.
+pub(crate) fn default_workspace_for_user(
+    metadata: &pintail_meta::MetaStore,
+    user_id: &str,
+) -> Result<(String, String), ApiError> {
+    let memberships = metadata
+        .workspaces_for_user(user_id)
+        .map_err(ApiError::internal)?;
+    let (workspace, role) = memberships
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::forbidden("this account does not belong to a workspace yet"))?;
+    Ok((workspace.id, role))
 }
 
 pub(crate) async fn session(request: Request) -> Result<Json<PrincipalResponse>, ApiError> {
@@ -214,6 +278,7 @@ pub(crate) async fn session(request: Request) -> Result<Json<PrincipalResponse>,
         subject: principal.subject.clone(),
         role: principal.role.clone(),
         database_id: principal.database_id.clone(),
+        workspace_id: principal.workspace_id.clone(),
         scopes: principal.scopes.clone(),
     }))
 }
@@ -252,6 +317,7 @@ fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrincipal, ApiE
         subject: token.claims.sub,
         role: token.claims.role,
         database_id: None,
+        workspace_id: Some(token.claims.workspace_id),
         scopes: vec!["*".to_owned()],
     })
 }
@@ -274,11 +340,17 @@ fn authenticate_api_key(state: &ApiState, secret: &str) -> Result<AuthPrincipal,
         subject: key.id,
         role: "api_key".to_owned(),
         database_id: Some(key.database_id),
+        workspace_id: None,
         scopes,
     })
 }
 
-fn issue_token(state: &ApiState, subject: &str, role: &str) -> Result<String, ApiError> {
+pub(crate) fn issue_token(
+    state: &ApiState,
+    subject: &str,
+    role: &str,
+    workspace_id: &str,
+) -> Result<String, ApiError> {
     let issued_at = u64::try_from(Utc::now().timestamp()).map_err(ApiError::internal)?;
     let expires_at = issued_at
         .checked_add(TOKEN_LIFETIME.as_secs())
@@ -286,6 +358,7 @@ fn issue_token(state: &ApiState, subject: &str, role: &str) -> Result<String, Ap
     let claims = Claims {
         sub: subject.to_owned(),
         role: role.to_owned(),
+        workspace_id: workspace_id.to_owned(),
         iss: TOKEN_ISSUER.to_owned(),
         iat: issued_at,
         exp: expires_at,

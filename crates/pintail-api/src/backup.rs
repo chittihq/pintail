@@ -19,7 +19,8 @@ use pintail_store::{StoreOptions, TableSnapshot, TableStore};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ApiState, auth::AuthPrincipal, error::ApiError, events::ApiEvent, snapshot::table_directory,
+    ApiState, audit, auth::AuthPrincipal, error::ApiError, events::ApiEvent,
+    snapshot::table_directory,
 };
 
 type EncryptedCredentials = (Option<Vec<u8>>, Option<Vec<u8>>);
@@ -154,6 +155,7 @@ pub(crate) async fn get_config(
 ) -> Result<Json<BackupConfigResponse>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     ensure_database(&state, &database_id)?;
     let config = state
         .metadata()?
@@ -172,6 +174,7 @@ pub(crate) async fn put_config(
 ) -> Result<Json<BackupConfigResponse>, ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     ensure_database(&state, &database_id)?;
     validate_prefix(&request.prefix).map_err(bad_request)?;
     if request.schedule_minutes == 0 {
@@ -211,6 +214,13 @@ pub(crate) async fn put_config(
         .backup_config(&database_id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::internal("saved backup configuration disappeared"))?;
+    audit::record(
+        &state,
+        &principal,
+        "backup_config.update",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"bucket": saved.bucket, "enabled": saved.enabled})),
+    );
     Ok(Json(saved.into()))
 }
 
@@ -221,6 +231,7 @@ pub(crate) async fn list(
 ) -> Result<Json<Vec<BackupResponse>>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     ensure_database(&state, &database_id)?;
     let backups = state
         .metadata()?
@@ -240,8 +251,16 @@ pub(crate) async fn start(
 ) -> Result<(StatusCode, Json<AcceptedBackup>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     let force_full = payload.is_some_and(|Json(request)| request.full);
     let accepted = start_job(&state, &database_id, force_full)?;
+    audit::record(
+        &state,
+        &principal,
+        "backup.start",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"kind": accepted.kind})),
+    );
     Ok((StatusCode::ACCEPTED, Json(accepted)))
 }
 
@@ -392,6 +411,7 @@ pub(crate) async fn restore(
 ) -> Result<(StatusCode, Json<RestoreResponse>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     ensure_database(&state, &database_id)?;
     let name = request.name.trim();
     if name.is_empty() {
@@ -428,6 +448,13 @@ pub(crate) async fn restore(
         &restored_id,
         format!("restored backup {} side-by-side", record.id),
     ));
+    audit::record(
+        &state,
+        &principal,
+        "backup.restore",
+        Some(("database", &restored_id)),
+        Some(serde_json::json!({"source_database_id": database_id, "backup_id": record.id})),
+    );
     Ok((
         StatusCode::CREATED,
         Json(RestoreResponse {

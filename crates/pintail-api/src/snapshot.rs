@@ -26,7 +26,7 @@ use pintail_snapshot::{
 use pintail_store::{StoreOptions, TableStore};
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiState, auth::AuthPrincipal, error::ApiError, events::ApiEvent};
+use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, events::ApiEvent};
 
 #[derive(Deserialize)]
 pub(crate) struct SnapshotRequest {
@@ -66,8 +66,16 @@ pub(crate) async fn start(
 ) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     let force = payload.is_some_and(|Json(request)| request.force);
     let run_id = begin_snapshot_job(&state, &database_id, force)?;
+    audit::record(
+        &state,
+        &principal,
+        "snapshot.start",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"force": force})),
+    );
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSnapshot {
@@ -227,6 +235,7 @@ pub(crate) async fn status(
 ) -> Result<Json<SnapshotStatus>, ApiError> {
     principal.require_scope("read")?;
     principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
     let metadata = state.metadata()?;
     let database = metadata
         .database(&database_id)
