@@ -12,6 +12,7 @@ const {
   loading,
   dark,
   loadNodeStatus,
+  loadWorkspaces,
   loadControlPlane,
   startEventStream,
   refreshLiveData,
@@ -38,6 +39,7 @@ onMounted(async () => {
     authMode.value = setup.required ? 'setup' : 'login'
     if (token.value) {
       session.value = await request<Session>('/session')
+      await loadWorkspaces()
       await loadControlPlane()
       startEventStream()
     }
@@ -65,6 +67,7 @@ async function submitAuth() {
     })
     setToken(response.token)
     session.value = await request<Session>('/session')
+    await loadWorkspaces()
     await loadControlPlane()
     startEventStream()
     toast(authMode.value === 'setup' ? 'Operator initialized' : 'Signed in')

@@ -7,6 +7,7 @@ import type {
   DlqRecord,
   Session,
   TableSummary,
+  Workspace,
 } from '@/types/pintail'
 
 export type NodeStatus = {
@@ -23,9 +24,10 @@ export type NodeStatus = {
 }
 
 export function useControlPlane() {
-  const { token, request } = usePintailApi()
+  const { token, setToken, request } = usePintailApi()
 
   const session = useState<Session | null>('cp-session', () => null)
+  const workspaces = useState<Workspace[]>('cp-workspaces', () => [])
   const nodeStatus = useState<NodeStatus | null>('cp-node-status', () => null)
   const databases = useState<DatabaseRecord[]>('cp-databases', () => [])
   const statuses = useState<Record<string, DatabaseStatus>>('cp-statuses', () => ({}))
@@ -139,6 +141,50 @@ export function useControlPlane() {
     eventAbort.value = undefined
   }
 
+  async function loadWorkspaces() {
+    try {
+      workspaces.value = await request<Workspace[]>('/workspaces')
+    } catch (failure) {
+      error.value = messageOf(failure)
+    }
+  }
+
+  async function enterWorkspace(response: { token: string, workspace: Workspace }) {
+    stopEventStream()
+    setToken(response.token)
+    session.value = await request<Session>('/session')
+    databases.value = []
+    statuses.value = {}
+    activity.value = []
+    deadLetters.value = []
+    await loadWorkspaces()
+    await loadControlPlane()
+    await startEventStream()
+  }
+
+  async function switchWorkspace(workspaceId: string) {
+    try {
+      const response = await request<{ token: string, workspace: Workspace }>(
+        `/workspaces/${workspaceId}/switch`,
+        { method: 'POST' },
+      )
+      await enterWorkspace(response)
+      toast(`Switched to ${response.workspace.name}`)
+    } catch (failure) {
+      error.value = messageOf(failure)
+    }
+  }
+
+  async function createWorkspace(name: string) {
+    const response = await request<{ token: string, workspace: Workspace }>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    })
+    await enterWorkspace(response)
+    toast(`${response.workspace.name} created`)
+    return response.workspace
+  }
+
   function logout() {
     const { setToken } = usePintailApi()
     stopEventStream()
@@ -229,6 +275,7 @@ export function useControlPlane() {
 
   return {
     session,
+    workspaces,
     nodeStatus,
     databases,
     statuses,
@@ -241,6 +288,9 @@ export function useControlPlane() {
     activeMirrors,
     alertCount,
     loadNodeStatus,
+    loadWorkspaces,
+    switchWorkspace,
+    createWorkspace,
     loadControlPlane,
     refreshStatuses,
     refreshLiveData,

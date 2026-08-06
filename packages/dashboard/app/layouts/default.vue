@@ -4,22 +4,26 @@ import {
   AlertTriangle,
   Archive,
   Cable,
+  Check,
   ChevronRight,
   ChevronsUpDown,
   Database,
   KeyRound,
   LayoutDashboard,
+  LoaderCircle,
   LogOut,
   Moon,
   Plus,
   Settings as SettingsIcon,
   SquareTerminal,
   Sun,
+  Users,
   X,
 } from '@lucide/vue'
-import { initials } from '@/lib/format'
+import { toast } from 'vue-sonner'
+import { initials, messageOf } from '@/lib/format'
 
-type NavItem = { to: string; label: string; icon: unknown; activeOn: (path: string) => boolean }
+type NavItem = { to: string; label: string; icon: unknown; activeOn: (path: string) => boolean, adminOnly?: boolean }
 
 const nav: NavItem[] = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, activeOn: (path) => path === '/' },
@@ -28,12 +32,30 @@ const nav: NavItem[] = [
   { to: '/activity', label: 'Activity', icon: Activity, activeOn: (path) => path === '/activity' },
   { to: '/keys', label: 'API Keys', icon: KeyRound, activeOn: (path) => path === '/keys' },
   { to: '/backups', label: 'Backups', icon: Archive, activeOn: (path) => path === '/backups' },
+  { to: '/team', label: 'Team', icon: Users, activeOn: (path) => path === '/team', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon, activeOn: (path) => path === '/settings' },
   { to: '/connect', label: 'Connect', icon: Cable, activeOn: (path) => path === '/connect' },
 ]
 
 const route = useRoute()
-const { session, error, dark, alertCount, databases, logout, toggleTheme } = useControlPlane()
+const {
+  session,
+  workspaces,
+  error,
+  dark,
+  alertCount,
+  databases,
+  logout,
+  toggleTheme,
+  switchWorkspace,
+  createWorkspace,
+} = useControlPlane()
+
+const currentWorkspace = computed(
+  () => workspaces.value.find((item) => item.id === session.value?.workspace_id) ?? null,
+)
+const isAdmin = computed(() => session.value?.role === 'admin')
+const visibleNav = computed(() => nav.filter((item) => !item.adminOnly || isAdmin.value))
 
 const currentLabel = computed(() => {
   if (route.path.startsWith('/databases/') && route.params.id) {
@@ -42,6 +64,31 @@ const currentLabel = computed(() => {
   }
   return nav.find((item) => item.activeOn(route.path))?.label || 'Pintail'
 })
+
+const createWorkspaceOpen = ref(false)
+const newWorkspaceName = ref('')
+const creatingWorkspace = ref(false)
+
+async function onSwitchWorkspace(workspaceId: string) {
+  if (workspaceId === session.value?.workspace_id) return
+  await switchWorkspace(workspaceId)
+  await navigateTo('/')
+}
+
+async function submitCreateWorkspace() {
+  if (!newWorkspaceName.value.trim()) return
+  creatingWorkspace.value = true
+  try {
+    await createWorkspace(newWorkspaceName.value.trim())
+    createWorkspaceOpen.value = false
+    newWorkspaceName.value = ''
+    await navigateTo('/')
+  } catch (failure) {
+    toast(messageOf(failure))
+  } finally {
+    creatingWorkspace.value = false
+  }
+}
 
 function signOut() {
   logout()
@@ -55,12 +102,34 @@ function signOut() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton as-child size="lg" class="data-[slot=sidebar-menu-button]:!p-1.5 text-base font-extrabold tracking-tight">
-              <NuxtLink to="/">
-                <span class="bg-primary text-primary-foreground grid size-7 shrink-0 place-items-center font-mono text-[0.6rem] font-extrabold">PT</span>
-                <span>Pintail</span>
-              </NuxtLink>
-            </SidebarMenuButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <SidebarMenuButton size="lg" class="data-[slot=sidebar-menu-button]:!p-1.5 data-[state=open]:bg-sidebar-accent">
+                  <span class="bg-primary text-primary-foreground grid size-7 shrink-0 place-items-center font-mono text-[0.6rem] font-extrabold">PT</span>
+                  <div class="grid flex-1 text-left text-sm leading-tight">
+                    <span class="truncate text-base font-extrabold tracking-tight">Pintail</span>
+                    <span class="text-sidebar-foreground/60 truncate text-xs">{{ currentWorkspace?.name || 'Choose a workspace' }}</span>
+                  </div>
+                  <ChevronsUpDown class="ml-auto size-4" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent class="w-(--reka-dropdown-menu-trigger-width) min-w-56 rounded-lg" side="bottom" align="start" :side-offset="4">
+                <DropdownMenuLabel class="text-muted-foreground font-mono text-[0.63rem] tracking-[0.1em] uppercase">Workspaces</DropdownMenuLabel>
+                <DropdownMenuItem
+                  v-for="workspace in workspaces"
+                  :key="workspace.id"
+                  @click="onSwitchWorkspace(workspace.id)"
+                >
+                  <span class="bg-accent text-accent-foreground grid size-6 shrink-0 place-items-center rounded font-mono text-[0.55rem] font-bold uppercase">{{ workspace.name.slice(0, 2) }}</span>
+                  <span class="flex-1 truncate">{{ workspace.name }}</span>
+                  <Check v-if="workspace.id === session?.workspace_id" class="text-foreground" />
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem @click="createWorkspaceOpen = true">
+                  <Plus /> Create workspace
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
@@ -68,7 +137,7 @@ function signOut() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem v-for="item in nav" :key="item.to">
+              <SidebarMenuItem v-for="item in visibleNav" :key="item.to">
                 <SidebarMenuButton as-child :is-active="item.activeOn(route.path)" :tooltip="item.label">
                   <NuxtLink :to="item.to">
                     <component :is="item.icon" />
@@ -163,5 +232,24 @@ function signOut() {
 
       <slot />
     </SidebarInset>
+
+    <Dialog v-model:open="createWorkspaceOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create a workspace</DialogTitle>
+          <DialogDescription>You become its admin. Databases, members, and activity are scoped to this workspace alone.</DialogDescription>
+        </DialogHeader>
+        <form class="grid gap-1.5" @submit.prevent="submitCreateWorkspace">
+          <Label for="workspace-name">Name</Label>
+          <Input id="workspace-name" v-model="newWorkspaceName" required placeholder="Acme production" autofocus />
+        </form>
+        <DialogFooter>
+          <Button variant="outline" @click="createWorkspaceOpen = false">Cancel</Button>
+          <Button :disabled="creatingWorkspace || !newWorkspaceName.trim()" @click="submitCreateWorkspace">
+            <LoaderCircle v-if="creatingWorkspace" class="animate-spin" /> Create workspace
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </SidebarProvider>
 </template>

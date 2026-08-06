@@ -2,7 +2,15 @@ export interface Session {
   subject: string
   role: string
   database_id: string | null
+  workspace_id: string | null
   scopes: string[]
+}
+
+export interface Workspace {
+  id: string
+  name: string
+  slug: string
+  role: string
 }
 
 export interface DatabaseRecord {
