@@ -2892,7 +2892,7 @@ fn bind_window_function(
             "window ORDER BY over JSON requires JSON-aware ordering".to_owned(),
         ));
     }
-    let frame = bind_window_frame(spec, function)?;
+    let frame = bind_window_frame(spec, function, &order_by)?;
     // FIRST_VALUE and LAST_VALUE read the frame by definition — LAST_VALUE's
     // whole reputation for surprise comes from the default frame — so a
     // frame on them is meaningful. Ranking and offset functions ignore or
@@ -4454,34 +4454,55 @@ fn substitute_named_windows(
 fn bind_window_frame(
     spec: &sqlparser::ast::WindowSpec,
     function: &Function,
+    order_by: &[BoundWindowOrderKey],
 ) -> Result<Option<BoundWindowFrame>, BindError> {
     let Some(frame) = &spec.window_frame else {
         return Ok(None);
     };
     let unsupported = || BindError::UnsupportedQueryClause(format!("window frame on {function}"));
-    // RANGE is accepted only with non-numeric bounds, where it differs from
-    // ROWS solely in treating CURRENT ROW as the whole peer group. RANGE with
-    // a numeric offset compares the ordering key's own VALUES, which needs
-    // typed arithmetic on that key; approximating it with row counts answers
-    // a different question, so it still rejects. GROUPS counts peer groups
-    // and rejects for the same reason.
+    // MySQL supports ROWS and RANGE but rejects GROUPS. A bounded RANGE must
+    // have exactly one numeric ORDER BY expression; its offsets are applied
+    // to that key's values during execution rather than treated as row counts.
     let range = match frame.units {
         sqlparser::ast::WindowFrameUnits::Rows => false,
         sqlparser::ast::WindowFrameUnits::Range => true,
         sqlparser::ast::WindowFrameUnits::Groups => return Err(unsupported()),
     };
-    if range {
-        let offsetless = |edge: &sqlparser::ast::WindowFrameBound| {
-            matches!(
-                edge,
-                sqlparser::ast::WindowFrameBound::CurrentRow
-                    | sqlparser::ast::WindowFrameBound::Preceding(None)
-                    | sqlparser::ast::WindowFrameBound::Following(None)
-            )
-        };
-        if !offsetless(&frame.start_bound) || !frame.end_bound.as_ref().is_none_or(offsetless) {
-            return Err(unsupported());
-        }
+    let has_offset = |edge: &sqlparser::ast::WindowFrameBound| {
+        matches!(
+            edge,
+            sqlparser::ast::WindowFrameBound::Preceding(Some(_))
+                | sqlparser::ast::WindowFrameBound::Following(Some(_))
+        )
+    };
+    if range
+        && (has_offset(&frame.start_bound) || frame.end_bound.as_ref().is_some_and(has_offset))
+        && !matches!(
+            order_by,
+            [BoundWindowOrderKey {
+                expr: BoundExpr {
+                    data_type: Some(
+                        DataType::Boolean
+                            | DataType::Int8
+                            | DataType::Int16
+                            | DataType::Int32
+                            | DataType::Int64
+                            | DataType::UInt8
+                            | DataType::UInt16
+                            | DataType::UInt32
+                            | DataType::UInt64
+                            | DataType::Float32
+                            | DataType::Float64
+                            | DataType::Decimal { .. }
+                            | DataType::Year
+                    ),
+                    ..
+                },
+                ..
+            }]
+        )
+    {
+        return Err(unsupported());
     }
     let bound = |edge: &sqlparser::ast::WindowFrameBound, preceding_side: bool| {
         use sqlparser::ast::WindowFrameBound as Edge;

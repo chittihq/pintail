@@ -553,12 +553,10 @@ pub enum BoundFrameBound {
     UnboundedFollowing,
 }
 
-/// An explicit `ROWS BETWEEN ... AND ...` frame.
+/// An explicit `ROWS` or `RANGE BETWEEN ... AND ...` frame.
 ///
-/// Only `ROWS` is represented. `RANGE` with a numeric offset needs arithmetic
-/// on the ordering key's own values, and `GROUPS` needs peer counting; both
-/// reject during binding rather than being approximated by row counts, which
-/// would silently answer a different question.
+/// A bounded `RANGE` applies its offset to the single numeric ordering key.
+/// `GROUPS` rejects during binding, matching `MySQL` 8.4.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoundWindowFrame {
     /// Whether `CURRENT ROW` means the whole peer group (`RANGE`) rather
@@ -579,7 +577,7 @@ pub struct BoundWindow {
     pub partition_by: Vec<BoundExpr>,
     /// In-partition ordering.
     pub order_by: Vec<BoundWindowOrderKey>,
-    /// Explicit `ROWS` frame; `None` uses `MySQL`'s default frame.
+    /// Explicit `ROWS`/`RANGE` frame; `None` uses `MySQL`'s default frame.
     pub frame: Option<BoundWindowFrame>,
     /// Result type.
     pub data_type: Option<DataType>,

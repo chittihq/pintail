@@ -17,12 +17,13 @@ stays readable as a list of things to fix.
   membership sides to be provably non-nullable: with a possible NULL, MySQL's
   three-valued `NOT IN` diverges from an anti join, so those shapes reject.
 - Non-equality join conditions are rejected.
-- A `RANGE` frame accepts only offsetless bounds (`UNBOUNDED PRECEDING`,
-  `CURRENT ROW`, `UNBOUNDED FOLLOWING`). `RANGE` with a numeric offset
-  compares the ordering key's own values rather than counting rows, so it is
-  not approximated with row offsets and rejects. `GROUPS` frames, which count
-  peer groups, reject for the same reason. Windows still cannot combine with
-  `DISTINCT` (#25). A named window may be referenced as `OVER w` and extended
+- A `RANGE` frame supports offsetless bounds (`UNBOUNDED PRECEDING`,
+  `CURRENT ROW`, `UNBOUNDED FOLLOWING`) and nonnegative integer offsets over
+  one numeric ordering key, framing by key value rather than row position.
+  Decimal and descending keys retain their exact ordering. Temporal
+  `INTERVAL` offsets and fractional numeric offsets still reject (#25).
+  `GROUPS` frames and `DISTINCT` window aggregates reject as MySQL 8.4 does;
+  they are not compatibility gaps. A named window may be referenced as `OVER w` and extended
   additively with clauses absent from its base definition. Chained named
   definitions (`WINDOW child AS parent`) still reject; resolving those needs
   cycle detection. As in MySQL, a framed base may be used directly as `OVER w`

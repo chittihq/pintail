@@ -2122,6 +2122,57 @@ mod tests {
         }
     }
 
+    #[test]
+    fn numeric_range_offsets_frame_by_order_values_not_row_positions() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        table
+            .ingest(
+                [1_u64, 2, 10, 11, 20]
+                    .into_iter()
+                    .map(|id| row(id, "value"))
+                    .collect(),
+            )
+            .expect("ingest");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(61);
+        let table_id = TableId::new(63);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT SUM(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) \
+                 FROM events",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            [1_u64, 3, 10, 21, 20].map(Value::UInt64)
+        );
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING), \
+                 id FROM events ORDER BY id DESC",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            [20_u64, 21, 21, 3, 3].map(Value::UInt64)
+        );
+    }
+
     /// The offset window functions, including the `LAST_VALUE` subtlety: under
     /// `MySQL`'s default frame it reads the last row of the current PEER
     /// GROUP, so with a unique ORDER BY key every row returns its own value

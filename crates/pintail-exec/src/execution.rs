@@ -8593,7 +8593,7 @@ struct CompiledWindow {
     partition: Vec<CompiledExpr>,
     /// Order keys with `(ascending, nulls_first, decimal)`.
     order: Vec<(CompiledExpr, bool, bool, bool)>,
-    /// Explicit `ROWS` frame; `None` keeps `MySQL`'s default frame.
+    /// Explicit `ROWS`/`RANGE` frame; `None` keeps `MySQL`'s default frame.
     frame: Option<pintail_sql::BoundWindowFrame>,
 }
 
@@ -8755,6 +8755,154 @@ fn build_window(
     Ok(MaterializedRows { rows, position: 0 })
 }
 
+enum NumericRangeTarget {
+    NegativeInfinity,
+    Value(Value),
+    PositiveInfinity,
+}
+
+#[allow(clippy::cast_precision_loss)] // Float ordering keys are approximate by definition.
+fn numeric_range_target(
+    current: &Value,
+    offset: u64,
+    add: bool,
+    decimal: bool,
+) -> Result<NumericRangeTarget, ExecError> {
+    let overflow = || {
+        if add {
+            NumericRangeTarget::PositiveInfinity
+        } else {
+            NumericRangeTarget::NegativeInfinity
+        }
+    };
+    let target = match current {
+        Value::Int64(value) => {
+            let value = i128::from(*value);
+            let offset = i128::from(offset);
+            let value = if add { value + offset } else { value - offset };
+            i64::try_from(value)
+                .map(Value::Int64)
+                .map_or_else(|_| overflow(), NumericRangeTarget::Value)
+        }
+        Value::UInt64(value) => {
+            let value = i128::from(*value);
+            let offset = i128::from(offset);
+            let value = if add { value + offset } else { value - offset };
+            u64::try_from(value)
+                .map(Value::UInt64)
+                .map_or_else(|_| overflow(), NumericRangeTarget::Value)
+        }
+        Value::Float64(value) => {
+            let offset = offset as f64;
+            let value = if add {
+                value.get() + offset
+            } else {
+                value.get() - offset
+            };
+            if value.is_finite() {
+                NumericRangeTarget::Value(Value::float64(value))
+            } else {
+                overflow()
+            }
+        }
+        Value::Utf8(text) if decimal => {
+            let scale = text
+                .split_once('.')
+                .map_or(0, |(_, fraction)| fraction.len());
+            let scale = u8::try_from(scale).map_err(|_| ExecError::NumericOverflow)?;
+            let units = pintail_types::parse_decimal_scaled(text, scale)
+                .ok_or(ExecError::InvalidExpressionType)?;
+            let offset = i128::from(offset)
+                .checked_mul(
+                    10_i128
+                        .checked_pow(u32::from(scale))
+                        .ok_or(ExecError::NumericOverflow)?,
+                )
+                .and_then(|offset| {
+                    if add {
+                        units.checked_add(offset)
+                    } else {
+                        units.checked_sub(offset)
+                    }
+                });
+            offset.map_or_else(overflow, |units| {
+                NumericRangeTarget::Value(Value::Utf8(pintail_types::format_decimal_scaled(
+                    units, scale,
+                )))
+            })
+        }
+        _ => return Err(ExecError::InvalidExpressionType),
+    };
+    Ok(target)
+}
+
+fn numeric_range_bound(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    partition: &[usize],
+    current: usize,
+    offset: u64,
+    preceding: bool,
+    upper: bool,
+) -> Result<usize, ExecError> {
+    let Some((_, ascending, nulls_first, decimal)) = window.order.first() else {
+        return Err(ExecError::InvalidExpressionType);
+    };
+    let key_position = window.partition.len();
+    let current_value = &keys[partition[current]][key_position];
+    let target = numeric_range_target(
+        current_value,
+        offset,
+        if *ascending { !preceding } else { preceding },
+        *decimal,
+    )?;
+    let compare = |candidate: &Value| {
+        if matches!(candidate, Value::Null) {
+            return if *nulls_first {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+        let natural = match &target {
+            NumericRangeTarget::NegativeInfinity => Ordering::Greater,
+            NumericRangeTarget::PositiveInfinity => Ordering::Less,
+            NumericRangeTarget::Value(target) => compare_sort_values(
+                candidate,
+                target,
+                BoundOrderKey {
+                    index: 0,
+                    ascending: *ascending,
+                    nulls_first: *nulls_first,
+                    decimal: *decimal,
+                },
+            ),
+        };
+        match target {
+            NumericRangeTarget::Value(_) => natural,
+            _ if *ascending => natural,
+            _ => natural.reverse(),
+        }
+    };
+    let mut low = 0;
+    let mut high = partition.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let ordering = compare(&keys[partition[middle]][key_position]);
+        let before_boundary = if upper {
+            ordering != Ordering::Greater
+        } else {
+            ordering == Ordering::Less
+        };
+        if before_boundary {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Ok(low)
+}
+
 /// Computes one window's value per row: sorts a permutation by
 /// (partition, order) keys, then walks each partition assigning ranks or
 /// aggregate frames (whole partition without ORDER BY; running frame
@@ -8829,6 +8977,71 @@ fn compute_window_column(
             end += 1;
         }
         let partition = &order[start..end];
+        let peer_start = |from: usize| {
+            let mut first = from;
+            while first > 0 && same_peers(partition[first - 1], partition[from]) {
+                first -= 1;
+            }
+            first
+        };
+        let peer_end = |from: usize| {
+            let mut last = from + 1;
+            while last < partition.len() && same_peers(partition[from], partition[last]) {
+                last += 1;
+            }
+            last
+        };
+        let frame_extent = |frame: pintail_sql::BoundWindowFrame,
+                            index: usize|
+         -> Result<(usize, usize), ExecError> {
+            use pintail_sql::BoundFrameBound as Edge;
+            let len = partition.len();
+            let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
+            let current_is_null = window
+                .order
+                .first()
+                .is_some_and(|_| matches!(keys[partition[index]][partition_len], Value::Null));
+            let start = match frame.start {
+                Edge::UnboundedPreceding => 0,
+                Edge::Preceding(_) | Edge::Following(_) if frame.range && current_is_null => {
+                    peer_start(index)
+                }
+                Edge::Preceding(offset) if frame.range => {
+                    numeric_range_bound(window, keys, partition, index, offset, true, false)?
+                }
+                Edge::Following(offset) if frame.range => {
+                    numeric_range_bound(window, keys, partition, index, offset, false, false)?
+                }
+                Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
+                Edge::CurrentRow if frame.range => peer_start(index),
+                Edge::CurrentRow => index,
+                Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
+                Edge::UnboundedFollowing => len,
+            };
+            let end = match frame.end {
+                Edge::UnboundedPreceding => 0,
+                Edge::Preceding(_) | Edge::Following(_) if frame.range && current_is_null => {
+                    peer_end(index)
+                }
+                Edge::Preceding(offset) if frame.range => {
+                    numeric_range_bound(window, keys, partition, index, offset, true, true)?
+                }
+                Edge::Following(offset) if frame.range => {
+                    numeric_range_bound(window, keys, partition, index, offset, false, true)?
+                }
+                Edge::Preceding(offset) => {
+                    index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
+                }
+                Edge::CurrentRow if frame.range => peer_end(index),
+                Edge::CurrentRow => index + 1,
+                Edge::Following(offset) => index
+                    .saturating_add(clamp(offset))
+                    .saturating_add(1)
+                    .min(len),
+                Edge::UnboundedFollowing => len,
+            };
+            Ok((start, end))
+        };
         match &window.function {
             CompiledWindowFunction::RowNumber
             | CompiledWindowFunction::Rank
@@ -8901,45 +9114,8 @@ fn compute_window_column(
                     // An explicit frame governs which row is read. Binding a
                     // frame and then ignoring it would answer the default
                     // frame's question under the caller's syntax.
-                    use pintail_sql::BoundFrameBound as Edge;
-                    let len = partition.len();
-                    let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
-                    let peer_start = |from: usize| {
-                        let mut first = from;
-                        while first > 0 && same_peers(partition[first - 1], partition[from]) {
-                            first -= 1;
-                        }
-                        first
-                    };
-                    let peer_end = |from: usize| {
-                        let mut last_row = from + 1;
-                        while last_row < len && same_peers(partition[from], partition[last_row]) {
-                            last_row += 1;
-                        }
-                        last_row
-                    };
-                    for index in 0..len {
-                        let start = match frame.start {
-                            Edge::UnboundedPreceding => 0,
-                            Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
-                            Edge::CurrentRow if frame.range => peer_start(index),
-                            Edge::CurrentRow => index,
-                            Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
-                            Edge::UnboundedFollowing => len,
-                        };
-                        let end = match frame.end {
-                            Edge::UnboundedPreceding => 0,
-                            Edge::Preceding(offset) => {
-                                index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
-                            }
-                            Edge::CurrentRow if frame.range => peer_end(index),
-                            Edge::CurrentRow => index + 1,
-                            Edge::Following(offset) => index
-                                .saturating_add(clamp(offset))
-                                .saturating_add(1)
-                                .min(len),
-                            Edge::UnboundedFollowing => len,
-                        };
+                    for index in 0..partition.len() {
+                        let (start, end) = frame_extent(frame, index)?;
                         // An empty frame has no value to read.
                         let value = if start >= end {
                             Value::Null
@@ -8990,7 +9166,6 @@ fn compute_window_column(
                 let argument_position = partition_len + window.order.len();
                 if let Some(frame) = window.frame {
                     use pintail_sql::BoundFrameBound as Edge;
-                    let len = partition.len();
                     // A frame anchored at UNBOUNDED PRECEDING accumulates
                     // once across the partition; anything else is a sliding
                     // window recomputed over its own width. MIN/MAX cannot be
@@ -9003,47 +9178,12 @@ fn compute_window_column(
                     let running = matches!(frame.start, Edge::UnboundedPreceding);
                     let mut state = AggregateState::new(aggregate);
                     let mut accumulated = 0_usize;
-                    let clamp = |offset: u64| usize::try_from(offset).unwrap_or(usize::MAX);
-                    for index in 0..len {
+                    for index in 0..partition.len() {
                         // Under RANGE, CURRENT ROW covers the whole peer
                         // group rather than the single row: the frame is
                         // defined over the ordering key's values, and peers
                         // share one value.
-                        let peer_start = |from: usize| {
-                            let mut first = from;
-                            while first > 0 && same_peers(partition[first - 1], partition[from]) {
-                                first -= 1;
-                            }
-                            first
-                        };
-                        let peer_end = |from: usize| {
-                            let mut last = from + 1;
-                            while last < len && same_peers(partition[from], partition[last]) {
-                                last += 1;
-                            }
-                            last
-                        };
-                        let start = match frame.start {
-                            Edge::UnboundedPreceding => 0,
-                            Edge::Preceding(offset) => index.saturating_sub(clamp(offset)),
-                            Edge::CurrentRow if frame.range => peer_start(index),
-                            Edge::CurrentRow => index,
-                            Edge::Following(offset) => index.saturating_add(clamp(offset)).min(len),
-                            Edge::UnboundedFollowing => len,
-                        };
-                        let end = match frame.end {
-                            Edge::UnboundedPreceding => 0,
-                            Edge::Preceding(offset) => {
-                                index.checked_sub(clamp(offset)).map_or(0, |row| row + 1)
-                            }
-                            Edge::CurrentRow if frame.range => peer_end(index),
-                            Edge::CurrentRow => index + 1,
-                            Edge::Following(offset) => index
-                                .saturating_add(clamp(offset))
-                                .saturating_add(1)
-                                .min(len),
-                            Edge::UnboundedFollowing => len,
-                        };
+                        let (start, end) = frame_extent(frame, index)?;
                         let value = if running {
                             while accumulated < end {
                                 state.update(
