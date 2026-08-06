@@ -45,6 +45,10 @@ const results: CheckResult[] = []
 /// its signature reports WARN; anything else on the same table stays FAIL,
 /// so unrelated regressions cannot hide behind a known gap.
 const documentedGapTables = new Map<string, RegExp>()
+/// Exact metadata divergences implied by the same documented operations.
+/// Keep these signatures narrow: a different column, type, or nullability
+/// mismatch must remain a gate failure.
+const documentedMetadataGaps: RegExp[] = []
 
 let mysqlConnection: mysql.Connection | undefined
 let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
@@ -404,7 +408,12 @@ async function verifyConvergence(phase: string) {
   results.push({
     phase,
     check: 'converge:information_schema.columns',
-    status: metadata === undefined ? 'PASS' : 'FAIL',
+    status:
+      metadata === undefined
+        ? 'PASS'
+        : documentedMetadataGaps.some((signature) => signature.test(metadata))
+          ? 'WARN'
+          : 'FAIL',
     detail: metadata,
   })
 }
@@ -638,6 +647,9 @@ async function phaseDdlDocumentedGaps() {
   // Rename quarantine: the renamed table never appears in the replica.
   documentedGapTables.set('audit_log', /unknown table/)
   documentedGapTables.set('audit_history', /unknown table/)
+  documentedMetadataGaps.push(
+    /^row \d+:\n  mysql   audit_history \| note \| 1\.0000 \| varchar \| NO\n  pintail audit_log \| note \| 1\.0000 \| varchar \| NO$/,
+  )
   await sql(`RENAME TABLE audit_log TO audit_history`)
   await sql(`INSERT INTO audit_history VALUES ('post rename')`)
   // In-place type change: replication stops applying to the table, so the
