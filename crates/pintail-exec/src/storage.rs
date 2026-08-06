@@ -2012,6 +2012,23 @@ mod tests {
             ),
             vec![u(1), u(2), u(3), u(4), u(5)]
         );
+        assert_eq!(
+            execute_values_with_limit(
+                "SELECT SUM(id) OVER (w ORDER BY id \
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM events \
+                 WINDOW w AS (PARTITION BY name)",
+                &catalog,
+                &provider,
+                4 * 1024 * 1024,
+            ),
+            vec![u(1), u(3), u(6), u(10), u(15)]
+        );
+        let statement = parse_statement(
+            "SELECT SUM(id) OVER (w ORDER BY id) FROM events \
+             WINDOW w AS (ORDER BY name)",
+        )
+        .expect("parse illegal named-window redefinition");
+        assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
     }
 
     /// Explicit ROWS frames: the running total and the moving window that

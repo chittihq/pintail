@@ -22,11 +22,11 @@ stays readable as a list of things to fix.
   compares the ordering key's own values rather than counting rows, so it is
   not approximated with row offsets and rejects. `GROUPS` frames, which count
   peer groups, reject for the same reason. Windows still cannot combine with
-  `DISTINCT` (#25). A named window may be
-  referenced as `OVER w` but not extended as `OVER (w ORDER BY …)`, which
-  inherits from `w` and adds to it; merging an inherited spec with a partial
-  one has precedence rules of its own, so that form rejects. `RANGE` with an offset compares the ordering key's own values rather
-  than counting rows, so it is not approximated with row offsets.
+  `DISTINCT` (#25). A named window may be referenced as `OVER w` and extended
+  additively with clauses absent from its base definition. Chained named
+  definitions (`WINDOW child AS parent`) still reject; resolving those needs
+  cycle detection. `RANGE` with an offset compares the ordering key's own
+  values rather than counting rows, so it is not approximated with row offsets.
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be
   un-accumulated when a row leaves the window. Cost is proportional to the

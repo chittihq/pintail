@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 793;
+const EXPECTED_CASES: usize = 794;
 
 struct OracleCase {
     family: &'static str,
@@ -1046,6 +1046,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written named windows partitioned",
             "SELECT id, active, SUM(score) OVER w, LAG(score) OVER w FROM events \
              WINDOW w AS (PARTITION BY active ORDER BY id) ORDER BY id",
+        ),
+        ordered(
+            "hand-written named window extension",
+            "SELECT id, active, SUM(score) OVER (w ORDER BY id \
+             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM events \
+             WINDOW w AS (PARTITION BY active) ORDER BY id",
         ),
         // The isolation that found this: CHAR and CONCAT both agreed with
         // MySQL, so the decoder's whitespace set was the only suspect left.

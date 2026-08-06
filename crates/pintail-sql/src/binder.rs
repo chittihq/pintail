@@ -4129,9 +4129,9 @@ fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Resu
 /// Replaces `OVER w` with the spec `w` names, before binding.
 ///
 /// `MySQL` also allows `OVER (w ORDER BY …)`, which inherits from `w` and
-/// extends it. That form rejects: merging an inherited spec with a partial
-/// one has its own precedence rules, and guessing them would answer a
-/// different question than the query asked.
+/// extends it. The merge below accepts only legal additive forms: a derived
+/// spec cannot replace PARTITION BY, ORDER BY, or a frame already supplied by
+/// the base window.
 fn substitute_named_windows(
     expr: &mut Expr,
     definitions: &[sqlparser::ast::NamedWindowDefinition],
@@ -4148,15 +4148,10 @@ fn substitute_named_windows(
                 None => None,
             };
             if let Some(name) = named {
-                if let Some(WindowType::WindowSpec(spec)) = &function.over
-                    && (!spec.partition_by.is_empty()
-                        || !spec.order_by.is_empty()
-                        || spec.window_frame.is_some())
-                {
-                    return Err(BindError::UnsupportedQueryClause(format!(
-                        "OVER ({name} …) extending a named window"
-                    )));
-                }
+                let extension = match &function.over {
+                    Some(WindowType::WindowSpec(spec)) => Some(spec.clone()),
+                    _ => None,
+                };
                 let resolved = definitions
                     .iter()
                     .find(|definition| definition.0.value.eq_ignore_ascii_case(&name.value))
@@ -4165,7 +4160,32 @@ fn substitute_named_windows(
                     })?;
                 match &resolved.1 {
                     NamedWindowExpr::WindowSpec(named) => {
-                        function.over = Some(WindowType::WindowSpec(named.clone()));
+                        if named.window_name.is_some() {
+                            return Err(BindError::UnsupportedQueryClause(format!(
+                                "window {name} defined as another window"
+                            )));
+                        }
+                        let mut merged = named.clone();
+                        if let Some(extension) = extension {
+                            if !extension.partition_by.is_empty()
+                                || (!merged.order_by.is_empty() && !extension.order_by.is_empty())
+                                || (merged.window_frame.is_some()
+                                    && extension.window_frame.is_some())
+                                || (merged.window_frame.is_some() && !extension.order_by.is_empty())
+                            {
+                                return Err(BindError::UnsupportedQueryClause(format!(
+                                    "OVER ({name} …) illegally redefines a named window"
+                                )));
+                            }
+                            if merged.order_by.is_empty() {
+                                merged.order_by = extension.order_by;
+                            }
+                            if merged.window_frame.is_none() {
+                                merged.window_frame = extension.window_frame;
+                            }
+                            merged.window_name = None;
+                        }
+                        function.over = Some(WindowType::WindowSpec(merged));
                     }
                     // `WINDOW a AS b` chains one name to another; resolving
                     // it needs cycle detection this does not do.
