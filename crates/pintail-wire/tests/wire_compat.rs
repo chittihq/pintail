@@ -425,8 +425,11 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
 }
 
 fn external_client_gate(address: std::net::SocketAddr) {
+    const METADATA_CORPUS: &str =
+        include_str!("../../../tests/integration/wire-clients/metadata.sql");
     let port = address.port().to_string();
     let mysql_cli = std::env::var_os("PINTAIL_MYSQL_CLI").unwrap_or_else(|| "mysql".into());
+    let cli_sql = format!("SELECT id, name FROM events ORDER BY id; {METADATA_CORPUS}");
     let cli = Command::new(&mysql_cli)
         .args([
             "--protocol=tcp",
@@ -441,7 +444,7 @@ fn external_client_gate(address: std::net::SocketAddr) {
             "--batch",
             "--skip-column-names",
             "--execute",
-            "SELECT id, name FROM events ORDER BY id",
+            &cli_sql,
         ])
         .env("MYSQL_PWD", "pk_wire_secret")
         .output()
@@ -451,10 +454,9 @@ fn external_client_gate(address: std::net::SocketAddr) {
         "mysql CLI failed: {}",
         String::from_utf8_lossy(&cli.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&cli.stdout).trim(),
-        "1\tlaunch\n2\tland"
-    );
+    let cli_output = String::from_utf8_lossy(&cli.stdout);
+    assert!(cli_output.contains("1\tlaunch\n2\tland"), "{cli_output}");
+    assert!(cli_output.contains("PRIMARY"), "{cli_output}");
 
     let clients = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/integration/wire-clients");
@@ -480,6 +482,11 @@ fn external_client_gate(address: std::net::SocketAddr) {
         "{}",
         String::from_utf8_lossy(&mysql2.stdout)
     );
+    assert!(
+        String::from_utf8_lossy(&mysql2.stdout).contains(r#""view_count":0"#),
+        "{}",
+        String::from_utf8_lossy(&mysql2.stdout)
+    );
 
     let pymysql = Command::new("uv")
         .args(["run", "--with", "pymysql", "python", "client.py"])
@@ -493,10 +500,12 @@ fn external_client_gate(address: std::net::SocketAddr) {
         "PyMySQL failed: {}",
         String::from_utf8_lossy(&pymysql.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&pymysql.stdout).trim(),
-        r"[2, 1, 2]"
+    let pymysql_output = String::from_utf8_lossy(&pymysql.stdout);
+    assert!(
+        pymysql_output.contains(r#""aggregate": [2, 1, 2]"#),
+        "{pymysql_output}"
     );
+    assert!(pymysql_output.contains("PRIMARY"), "{pymysql_output}");
 }
 
 #[allow(clippy::too_many_lines)]

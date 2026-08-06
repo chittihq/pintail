@@ -448,6 +448,10 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
                     .unique_keys
                     .iter()
                     .any(|key| key.len() == 1 && key[0].eq_ignore_ascii_case(&column.name)),
+                character_set: column.character_set.clone(),
+                collation: column.collation.clone(),
+                mysql_data_type: Some(column.mysql_data_type.clone()),
+                mysql_column_type: Some(column.mysql_column_type.clone()),
             });
         }
         let chosen_unique = matches!(source.key.mode, pintail_types::KeyMode::Unique);

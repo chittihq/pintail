@@ -63,4 +63,9 @@ cargo test -p pintail-wire --test wire_compat -- --nocapture
 longer ship the `mysql_native_password` client plugin, so use a MySQL 8.4 or
 compatible MariaDB client binary for Pintail's hash-only native challenge
 gate. JavaScript dependencies in `tests/integration/wire-clients` are locked
-and installed with Bun.
+and installed with Bun. All three external clients replay
+`tests/integration/wire-clients/metadata.sql`, a checked-in discovery corpus
+covering the `SHOW`, index, column, view, alias, join, and aggregate shapes
+used by MySQL CLI, DBeaver/Metabase-style inspectors, and ORMs. The GUI clients
+themselves are not automated by this gate; their SQL shapes are replayed by
+the deterministic protocol clients above.

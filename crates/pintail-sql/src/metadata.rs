@@ -101,6 +101,14 @@ pub struct ColumnFacts {
     pub generated_stored: bool,
     /// Whether a single-column non-null UNIQUE constraint covers it.
     pub unique_single: bool,
+    /// Source character set for textual columns.
+    pub character_set: Option<String>,
+    /// Source collation for textual columns.
+    pub collation: Option<String>,
+    /// Source `DATA_TYPE` text.
+    pub mysql_data_type: Option<String>,
+    /// Source `COLUMN_TYPE` text including width, precision, and unsignedness.
+    pub mysql_column_type: Option<String>,
 }
 
 /// Executes one supported `MySQL` metadata statement against an immutable catalog.
@@ -136,7 +144,7 @@ pub fn execute_metadata(
         }
         Statement::ShowColumns {
             extended: false,
-            full: false,
+            full,
             show_options,
         } if filterable_options(show_options) => {
             let name = show_options
@@ -145,7 +153,7 @@ pub fn execute_metadata(
                 .and_then(|show_in| show_in.parent_name.as_ref())
                 .ok_or_else(|| MetadataError::Unsupported(statement.to_string()))?;
             let (database, table) = resolve_table(name, catalog, current_database)?;
-            apply_show_filter(describe_table(database, table, facts), show_options)
+            apply_show_filter(describe_table(database, table, facts, *full), show_options)
         }
         Statement::ExplainTable {
             hive_format: None,
@@ -153,7 +161,7 @@ pub fn execute_metadata(
             ..
         } => {
             let (database, table) = resolve_table(table_name, catalog, current_database)?;
-            Ok(describe_table(database, table, facts))
+            Ok(describe_table(database, table, facts, false))
         }
         Statement::ShowCreate {
             obj_type: ShowCreateObject::Table,
@@ -507,16 +515,32 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
         ("COLUMN_DEFAULT", DataType::Utf8, true),
         ("IS_NULLABLE", DataType::Utf8, false),
         ("DATA_TYPE", DataType::Utf8, false),
+        ("CHARACTER_MAXIMUM_LENGTH", DataType::UInt64, true),
+        ("CHARACTER_OCTET_LENGTH", DataType::UInt64, true),
+        ("NUMERIC_PRECISION", DataType::UInt64, true),
+        ("NUMERIC_SCALE", DataType::UInt64, true),
+        ("DATETIME_PRECISION", DataType::UInt64, true),
+        ("CHARACTER_SET_NAME", DataType::Utf8, true),
+        ("COLLATION_NAME", DataType::Utf8, true),
         ("COLUMN_TYPE", DataType::Utf8, false),
         ("COLUMN_KEY", DataType::Utf8, false),
         ("EXTRA", DataType::Utf8, false),
+        ("PRIVILEGES", DataType::Utf8, false),
+        ("COLUMN_COMMENT", DataType::Utf8, false),
+        ("GENERATION_EXPRESSION", DataType::Utf8, false),
+        ("SRS_ID", DataType::UInt64, true),
     ]);
     let mut rows = Vec::new();
     for database in catalog.databases() {
         for table in database.tables() {
             for (index, column) in table.schema().columns().iter().enumerate() {
-                let column_type = mysql_type(column.data_type());
                 let fact = column_fact(database.name(), table.name(), column.name(), facts);
+                let column_type = fact
+                    .and_then(|fact| fact.mysql_column_type.as_deref())
+                    .map_or_else(|| mysql_type(column.data_type()), ToOwned::to_owned);
+                let data_type = fact
+                    .and_then(|fact| fact.mysql_data_type.as_deref())
+                    .unwrap_or_else(|| mysql_data_type(column.data_type()));
                 let key = column_key(table, column.id(), fact);
                 let extra = fact.map_or("", |fact| {
                     if fact.auto_increment {
@@ -536,10 +560,23 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                     fact.and_then(|fact| fact.default_value.as_deref())
                         .map_or(Value::Null, utf8),
                     utf8(if column.is_nullable() { "YES" } else { "NO" }),
-                    utf8(mysql_data_type(column.data_type())),
+                    utf8(data_type),
+                    Value::Null,
+                    Value::Null,
+                    numeric_precision(column.data_type()).map_or(Value::Null, Value::UInt64),
+                    numeric_scale(column.data_type()).map_or(Value::Null, Value::UInt64),
+                    datetime_precision(column.data_type()).map_or(Value::Null, Value::UInt64),
+                    fact.and_then(|fact| fact.character_set.as_deref())
+                        .map_or(Value::Null, utf8),
+                    fact.and_then(|fact| fact.collation.as_deref())
+                        .map_or(Value::Null, utf8),
                     utf8(&column_type),
                     utf8(key),
                     utf8(extra),
+                    utf8("select"),
+                    utf8(""),
+                    utf8(""),
+                    Value::Null,
                 ]);
             }
         }
@@ -1169,7 +1206,8 @@ fn aggregate_metadata_result(
                     return Err(MetadataError::Unsupported(item.to_string()));
                 }
                 let mut field = source.fields[index].clone();
-                metadata_expr_output_name(expression)?.clone_into(&mut field.name);
+                let name = metadata_field_base_name(&field.name).to_owned();
+                field.name = name;
                 (MetadataProjection::GroupColumn(index), field)
             };
         if let SelectItem::ExprWithAlias { alias, .. } = item {
@@ -1336,7 +1374,8 @@ fn project_metadata_result(
             SelectItem::UnnamedExpr(expr) => {
                 let index = metadata_expr_column(expr, &source.fields)?;
                 let mut field = source.fields[index].clone();
-                metadata_expr_output_name(expr)?.clone_into(&mut field.name);
+                let name = metadata_field_base_name(&field.name).to_owned();
+                field.name = name;
                 columns.push((index, field));
             }
             SelectItem::ExprWithAlias { expr, alias } => {
@@ -1406,13 +1445,6 @@ fn metadata_identifier_parts(expression: &Expr) -> Result<Vec<&str>, MetadataErr
             .collect()),
         _ => Err(MetadataError::Unsupported(expression.to_string())),
     }
-}
-
-fn metadata_expr_output_name(expression: &Expr) -> Result<&str, MetadataError> {
-    metadata_identifier_parts(expression)?
-        .last()
-        .copied()
-        .ok_or_else(|| MetadataError::Unsupported(expression.to_string()))
 }
 
 fn metadata_field_qualifier(name: &str) -> Option<&str> {
@@ -1758,15 +1790,30 @@ fn describe_table(
     database: &DatabaseEntry,
     table: &TableEntry,
     facts: &SourceFacts,
+    full: bool,
 ) -> MetadataResult {
-    let fields = metadata_fields(&[
-        ("Field", DataType::Utf8, false),
-        ("Type", DataType::Utf8, false),
-        ("Null", DataType::Utf8, false),
-        ("Key", DataType::Utf8, false),
-        ("Default", DataType::Utf8, true),
-        ("Extra", DataType::Utf8, false),
-    ]);
+    let fields = if full {
+        metadata_fields(&[
+            ("Field", DataType::Utf8, false),
+            ("Type", DataType::Utf8, false),
+            ("Collation", DataType::Utf8, true),
+            ("Null", DataType::Utf8, false),
+            ("Key", DataType::Utf8, false),
+            ("Default", DataType::Utf8, true),
+            ("Extra", DataType::Utf8, false),
+            ("Privileges", DataType::Utf8, false),
+            ("Comment", DataType::Utf8, false),
+        ])
+    } else {
+        metadata_fields(&[
+            ("Field", DataType::Utf8, false),
+            ("Type", DataType::Utf8, false),
+            ("Null", DataType::Utf8, false),
+            ("Key", DataType::Utf8, false),
+            ("Default", DataType::Utf8, true),
+            ("Extra", DataType::Utf8, false),
+        ])
+    };
     let rows = table
         .schema()
         .columns()
@@ -1783,14 +1830,32 @@ fn describe_table(
                     ""
                 }
             });
-            vec![
+            let column_type = fact
+                .and_then(|fact| fact.mysql_column_type.as_deref())
+                .map_or_else(|| mysql_type(column.data_type()), ToOwned::to_owned);
+            let compact = vec![
                 Value::Utf8(column.name().to_owned()),
-                Value::Utf8(mysql_type(column.data_type())),
+                Value::Utf8(column_type),
                 Value::Utf8(if column.is_nullable() { "YES" } else { "NO" }.to_owned()),
                 utf8(key),
                 fact.and_then(|fact| fact.default_value.as_deref())
                     .map_or(Value::Null, utf8),
                 utf8(extra),
+            ];
+            if !full {
+                return compact;
+            }
+            vec![
+                compact[0].clone(),
+                compact[1].clone(),
+                fact.and_then(|fact| fact.collation.as_deref())
+                    .map_or(Value::Null, utf8),
+                compact[2].clone(),
+                compact[3].clone(),
+                compact[4].clone(),
+                compact[5].clone(),
+                utf8("select"),
+                utf8(""),
             ]
         })
         .collect();
@@ -1848,6 +1913,44 @@ const fn mysql_data_type(data_type: DataType) -> &'static str {
         DataType::Utf8 => "text",
         DataType::Binary => "blob",
         DataType::Json => "json",
+    }
+}
+
+const fn numeric_precision(data_type: DataType) -> Option<u64> {
+    match data_type {
+        DataType::Boolean | DataType::Int8 | DataType::UInt8 => Some(3),
+        DataType::Int16 | DataType::UInt16 => Some(5),
+        DataType::Int32 | DataType::UInt32 => Some(10),
+        DataType::Int64 => Some(19),
+        DataType::UInt64 => Some(20),
+        DataType::Float32 => Some(12),
+        DataType::Float64 => Some(22),
+        DataType::Decimal { precision, .. } => Some(precision as u64),
+        _ => None,
+    }
+}
+
+const fn numeric_scale(data_type: DataType) -> Option<u64> {
+    match data_type {
+        DataType::Boolean
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => Some(0),
+        DataType::Decimal { scale, .. } => Some(scale as u64),
+        _ => None,
+    }
+}
+
+const fn datetime_precision(data_type: DataType) -> Option<u64> {
+    match data_type {
+        DataType::DateTime64 { fsp } | DataType::Time64 { fsp } => Some(fsp as u64),
+        DataType::Date32 => Some(0),
+        _ => None,
     }
 }
 
@@ -2010,6 +2113,10 @@ mod tests {
                     auto_increment: true,
                     generated_stored: false,
                     unique_single: false,
+                    character_set: None,
+                    collation: None,
+                    mysql_data_type: Some("bigint".to_owned()),
+                    mysql_column_type: Some("bigint unsigned".to_owned()),
                 },
                 crate::ColumnFacts {
                     database: "Analytics".to_owned(),
@@ -2019,6 +2126,10 @@ mod tests {
                     auto_increment: false,
                     generated_stored: false,
                     unique_single: true,
+                    character_set: Some("utf8mb4".to_owned()),
+                    collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+                    mysql_data_type: Some("varchar".to_owned()),
+                    mysql_column_type: Some("varchar(255)".to_owned()),
                 },
             ],
             indexes: vec![crate::IndexFacts {
@@ -2398,6 +2509,55 @@ mod tests {
     }
 
     #[test]
+    fn show_full_columns_reports_collation_privileges_and_comment() {
+        let result = execute_metadata(
+            &parse_statement("SHOW FULL COLUMNS FROM Events FROM Analytics").expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts {
+                columns: vec![crate::ColumnFacts {
+                    database: "Analytics".to_owned(),
+                    table: "Events".to_owned(),
+                    column: "name".to_owned(),
+                    character_set: Some("utf8mb4".to_owned()),
+                    collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+                    mysql_data_type: Some("varchar".to_owned()),
+                    mysql_column_type: Some("varchar(255)".to_owned()),
+                    ..crate::ColumnFacts::default()
+                }],
+                ..SourceFacts::default()
+            },
+        )
+        .expect("full columns");
+
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Field",
+                "Type",
+                "Collation",
+                "Null",
+                "Key",
+                "Default",
+                "Extra",
+                "Privileges",
+                "Comment",
+            ]
+        );
+        assert_eq!(result.rows[1][1], Value::Utf8("varchar(255)".to_owned()));
+        assert_eq!(
+            result.rows[1][2],
+            Value::Utf8("utf8mb4_0900_ai_ci".to_owned())
+        );
+        assert_eq!(result.rows[1][7], Value::Utf8("select".to_owned()));
+        assert_eq!(result.rows[1][8], Value::Utf8(String::new()));
+    }
+
+    #[test]
     fn serves_basic_information_schema_queries() {
         let catalog = catalog();
         let schemata = execute_metadata(
@@ -2498,7 +2658,7 @@ mod tests {
                 .iter()
                 .map(|field| field.name.as_str())
                 .collect::<Vec<_>>(),
-            ["table_name", "column_name", "table_type"]
+            ["TABLE_NAME", "COLUMN_NAME", "TABLE_TYPE"]
         );
         assert_eq!(
             result.rows,

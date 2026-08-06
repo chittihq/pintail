@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 import pymysql
 
@@ -14,5 +15,11 @@ with connection.cursor() as cursor:
     cursor.execute(
         "SELECT COUNT(*) AS total, MIN(id) AS first_id, MAX(id) AS last_id FROM events"
     )
-    print(json.dumps(cursor.fetchone()))
+    aggregate = cursor.fetchone()
+    corpus = []
+    for query in Path("metadata.sql").read_text().split(";"):
+        if query.strip():
+            cursor.execute(query)
+            corpus.append(cursor.fetchall())
+    print(json.dumps({"aggregate": aggregate, "corpus": corpus}))
 connection.close()
