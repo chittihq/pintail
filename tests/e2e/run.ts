@@ -355,6 +355,19 @@ async function tableDiff(table: string): Promise<string | undefined> {
   return diffRows(expected, actual, { multiset: key.length === 0 })
 }
 
+async function metadataDiff(): Promise<string | undefined> {
+  const query =
+    `SELECT table_name, column_name, ordinal_position, data_type, is_nullable ` +
+    `FROM information_schema.columns WHERE table_schema = '${DATABASE}' ` +
+    `ORDER BY table_name, ordinal_position`
+  const expected = await mysqlRows(query)
+  try {
+    return diffRows(expected, await pintailQuery(query))
+  } catch (error) {
+    return `pintail metadata query failed: ${error}`
+  }
+}
+
 async function verifyConvergence(phase: string) {
   const tables = await baseTables()
   const pending = new Map<string, string>()
@@ -382,6 +395,18 @@ async function verifyConvergence(phase: string) {
   if (pending.size === 0) {
     log(`${phase}: converged (${tables.length} tables)`)
   }
+  const metadataDeadline = Date.now() + CONVERGE_TIMEOUT_MS
+  let metadata = await metadataDiff()
+  while (metadata !== undefined && Date.now() < metadataDeadline) {
+    await Bun.sleep(CONVERGE_POLL_MS)
+    metadata = await metadataDiff()
+  }
+  results.push({
+    phase,
+    check: 'converge:information_schema.columns',
+    status: metadata === undefined ? 'PASS' : 'FAIL',
+    detail: metadata,
+  })
 }
 
 async function verifyCorpus(phase: string) {

@@ -1098,7 +1098,7 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use opensrv_mysql::ColumnType;
+    use opensrv_mysql::{ColumnFlags, ColumnType};
     use pintail_types::DataType;
     use sha1::{Digest as _, Sha1};
     use sha2::Digest as _;
@@ -1117,6 +1117,34 @@ mod tests {
             nullable: true,
         });
         assert_eq!(column.coltype, ColumnType::MYSQL_TYPE_JSON);
+    }
+
+    #[test]
+    fn result_columns_preserve_numeric_binary_and_nullability_flags() {
+        let unsigned = mysql_column(&QueryField {
+            name: "ordinal_position".to_owned(),
+            data_type: Some(DataType::UInt64),
+            nullable: false,
+        });
+        assert_eq!(unsigned.coltype, ColumnType::MYSQL_TYPE_LONGLONG);
+        assert!(unsigned.colflags.contains(ColumnFlags::UNSIGNED_FLAG));
+        assert!(unsigned.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
+
+        let nullable_text = mysql_column(&QueryField {
+            name: "column_default".to_owned(),
+            data_type: Some(DataType::Utf8),
+            nullable: true,
+        });
+        assert_eq!(nullable_text.coltype, ColumnType::MYSQL_TYPE_VAR_STRING);
+        assert!(!nullable_text.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
+
+        let binary = mysql_column(&QueryField {
+            name: "payload".to_owned(),
+            data_type: Some(DataType::Binary),
+            nullable: true,
+        });
+        assert_eq!(binary.coltype, ColumnType::MYSQL_TYPE_BLOB);
+        assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
     }
 
     #[test]

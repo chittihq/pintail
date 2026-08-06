@@ -1,9 +1,10 @@
-use std::{cmp::Ordering, fmt};
+use std::{cmp::Ordering, collections::BTreeMap, fmt};
 
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, KeyMode, Value};
 use sqlparser::ast::{
-    BinaryOperator, Expr, GroupByExpr, LimitClause, ObjectName, OrderByKind, Query, Select,
+    BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr,
+    JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select,
     SelectFlavor, SelectItem, SetExpr, ShowCreateObject, ShowStatementFilter,
     ShowStatementFilterPosition, ShowStatementOptions, Statement, TableFactor, Value as SqlValue,
     WildcardAdditionalOptions,
@@ -221,30 +222,19 @@ fn execute_information_schema(
     if query_has_unsupported_clauses(query)
         || select_has_unsupported_clauses(select)
         || select.from.len() != 1
-        || !select.from[0].joins.is_empty()
     {
         return Err(MetadataError::Unsupported(query.to_string()));
     }
-    let TableFactor::Table {
-        name,
-        args: None,
-        with_hints,
-        version: None,
-        with_ordinality: false,
-        partitions,
-        json_path: None,
-        sample: None,
-        index_hints,
-        ..
-    } = &select.from[0].relation
-    else {
-        return Err(MetadataError::Unsupported(query.to_string()));
-    };
-    if !with_hints.is_empty() || !partitions.is_empty() || !index_hints.is_empty() {
-        return Err(MetadataError::Unsupported(query.to_string()));
+    let from = &select.from[0];
+    let qualified = !from.joins.is_empty();
+    let mut result = information_schema_relation(&from.relation, catalog, facts, qualified)?;
+    for join in &from.joins {
+        if join.global {
+            return Err(MetadataError::Unsupported(join.to_string()));
+        }
+        let right = information_schema_relation(&join.relation, catalog, facts, true)?;
+        result = join_metadata_results(result, right, &join.join_operator)?;
     }
-
-    let mut result = information_schema_table(name, catalog, facts)?;
     if let Some(predicate) = &select.selection {
         let mut filtered = Vec::with_capacity(result.rows.len());
         for row in result.rows {
@@ -254,10 +244,117 @@ fn execute_information_schema(
         }
         result.rows = filtered;
     }
+    if metadata_query_is_aggregated(select)? {
+        result = aggregate_metadata_result(result, &select.projection, &select.group_by)?;
+        order_metadata_result(&mut result, query)?;
+        limit_metadata_result(&mut result, query)?;
+        return Ok(result);
+    }
+    let order_after_projection = match order_metadata_result(&mut result, query) {
+        Ok(()) => false,
+        Err(MetadataError::UnknownColumn(_)) => true,
+        Err(error) => return Err(error),
+    };
     result = project_metadata_result(result, &select.projection)?;
-    order_metadata_result(&mut result, query)?;
+    if order_after_projection {
+        order_metadata_result(&mut result, query)?;
+    }
     limit_metadata_result(&mut result, query)?;
     Ok(result)
+}
+
+fn information_schema_relation(
+    factor: &TableFactor,
+    catalog: &CatalogSnapshot,
+    facts: &SourceFacts,
+    qualify_fields: bool,
+) -> Result<MetadataResult, MetadataError> {
+    let TableFactor::Table {
+        name,
+        alias,
+        args: None,
+        with_hints,
+        version: None,
+        with_ordinality: false,
+        partitions,
+        json_path: None,
+        sample: None,
+        index_hints,
+    } = factor
+    else {
+        return Err(MetadataError::Unsupported(factor.to_string()));
+    };
+    if !with_hints.is_empty() || !partitions.is_empty() || !index_hints.is_empty() {
+        return Err(MetadataError::Unsupported(factor.to_string()));
+    }
+    if alias
+        .as_ref()
+        .is_some_and(|alias| !alias.columns.is_empty())
+    {
+        return Err(MetadataError::Unsupported(factor.to_string()));
+    }
+    let mut result = information_schema_table(name, catalog, facts)?;
+    if qualify_fields {
+        let qualifier = alias.as_ref().map_or_else(
+            || object_name_last(name),
+            |alias| Ok(alias.name.value.as_str()),
+        )?;
+        for field in &mut result.fields {
+            field.name = format!("{qualifier}.{}", field.name);
+        }
+    }
+    Ok(result)
+}
+
+fn object_name_last(name: &ObjectName) -> Result<&str, MetadataError> {
+    object_name_parts(name)?
+        .last()
+        .copied()
+        .ok_or_else(|| MetadataError::InvalidObjectName(name.to_string()))
+}
+
+fn join_metadata_results(
+    left: MetadataResult,
+    right: MetadataResult,
+    operator: &JoinOperator,
+) -> Result<MetadataResult, MetadataError> {
+    let (constraint, preserve_left) = match operator {
+        JoinOperator::Join(constraint) | JoinOperator::Inner(constraint) => (constraint, false),
+        JoinOperator::Left(constraint) | JoinOperator::LeftOuter(constraint) => (constraint, true),
+        JoinOperator::CrossJoin(JoinConstraint::None) => (&JoinConstraint::None, false),
+        _ => return Err(MetadataError::Unsupported(format!("{operator:?}"))),
+    };
+    if !matches!(constraint, JoinConstraint::On(_) | JoinConstraint::None) {
+        return Err(MetadataError::Unsupported(format!("{constraint:?}")));
+    }
+    let mut fields = left.fields;
+    let right_width = right.fields.len();
+    fields.extend(right.fields);
+    let mut rows = Vec::new();
+    for left_row in left.rows {
+        let mut matched = false;
+        for right_row in &right.rows {
+            let mut joined = left_row.clone();
+            joined.extend(right_row.iter().cloned());
+            let include = match constraint {
+                JoinConstraint::On(predicate) => {
+                    evaluate_metadata_predicate(predicate, &fields, &joined)?
+                }
+                JoinConstraint::None => true,
+                _ => unreachable!("validated above"),
+            };
+            if include {
+                matched = true;
+                rows.push(joined);
+            }
+        }
+        if preserve_left && !matched {
+            let mut joined = left_row;
+            joined.extend(std::iter::repeat_n(Value::Null, right_width));
+            rows.push(joined);
+        }
+    }
+    Ok(MetadataResult { fields, rows })
 }
 
 fn query_has_unsupported_clauses(query: &Query) -> bool {
@@ -271,8 +368,6 @@ fn query_has_unsupported_clauses(query: &Query) -> bool {
 }
 
 fn select_has_unsupported_clauses(select: &Select) -> bool {
-    let empty_grouping =
-        matches!(&select.group_by, GroupByExpr::Expressions(exprs, _) if exprs.is_empty());
     !select.optimizer_hints.is_empty()
         || select.distinct.is_some()
         || select
@@ -285,7 +380,6 @@ fn select_has_unsupported_clauses(select: &Select) -> bool {
         || !select.lateral_views.is_empty()
         || select.prewhere.is_some()
         || !select.connect_by.is_empty()
-        || !empty_grouping
         || !select.cluster_by.is_empty()
         || !select.distribute_by.is_empty()
         || !select.sort_by.is_empty()
@@ -936,6 +1030,261 @@ fn utf8(value: &str) -> Value {
     Value::Utf8(value.to_owned())
 }
 
+#[derive(Clone, Copy)]
+enum MetadataAggregate {
+    CountAll,
+    Count(usize),
+    Min(usize),
+    Max(usize),
+    Sum(usize),
+}
+
+enum MetadataProjection {
+    GroupColumn(usize),
+    Aggregate(MetadataAggregate),
+}
+
+fn metadata_query_is_aggregated(select: &Select) -> Result<bool, MetadataError> {
+    let grouped = match &select.group_by {
+        GroupByExpr::Expressions(expressions, modifiers) => {
+            if !modifiers.is_empty() {
+                return Err(MetadataError::Unsupported(select.group_by.to_string()));
+            }
+            !expressions.is_empty()
+        }
+        GroupByExpr::All(modifiers) => {
+            return Err(MetadataError::Unsupported(format!(
+                "GROUP BY ALL {modifiers:?}"
+            )));
+        }
+    };
+    Ok(grouped
+        || select.projection.iter().any(|item| {
+            metadata_projection_expr(item).is_some_and(|expression| {
+                matches!(expression, Expr::Function(function) if metadata_aggregate_name(function).is_some())
+            })
+        }))
+}
+
+fn metadata_projection_expr(item: &SelectItem) -> Option<&Expr> {
+    match item {
+        SelectItem::UnnamedExpr(expression)
+        | SelectItem::ExprWithAlias {
+            expr: expression, ..
+        } => Some(expression),
+        _ => None,
+    }
+}
+
+fn metadata_aggregate_name(function: &sqlparser::ast::Function) -> Option<&str> {
+    let parts = object_name_parts(&function.name).ok()?;
+    let [name] = parts.as_slice() else {
+        return None;
+    };
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "COUNT" | "MIN" | "MAX" | "SUM"
+    )
+    .then_some(*name)
+}
+
+fn parse_metadata_aggregate(
+    expression: &Expr,
+    fields: &[MetadataField],
+) -> Result<Option<MetadataAggregate>, MetadataError> {
+    let Expr::Function(function) = expression else {
+        return Ok(None);
+    };
+    let Some(name) = metadata_aggregate_name(function) else {
+        return Ok(None);
+    };
+    if !matches!(function.parameters, FunctionArguments::None) {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    }
+    let FunctionArguments::List(arguments) = &function.args else {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    };
+    if arguments.duplicate_treatment.is_some() || !arguments.clauses.is_empty() {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    }
+    let aggregate = match (
+        name.to_ascii_uppercase().as_str(),
+        arguments.args.as_slice(),
+    ) {
+        ("COUNT", [FunctionArg::Unnamed(FunctionArgExpr::Wildcard)]) => MetadataAggregate::CountAll,
+        ("COUNT", [FunctionArg::Unnamed(FunctionArgExpr::Expr(column))]) => {
+            MetadataAggregate::Count(metadata_expr_column(column, fields)?)
+        }
+        ("MIN", [FunctionArg::Unnamed(FunctionArgExpr::Expr(column))]) => {
+            MetadataAggregate::Min(metadata_expr_column(column, fields)?)
+        }
+        ("MAX", [FunctionArg::Unnamed(FunctionArgExpr::Expr(column))]) => {
+            MetadataAggregate::Max(metadata_expr_column(column, fields)?)
+        }
+        ("SUM", [FunctionArg::Unnamed(FunctionArgExpr::Expr(column))]) => {
+            MetadataAggregate::Sum(metadata_expr_column(column, fields)?)
+        }
+        _ => return Err(MetadataError::Unsupported(expression.to_string())),
+    };
+    Ok(Some(aggregate))
+}
+
+fn aggregate_metadata_result(
+    source: MetadataResult,
+    projection: &[SelectItem],
+    group_by: &GroupByExpr,
+) -> Result<MetadataResult, MetadataError> {
+    let group_expressions = match group_by {
+        GroupByExpr::Expressions(expressions, modifiers) if modifiers.is_empty() => expressions,
+        _ => return Err(MetadataError::Unsupported(group_by.to_string())),
+    };
+    let group_indexes = group_expressions
+        .iter()
+        .map(|expression| metadata_expr_column(expression, &source.fields))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut groups = BTreeMap::<Vec<Value>, Vec<Vec<Value>>>::new();
+    for row in source.rows {
+        let key = group_indexes
+            .iter()
+            .map(|index| row[*index].clone())
+            .collect();
+        groups.entry(key).or_default().push(row);
+    }
+    if groups.is_empty() && group_indexes.is_empty() {
+        groups.insert(Vec::new(), Vec::new());
+    }
+
+    let mut fields = Vec::with_capacity(projection.len());
+    let mut projected = Vec::with_capacity(projection.len());
+    for item in projection {
+        let expression = metadata_projection_expr(item)
+            .ok_or_else(|| MetadataError::Unsupported(item.to_string()))?;
+        let (projection, mut field) =
+            if let Some(aggregate) = parse_metadata_aggregate(expression, &source.fields)? {
+                let field = aggregate_metadata_field(aggregate, &source.fields, expression);
+                (MetadataProjection::Aggregate(aggregate), field)
+            } else {
+                let index = metadata_expr_column(expression, &source.fields)?;
+                if !group_indexes.contains(&index) {
+                    return Err(MetadataError::Unsupported(item.to_string()));
+                }
+                let mut field = source.fields[index].clone();
+                metadata_expr_output_name(expression)?.clone_into(&mut field.name);
+                (MetadataProjection::GroupColumn(index), field)
+            };
+        if let SelectItem::ExprWithAlias { alias, .. } = item {
+            field.name.clone_from(&alias.value);
+        }
+        projected.push(projection);
+        fields.push(field);
+    }
+
+    let rows = groups
+        .values()
+        .map(|rows| {
+            projected
+                .iter()
+                .map(|projection| match projection {
+                    MetadataProjection::GroupColumn(index) => {
+                        Ok(rows.first().map_or(Value::Null, |row| row[*index].clone()))
+                    }
+                    MetadataProjection::Aggregate(aggregate) => {
+                        evaluate_metadata_aggregate(*aggregate, rows)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(MetadataResult { fields, rows })
+}
+
+fn aggregate_metadata_field(
+    aggregate: MetadataAggregate,
+    fields: &[MetadataField],
+    expression: &Expr,
+) -> MetadataField {
+    match aggregate {
+        MetadataAggregate::CountAll | MetadataAggregate::Count(_) => MetadataField {
+            name: expression.to_string(),
+            data_type: DataType::UInt64,
+            nullable: false,
+        },
+        MetadataAggregate::Min(index)
+        | MetadataAggregate::Max(index)
+        | MetadataAggregate::Sum(index) => MetadataField {
+            name: expression.to_string(),
+            data_type: fields[index].data_type,
+            nullable: true,
+        },
+    }
+}
+
+fn evaluate_metadata_aggregate(
+    aggregate: MetadataAggregate,
+    rows: &[Vec<Value>],
+) -> Result<Value, MetadataError> {
+    match aggregate {
+        MetadataAggregate::CountAll => Ok(Value::UInt64(
+            u64::try_from(rows.len()).expect("metadata row count fits u64"),
+        )),
+        MetadataAggregate::Count(index) => Ok(Value::UInt64(
+            u64::try_from(
+                rows.iter()
+                    .filter(|row| !matches!(row[index], Value::Null))
+                    .count(),
+            )
+            .expect("metadata row count fits u64"),
+        )),
+        MetadataAggregate::Min(index) => Ok(rows
+            .iter()
+            .map(|row| &row[index])
+            .filter(|value| !matches!(value, Value::Null))
+            .min()
+            .cloned()
+            .unwrap_or(Value::Null)),
+        MetadataAggregate::Max(index) => Ok(rows
+            .iter()
+            .map(|row| &row[index])
+            .filter(|value| !matches!(value, Value::Null))
+            .max()
+            .cloned()
+            .unwrap_or(Value::Null)),
+        MetadataAggregate::Sum(index) => metadata_sum(rows, index),
+    }
+}
+
+fn metadata_sum(rows: &[Vec<Value>], index: usize) -> Result<Value, MetadataError> {
+    let values = rows
+        .iter()
+        .map(|row| &row[index])
+        .filter(|value| !matches!(value, Value::Null))
+        .collect::<Vec<_>>();
+    let Some(first) = values.first() else {
+        return Ok(Value::Null);
+    };
+    match first {
+        Value::Int64(_) => values
+            .into_iter()
+            .try_fold(0_i64, |sum, value| match value {
+                Value::Int64(value) => sum.checked_add(*value),
+                _ => None,
+            })
+            .map(Value::Int64)
+            .ok_or_else(|| MetadataError::Unsupported("metadata SUM overflow".to_owned())),
+        Value::UInt64(_) => values
+            .into_iter()
+            .try_fold(0_u64, |sum, value| match value {
+                Value::UInt64(value) => sum.checked_add(*value),
+                _ => None,
+            })
+            .map(Value::UInt64)
+            .ok_or_else(|| MetadataError::Unsupported("metadata SUM overflow".to_owned())),
+        _ => Err(MetadataError::Unsupported(
+            "metadata SUM requires an integer field".to_owned(),
+        )),
+    }
+}
+
 fn project_metadata_result(
     source: MetadataResult,
     projection: &[SelectItem],
@@ -952,20 +1301,43 @@ fn project_metadata_result(
     let mut columns = Vec::new();
     for item in projection {
         match item {
-            SelectItem::Wildcard(options) | SelectItem::QualifiedWildcard(_, options)
-                if wildcard_is_plain(options) =>
-            {
+            SelectItem::Wildcard(options) if wildcard_is_plain(options) => {
+                columns.extend(source.fields.iter().enumerate().map(|(index, field)| {
+                    let mut field = field.clone();
+                    let name = metadata_field_base_name(&field.name).to_owned();
+                    field.name = name;
+                    (index, field)
+                }));
+            }
+            SelectItem::QualifiedWildcard(qualifier, options) if wildcard_is_plain(options) => {
+                let sqlparser::ast::SelectItemQualifiedWildcardKind::ObjectName(qualifier) =
+                    qualifier
+                else {
+                    return Err(MetadataError::Unsupported(item.to_string()));
+                };
+                let qualifier = object_name_last(qualifier)?;
                 columns.extend(
                     source
                         .fields
                         .iter()
                         .enumerate()
-                        .map(|(index, field)| (index, field.clone())),
+                        .filter(|(_, field)| {
+                            metadata_field_qualifier(&field.name)
+                                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(qualifier))
+                        })
+                        .map(|(index, field)| {
+                            let mut field = field.clone();
+                            let name = metadata_field_base_name(&field.name).to_owned();
+                            field.name = name;
+                            (index, field)
+                        }),
                 );
             }
             SelectItem::UnnamedExpr(expr) => {
                 let index = metadata_expr_column(expr, &source.fields)?;
-                columns.push((index, source.fields[index].clone()));
+                let mut field = source.fields[index].clone();
+                metadata_expr_output_name(expr)?.clone_into(&mut field.name);
+                columns.push((index, field));
             }
             SelectItem::ExprWithAlias { expr, alias } => {
                 let index = metadata_expr_column(expr, &source.fields)?;
@@ -998,18 +1370,57 @@ fn metadata_expr_column(
     expression: &Expr,
     fields: &[MetadataField],
 ) -> Result<usize, MetadataError> {
-    let name = match expression {
-        Expr::Identifier(identifier) => identifier.value.as_str(),
-        Expr::CompoundIdentifier(identifiers) => identifiers
-            .last()
-            .map(|identifier| identifier.value.as_str())
-            .ok_or_else(|| MetadataError::Unsupported(expression.to_string()))?,
-        _ => return Err(MetadataError::Unsupported(expression.to_string())),
-    };
-    fields
+    let parts = metadata_identifier_parts(expression)?;
+    let name = parts
+        .last()
+        .copied()
+        .ok_or_else(|| MetadataError::Unsupported(expression.to_string()))?;
+    if parts.len() > 1 {
+        let qualified = parts[parts.len() - 2..].join(".");
+        if let Some(index) = fields
+            .iter()
+            .position(|field| field.name.eq_ignore_ascii_case(&qualified))
+        {
+            return Ok(index);
+        }
+    }
+    let matches = fields
         .iter()
-        .position(|field| field.name.eq_ignore_ascii_case(name))
-        .ok_or_else(|| MetadataError::UnknownColumn(name.to_owned()))
+        .enumerate()
+        .filter(|(_, field)| metadata_field_base_name(&field.name).eq_ignore_ascii_case(name))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(MetadataError::UnknownColumn(name.to_owned())),
+        _ => Err(MetadataError::AmbiguousColumn(name.to_owned())),
+    }
+}
+
+fn metadata_identifier_parts(expression: &Expr) -> Result<Vec<&str>, MetadataError> {
+    match expression {
+        Expr::Identifier(identifier) => Ok(vec![identifier.value.as_str()]),
+        Expr::CompoundIdentifier(identifiers) if !identifiers.is_empty() => Ok(identifiers
+            .iter()
+            .map(|identifier| identifier.value.as_str())
+            .collect()),
+        _ => Err(MetadataError::Unsupported(expression.to_string())),
+    }
+}
+
+fn metadata_expr_output_name(expression: &Expr) -> Result<&str, MetadataError> {
+    metadata_identifier_parts(expression)?
+        .last()
+        .copied()
+        .ok_or_else(|| MetadataError::Unsupported(expression.to_string()))
+}
+
+fn metadata_field_qualifier(name: &str) -> Option<&str> {
+    name.rsplit_once('.').map(|(qualifier, _)| qualifier)
+}
+
+fn metadata_field_base_name(name: &str) -> &str {
+    name.rsplit_once('.').map_or(name, |(_, field)| field)
 }
 
 fn evaluate_metadata_predicate(
@@ -1514,6 +1925,8 @@ pub enum MetadataError {
     UnknownTable(String),
     /// No metadata field has this name.
     UnknownColumn(String),
+    /// An unqualified field name matches more than one joined metadata table.
+    AmbiguousColumn(String),
     /// An object name has an unsupported shape.
     InvalidObjectName(String),
 }
@@ -1528,6 +1941,7 @@ impl fmt::Display for MetadataError {
             Self::UnknownDatabase(database) => write!(formatter, "unknown database {database}"),
             Self::UnknownTable(table) => write!(formatter, "unknown table {table}"),
             Self::UnknownColumn(column) => write!(formatter, "unknown column {column}"),
+            Self::AmbiguousColumn(column) => write!(formatter, "ambiguous column {column}"),
             Self::InvalidObjectName(name) => write!(formatter, "invalid object name {name}"),
         }
     }
@@ -2057,6 +2471,79 @@ mod tests {
         )
         .expect("count");
         assert_eq!(count.rows, [vec![Value::UInt64(2)]]);
+    }
+
+    #[test]
+    fn information_schema_supports_aliased_client_discovery_joins() {
+        let result = execute_metadata(
+            &parse_statement(
+                "SELECT c.table_name, c.column_name, t.table_type \
+                 FROM information_schema.columns AS c \
+                 JOIN information_schema.tables AS t \
+                   ON c.table_schema = t.table_schema \
+                  AND c.table_name = t.table_name \
+                 WHERE c.table_schema = 'analytics' \
+                 ORDER BY c.ordinal_position LIMIT 2",
+            )
+            .expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("metadata join");
+
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["table_name", "column_name", "table_type"]
+        );
+        assert_eq!(
+            result.rows,
+            [
+                vec![
+                    Value::Utf8("Events".to_owned()),
+                    Value::Utf8("id".to_owned()),
+                    Value::Utf8("BASE TABLE".to_owned()),
+                ],
+                vec![
+                    Value::Utf8("Events".to_owned()),
+                    Value::Utf8("name".to_owned()),
+                    Value::Utf8("BASE TABLE".to_owned()),
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn information_schema_supports_grouped_client_aggregates() {
+        let result = execute_metadata(
+            &parse_statement(
+                "SELECT t.table_schema, COUNT(*) AS table_count, \
+                        MAX(t.table_rows) AS largest_table \
+                 FROM information_schema.tables AS t \
+                 GROUP BY t.table_schema ORDER BY t.table_schema",
+            )
+            .expect("parse"),
+            &catalog(),
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("metadata aggregates");
+
+        assert_eq!(
+            result.rows,
+            [vec![
+                Value::Utf8("Analytics".to_owned()),
+                Value::UInt64(1),
+                Value::UInt64(3),
+            ]]
+        );
+        assert_eq!(result.fields[1].name, "table_count");
+        assert_eq!(result.fields[1].data_type, DataType::UInt64);
+        assert!(!result.fields[1].nullable);
     }
 
     #[test]

@@ -344,6 +344,21 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             ("events".to_owned(), "name".to_owned(), 2)
         ]
     );
+    let discovery: Vec<(String, String, u64)> = connection
+        .query(
+            "SELECT c.table_name, t.table_type, COUNT(c.column_name) AS column_count \
+             FROM information_schema.columns AS c \
+             JOIN information_schema.tables AS t \
+               ON c.table_schema = t.table_schema AND c.table_name = t.table_name \
+             WHERE c.table_schema = 'analytics' AND c.table_name = 'events' \
+             GROUP BY c.table_name, t.table_type",
+        )
+        .await
+        .expect("joined metadata discovery query");
+    assert_eq!(
+        discovery,
+        vec![("events".to_owned(), "BASE TABLE".to_owned(), 2)]
+    );
     let indexes: Vec<mysql_async::Row> = connection
         .query("SHOW KEYS FROM events")
         .await
