@@ -4,8 +4,10 @@
 
 Pintail currently exposes **134 callable function names** and carries **794
 MySQL 8.4 differential-oracle cases**. The count in `parity.md` is enforced by
-a binder unit test. The eight bounded read-only SQL tasks selected from the
-repository issues have all been implemented and committed independently.
+a binder unit test. This is the oracle inventory, not a claim that the
+Docker-backed oracle ran during this series. The eight bounded read-only SQL
+tasks selected from the repository issues have all been implemented and
+committed independently.
 
 The delivered work improves metadata discovery, everyday functions, correlated
 subqueries, join syntax, JSON and regex overloads, week calculation, exact
@@ -34,9 +36,10 @@ The review covered:
 - all open GitHub issues, with special attention to #8, #9, #10, #11, #13,
   #14, #16, #17, and #25.
 
-The full workspace test suite was green before the final review corrections.
-Post-correction targeted SQL and executor suites are also green; the final
-workspace gate is recorded in the conclusion.
+The full workspace test suite and strict workspace clippy gate are green after
+the final review corrections. Docker-backed oracle/E2E tests and the benchmark
+gate were not run during this series; their performance and external-MySQL
+results remain unmeasured here.
 
 ## Eight completed tasks
 
@@ -53,7 +56,10 @@ workspace gate is recorded in the conclusion.
 
 \* The metadata SQL changes share `3fab0bbd` with a concurrent dashboard
 change. The SQL files themselves remain independently identifiable in that
-commit.
+commit. That commit also contains a wire-visible MySQL compatibility fix:
+`DESCRIBE` now returns a real SQL `NULL` in its `Default` column when no default
+exists, rather than a text placeholder. The mixed commit subject does not
+describe either SQL change; correcting it requires a deliberate history split.
 
 ## Current JSON function support
 
@@ -92,7 +98,9 @@ The supported regex surface is:
 engine and translates selected POSIX classes to Unicode-aware equivalents.
 The review pass made `u` meaningful: without it, CR, CRLF, NEL, line separator,
 and paragraph separator are normalized to ICU-style line boundaries; with
-`u`, only LF receives newline treatment.
+`u`, only LF receives newline treatment. Compiled programs are now held by
+owned, reference-counted entries; the 256-entry cache evicts and drops programs
+instead of leaking every compilation for the worker thread's lifetime.
 
 Remaining regex discrepancies:
 

@@ -2974,7 +2974,7 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 // so each worker thread compiles a combination once. Case-insensitive by
 // default to match the ci collations (docs/limitations.md).
 thread_local! {
-    static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, &'static regex::Regex>> =
+    static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<regex::Regex>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -3023,7 +3023,7 @@ fn unicode_posix_classes(pattern: &str) -> String {
     rewritten
 }
 
-fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
+fn compiled_regex(pattern: &str) -> Result<std::rc::Rc<regex::Regex>, ExecError> {
     compiled_regex_with_match_type(pattern, "")
 }
 
@@ -3051,7 +3051,7 @@ fn normalize_mysql_regex_line_endings(text: &str) -> String {
 fn compiled_regex_with_match_type(
     pattern: &str,
     match_type: &str,
-) -> Result<&'static regex::Regex, ExecError> {
+) -> Result<std::rc::Rc<regex::Regex>, ExecError> {
     let mut case_insensitive = true;
     let mut multi_line = false;
     let mut dot_matches_new_line = false;
@@ -3076,24 +3076,25 @@ fn compiled_regex_with_match_type(
     REGEX_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(compiled) = cache.get(&cache_key) {
-            return Ok(*compiled);
+            return Ok(std::rc::Rc::clone(compiled));
         }
         let translated = unicode_posix_classes(pattern);
-        let compiled = regex::RegexBuilder::new(&translated)
-            .case_insensitive(case_insensitive)
-            .multi_line(multi_line)
-            .dot_matches_new_line(dot_matches_new_line)
-            .size_limit(1 << 20)
-            .build()
-            .map_err(|_| ExecError::InvalidExpressionType)?;
-        // Interned for the thread's lifetime: pattern cardinality is tiny
-        // (query literals), and a bounded cache would need eviction the
-        // &'static borrows could not survive.
-        let leaked: &'static regex::Regex = Box::leak(Box::new(compiled));
-        if cache.len() < 256 {
-            cache.insert(cache_key, leaked);
+        let compiled = std::rc::Rc::new(
+            regex::RegexBuilder::new(&translated)
+                .case_insensitive(case_insensitive)
+                .multi_line(multi_line)
+                .dot_matches_new_line(dot_matches_new_line)
+                .size_limit(1 << 20)
+                .build()
+                .map_err(|_| ExecError::InvalidExpressionType)?,
+        );
+        if cache.len() >= 256
+            && let Some(evicted) = cache.keys().next().cloned()
+        {
+            cache.remove(&evicted);
         }
-        Ok(leaked)
+        cache.insert(cache_key, std::rc::Rc::clone(&compiled));
+        Ok(compiled)
     })
 }
 
@@ -4286,6 +4287,23 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn regex_cache_drops_evicted_programs() {
+        super::REGEX_CACHE.with(|cache| cache.borrow_mut().clear());
+        let mut programs = Vec::new();
+        for index in 0..300 {
+            let compiled =
+                super::compiled_regex(&format!("cache-pattern-{index}")).expect("pattern compiles");
+            programs.push(std::rc::Rc::downgrade(&compiled));
+        }
+
+        let retained = programs
+            .iter()
+            .filter(|program| program.upgrade().is_some())
+            .count();
+        assert_eq!(retained, 256, "only bounded cache entries remain alive");
     }
 
     /// Hostile arguments must return or error, never abort the process.
