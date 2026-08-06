@@ -17,6 +17,7 @@ pub use execution::{
     BatchStream, ExecError, Execution, MAX_CROSS_JOIN_ROWS, MemoryTracker, OutputField,
     PhysicalPlan, PhysicalPlanner, ScanProvider,
 };
+pub use execution::{set_session_group_concat_max_len, take_session_group_concat_warnings};
 pub use explain::{
     ExplainError, explain_analyze_statement, explain_statement, format_physical_plan,
     format_physical_plan_with_stats,

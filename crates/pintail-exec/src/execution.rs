@@ -27,6 +27,28 @@ use crate::{
     spill,
 };
 
+const DEFAULT_GROUP_CONCAT_MAX_LEN: usize = 1024;
+
+thread_local! {
+    static SESSION_GROUP_CONCAT_MAX_LEN: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(DEFAULT_GROUP_CONCAT_MAX_LEN) };
+    static SESSION_GROUP_CONCAT_WARNINGS: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Installs the current connection's `group_concat_max_len` on this
+/// synchronous execution thread. `None` restores `MySQL`'s default of 1024.
+pub fn set_session_group_concat_max_len(limit: Option<usize>) {
+    SESSION_GROUP_CONCAT_MAX_LEN.set(limit.unwrap_or(DEFAULT_GROUP_CONCAT_MAX_LEN).max(4));
+    SESSION_GROUP_CONCAT_WARNINGS.set(0);
+}
+
+/// Takes the number of `GROUP_CONCAT` results truncated by the last statement.
+#[must_use]
+pub fn take_session_group_concat_warnings() -> u64 {
+    SESSION_GROUP_CONCAT_WARNINGS.replace(0)
+}
+
 /// Maximum estimated result rows accepted by the unqualified cross-join
 /// operator.
 pub const MAX_CROSS_JOIN_ROWS: u64 = 1_000_000;
@@ -3995,14 +4017,17 @@ impl AggregateState {
                     .map(|(_, text)| text.as_str())
                     .collect::<Vec<_>>()
                     .join(&separator);
-                // MySQL truncates at group_concat_max_len (default 1024
-                // bytes) on a character boundary.
-                if joined.len() > 1024 {
-                    let mut cut = 1024;
+                // MySQL truncates at the session's byte ceiling and raises
+                // warning 1260 for each group that was cut.
+                let limit = SESSION_GROUP_CONCAT_MAX_LEN.get();
+                if joined.len() > limit {
+                    let mut cut = limit;
                     while !joined.is_char_boundary(cut) {
                         cut -= 1;
                     }
                     joined.truncate(cut);
+                    SESSION_GROUP_CONCAT_WARNINGS
+                        .set(SESSION_GROUP_CONCAT_WARNINGS.get().saturating_add(1));
                 }
                 Value::Utf8(joined)
             }
@@ -11110,6 +11135,39 @@ mod tests {
             Some(&Value::Utf8("alpha".to_owned()))
         );
         assert!(execution.next_batch().expect("end").is_none());
+    }
+
+    #[test]
+    fn group_concat_honors_session_byte_limit_and_reports_truncation() {
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    3,
+                    vec![
+                        ColumnVector::new(
+                            DataType::Utf8,
+                            vec![
+                                Value::Utf8("é".to_owned()),
+                                Value::Utf8("é".to_owned()),
+                                Value::Utf8("é".to_owned()),
+                            ],
+                        )
+                        .expect("names"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        super::set_session_group_concat_max_len(Some(5));
+        let plan = physical("SELECT GROUP_CONCAT(name SEPARATOR '') FROM events");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("éé".to_owned()))
+        );
+        assert_eq!(super::take_session_group_concat_warnings(), 1);
+        super::set_session_group_concat_max_len(None);
     }
 
     #[test]

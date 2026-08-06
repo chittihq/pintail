@@ -43,8 +43,10 @@ stays readable as a list of things to fix.
   chain. Aliased groups, nested right inputs, and parenthesized groups that
   contain outer/semi/anti joins reject because the current bound plan cannot
   preserve their join tree (#16).
-- `GROUP_CONCAT`'s `group_concat_max_len` session variable is not configurable
-  and the truncation warning is not raised.
+- `GROUP_CONCAT` honors per-connection `group_concat_max_len` (minimum 4,
+  default 1024), truncates on a UTF-8 boundary, and exposes warning 1260
+  through `SHOW WARNINGS`. Other MySQL warning categories are not yet kept in
+  a general diagnostics area.
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
   `JSON_MERGE*`, `JSON_REMOVE`) and `JSON_TABLE` are unimplemented and out of
   scope by decision. `JSON_TABLE` is a table-valued function, so it needs a new

@@ -174,6 +174,32 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .expect("sql mode probe");
     assert_eq!(mode.as_deref(), Some("ANSI_QUOTES"));
     connection
+        .query_drop("SET SESSION group_concat_max_len = 5")
+        .await
+        .expect("set group concat limit");
+    let concat_limit: Option<u64> = connection
+        .query_first("SELECT @@group_concat_max_len")
+        .await
+        .expect("group concat limit probe");
+    assert_eq!(concat_limit, Some(5));
+    let truncated_concat: Option<String> = connection
+        .query_first("SELECT GROUP_CONCAT(name ORDER BY id SEPARATOR '') FROM events")
+        .await
+        .expect("truncated group concat");
+    assert_eq!(truncated_concat.as_deref(), Some("launc"));
+    let warnings: Vec<(String, u64, String)> = connection
+        .query("SHOW WARNINGS")
+        .await
+        .expect("group concat warnings");
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].0, "Warning");
+    assert_eq!(warnings[0].1, 1260);
+    assert!(warnings[0].2.contains("GROUP_CONCAT"));
+    connection
+        .query_drop("SET SESSION group_concat_max_len = 1024")
+        .await
+        .expect("restore group concat limit");
+    connection
         .query_drop("SET time_zone = 'SYSTEM'")
         .await
         .expect("restore zone");

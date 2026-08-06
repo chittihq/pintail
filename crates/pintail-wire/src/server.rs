@@ -227,6 +227,8 @@ struct Session {
     time_zone: String,
     sql_mode: String,
     charset: String,
+    group_concat_max_len: usize,
+    group_concat_warnings: u64,
 }
 
 impl Default for Session {
@@ -237,6 +239,8 @@ impl Default for Session {
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
                 .to_owned(),
             charset: "utf8mb4".to_owned(),
+            group_concat_max_len: 1024,
+            group_concat_warnings: 0,
         }
     }
 }
@@ -340,10 +344,16 @@ impl Backend {
                 // optimization runs on this thread, so install-and-restore
                 // brackets exactly one statement.
                 let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
                 let result = self
                     .engine
                     .execute(&authenticated.database_id, sql, DEFAULT_MAX_ROWS);
+                let warnings = pintail_exec::take_session_group_concat_warnings();
+                pintail_exec::set_session_group_concat_max_len(None);
                 let _ = pintail_exec::set_session_time_zone(None);
+                if let Ok(mut current) = self.session.lock() {
+                    current.group_concat_warnings = warnings;
+                }
                 result
             },
             Ok,
@@ -398,6 +408,15 @@ impl Backend {
             }
             "sql_mode" => {
                 session.sql_mode = value;
+                Ok(())
+            }
+            "group_concat_max_len" => {
+                let limit = value
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|limit| usize::try_from(limit).ok())
+                    .ok_or_else(|| "group_concat_max_len must be an unsigned integer".to_owned())?;
+                session.group_concat_max_len = limit.max(4);
                 Ok(())
             }
             // Everything else keeps the accepted-no-op compatibility
@@ -891,6 +910,41 @@ fn error_kind(error: &QueryError) -> ErrorKind {
 
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
+    if normalized.starts_with("show warnings") {
+        return Some(QueryOutput {
+            fields: vec![
+                QueryField {
+                    name: "Level".to_owned(),
+                    data_type: Some(DataType::Utf8),
+                    nullable: false,
+                },
+                QueryField {
+                    name: "Code".to_owned(),
+                    data_type: Some(DataType::UInt64),
+                    nullable: false,
+                },
+                QueryField {
+                    name: "Message".to_owned(),
+                    data_type: Some(DataType::Utf8),
+                    nullable: false,
+                },
+            ],
+            rows: (1..=session.group_concat_warnings)
+                .map(|row| {
+                    vec![
+                        Value::Utf8("Warning".to_owned()),
+                        Value::UInt64(1260),
+                        Value::Utf8(format!("Row {row} was cut by GROUP_CONCAT()")),
+                    ]
+                })
+                .collect(),
+            stats: QueryStats {
+                rows: usize::try_from(session.group_concat_warnings).unwrap_or(usize::MAX),
+                ..QueryStats::default()
+            },
+            truncated: false,
+        });
+    }
     let (name, value) = if normalized.starts_with("select version()") {
         (
             "VERSION()",
@@ -905,6 +959,16 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         )
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
+    } else if normalized.contains("@@group_concat_max_len") {
+        (
+            "@@group_concat_max_len",
+            Value::UInt64(u64::try_from(session.group_concat_max_len).unwrap_or(u64::MAX)),
+        )
+    } else if normalized.contains("@@warning_count") {
+        (
+            "@@warning_count",
+            Value::UInt64(session.group_concat_warnings),
+        )
     } else if normalized.contains("@@session.time_zone") || normalized.contains("@@time_zone") {
         (
             "@@session.time_zone",
