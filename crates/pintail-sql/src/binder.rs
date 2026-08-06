@@ -3465,10 +3465,18 @@ fn bind_convert(
     let target = match (data_type, charset) {
         (Some(data_type), _) => cast_data_type(data_type)
             .ok_or_else(|| BindError::InvalidScalarFunction(format!("CONVERT TO {data_type}")))?,
-        (None, Some(charset)) if charset.to_string().eq_ignore_ascii_case("binary") => {
-            DataType::Binary
-        }
-        (None, Some(_)) => DataType::Utf8,
+        (None, Some(charset)) => match charset.to_string().to_ascii_lowercase().as_str() {
+            "binary" => DataType::Binary,
+            // These names all denote Pintail's UTF-8 carrier. Other MySQL
+            // character sets require byte-level transcoding and must not be
+            // silently relabeled as UTF-8.
+            "utf8" | "utf8mb3" | "utf8mb4" => DataType::Utf8,
+            unsupported => {
+                return Err(BindError::InvalidScalarFunction(format!(
+                    "CONVERT USING unsupported character set {unsupported}"
+                )));
+            }
+        },
         (None, None) => {
             return Err(BindError::InvalidScalarFunction(
                 "CONVERT requires a target type or character set".to_owned(),
@@ -5374,6 +5382,20 @@ mod tests {
     fn binds_json_cast_as_a_typed_document() {
         let query = bind(r#"SELECT CAST('{"a":1}' AS JSON) FROM Events"#).expect("binds");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
+    }
+
+    #[test]
+    fn convert_using_rejects_charsets_it_cannot_transcode() {
+        for charset in ["utf8", "utf8mb3", "utf8mb4", "binary"] {
+            bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events"))
+                .unwrap_or_else(|error| panic!("{charset} should bind: {error:?}"));
+        }
+        for charset in ["latin1", "ascii", "utf16"] {
+            assert!(matches!(
+                bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events")),
+                Err(BindError::InvalidScalarFunction(_))
+            ));
+        }
     }
 
     #[test]

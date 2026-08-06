@@ -82,8 +82,10 @@ stays readable as a list of things to fix.
   query. Their conservative memory bound and generated replacement output are
   charged to the per-query ceiling; dynamic patterns are deliberately uncached
   so no program can outlive the row that requested it.
-- `CONVERT(value USING charset)` does not perform byte-level transcoding among
-  MySQL character sets.
+- `CONVERT(value USING charset)` accepts `utf8`, `utf8mb3`, and `utf8mb4` as
+  the engine's UTF-8 carrier plus `binary` as bytes. Other MySQL character
+  sets reject explicitly because Pintail does not perform byte-level
+  transcoding among character sets.
 - `CAST(value AS TIME[(fsp)])` accepts MySQL's interval-shaped, compact, day-
   prefixed, and datetime inputs, rounds to the declared fractional precision,
   and clamps to `-838:59:59`..`838:59:59`. `CAST AS JSON` validates and
