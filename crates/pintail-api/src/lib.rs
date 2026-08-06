@@ -64,7 +64,10 @@ use crate::databases::{
     update as update_database,
 };
 use crate::events::{sse, websocket};
-use crate::invites::{create as create_invite, list as list_invites, revoke as revoke_invite};
+use crate::invites::{
+    create as create_invite, list as list_invites, revoke as revoke_invite,
+    status as invite_status,
+};
 use crate::keys::{
     create as create_api_key, delete as delete_api_key, list as list_api_keys,
     patch as patch_api_key,
@@ -77,8 +80,9 @@ use crate::oauth::{
 use crate::query::{list_tables, query, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 use crate::workspaces::{
-    create as create_workspace, list as list_workspaces, members as workspace_members,
-    remove_member as remove_workspace_member, switch as switch_workspace,
+    audit_log as workspace_audit_log, create as create_workspace, list as list_workspaces,
+    members as workspace_members, remove_member as remove_workspace_member,
+    switch as switch_workspace,
 };
 
 /// Builds the public HTTP application without configured control-plane API
@@ -109,6 +113,7 @@ pub fn router_with_state(state: ApiState) -> Router {
             "/workspaces/invites/{id}",
             axum::routing::delete(revoke_invite),
         )
+        .route("/workspaces/audit-log", get(workspace_audit_log))
         .route(
             "/settings/oauth/google",
             get(get_google_settings).put(put_google_settings),
@@ -164,6 +169,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/auth/google/start", get(google_start))
         .route("/auth/google/callback", get(google_callback))
         .route("/auth/google/status", get(google_status))
+        .route("/invites/status", get(invite_status))
         .merge(protected);
 
     Router::new()

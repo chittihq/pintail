@@ -1,4 +1,4 @@
-use axum::{Extension, Json, extract::{Path, State}};
+use axum::{Extension, Json, extract::{Path, Query, State}};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,28 @@ pub(crate) struct MemberResponse {
     user_id: String,
     email: String,
     role: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AuditLogQuery {
+    #[serde(default = "default_audit_limit")]
+    limit: u64,
+}
+
+const fn default_audit_limit() -> u64 {
+    200
+}
+
+#[derive(Serialize)]
+pub(crate) struct AuditEventResponse {
+    id: String,
+    actor_type: String,
+    actor_label: String,
+    action: String,
+    target_type: Option<String>,
+    target_id: Option<String>,
+    detail_json: Option<String>,
+    created_at: String,
 }
 
 /// Lists every workspace the caller belongs to, for the sidebar switcher.
@@ -143,6 +165,36 @@ pub(crate) async fn members(
         })
         .collect();
     Ok(Json(members))
+}
+
+/// Lists the audit trail for the caller's current workspace, most recent
+/// first. Admin only: entries can include query SQL text and other
+/// sensitive detail.
+pub(crate) async fn audit_log(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Query(query): Query<AuditLogQuery>,
+) -> Result<Json<Vec<AuditEventResponse>>, ApiError> {
+    principal.require_admin()?;
+    let workspace_id = principal.require_workspace()?;
+    let limit = query.limit.clamp(1, 1_000);
+    let events = state
+        .metadata()?
+        .audit_log_in_workspace(workspace_id, limit)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(|event| AuditEventResponse {
+            id: event.id,
+            actor_type: event.actor_type,
+            actor_label: event.actor_label,
+            action: event.action,
+            target_type: event.target_type,
+            target_id: event.target_id,
+            detail_json: event.detail_json,
+            created_at: event.created_at,
+        })
+        .collect();
+    Ok(Json(events))
 }
 
 /// Removes a member from the caller's current workspace. Admin only; the

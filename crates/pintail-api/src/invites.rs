@@ -5,10 +5,10 @@
 
 use axum::{
     Extension, Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -40,6 +40,66 @@ pub(crate) struct CreatedInviteResponse {
 pub(crate) struct CreateInviteRequest {
     email: String,
     role: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct InviteStatusQuery {
+    token: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct InviteStatusResponse {
+    valid: bool,
+    email: Option<String>,
+    role: Option<String>,
+    workspace_name: Option<String>,
+    reason: Option<&'static str>,
+}
+
+/// Public lookup for the invite-acceptance page: shows which workspace,
+/// email, and role a link grants before the visitor signs in with Google.
+/// Reveals no more than what the admin already put in the (email-bound)
+/// link itself.
+pub(crate) async fn status(
+    State(state): State<ApiState>,
+    Query(query): Query<InviteStatusQuery>,
+) -> Result<Json<InviteStatusResponse>, ApiError> {
+    let metadata = state.metadata()?;
+    let token_hash = Sha256::digest(query.token.as_bytes());
+    let Some(invite) = metadata
+        .invite_by_token_hash(&token_hash)
+        .map_err(ApiError::internal)?
+    else {
+        return Ok(Json(InviteStatusResponse {
+            valid: false,
+            email: None,
+            role: None,
+            workspace_name: None,
+            reason: Some("not_found"),
+        }));
+    };
+    let reason = if invite.revoked_at.is_some() {
+        Some("revoked")
+    } else if invite.accepted_at.is_some() {
+        Some("accepted")
+    } else if DateTime::parse_from_rfc3339(&invite.expires_at)
+        .is_ok_and(|expires| expires <= Utc::now())
+    {
+        Some("expired")
+    } else {
+        None
+    };
+    let workspace_name = metadata
+        .workspace_by_id(&invite.workspace_id)
+        .map_err(ApiError::internal)?
+        .map(|workspace| workspace.name);
+    Ok(Json(InviteStatusResponse {
+        valid: reason.is_none(),
+        email: Some(invite.email),
+        role: Some(invite.role),
+        workspace_name,
+        reason,
+    }))
 }
 
 /// Lists every invite issued in the caller's current workspace, most recent

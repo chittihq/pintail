@@ -13,6 +13,51 @@ export interface Workspace {
   role: string
 }
 
+export interface WorkspaceMember {
+  user_id: string
+  email: string
+  role: string
+}
+
+export interface Invite {
+  id: string
+  email: string
+  role: string
+  created_at: string
+  expires_at: string
+  accepted_at: string | null
+  revoked_at: string | null
+}
+
+export interface CreatedInvite extends Invite {
+  token: string
+}
+
+export interface InviteStatus {
+  valid: boolean
+  email: string | null
+  role: string | null
+  workspace_name: string | null
+  reason: 'not_found' | 'revoked' | 'accepted' | 'expired' | null
+}
+
+export interface GoogleOAuthSettings {
+  enabled: boolean
+  client_id: string
+  configured: boolean
+}
+
+export interface AuditEvent {
+  id: string
+  actor_type: string
+  actor_label: string
+  action: string
+  target_type: string | null
+  target_id: string | null
+  detail_json: string | null
+  created_at: string
+}
+
 export interface DatabaseRecord {
   id: string
   name: string

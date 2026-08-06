@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Activity as ActivityIcon, RefreshCw } from '@lucide/vue'
-import { formatBytes, formatDate, stateTone } from '@/lib/format'
+import { Activity as ActivityIcon, RefreshCw, ShieldCheck } from '@lucide/vue'
+import { formatBytes, formatDate, messageOf, stateTone } from '@/lib/format'
+import type { AuditEvent } from '@/types/pintail'
 
 const route = useRoute()
 const router = useRouter()
-const { databases, activity, deadLetters, discardDlq, retryDlq } = useControlPlane()
+const { databases, activity, deadLetters, discardDlq, retryDlq, session, error } = useControlPlane()
+const { request } = usePintailApi()
 
 const activityDatabase = computed({
   get: () => (typeof route.query.db === 'string' ? route.query.db : ''),
@@ -15,6 +17,33 @@ const filteredActivity = computed(() =>
     ? activity.value.filter((record) => record.database_id === activityDatabase.value)
     : activity.value,
 )
+
+const isAdmin = computed(() => session.value?.role === 'admin')
+const auditEvents = ref<AuditEvent[]>([])
+const auditLoading = ref(false)
+
+async function loadAuditLog() {
+  if (!isAdmin.value) return
+  auditLoading.value = true
+  try {
+    auditEvents.value = await request<AuditEvent[]>('/workspaces/audit-log?limit=200')
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+onMounted(loadAuditLog)
+
+function auditDetail(event: AuditEvent) {
+  if (!event.detail_json) return ''
+  try {
+    return JSON.stringify(JSON.parse(event.detail_json))
+  } catch {
+    return event.detail_json
+  }
+}
 </script>
 
 <template>
@@ -64,6 +93,24 @@ const filteredActivity = computed(() =>
           </div>
         </div>
       </div>
+    </Card>
+    <Card v-if="isAdmin" class="mt-4 overflow-hidden p-0">
+      <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Every user, every workspace action</p><h2 class="text-base font-semibold">Audit trail</h2></div><Button variant="ghost" size="icon" :disabled="auditLoading" aria-label="Refresh audit trail" @click="loadAuditLog"><RefreshCw /></Button></div>
+      <div v-if="!auditEvents.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><ShieldCheck :size="26" /><strong class="text-foreground">No audit events yet</strong><span class="max-w-sm text-sm">Queries, configuration changes, and workspace management appear here.</span></div>
+      <Table v-else>
+        <TableHeader>
+          <TableRow><TableHead>When</TableHead><TableHead>Actor</TableHead><TableHead>Action</TableHead><TableHead>Target</TableHead><TableHead>Detail</TableHead></TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow v-for="event in auditEvents" :key="event.id">
+            <TableCell class="text-muted-foreground whitespace-nowrap">{{ formatDate(event.created_at) }}</TableCell>
+            <TableCell><strong>{{ event.actor_label }}</strong><small class="text-muted-foreground block text-xs">{{ event.actor_type }}</small></TableCell>
+            <TableCell><Badge variant="outline">{{ event.action }}</Badge></TableCell>
+            <TableCell class="text-muted-foreground text-xs">{{ event.target_type ? `${event.target_type}:${event.target_id}` : '—' }}</TableCell>
+            <TableCell class="text-muted-foreground max-w-96 truncate font-mono text-xs">{{ auditDetail(event) }}</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </Card>
   </section>
 </template>

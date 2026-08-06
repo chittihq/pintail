@@ -1,7 +1,54 @@
 <script setup lang="ts">
-import { Moon, Server, Sun } from '@lucide/vue'
+import { KeyRound, LoaderCircle, Moon, Server, Sun } from '@lucide/vue'
+import { toast } from 'vue-sonner'
+import { messageOf } from '@/lib/format'
+import type { GoogleOAuthSettings } from '@/types/pintail'
 
-const { session, dark, nodeStatus, toggleTheme } = useControlPlane()
+const { session, dark, nodeStatus, toggleTheme, error } = useControlPlane()
+const { request } = usePintailApi()
+
+const isAdmin = computed(() => session.value?.role === 'admin')
+const googleLoaded = ref(false)
+const googleSaving = ref(false)
+const googleForm = reactive({ enabled: false, clientId: '', clientSecret: '' })
+const googleConfigured = ref(false)
+
+async function loadGoogleSettings() {
+  if (!isAdmin.value) return
+  try {
+    const settings = await request<GoogleOAuthSettings>('/settings/oauth/google')
+    googleForm.enabled = settings.enabled
+    googleForm.clientId = settings.client_id
+    googleForm.clientSecret = ''
+    googleConfigured.value = settings.configured
+    googleLoaded.value = true
+  } catch (failure) {
+    error.value = messageOf(failure)
+  }
+}
+
+onMounted(loadGoogleSettings)
+
+async function saveGoogleSettings() {
+  googleSaving.value = true
+  try {
+    const settings = await request<GoogleOAuthSettings>('/settings/oauth/google', {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: googleForm.enabled,
+        client_id: googleForm.clientId.trim(),
+        client_secret: googleForm.clientSecret || undefined,
+      }),
+    })
+    googleForm.clientSecret = ''
+    googleConfigured.value = settings.configured
+    toast('Google sign-in settings saved')
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    googleSaving.value = false
+  }
+}
 </script>
 
 <template>
@@ -36,6 +83,18 @@ const { session, dark, nodeStatus, toggleTheme } = useControlPlane()
           <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Username</dt><dd class="mt-1 text-sm">Database name</dd></div>
           <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Protocol</dt><dd class="mt-1 text-sm">MySQL native</dd></div>
         </dl>
+      </Card>
+      <Card v-if="isAdmin" class="grid gap-4 p-4">
+        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Node-wide, one OAuth client covers every workspace</p><h2 class="text-base font-semibold">Google sign-in</h2></div><Badge :class="googleConfigured ? 'tone-positive' : 'tone-neutral'">{{ googleConfigured ? 'Configured' : 'Not configured' }}</Badge></div>
+        <div class="grid gap-3">
+          <div class="grid content-start gap-1.5"><Label for="google-client-id">Client ID</Label><Input id="google-client-id" v-model="googleForm.clientId" autocomplete="off" placeholder="123456789-abc.apps.googleusercontent.com" /></div>
+          <div class="grid content-start gap-1.5"><Label for="google-client-secret">Client secret</Label><Input id="google-client-secret" v-model="googleForm.clientSecret" type="password" autocomplete="new-password" placeholder="Leave blank to preserve" /></div>
+        </div>
+        <div class="flex w-full items-center justify-between py-1">
+          <span><strong class="block text-sm">Allow sign-in with Google</strong><small class="text-muted-foreground text-xs">Only invited or existing members can complete it.</small></span>
+          <Switch :model-value="googleForm.enabled" @update:model-value="(value) => googleForm.enabled = value === true" />
+        </div>
+        <Button :disabled="googleSaving || !googleLoaded" @click="saveGoogleSettings"><LoaderCircle v-if="googleSaving" class="animate-spin" /><KeyRound v-else /> Save Google settings</Button>
       </Card>
       <Card class="p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Telemetry</p><h2 class="text-base font-semibold">Operations</h2></div><Badge class="tone-positive">Live</Badge></div>
