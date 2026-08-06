@@ -129,7 +129,9 @@ pub(crate) async fn list(
             .databases_in_workspace(principal.require_workspace()?)
             .map_err(ApiError::internal)?
     };
-    Ok(Json(records.into_iter().map(DatabaseResponse::from).collect()))
+    Ok(Json(
+        records.into_iter().map(DatabaseResponse::from).collect(),
+    ))
 }
 
 pub(crate) async fn create(
@@ -288,7 +290,13 @@ pub(crate) async fn delete(
         .delete_database(&id)
         .map_err(ApiError::internal)?
     {
-        audit::record(&state, &principal, "database.delete", Some(("database", &id)), None);
+        audit::record(
+            &state,
+            &principal,
+            "database.delete",
+            Some(("database", &id)),
+            None,
+        );
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("database does not exist"))

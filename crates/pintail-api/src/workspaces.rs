@@ -1,4 +1,7 @@
-use axum::{Extension, Json, extract::{Path, Query, State}};
+use axum::{
+    Extension, Json,
+    extract::{Path, Query, State},
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 

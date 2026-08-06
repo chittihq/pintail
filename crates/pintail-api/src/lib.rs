@@ -65,8 +65,7 @@ use crate::databases::{
 };
 use crate::events::{sse, websocket};
 use crate::invites::{
-    create as create_invite, list as list_invites, revoke as revoke_invite,
-    status as invite_status,
+    create as create_invite, list as list_invites, revoke as revoke_invite, status as invite_status,
 };
 use crate::keys::{
     create as create_api_key, delete as delete_api_key, list as list_api_keys,
@@ -105,10 +104,7 @@ pub fn router_with_state(state: ApiState) -> Router {
             "/workspaces/members/{user_id}",
             axum::routing::delete(remove_workspace_member),
         )
-        .route(
-            "/workspaces/invites",
-            get(list_invites).post(create_invite),
-        )
+        .route("/workspaces/invites", get(list_invites).post(create_invite))
         .route(
             "/workspaces/invites/{id}",
             axum::routing::delete(revoke_invite),

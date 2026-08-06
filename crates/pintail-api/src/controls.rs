@@ -13,8 +13,7 @@ use pintail_probe::ProbeReport;
 use serde::Serialize;
 
 use crate::{
-    ApiState,
-    audit,
+    ApiState, audit,
     auth::AuthPrincipal,
     error::ApiError,
     events::ApiEvent,

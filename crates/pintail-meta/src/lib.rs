@@ -1544,9 +1544,7 @@ fn migration_v15(transaction: Transaction<'_>) -> Result<()> {
 
 fn migration_v16(transaction: Transaction<'_>) -> Result<()> {
     transaction
-        .execute_batch(include_str!(
-            "../migrations/016_oauth_invites_audit.sql"
-        ))
+        .execute_batch(include_str!("../migrations/016_oauth_invites_audit.sql"))
         .context("failed to apply metadata migration 16")?;
     transaction
         .commit()

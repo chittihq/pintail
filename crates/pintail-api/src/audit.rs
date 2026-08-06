@@ -55,7 +55,9 @@ fn try_record(
     target: Option<(&str, &str)>,
     detail: Option<Value>,
 ) -> anyhow::Result<()> {
-    let metadata = state.metadata().map_err(|error| anyhow::anyhow!("{error}"))?;
+    let metadata = state
+        .metadata()
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     let (actor_type, actor_label) = if principal.database_id.is_some() {
         ("api_key", principal.subject.clone())
     } else {

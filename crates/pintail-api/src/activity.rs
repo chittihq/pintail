@@ -75,7 +75,11 @@ pub(crate) async fn dead_letters(
     let records = if principal.database_id.is_some() {
         metadata.dlq_records(database.as_deref(), limit)
     } else {
-        metadata.dlq_records_in_workspace(principal.require_workspace()?, database.as_deref(), limit)
+        metadata.dlq_records_in_workspace(
+            principal.require_workspace()?,
+            database.as_deref(),
+            limit,
+        )
     }
     .map_err(ApiError::internal)?
     .into_iter()

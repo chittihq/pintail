@@ -114,7 +114,10 @@ pub(crate) async fn put_settings(
     principal.require_admin()?;
     let metadata = state.metadata()?;
     metadata
-        .set_setting("oauth_google_enabled", if request.enabled { "true" } else { "false" })
+        .set_setting(
+            "oauth_google_enabled",
+            if request.enabled { "true" } else { "false" },
+        )
         .map_err(ApiError::internal)?;
     metadata
         .set_setting("oauth_google_client_id", request.client_id.trim())
@@ -284,7 +287,9 @@ async fn callback_inner(
     query: &CallbackQuery,
 ) -> Result<String, ApiError> {
     if let Some(error) = &query.error {
-        return Err(ApiError::bad_request(format!("Google sign-in was cancelled: {error}")));
+        return Err(ApiError::bad_request(format!(
+            "Google sign-in was cancelled: {error}"
+        )));
     }
     let code = query
         .code
@@ -302,7 +307,9 @@ async fn callback_inner(
     }
     let google_user = exchange_code(&config, &redirect_uri(headers), code).await?;
     if !google_user.email_verified {
-        return Err(ApiError::bad_request("Google account email is not verified"));
+        return Err(ApiError::bad_request(
+            "Google account email is not verified",
+        ));
     }
     let email = google_user.email.trim().to_ascii_lowercase();
 
@@ -423,10 +430,13 @@ pub(crate) const fn invite_lifetime_days() -> i64 {
 
 fn encode_hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut output, byte| {
-        let _ = write!(output, "{byte:02x}");
-        output
-    })
+    bytes.iter().fold(
+        String::with_capacity(bytes.len() * 2),
+        |mut output, byte| {
+            let _ = write!(output, "{byte:02x}");
+            output
+        },
+    )
 }
 
 fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
@@ -436,8 +446,7 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
     (0..text.len())
         .step_by(2)
         .map(|index| {
-            u8::from_str_radix(&text[index..index + 2], 16)
-                .map_err(|error| error.to_string())
+            u8::from_str_radix(&text[index..index + 2], 16).map_err(|error| error.to_string())
         })
         .collect()
 }
