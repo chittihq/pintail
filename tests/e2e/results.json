@@ -26,6 +26,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -92,6 +97,21 @@
   {
     "phase": "snapshot",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -171,6 +191,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -237,6 +262,21 @@
   {
     "phase": "crud",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -316,6 +356,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -382,6 +427,21 @@
   {
     "phase": "type-edges",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -466,6 +526,11 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -532,6 +597,21 @@
   {
     "phase": "ddl",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -646,6 +726,11 @@
   },
   {
     "phase": "churn",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -712,6 +797,21 @@
   {
     "phase": "churn",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -812,6 +912,11 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -878,6 +983,21 @@
   {
     "phase": "pooling",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -962,6 +1082,11 @@
   },
   {
     "phase": "restart",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -1028,6 +1153,21 @@
   {
     "phase": "restart",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -1182,6 +1322,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -1248,6 +1393,21 @@
   {
     "phase": "control-plane",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {
@@ -1338,6 +1498,12 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:information_schema.columns",
+    "status": "WARN",
+    "detail": "row 0:\n  mysql   audit_history | note | 1.0000 | varchar | NO\n  pintail audit_log | note | 1.0000 | varchar | NO"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "query:point lookup by key",
     "status": "PASS"
   },
@@ -1404,6 +1570,21 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:regular expression read transforms",
     "status": "PASS"
   },
   {

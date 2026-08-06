@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-05T20:03:33.226Z.
+Measured 2026-08-06T22:48:12.090Z.
 
-**288 passed, 0 failed, 2 documented-gap warnings.**
+**323 passed, 0 failed, 3 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -11,6 +11,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | snapshot | converge:customers | PASS |  |
 | snapshot | converge:order_items | PASS |  |
 | snapshot | converge:orders | PASS |  |
+| snapshot | converge:information_schema.columns | PASS |  |
 | snapshot | query:point lookup by key | PASS |  |
 | snapshot | query:range scan with compound predicate | PASS |  |
 | snapshot | query:inner join with aggregation | PASS |  |
@@ -25,6 +26,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | snapshot | query:non-recursive cte | PASS |  |
 | snapshot | query:date bucketing | PASS |  |
 | snapshot | query:string functions and like | PASS |  |
+| snapshot | query:json constructor preserves json versus text | PASS |  |
+| snapshot | query:json aggregate embeds documents | PASS |  |
+| snapshot | query:regular expression read transforms | PASS |  |
 | snapshot | query:case expression buckets | PASS |  |
 | snapshot | query:null handling | PASS |  |
 | snapshot | query:coalesce and ifnull | PASS |  |
@@ -40,6 +44,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | crud | converge:customers | PASS |  |
 | crud | converge:order_items | PASS |  |
 | crud | converge:orders | PASS |  |
+| crud | converge:information_schema.columns | PASS |  |
 | crud | query:point lookup by key | PASS |  |
 | crud | query:range scan with compound predicate | PASS |  |
 | crud | query:inner join with aggregation | PASS |  |
@@ -54,6 +59,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | crud | query:non-recursive cte | PASS |  |
 | crud | query:date bucketing | PASS |  |
 | crud | query:string functions and like | PASS |  |
+| crud | query:json constructor preserves json versus text | PASS |  |
+| crud | query:json aggregate embeds documents | PASS |  |
+| crud | query:regular expression read transforms | PASS |  |
 | crud | query:case expression buckets | PASS |  |
 | crud | query:null handling | PASS |  |
 | crud | query:coalesce and ifnull | PASS |  |
@@ -69,6 +77,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | type-edges | converge:customers | PASS |  |
 | type-edges | converge:order_items | PASS |  |
 | type-edges | converge:orders | PASS |  |
+| type-edges | converge:information_schema.columns | PASS |  |
 | type-edges | query:point lookup by key | PASS |  |
 | type-edges | query:range scan with compound predicate | PASS |  |
 | type-edges | query:inner join with aggregation | PASS |  |
@@ -83,6 +92,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | type-edges | query:non-recursive cte | PASS |  |
 | type-edges | query:date bucketing | PASS |  |
 | type-edges | query:string functions and like | PASS |  |
+| type-edges | query:json constructor preserves json versus text | PASS |  |
+| type-edges | query:json aggregate embeds documents | PASS |  |
+| type-edges | query:regular expression read transforms | PASS |  |
 | type-edges | query:case expression buckets | PASS |  |
 | type-edges | query:null handling | PASS |  |
 | type-edges | query:coalesce and ifnull | PASS |  |
@@ -99,6 +111,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | ddl | converge:order_items | PASS |  |
 | ddl | converge:orders | PASS |  |
 | ddl | converge:shipments | PASS |  |
+| ddl | converge:information_schema.columns | PASS |  |
 | ddl | query:point lookup by key | PASS |  |
 | ddl | query:range scan with compound predicate | PASS |  |
 | ddl | query:inner join with aggregation | PASS |  |
@@ -113,6 +126,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | ddl | query:non-recursive cte | PASS |  |
 | ddl | query:date bucketing | PASS |  |
 | ddl | query:string functions and like | PASS |  |
+| ddl | query:json constructor preserves json versus text | PASS |  |
+| ddl | query:json aggregate embeds documents | PASS |  |
+| ddl | query:regular expression read transforms | PASS |  |
 | ddl | query:case expression buckets | PASS |  |
 | ddl | query:null handling | PASS |  |
 | ddl | query:coalesce and ifnull | PASS |  |
@@ -135,6 +151,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | churn | converge:order_items | PASS |  |
 | churn | converge:orders | PASS |  |
 | churn | converge:shipments | PASS |  |
+| churn | converge:information_schema.columns | PASS |  |
 | churn | query:point lookup by key | PASS |  |
 | churn | query:range scan with compound predicate | PASS |  |
 | churn | query:inner join with aggregation | PASS |  |
@@ -149,6 +166,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | churn | query:non-recursive cte | PASS |  |
 | churn | query:date bucketing | PASS |  |
 | churn | query:string functions and like | PASS |  |
+| churn | query:json constructor preserves json versus text | PASS |  |
+| churn | query:json aggregate embeds documents | PASS |  |
+| churn | query:regular expression read transforms | PASS |  |
 | churn | query:case expression buckets | PASS |  |
 | churn | query:null handling | PASS |  |
 | churn | query:coalesce and ifnull | PASS |  |
@@ -168,6 +188,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | pooling | converge:order_items | PASS |  |
 | pooling | converge:orders | PASS |  |
 | pooling | converge:shipments | PASS |  |
+| pooling | converge:information_schema.columns | PASS |  |
 | pooling | query:point lookup by key | PASS |  |
 | pooling | query:range scan with compound predicate | PASS |  |
 | pooling | query:inner join with aggregation | PASS |  |
@@ -182,6 +203,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | pooling | query:non-recursive cte | PASS |  |
 | pooling | query:date bucketing | PASS |  |
 | pooling | query:string functions and like | PASS |  |
+| pooling | query:json constructor preserves json versus text | PASS |  |
+| pooling | query:json aggregate embeds documents | PASS |  |
+| pooling | query:regular expression read transforms | PASS |  |
 | pooling | query:case expression buckets | PASS |  |
 | pooling | query:null handling | PASS |  |
 | pooling | query:coalesce and ifnull | PASS |  |
@@ -198,6 +222,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | restart | converge:order_items | PASS |  |
 | restart | converge:orders | PASS |  |
 | restart | converge:shipments | PASS |  |
+| restart | converge:information_schema.columns | PASS |  |
 | restart | query:point lookup by key | PASS |  |
 | restart | query:range scan with compound predicate | PASS |  |
 | restart | query:inner join with aggregation | PASS |  |
@@ -212,6 +237,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | restart | query:non-recursive cte | PASS |  |
 | restart | query:date bucketing | PASS |  |
 | restart | query:string functions and like | PASS |  |
+| restart | query:json constructor preserves json versus text | PASS |  |
+| restart | query:json aggregate embeds documents | PASS |  |
+| restart | query:regular expression read transforms | PASS |  |
 | restart | query:case expression buckets | PASS |  |
 | restart | query:null handling | PASS |  |
 | restart | query:coalesce and ifnull | PASS |  |
@@ -242,6 +270,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
+| control-plane | converge:information_schema.columns | PASS |  |
 | control-plane | query:point lookup by key | PASS |  |
 | control-plane | query:range scan with compound predicate | PASS |  |
 | control-plane | query:inner join with aggregation | PASS |  |
@@ -256,6 +285,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | control-plane | query:non-recursive cte | PASS |  |
 | control-plane | query:date bucketing | PASS |  |
 | control-plane | query:string functions and like | PASS |  |
+| control-plane | query:json constructor preserves json versus text | PASS |  |
+| control-plane | query:json aggregate embeds documents | PASS |  |
+| control-plane | query:regular expression read transforms | PASS |  |
 | control-plane | query:case expression buckets | PASS |  |
 | control-plane | query:null handling | PASS |  |
 | control-plane | query:coalesce and ifnull | PASS |  |
@@ -273,6 +305,7 @@ Measured 2026-08-05T20:03:33.226Z.
 | ddl-documented-gaps | converge:order_items | PASS |  |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
+| ddl-documented-gaps | converge:information_schema.columns | WARN | row 0: |
 | ddl-documented-gaps | query:point lookup by key | PASS |  |
 | ddl-documented-gaps | query:range scan with compound predicate | PASS |  |
 | ddl-documented-gaps | query:inner join with aggregation | PASS |  |
@@ -287,6 +320,9 @@ Measured 2026-08-05T20:03:33.226Z.
 | ddl-documented-gaps | query:non-recursive cte | PASS |  |
 | ddl-documented-gaps | query:date bucketing | PASS |  |
 | ddl-documented-gaps | query:string functions and like | PASS |  |
+| ddl-documented-gaps | query:json constructor preserves json versus text | PASS |  |
+| ddl-documented-gaps | query:json aggregate embeds documents | PASS |  |
+| ddl-documented-gaps | query:regular expression read transforms | PASS |  |
 | ddl-documented-gaps | query:case expression buckets | PASS |  |
 | ddl-documented-gaps | query:null handling | PASS |  |
 | ddl-documented-gaps | query:coalesce and ifnull | PASS |  |
