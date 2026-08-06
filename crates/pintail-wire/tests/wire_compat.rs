@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, hash_map::DefaultHasher};
 use std::hash::{Hash as _, Hasher as _};
 use std::process::Command;
 
-use mysql_async::{Opts, Pool, prelude::Queryable as _};
+use mysql_async::{Opts, Pool, consts::ColumnType, prelude::Queryable as _};
 use pintail_meta::{MetaStore, NewApiKey};
 use pintail_probe::{
     ProbeReport, RecommendedMode, ServerIdentity, SourceCapabilities, SourceColumn, SourceFlavor,
@@ -182,6 +182,70 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("wire query");
     assert_eq!(rows, vec![(1, "launch".to_owned()), (2, "land".to_owned())]);
+
+    let mut json_result = connection
+        .query_iter(
+            "SELECT JSON_OBJECT('json', JSON_EXTRACT('{\"x\":1}', '$'), \
+                                'text', '{\"x\":1}'), \
+                    JSON_EXTRACT('null', '$'), JSON_EXTRACT(NULL, '$')",
+        )
+        .await
+        .expect("text-protocol JSON query");
+    let json_columns = json_result.columns().expect("JSON result metadata");
+    assert!(
+        json_columns
+            .iter()
+            .all(|column| column.column_type() == ColumnType::MYSQL_TYPE_JSON)
+    );
+    let json_rows: Vec<mysql_async::Row> = json_result
+        .collect()
+        .await
+        .expect("text-protocol JSON rows");
+    assert_eq!(
+        json_rows.into_iter().next().expect("JSON row").unwrap(),
+        vec![
+            mysql_async::Value::Bytes(br#"{"json": {"x": 1}, "text": "{\"x\":1}"}"#.to_vec(),),
+            mysql_async::Value::Bytes(b"null".to_vec()),
+            mysql_async::Value::NULL,
+        ]
+    );
+
+    let json_statement = connection
+        .prep(
+            "SELECT JSON_OBJECT('json', json_value, 'text', text_value), \
+                    JSON_ARRAY(json_value, text_value) \
+             FROM type_fidelity WHERE id = ?",
+        )
+        .await
+        .expect("prepare JSON query");
+    assert!(
+        json_statement
+            .columns()
+            .iter()
+            .all(|column| column.column_type() == ColumnType::MYSQL_TYPE_JSON)
+    );
+    let prepared_json = connection
+        .exec_first::<mysql_async::Row, _, _>(&json_statement, (1_u64,))
+        .await
+        .expect("prepared JSON query")
+        .expect("prepared JSON row")
+        .unwrap();
+    assert_eq!(
+        prepared_json,
+        vec![
+            mysql_async::Value::Bytes(
+                "{\"json\": {\"a\": 1, \"b\": [true, null]}, \
+                 \"text\": \"café βeta red,blue 🪿\"}"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            mysql_async::Value::Bytes(
+                "[{\"a\": 1, \"b\": [true, null]}, \"café βeta red,blue 🪿\"]"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ]
+    );
 
     let prepared: Vec<(u64, String)> = connection
         .exec("SELECT id, name FROM events WHERE id = ?", (2_u64,))

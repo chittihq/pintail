@@ -74,10 +74,14 @@ The supported JSON names and operators are:
 
 Important remaining JSON discrepancies:
 
-- SQL values are carried through a text-backed JSON representation, so typed
-  DECIMAL and temporal values cannot always retain MySQL's JSON scalar type.
-- JSON comparison, grouping, DISTINCT, IN, hash-key, MIN/MAX, and collation
-  behavior is not yet a complete MySQL JSON type-precedence model.
+- JSON-vs-VARCHAR identity now survives compiled scalar arguments and aggregate
+  inputs. Constructors embed JSON documents, quote equal-looking text, retain
+  SQL NULL versus JSON null, and expose JSON result metadata.
+- Direct JSON comparison, ordering, grouping, DISTINCT/set duplicate handling,
+  joins, IN/BETWEEN, window keys, and MIN/MAX now reject explicitly until a
+  MySQL-compatible binary-JSON precedence/hash model exists.
+- SQL DECIMAL and temporal values still cannot retain MySQL's typed JSON scalar
+  categories through the text-backed physical carrier.
 - The modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
   `JSON_REMOVE`, `JSON_MERGE*`) and table-valued `JSON_TABLE` remain out of
   scope.
@@ -99,18 +103,20 @@ engine and translates selected POSIX classes to Unicode-aware equivalents.
 The review pass made `u` meaningful: without it, CR, CRLF, NEL, line separator,
 and paragraph separator are normalized to ICU-style line boundaries; with
 `u`, only LF receives newline treatment. Compiled programs are now held by
-owned, reference-counted entries; the 256-entry cache evicts and drops programs
-instead of leaking every compilation for the worker thread's lifetime.
+query-owned, reference-counted entries for literal patterns and are reused for
+every row and batch. Dynamic patterns are uncached and drop after the row.
+Binary operands reject, patterns cap at 64 KiB, compiled programs cap at 1 MiB,
+and both retained literal programs and replacement output are charged to the
+query memory limit.
 
 Remaining regex discrepancies:
 
 - `REGEXP_INSTR`, `REGEXP_SUBSTR`, and `REGEXP_REPLACE` do not yet accept the
   MySQL position, occurrence, return-option, and match-type overloads.
-- ICU-only syntax, capture replacement details, binary operands, zero-width
-  advancement, and collation-sensitive matching need a published compatibility
-  matrix with explicit rejection tests.
-- The current cache is thread-local and bounded by entry count, but compiled
-  pattern memory is not integrated with the per-query memory tracker.
+- ICU-only syntax, capture replacement details, zero-width advancement, and
+  collation-sensitive matching need a broader compatibility matrix.
+- The Rust engine is an intentionally narrower ICU subset; patterns accepted by
+  both engines still need continuing differential coverage for semantic edges.
 
 ## Discrepancies in the other function families
 

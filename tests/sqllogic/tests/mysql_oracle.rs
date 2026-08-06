@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 794;
+const EXPECTED_CASES: usize = 797;
 
 struct OracleCase {
     family: &'static str,
@@ -172,6 +172,11 @@ fn oracle_applies_tolerance_only_to_float_results() {
         &OracleValue::Float("0.30000000000000004".to_owned()),
         "0.3",
     ));
+}
+
+#[test]
+fn oracle_case_inventory_matches_the_declared_gate() {
+    assert_eq!(oracle_cases().len(), EXPECTED_CASES);
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1519,6 +1524,21 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "json extract multiple paths",
             "SELECT JSON_EXTRACT('{\"a\":1,\"b\":\"x\"}', '$.a', '$.b')",
+        ),
+        ordered(
+            "json typed constructor input",
+            "SELECT JSON_OBJECT('json', JSON_EXTRACT('{\"x\":1}', '$'), \
+             'text', '{\"x\":1}'), JSON_ARRAY(JSON_EXTRACT('{\"x\":1}', '$'), '{\"x\":1}')",
+        ),
+        ordered(
+            "json typed aggregate input",
+            "SELECT id, JSON_ARRAYAGG(JSON_EXTRACT('{\"x\":1}', '$')) \
+             FROM events GROUP BY id ORDER BY id",
+        ),
+        ordered(
+            "json null distinction",
+            "SELECT JSON_EXTRACT('null', '$'), JSON_EXTRACT(NULL, '$'), \
+             JSON_ARRAY(JSON_EXTRACT('null', '$'), NULL)",
         ),
         unordered(
             "union distinct",

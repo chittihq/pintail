@@ -58,14 +58,30 @@ stays readable as a list of things to fix.
   above — the executor has no typed JSON carrier — rather than a separate
   defect, and closing it means a typed carrier, not a change to `JSON_TYPE`
   (#8).
-- `JSON_OBJECT`/`JSON_ARRAY`/`JSON_ARRAYAGG` encode DECIMAL and temporal
-  values as JSON strings where MySQL emits numbers or datetime scalars, because
-  there is no JSON column type in the executor.
+- JSON logical identity now survives scalar and aggregate execution: constructors
+  embed JSON columns and quote equal-looking VARCHAR text, and results advertise
+  `MYSQL_TYPE_JSON`. DECIMAL and temporal values still encode as JSON strings
+  where MySQL emits typed JSON scalars because the physical `Value` carrier does
+  not preserve those scalar subtypes.
+- Direct comparison, ordering, grouping, DISTINCT/set duplicate handling,
+  window partition/order keys, `IN`/`BETWEEN`, and `MIN`/`MAX` over JSON reject
+  explicitly. Pintail does not substitute text collation or UTF-8 hashing for
+  MySQL's binary-JSON precedence and equality rules (#8).
 - JSON paths support member and numeric-index steps. Wildcards, recursive
   descent, ranges, and `last`-relative indexes still reject (#8).
 - `REGEXP_LIKE` accepts MySQL's optional `match_type`; the longer positional
   overloads of `REGEXP_INSTR`, `REGEXP_REPLACE`, and `REGEXP_SUBSTR`, plus
-  `REGEXP_COUNT`, remain unimplemented (#8).
+  `REGEXP_COUNT`, remain unimplemented (#8). Regex uses Rust's linear-time
+  Unicode engine rather than ICU. The compatibility surface is literals,
+  alternation, capturing/non-capturing groups without backreferences,
+  quantifiers, anchors, dot, Unicode properties and character/POSIX classes;
+  lookaround and backreferences reject instead of being reinterpreted. Other
+  ICU syntax and same-spelling semantic edges are not claimed. Binary-string
+  operands reject, patterns are limited to 64 KiB, compiled
+  programs to 1 MiB, and literal programs are owned and reused by the compiled
+  query. Their conservative memory bound and generated replacement output are
+  charged to the per-query ceiling; dynamic patterns are deliberately uncached
+  so no program can outlive the row that requested it.
 - `CONVERT(value USING charset)` does not perform byte-level transcoding among
   MySQL character sets.
 - `CAST(value AS TIME)` and `CAST(value AS JSON)` reject. MySQL's `TIME` spans

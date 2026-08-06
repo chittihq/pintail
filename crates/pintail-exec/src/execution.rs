@@ -21,8 +21,8 @@ use crate::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, LogicalPlanner, Optimizer,
     RecordBatch, Scan,
     expression::{
-        CompiledExpr, compare_mysql, compare_utf8_mysql, mysql_f64, mysql_i64, mysql_u64,
-        predicate_truth,
+        CompiledExpr, bound_regex_memory_upper_bound, compare_mysql, compare_utf8_mysql, mysql_f64,
+        mysql_i64, mysql_u64, predicate_truth,
     },
     spill,
 };
@@ -825,6 +825,113 @@ pub struct Execution {
     output_fields: Vec<OutputField>,
 }
 
+fn aggregate_regex_memory_upper_bound(aggregate: &BoundAggregate) -> usize {
+    aggregate
+        .expr
+        .as_ref()
+        .map_or(0, bound_regex_memory_upper_bound)
+        .saturating_add(
+            aggregate
+                .order_within
+                .iter()
+                .fold(0_usize, |bytes, (expression, _)| {
+                    bytes.saturating_add(bound_regex_memory_upper_bound(expression))
+                }),
+        )
+}
+
+fn window_regex_memory_upper_bound(window: &BoundWindow) -> usize {
+    let function = match &window.function {
+        WindowFunction::Offset { expr, default, .. } => bound_regex_memory_upper_bound(expr)
+            .saturating_add(default.as_deref().map_or(0, bound_regex_memory_upper_bound)),
+        WindowFunction::Extreme { expr, .. } => bound_regex_memory_upper_bound(expr),
+        WindowFunction::Aggregate(aggregate) => aggregate_regex_memory_upper_bound(aggregate)
+            .saturating_add(
+                aggregate
+                    .expr
+                    .as_ref()
+                    .map_or(0, bound_regex_memory_upper_bound),
+            ),
+        WindowFunction::RowNumber
+        | WindowFunction::Rank
+        | WindowFunction::DenseRank
+        | WindowFunction::NTile(_) => 0,
+    };
+    function
+        .saturating_add(
+            window
+                .partition_by
+                .iter()
+                .fold(0_usize, |bytes, expression| {
+                    bytes.saturating_add(bound_regex_memory_upper_bound(expression))
+                }),
+        )
+        .saturating_add(window.order_by.iter().fold(0_usize, |bytes, key| {
+            bytes.saturating_add(bound_regex_memory_upper_bound(&key.expr))
+        }))
+}
+
+fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
+    let nested = |input: &PhysicalPlan| plan_regex_memory_upper_bound(input);
+    match plan {
+        PhysicalPlan::Empty | PhysicalPlan::OneRow => 0,
+        PhysicalPlan::Scan(scan) => scan.predicates.iter().fold(0_usize, |bytes, expression| {
+            bytes.saturating_add(bound_regex_memory_upper_bound(expression))
+        }),
+        PhysicalPlan::Derived { input, .. }
+        | PhysicalPlan::Distinct { input }
+        | PhysicalPlan::Sort { input, .. }
+        | PhysicalPlan::Limit { input, .. } => nested(input),
+        PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => inputs
+            .iter()
+            .fold(0_usize, |bytes, input| bytes.saturating_add(nested(input))),
+        PhysicalPlan::SetOp { left, right, .. } => nested(left).saturating_add(nested(right)),
+        PhysicalPlan::Recursive { anchor, member, .. } => {
+            nested(anchor).saturating_add(nested(member))
+        }
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            left_key,
+            right_key,
+            extra_keys,
+            ..
+        } => nested(left)
+            .saturating_add(nested(right))
+            .saturating_add(bound_regex_memory_upper_bound(left_key))
+            .saturating_add(bound_regex_memory_upper_bound(right_key))
+            .saturating_add(extra_keys.iter().fold(0_usize, |bytes, (left, right)| {
+                bytes
+                    .saturating_add(bound_regex_memory_upper_bound(left))
+                    .saturating_add(bound_regex_memory_upper_bound(right))
+            })),
+        PhysicalPlan::Filter { input, predicate } => {
+            nested(input).saturating_add(bound_regex_memory_upper_bound(predicate))
+        }
+        PhysicalPlan::HashAggregate {
+            input,
+            group_by,
+            aggregates,
+        } => nested(input)
+            .saturating_add(group_by.iter().fold(0_usize, |bytes, expression| {
+                bytes.saturating_add(bound_regex_memory_upper_bound(expression))
+            }))
+            .saturating_add(aggregates.iter().fold(0_usize, |bytes, aggregate| {
+                bytes.saturating_add(aggregate_regex_memory_upper_bound(aggregate))
+            })),
+        PhysicalPlan::Project { input, expressions } => {
+            nested(input).saturating_add(expressions.iter().fold(0_usize, |bytes, projection| {
+                bytes.saturating_add(bound_regex_memory_upper_bound(&projection.expr))
+            }))
+        }
+        PhysicalPlan::Window { input, windows, .. } => {
+            nested(input).saturating_add(windows.iter().fold(0_usize, |bytes, window| {
+                bytes.saturating_add(window_regex_memory_upper_bound(window))
+            }))
+        }
+    }
+}
+
 impl Execution {
     /// Opens every scan and prepares a physical plan for pulling.
     ///
@@ -841,7 +948,7 @@ impl Execution {
         resolve_plan_subqueries(&mut plan, provider, memory_limit, &mut subquery_bytes)?;
         let output_fields = plan.output_fields();
         let memory = MemoryTracker::new(memory_limit);
-        memory.reserve(subquery_bytes)?;
+        memory.reserve(subquery_bytes.saturating_add(plan_regex_memory_upper_bound(&plan)))?;
         let (root, _) = build_operator(plan, provider, &memory)?;
         Ok(Self {
             root,
@@ -10553,10 +10660,19 @@ mod tests {
             batches: Mutex::new(Vec::new()),
         };
         let plan = physical("SELECT REGEXP_REPLACE(REPEAT('a', 1000), 'a', 'replacement')");
-        let mut execution = Execution::start(plan, &provider, 4 * 1024).expect("execution");
+        let program_memory = crate::expression::REGEX_PROGRAM_MEMORY_UPPER_BOUND;
+        assert!(matches!(
+            Execution::start(plan.clone(), &provider, program_memory - 1),
+            Err(ExecError::MemoryLimitExceeded { .. })
+        ));
+        let limit = program_memory + 4 * 1024;
+        let mut execution = Execution::start(plan, &provider, limit).expect("execution");
         assert!(matches!(
             execution.next_batch(),
-            Err(ExecError::MemoryLimitExceeded { limit: 4096, .. })
+            Err(ExecError::MemoryLimitExceeded {
+                limit: actual,
+                ..
+            }) if actual == limit
         ));
     }
 

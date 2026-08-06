@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use chrono::{
     Datelike, Duration, FixedOffset, Local, LocalResult, Months, NaiveDate, NaiveDateTime,
@@ -198,6 +198,29 @@ fn typed_comparison_mask(
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct CompiledRegex {
+    signature: String,
+    program: Arc<regex::Regex>,
+}
+
+impl std::fmt::Debug for CompiledRegex {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompiledRegex")
+            .field("signature", &self.signature)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for CompiledRegex {
+    fn eq(&self, other: &Self) -> bool {
+        self.signature == other.signature
+    }
+}
+
+impl Eq for CompiledRegex {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CompiledExpr {
     Column(usize),
@@ -221,6 +244,7 @@ pub(crate) enum CompiledExpr {
         function: ScalarFunction,
         args: Vec<Self>,
         argument_types: Vec<Option<DataType>>,
+        literal_regex: Option<CompiledRegex>,
         data_type: Option<DataType>,
     },
 }
@@ -463,15 +487,19 @@ impl CompiledExpr {
                 expr: Box::new(Self::compile(child, columns)?),
                 negated: *negated,
             }),
-            BoundExprKind::Scalar { function, args } => Ok(Self::Scalar {
-                function: *function,
-                argument_types: args.iter().map(|argument| argument.data_type).collect(),
-                args: args
-                    .iter()
-                    .map(|argument| Self::compile(argument, columns))
-                    .collect::<Result<Vec<_>, _>>()?,
-                data_type: expr.data_type,
-            }),
+            BoundExprKind::Scalar { function, args } => {
+                let literal_regex = compile_literal_regex(*function, args)?;
+                Ok(Self::Scalar {
+                    function: *function,
+                    argument_types: args.iter().map(|argument| argument.data_type).collect(),
+                    args: args
+                        .iter()
+                        .map(|argument| Self::compile(argument, columns))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    literal_regex,
+                    data_type: expr.data_type,
+                })
+            }
             BoundExprKind::ScalarSubquery(_)
             | BoundExprKind::InSubquery { .. }
             | BoundExprKind::ExistsSubquery { .. } => Err(ExecError::InvalidPhysicalPlan(
@@ -513,6 +541,7 @@ impl CompiledExpr {
                 function,
                 args,
                 argument_types,
+                literal_regex: _,
                 data_type,
             } => {
                 if matches!(
@@ -572,6 +601,7 @@ impl CompiledExpr {
                 function,
                 args,
                 argument_types,
+                literal_regex,
                 data_type,
             } => {
                 if let ScalarFunction::DatePart(part) = function
@@ -592,7 +622,15 @@ impl CompiledExpr {
                         return value;
                     }
                 }
-                evaluate_scalar(*function, args, argument_types, *data_type, batch, row)
+                evaluate_scalar(
+                    *function,
+                    args,
+                    argument_types,
+                    literal_regex.as_ref(),
+                    *data_type,
+                    batch,
+                    row,
+                )
             }
         }
     }
@@ -635,6 +673,7 @@ impl CompiledExpr {
                 args,
                 data_type: _,
                 argument_types: _,
+                literal_regex,
             } => {
                 let string_arguments = args
                     .iter()
@@ -773,7 +812,12 @@ impl CompiledExpr {
                         first.saturating_mul(2).saturating_add(24)
                     }
                 };
-                argument_memory.saturating_add(output)
+                let dynamic_regex_memory =
+                    usize::from(is_regex_function(*function) && literal_regex.is_none())
+                        .saturating_mul(REGEX_PROGRAM_MEMORY_UPPER_BOUND);
+                argument_memory
+                    .saturating_add(output)
+                    .saturating_add(dynamic_regex_memory)
             }
         }
     }
@@ -1062,6 +1106,7 @@ fn evaluate_scalar(
     function: ScalarFunction,
     args: &[CompiledExpr],
     argument_types: &[Option<DataType>],
+    literal_regex: Option<&CompiledRegex>,
     data_type: Option<DataType>,
     batch: &RecordBatch,
     row: usize,
@@ -1103,7 +1148,7 @@ fn evaluate_scalar(
                 .iter()
                 .map(|argument| argument.evaluate(batch, row))
                 .collect::<Result<Vec<_>, _>>()?;
-            evaluate_eager_scalar_typed(function, &values, argument_types, data_type)
+            evaluate_eager_scalar_typed(function, &values, argument_types, literal_regex, data_type)
         }
     }
 }
@@ -1115,7 +1160,7 @@ fn evaluate_eager_scalar(
     data_type: Option<DataType>,
 ) -> Result<Value, ExecError> {
     let argument_types = vec![None; values.len()];
-    evaluate_eager_scalar_typed(function, values, &argument_types, data_type)
+    evaluate_eager_scalar_typed(function, values, &argument_types, None, data_type)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1123,6 +1168,7 @@ fn evaluate_eager_scalar_typed(
     function: ScalarFunction,
     values: &[Value],
     argument_types: &[Option<DataType>],
+    literal_regex: Option<&CompiledRegex>,
     data_type: Option<DataType>,
 ) -> Result<Value, ExecError> {
     if values.iter().any(|value| matches!(value, Value::Null))
@@ -1823,23 +1869,24 @@ fn evaluate_eager_scalar_typed(
             } else {
                 normalize_mysql_regex_line_endings(&text)
             };
-            let matched = compiled_regex_with_match_type(
+            let program = regex_program(
+                literal_regex,
                 &scalar_string(&values[1])?,
                 match_type.as_deref().unwrap_or(""),
-            )?
-            .is_match(&text);
+            )?;
+            let matched = program.is_match(&text);
             Ok(Value::Boolean(matched != negated))
         }
         ScalarFunction::RegexpSubstr => {
             let text = scalar_string(&values[0])?;
-            let found = compiled_regex(&scalar_string(&values[1])?)?
+            let found = regex_program(literal_regex, &scalar_string(&values[1])?, "")?
                 .find(&text)
                 .map(|found| found.as_str().to_owned());
             Ok(found.map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::RegexpInstr => {
             let text = scalar_string(&values[0])?;
-            let position = compiled_regex(&scalar_string(&values[1])?)?
+            let position = regex_program(literal_regex, &scalar_string(&values[1])?, "")?
                 .find(&text)
                 .map_or(0, |found| text[..found.start()].chars().count() as u64 + 1);
             Ok(Value::UInt64(position))
@@ -1847,7 +1894,7 @@ fn evaluate_eager_scalar_typed(
         ScalarFunction::RegexpReplace => {
             let text = scalar_string(&values[0])?;
             let replacement = scalar_string(&values[2])?;
-            let replaced = compiled_regex(&scalar_string(&values[1])?)?
+            let replaced = regex_program(literal_regex, &scalar_string(&values[1])?, "")?
                 .replace_all(&text, replacement.as_str())
                 .into_owned();
             Ok(Value::Utf8(replaced))
@@ -3001,20 +3048,28 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
-// Compiled regex cache: patterns and match flags are almost always literals,
-// so each worker thread compiles a combination once. Case-insensitive by
-// default to match the ci collations (docs/limitations.md).
-thread_local! {
-    static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<regex::Regex>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 /// Hard resource boundaries for the linear-time regex engine. Subject work
 /// is linear in the already-accounted input bytes; these caps bound parser
-/// work, compiled automata, and retained cache entries.
+/// work and compiled automata. Literal programs belong to the compiled query;
+/// dynamic programs are deliberately uncached and die after the row.
 const MAX_REGEX_PATTERN_BYTES: usize = 64 * 1024;
 const MAX_COMPILED_REGEX_BYTES: usize = 1 << 20;
-const MAX_REGEX_CACHE_ENTRIES: usize = 256;
+// A compiled literal retains the pattern once in the bound literal and once
+// in `CompiledRegex::signature`. Leave a small fixed allowance for the
+// `Regex`, `Arc`, `String`, and enum/container metadata as well.
+const REGEX_PROGRAM_METADATA_BYTES: usize = 4 * 1024;
+pub(crate) const REGEX_PROGRAM_MEMORY_UPPER_BOUND: usize =
+    MAX_COMPILED_REGEX_BYTES + 2 * MAX_REGEX_PATTERN_BYTES + REGEX_PROGRAM_METADATA_BYTES;
+
+pub(crate) const fn is_regex_function(function: ScalarFunction) -> bool {
+    matches!(
+        function,
+        ScalarFunction::RegexpLike { .. }
+            | ScalarFunction::RegexpSubstr
+            | ScalarFunction::RegexpInstr
+            | ScalarFunction::RegexpReplace
+    )
+}
 
 /// Whether any operand is a binary string, which makes `MySQL` compare the
 /// pair case-sensitively rather than under a collation.
@@ -3061,10 +3116,6 @@ fn unicode_posix_classes(pattern: &str) -> String {
     rewritten
 }
 
-fn compiled_regex(pattern: &str) -> Result<std::rc::Rc<regex::Regex>, ExecError> {
-    compiled_regex_with_match_type(pattern, "")
-}
-
 /// ICU treats CR, CRLF, NEL, LS, and PS as line endings by default. Rust's
 /// regex engine treats only LF specially, so normalize those sequences for
 /// `REGEXP_LIKE` unless `MySQL`'s `u` (Unix-lines-only) match flag is present.
@@ -3086,10 +3137,7 @@ fn normalize_mysql_regex_line_endings(text: &str) -> String {
     normalized
 }
 
-fn compiled_regex_with_match_type(
-    pattern: &str,
-    match_type: &str,
-) -> Result<std::rc::Rc<regex::Regex>, ExecError> {
+fn compile_regex(pattern: &str, match_type: &str) -> Result<CompiledRegex, ExecError> {
     if pattern.len() > MAX_REGEX_PATTERN_BYTES {
         return Err(ExecError::InvalidExpressionType);
     }
@@ -3108,35 +3156,102 @@ fn compiled_regex_with_match_type(
             _ => return Err(ExecError::InvalidExpressionType),
         }
     }
-    let cache_key = format!(
+    let signature = format!(
         "{}{}{}\0{pattern}",
         u8::from(case_insensitive),
         u8::from(multi_line),
         u8::from(dot_matches_new_line)
     );
-    REGEX_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if let Some(compiled) = cache.get(&cache_key) {
-            return Ok(std::rc::Rc::clone(compiled));
+    let translated = unicode_posix_classes(pattern);
+    let program = Arc::new(
+        regex::RegexBuilder::new(&translated)
+            .case_insensitive(case_insensitive)
+            .multi_line(multi_line)
+            .dot_matches_new_line(dot_matches_new_line)
+            .size_limit(MAX_COMPILED_REGEX_BYTES)
+            .build()
+            .map_err(|_| ExecError::InvalidExpressionType)?,
+    );
+    Ok(CompiledRegex { signature, program })
+}
+
+fn compile_literal_regex(
+    function: ScalarFunction,
+    args: &[BoundExpr],
+) -> Result<Option<CompiledRegex>, ExecError> {
+    let Some((pattern, match_type)) = literal_regex_arguments(function, args) else {
+        return Ok(None);
+    };
+    compile_regex(pattern, match_type).map(Some)
+}
+
+fn literal_regex_arguments(function: ScalarFunction, args: &[BoundExpr]) -> Option<(&str, &str)> {
+    if !is_regex_function(function) {
+        return None;
+    }
+    let Some(BoundExpr {
+        kind: BoundExprKind::Literal(Value::Utf8(pattern)),
+        ..
+    }) = args.get(1)
+    else {
+        return None;
+    };
+    let match_type = if matches!(function, ScalarFunction::RegexpLike { .. }) {
+        match args.get(2) {
+            None => "",
+            Some(BoundExpr {
+                kind: BoundExprKind::Literal(Value::Utf8(match_type)),
+                ..
+            }) => match_type,
+            Some(_) => return None,
         }
-        let translated = unicode_posix_classes(pattern);
-        let compiled = std::rc::Rc::new(
-            regex::RegexBuilder::new(&translated)
-                .case_insensitive(case_insensitive)
-                .multi_line(multi_line)
-                .dot_matches_new_line(dot_matches_new_line)
-                .size_limit(MAX_COMPILED_REGEX_BYTES)
-                .build()
-                .map_err(|_| ExecError::InvalidExpressionType)?,
-        );
-        if cache.len() >= MAX_REGEX_CACHE_ENTRIES
-            && let Some(evicted) = cache.keys().next().cloned()
-        {
-            cache.remove(&evicted);
+    } else {
+        ""
+    };
+    Some((pattern, match_type))
+}
+
+pub(crate) fn bound_regex_memory_upper_bound(expr: &BoundExpr) -> usize {
+    match &expr.kind {
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            bound_regex_memory_upper_bound(expr)
         }
-        cache.insert(cache_key, std::rc::Rc::clone(&compiled));
-        Ok(compiled)
-    })
+        BoundExprKind::Binary { left, right, .. } => bound_regex_memory_upper_bound(left)
+            .saturating_add(bound_regex_memory_upper_bound(right)),
+        BoundExprKind::Scalar { function, args } => {
+            let nested = args.iter().fold(0_usize, |bytes, argument| {
+                bytes.saturating_add(bound_regex_memory_upper_bound(argument))
+            });
+            nested.saturating_add(
+                usize::from(literal_regex_arguments(*function, args).is_some())
+                    .saturating_mul(REGEX_PROGRAM_MEMORY_UPPER_BOUND),
+            )
+        }
+        BoundExprKind::InSubquery { expr, .. } => bound_regex_memory_upper_bound(expr),
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. } => 0,
+    }
+}
+
+fn regex_program(
+    literal: Option<&CompiledRegex>,
+    pattern: &str,
+    match_type: &str,
+) -> Result<Arc<regex::Regex>, ExecError> {
+    literal.map_or_else(
+        || compile_regex(pattern, match_type).map(|compiled| compiled.program),
+        |compiled| Ok(Arc::clone(&compiled.program)),
+    )
+}
+
+#[cfg(test)]
+fn compiled_regex(pattern: &str) -> Result<Arc<regex::Regex>, ExecError> {
+    compile_regex(pattern, "").map(|compiled| compiled.program)
 }
 
 /// Exact CEIL/FLOOR of canonical decimal text: the integer part, adjusted
@@ -4345,33 +4460,17 @@ mod tests {
     }
 
     #[test]
-    fn regex_cache_drops_evicted_programs() {
-        super::REGEX_CACHE.with(|cache| cache.borrow_mut().clear());
-        let mut programs = Vec::new();
-        for index in 0..300 {
-            let compiled =
-                super::compiled_regex(&format!("cache-pattern-{index}")).expect("pattern compiles");
-            programs.push(std::rc::Rc::downgrade(&compiled));
-        }
-
-        let retained = programs
-            .iter()
-            .filter(|program| program.upgrade().is_some())
-            .count();
-        assert_eq!(
-            retained,
-            super::MAX_REGEX_CACHE_ENTRIES,
-            "only bounded cache entries remain alive"
-        );
-    }
-
-    #[test]
     fn regex_patterns_have_a_hard_input_limit() {
         let oversized = "a".repeat(super::MAX_REGEX_PATTERN_BYTES + 1);
         assert!(matches!(
             super::compiled_regex(&oversized),
             Err(super::ExecError::InvalidExpressionType)
         ));
+        assert!(super::compiled_regex("(?=a)").is_err(), "lookahead rejects");
+        assert!(
+            super::compiled_regex(r"(a)\1").is_err(),
+            "backreferences reject"
+        );
     }
 
     /// Hostile arguments must return or error, never abort the process.
@@ -4582,6 +4681,7 @@ mod tests {
                 Some(DataType::Utf8),
                 Some(DataType::Utf8),
             ],
+            literal_regex: None,
         };
 
         assert_eq!(

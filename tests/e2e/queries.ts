@@ -135,6 +135,29 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers'],
   },
   {
+    name: 'json constructor preserves json versus text',
+    sql:
+      "SELECT id, JSON_OBJECT('json', meta, 'text', CAST(meta AS CHAR)) AS object_value, " +
+      'JSON_ARRAY(meta, CAST(meta AS CHAR)) AS array_value ' +
+      'FROM customers ORDER BY id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
+    name: 'json aggregate embeds documents',
+    sql:
+      'SELECT id, JSON_ARRAYAGG(meta) AS documents FROM customers ' +
+      'GROUP BY id ORDER BY id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
+    name: 'regular expression read transforms',
+    sql:
+      "SELECT id, REGEXP_LIKE(name, '^[[:alpha:]]'), " +
+      "REGEXP_INSTR(name, '[0-9]+'), REGEXP_REPLACE(name, '[0-9]+', '#') " +
+      'FROM customers ORDER BY id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
     name: 'case expression buckets',
     sql:
       'SELECT CASE WHEN total >= 500 THEN \'high\' WHEN total >= 100 THEN \'mid\' ' +

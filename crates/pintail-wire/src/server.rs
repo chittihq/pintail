@@ -1098,13 +1098,26 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    use opensrv_mysql::ColumnType;
+    use pintail_types::DataType;
     use sha1::{Digest as _, Sha1};
     use sha2::Digest as _;
 
     use super::{
-        Sha256, placeholder_offsets, substitute_parameters, verify_caching_sha2,
+        Sha256, mysql_column, placeholder_offsets, substitute_parameters, verify_caching_sha2,
         verify_native_password,
     };
+    use crate::QueryField;
+
+    #[test]
+    fn json_results_advertise_mysql_json_metadata() {
+        let column = mysql_column(&QueryField {
+            name: "document".to_owned(),
+            data_type: Some(DataType::Json),
+            nullable: true,
+        });
+        assert_eq!(column.coltype, ColumnType::MYSQL_TYPE_JSON);
+    }
 
     #[test]
     fn renders_temporal_prepared_parameters_as_mysql_literals() {
