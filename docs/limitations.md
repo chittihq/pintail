@@ -44,8 +44,11 @@ stays readable as a list of things to fix.
 - Aggregates are limited to `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`,
   `GROUP_CONCAT` and `JSON_ARRAYAGG`. `ANY_VALUE`, the `STDDEV`/`VARIANCE`
   families and `BIT_AND`/`BIT_OR`/`BIT_XOR` are missing (#17).
-- `JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`, `JSON_MERGE*`, `JSON_REMOVE` and
-  `JSON_TABLE` are unimplemented (#8).
+- The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
+  `JSON_MERGE*`, `JSON_REMOVE`) and `JSON_TABLE` are unimplemented and out of
+  scope by decision. `JSON_TABLE` is a table-valued function, so it needs a new
+  table source through the binder, planner and executor plus the `COLUMNS`
+  clause — structural work, not a function addition (#8).
 - `JSON_TYPE` matches MySQL for JSON parsed from text — `DOUBLE`, `INTEGER`,
   `STRING`, `BOOLEAN`, `NULL`, `ARRAY`, `OBJECT` all agree, measured. It
   diverges only for a value carrying a SQL type into the document, where MySQL
@@ -74,6 +77,12 @@ stays readable as a list of things to fix.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
   `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
   the BI corpus (#17).
+- `JSON_DEPTH`, `JSON_QUOTE`, `JSON_PRETTY`, `JSON_OVERLAPS` and `MEMBER OF`
+  are unimplemented. `JSON_STORAGE_SIZE`/`JSON_STORAGE_FREE` report bytes of
+  MySQL's binary JSON format, which has no counterpart here, so any number
+  they returned would be invented; they stay unimplemented rather than
+  approximated. `JSON_SCHEMA_VALID`/`JSON_SCHEMA_VALIDATION_REPORT` need a
+  JSON Schema implementation (#8).
 
 ### What an unsupported construct looks like
 

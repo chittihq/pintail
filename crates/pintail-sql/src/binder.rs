@@ -4833,6 +4833,61 @@ impl fmt::Display for BindError {
 impl std::error::Error for BindError {}
 
 #[cfg(test)]
+mod parity_surface {
+    /// `parity.md` states how many function names are callable. That number
+    /// drifted from 110 to 133 without anyone noticing, because nothing tied
+    /// the prose to the code. This does.
+    ///
+    /// The extraction mirrors `scripts/function-surface.ts`: match arms whose
+    /// head is one or more quoted upper-case names, plus the handful
+    /// dispatched by an equality test ahead of the match.
+    #[test]
+    fn parity_states_the_real_callable_count() {
+        let source = include_str!("binder.rs");
+        let mut names = std::collections::BTreeSet::new();
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            if let Some(head) = trimmed.split("=>").next()
+                && (trimmed.contains("=>") || trimmed.contains("function_name =="))
+            {
+                let mut rest = head;
+                while let Some(open) = rest.find('"') {
+                    let after = &rest[open + 1..];
+                    let Some(close) = after.find('"') else { break };
+                    let candidate = &after[..close];
+                    if !candidate.is_empty()
+                        && candidate
+                            .chars()
+                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                    {
+                        names.insert(candidate.to_owned());
+                    }
+                    rest = &after[close + 1..];
+                }
+            }
+        }
+        let parity = include_str!("../../../parity.md");
+        let claimed: usize = parity
+            .lines()
+            .find(|line| line.starts_with("| Callable functions |"))
+            .and_then(|line| {
+                line.split('|')
+                    .nth(2)
+                    .and_then(|cell| cell.split_whitespace().next())
+            })
+            .and_then(|number| number.parse().ok())
+            .expect("parity.md states a callable-function count");
+        assert_eq!(
+            claimed,
+            names.len(),
+            "parity.md claims {claimed} callable functions; the binder resolves {}. \
+             Run `bun run scripts/function-surface.ts` and update the row.",
+            names.len()
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use pintail_catalog::{
         CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,

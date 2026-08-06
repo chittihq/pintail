@@ -3193,8 +3193,16 @@ impl AggregateState {
         // Like JSON_ARRAYAGG, this runs ahead of the NULL skip: MySQL keeps a
         // NULL value in the object rather than dropping the member.
         if let AggregateValue::JsonObjectAgg { members } = &mut self.value {
-            let fragment =
-                crate::expression::mysql_json_text(&crate::expression::json_value_of(value));
+            // The bound expression already rendered JSON_OBJECT(k, v), so
+            // this text IS the object. Running it back through
+            // json_value_of would wrap it as a JSON *string*, the object
+            // parse would fail, and every group answered {}.
+            let fragment = match value {
+                Value::Utf8(text) => text.clone(),
+                other => {
+                    crate::expression::mysql_json_text(&crate::expression::json_value_of(other))
+                }
+            };
             if let Ok(serde_json::Value::Object(pair)) =
                 serde_json::from_str::<serde_json::Value>(&fragment)
             {
