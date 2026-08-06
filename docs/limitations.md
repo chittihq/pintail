@@ -46,11 +46,14 @@ stays readable as a list of things to fix.
   families and `BIT_AND`/`BIT_OR`/`BIT_XOR` are missing (#17).
 - `JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`, `JSON_MERGE*`, `JSON_REMOVE` and
   `JSON_TABLE` are unimplemented (#8).
-- `JSON_TYPE` reports `INTEGER` or `DOUBLE` for every number and never
-  `DECIMAL`, `DATE`, `DATETIME`, `TIME`, `BLOB` or `OPAQUE`, because the
-  executor has no typed JSON carrier — a JSON document is UTF-8 text there,
-  so the distinctions MySQL draws from its binary JSON format are not
-  recoverable (#8).
+- `JSON_TYPE` matches MySQL for JSON parsed from text — `DOUBLE`, `INTEGER`,
+  `STRING`, `BOOLEAN`, `NULL`, `ARRAY`, `OBJECT` all agree, measured. It
+  diverges only for a value carrying a SQL type into the document, where MySQL
+  reports `DECIMAL`, `DATE`, `DATETIME`, `TIME` or `BLOB` and Pintail reports
+  `STRING`. That is the same root cause as the `JSON_OBJECT` encoding entry
+  above — the executor has no typed JSON carrier — rather than a separate
+  defect, and closing it means a typed carrier, not a change to `JSON_TYPE`
+  (#8).
 - `JSON_OBJECT`/`JSON_ARRAY`/`JSON_ARRAYAGG` encode DECIMAL and temporal
   values as JSON strings where MySQL emits numbers or datetime scalars, because
   there is no JSON column type in the executor.

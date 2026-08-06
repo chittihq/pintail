@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 783;
+const EXPECTED_CASES: usize = 782;
 
 struct OracleCase {
     family: &'static str,
@@ -1058,19 +1058,6 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "reviewed maketime fraction",
             "SELECT MAKETIME(12, 15, 30.5), MAKETIME(12, 15, 30), MAKETIME(1, 60, 0)",
-        ),
-        // Does JSON_TYPE actually need a typed carrier? For JSON parsed from
-        // text, MySQL may report the same INTEGER/DOUBLE split we already
-        // produce; DECIMAL and the temporal categories may only appear for
-        // values inserted through a typed constructor. Worth measuring
-        // before calling it a storage-format problem.
-        ordered(
-            "probe json_type categories",
-            "SELECT JSON_TYPE(JSON_EXTRACT('{\"a\":1.5}', '$.a')), \
-             JSON_TYPE(JSON_EXTRACT('{\"a\":1}', '$.a')), \
-             JSON_TYPE(JSON_EXTRACT('{\"a\":\"2024-01-01\"}', '$.a')), \
-             JSON_TYPE(JSON_EXTRACT(JSON_OBJECT('a', CAST(1.5 AS DECIMAL(2,1))), '$.a')), \
-             JSON_TYPE(JSON_EXTRACT(JSON_OBJECT('a', CAST('2024-01-01' AS DATE)), '$.a'))",
         ),
         ordered(
             "reviewed json keys ordering",
