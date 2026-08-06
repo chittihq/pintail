@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, fmt};
 
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
-use pintail_types::{DataType, Value};
+use pintail_types::{DataType, KeyMode, Value};
 use sqlparser::ast::{
     BinaryOperator, Expr, GroupByExpr, LimitClause, ObjectName, OrderByKind, Query, Select,
     SelectFlavor, SelectItem, SetExpr, ShowCreateObject, ShowStatementFilter,
@@ -355,17 +355,8 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
         for table in database.tables() {
             for (index, column) in table.schema().columns().iter().enumerate() {
                 let column_type = mysql_type(column.data_type());
-                // PRI marks physical key membership the way DBeaver-class
-                // tools expect; auto_increment and secondary indexes are
-                // not in the catalog yet.
                 let fact = column_fact(database.name(), table.name(), column.name(), facts);
-                let key = if table.key_column_ids().contains(&column.id()) {
-                    "PRI"
-                } else if fact.is_some_and(|fact| fact.unique_single) {
-                    "UNI"
-                } else {
-                    ""
-                };
+                let key = column_key(table, column.id(), fact);
                 let extra = fact.map_or("", |fact| {
                     if fact.auto_increment {
                         "auto_increment"
@@ -401,11 +392,29 @@ fn table_indexes(
     database: &str,
     table_name: &str,
     key_columns: &[String],
+    key_mode: KeyMode,
     facts: &SourceFacts,
 ) -> Vec<(String, Vec<String>)> {
     let mut indexes = Vec::new();
     if !key_columns.is_empty() {
-        indexes.push(("PRIMARY".to_owned(), key_columns.to_vec()));
+        let index_name = if key_mode == KeyMode::Primary {
+            "PRIMARY".to_owned()
+        } else {
+            facts
+                .indexes
+                .iter()
+                .find(|index| {
+                    index.database.eq_ignore_ascii_case(database)
+                        && index.table.eq_ignore_ascii_case(table_name)
+                        && index.unique
+                        && same_columns(&index.columns, key_columns)
+                })
+                .map_or_else(
+                    || "pintail_unique_key".to_owned(),
+                    |index| index.index_name.clone(),
+                )
+        };
+        indexes.push((index_name, key_columns.to_vec()));
     }
     for index in &facts.indexes {
         if !index.database.eq_ignore_ascii_case(database)
@@ -414,17 +423,39 @@ fn table_indexes(
         {
             continue;
         }
-        let same_as_primary = index.columns.len() == key_columns.len()
-            && index
-                .columns
-                .iter()
-                .zip(key_columns)
-                .all(|(left, right)| left.eq_ignore_ascii_case(right));
-        if !same_as_primary {
+        if !same_columns(&index.columns, key_columns) {
             indexes.push((index.index_name.clone(), index.columns.clone()));
         }
     }
     indexes
+}
+
+fn same_columns(left: &[String], right: &[String]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+}
+
+fn column_key(
+    table: &pintail_catalog::TableEntry,
+    column_id: u32,
+    fact: Option<&ColumnFacts>,
+) -> &'static str {
+    if table.key_column_ids().contains(&column_id) {
+        return match table.schema().key_mode() {
+            KeyMode::Primary => "PRI",
+            KeyMode::Unique if table.key_column_ids().len() == 1 => "UNI",
+            KeyMode::Unique => "MUL",
+            KeyMode::AppendRowId => "",
+        };
+    }
+    if fact.is_some_and(|fact| fact.unique_single) {
+        "UNI"
+    } else {
+        ""
+    }
 }
 
 fn catalog_key_names(table: &pintail_catalog::TableEntry) -> Vec<String> {
@@ -467,9 +498,13 @@ fn information_statistics(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Met
     for database in catalog.databases() {
         for table in database.tables() {
             let key_names = catalog_key_names(table);
-            for (index_name, columns) in
-                table_indexes(database.name(), table.name(), &key_names, facts)
-            {
+            for (index_name, columns) in table_indexes(
+                database.name(),
+                table.name(),
+                &key_names,
+                table.schema().key_mode(),
+                facts,
+            ) {
                 for (sequence, column_name) in columns.iter().enumerate() {
                     let nullable = table
                         .schema()
@@ -523,9 +558,13 @@ fn information_key_column_usage(catalog: &CatalogSnapshot, facts: &SourceFacts) 
     for database in catalog.databases() {
         for table in database.tables() {
             let key_names = catalog_key_names(table);
-            for (index_name, columns) in
-                table_indexes(database.name(), table.name(), &key_names, facts)
-            {
+            for (index_name, columns) in table_indexes(
+                database.name(),
+                table.name(),
+                &key_names,
+                table.schema().key_mode(),
+                facts,
+            ) {
                 for (sequence, column_name) in columns.iter().enumerate() {
                     rows.push(vec![
                         utf8("def"),
@@ -635,7 +674,13 @@ fn information_table_constraints(catalog: &CatalogSnapshot, facts: &SourceFacts)
     for database in catalog.databases() {
         for table in database.tables() {
             let key_names = catalog_key_names(table);
-            for (index_name, _) in table_indexes(database.name(), table.name(), &key_names, facts) {
+            for (index_name, _) in table_indexes(
+                database.name(),
+                table.name(),
+                &key_names,
+                table.schema().key_mode(),
+                facts,
+            ) {
                 let constraint_type = if index_name == "PRIMARY" {
                     "PRIMARY KEY"
                 } else {
@@ -710,7 +755,13 @@ fn show_create_table(
         }
     }
     let key_names = catalog_key_names(table);
-    for (index_name, columns) in table_indexes(database.name(), table.name(), &key_names, facts) {
+    for (index_name, columns) in table_indexes(
+        database.name(),
+        table.name(),
+        &key_names,
+        table.schema().key_mode(),
+        facts,
+    ) {
         let column_list = columns
             .iter()
             .map(|name| format!("`{name}`"))
@@ -945,20 +996,45 @@ fn metadata_equal(left: &Value, right: &Value) -> Option<bool> {
 }
 
 fn metadata_like(value: &str, pattern: &str) -> bool {
-    let value = value.to_lowercase().into_bytes();
-    let pattern = pattern.to_lowercase().into_bytes();
+    #[derive(Clone, Copy)]
+    enum Token {
+        AnyMany,
+        AnyOne,
+        Literal(char),
+    }
+
+    let value = value.to_lowercase().chars().collect::<Vec<_>>();
+    let lowercase_pattern = pattern.to_lowercase();
+    let mut pattern = lowercase_pattern.chars().peekable();
+    let mut tokens = Vec::new();
+    while let Some(character) = pattern.next() {
+        match character {
+            '%' => tokens.push(Token::AnyMany),
+            '_' => tokens.push(Token::AnyOne),
+            '\\' => tokens.push(Token::Literal(pattern.next().unwrap_or('\\'))),
+            literal => tokens.push(Token::Literal(literal)),
+        }
+    }
     let mut matches = vec![false; value.len() + 1];
     matches[0] = true;
-    for token in pattern {
-        if token == b'%' {
-            for index in 1..=value.len() {
-                matches[index] |= matches[index - 1];
+    for token in tokens {
+        match token {
+            Token::AnyMany => {
+                for index in 1..=value.len() {
+                    matches[index] |= matches[index - 1];
+                }
             }
-        } else {
-            for index in (1..=value.len()).rev() {
-                matches[index] = matches[index - 1] && (token == b'_' || token == value[index - 1]);
+            Token::AnyOne | Token::Literal(_) => {
+                for index in (1..=value.len()).rev() {
+                    matches[index] = matches[index - 1]
+                        && match token {
+                            Token::AnyOne => true,
+                            Token::Literal(literal) => literal == value[index - 1],
+                            Token::AnyMany => unreachable!("handled above"),
+                        };
+                }
+                matches[0] = false;
             }
-            matches[0] = false;
         }
     }
     matches[value.len()]
@@ -1145,13 +1221,7 @@ fn describe_table(
         .iter()
         .map(|column| {
             let fact = column_fact(database.name(), table.name(), column.name(), facts);
-            let key = if table.key_column_ids().contains(&column.id()) {
-                "PRI"
-            } else if fact.is_some_and(|fact| fact.unique_single) {
-                "UNI"
-            } else {
-                ""
-            };
+            let key = column_key(table, column.id(), fact);
             let extra = fact.map_or("", |fact| {
                 if fact.auto_increment {
                     "auto_increment"
@@ -1329,7 +1399,7 @@ mod tests {
     use pintail_catalog::{
         CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
     };
-    use pintail_types::{Column, DataType, TableSchema, Value};
+    use pintail_types::{Column, DataType, KeyMode, TableSchema, Value};
 
     use crate::{SourceFacts, execute_metadata, parse_statement};
 
@@ -1576,6 +1646,48 @@ mod tests {
         .expect("filtered tables");
 
         assert_eq!(result.rows, [vec![Value::Utf8("Events".to_owned())]]);
+    }
+
+    #[test]
+    fn metadata_like_counts_unicode_characters_and_honors_escapes() {
+        assert!(super::metadata_like("é", "_"));
+        assert!(super::metadata_like("foo_bar", r"foo\_bar"));
+        assert!(super::metadata_like("foo%bar", r"foo\%bar"));
+        assert!(!super::metadata_like("fooxbar", r"foo\_bar"));
+    }
+
+    #[test]
+    fn show_columns_labels_the_selected_unique_key_as_unique() {
+        let table = TableEntry::new(
+            TableId::new(3),
+            "Users",
+            TableSchema::with_key_mode(
+                1,
+                vec![
+                    Column::new(1, "id", DataType::UInt64, false),
+                    Column::new(2, "email", DataType::Utf8, false),
+                ],
+                KeyMode::Unique,
+            )
+            .expect("unique-key schema"),
+            TableStatistics::default(),
+        )
+        .expect("table")
+        .with_key_columns([2])
+        .expect("key columns");
+        let database =
+            DatabaseEntry::new(DatabaseId::new(1), "Analytics", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+
+        let columns = execute_metadata(
+            &parse_statement("SHOW COLUMNS FROM Analytics.Users").expect("parse"),
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("show columns");
+        assert_eq!(columns.rows[0][3], Value::Utf8(String::new()));
+        assert_eq!(columns.rows[1][3], Value::Utf8("UNI".to_owned()));
     }
 
     #[test]

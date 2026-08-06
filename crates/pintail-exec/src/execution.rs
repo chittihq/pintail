@@ -10531,6 +10531,65 @@ mod tests {
     }
 
     #[test]
+    fn hash_joins_decimal_keys_after_exact_scale_coercion() {
+        let table = TableEntry::new(
+            TableId::new(1),
+            "payments",
+            TableSchema::new(
+                1,
+                vec![Column::new(
+                    1,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 20,
+                        scale: 2,
+                    },
+                    false,
+                )],
+            )
+            .expect("schema"),
+            TableStatistics::with_row_count(2),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let statement = parse_statement(
+            "SELECT p.amount FROM payments p \
+             JOIN payments q ON p.amount = q.amount ORDER BY p.amount",
+        )
+        .expect("parse");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind");
+        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("physical decimal equi-join");
+        let amounts = ColumnVector::new(
+            DataType::Decimal {
+                precision: 20,
+                scale: 2,
+            },
+            vec![
+                Value::Utf8("1.00".to_owned()),
+                Value::Utf8("2.00".to_owned()),
+            ],
+        )
+        .expect("amounts");
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![RecordBatch::new(2, vec![amounts]).expect("batch")]),
+        };
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024).expect("decimal-key execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).expect("amounts").values(),
+            [
+                Value::Utf8("1.00".to_owned()),
+                Value::Utf8("2.00".to_owned())
+            ]
+        );
+    }
+
+    #[test]
     fn aggregates_inner_joins_without_materializing_joined_rows() {
         let provider = StaticProvider {
             batches: Mutex::new(vec![

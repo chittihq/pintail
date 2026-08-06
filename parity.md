@@ -14,7 +14,7 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `ANY_VALUE`, `STDDEV`/`STD`/`STDDEV_POP`/`STDDEV_SAMP`, `VARIANCE`/`VAR_POP`/`VAR_SAMP`, `BIT_AND`/`BIT_OR`/`BIT_XOR` |
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; `RANGE BETWEEN` with offsetless bounds, where `CURRENT ROW` covers the peer group; `RANGE` with an offset and `GROUPS` reject |
-| Named windows | `WINDOW w AS (…)` referenced as `OVER w`; legal additive `OVER (w ORDER BY … ROWS …)` inheritance without clause redefinition |
+| Named windows | `WINDOW w AS (…)` referenced as `OVER w`; legal additive `OVER (w ORDER BY … ROWS …)` inheritance without clause redefinition; a framed base rejects through parenthesized `OVER (w)` as MySQL requires |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root INNER/CROSS groups |
 | Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form; correlated scalar aggregates and unique-key lookups, decorrelated to joins |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
@@ -71,9 +71,6 @@ From `scripts/function-surface.ts` against `tests/corpus/bi-shapes.sql`.
 
 | Function | Needed by | Issue |
 |---|---|---|
-| `STDDEV[_POP\|_SAMP]`, `VARIANCE`, `VAR_[POP\|SAMP]` | Tableau | #17 |
-| `ANY_VALUE` | Looker, Metabase — `ONLY_FULL_GROUP_BY` | #17 |
-| `BIT_AND`, `BIT_OR`, `BIT_XOR` | Tableau | #17 |
 | Compound intervals | Superset — blocked in sqlparser, not the engine | #13 |
 
 `tests/corpus/bi-shapes.sql` is **reconstructed** from documented BI-tool

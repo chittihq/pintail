@@ -25,8 +25,8 @@ stays readable as a list of things to fix.
   `DISTINCT` (#25). A named window may be referenced as `OVER w` and extended
   additively with clauses absent from its base definition. Chained named
   definitions (`WINDOW child AS parent`) still reject; resolving those needs
-  cycle detection. `RANGE` with an offset compares the ordering key's own
-  values rather than counting rows, so it is not approximated with row offsets.
+  cycle detection. As in MySQL, a framed base may be used directly as `OVER w`
+  but its frame cannot be inherited through the parenthesized `OVER (w)` form.
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be
   un-accumulated when a row leaves the window. Cost is proportional to the
@@ -45,9 +45,6 @@ stays readable as a list of things to fix.
   preserve their join tree (#16).
 - `GROUP_CONCAT`'s `group_concat_max_len` session variable is not configurable
   and the truncation warning is not raised.
-- Aggregates are limited to `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`,
-  `GROUP_CONCAT` and `JSON_ARRAYAGG`. `ANY_VALUE`, the `STDDEV`/`VARIANCE`
-  families and `BIT_AND`/`BIT_OR`/`BIT_XOR` are missing (#17).
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
   `JSON_MERGE*`, `JSON_REMOVE`) and `JSON_TABLE` are unimplemented and out of
   scope by decision. `JSON_TABLE` is a table-valued function, so it needs a new

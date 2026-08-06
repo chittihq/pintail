@@ -2461,27 +2461,8 @@ fn bind_binary(
         }
     };
 
-    if matches!(
-        op,
-        BinaryOp::Equal
-            | BinaryOp::NotEqual
-            | BinaryOp::Less
-            | BinaryOp::LessOrEqual
-            | BinaryOp::Greater
-            | BinaryOp::GreaterOrEqual
-    ) && (matches!(left.data_type, Some(DataType::Decimal { .. }))
-        || matches!(right.data_type, Some(DataType::Decimal { .. })))
-        && left.data_type.and_then(exact_numeric_digits).is_some()
-        && right.data_type.and_then(exact_numeric_digits).is_some()
-    {
-        return Ok(BoundExpr {
-            nullable: left.nullable || right.nullable,
-            data_type: Some(DataType::Boolean),
-            kind: BoundExprKind::Scalar {
-                function: ScalarFunction::DecimalComparison { op },
-                args: vec![left, right],
-            },
-        });
+    if is_exact_decimal_comparison(op, &left, &right) {
+        return Ok(bind_exact_decimal_comparison(op, left, right));
     }
 
     Ok(BoundExpr {
@@ -2493,6 +2474,64 @@ fn bind_binary(
             right: Box::new(right),
         },
     })
+}
+
+fn is_exact_decimal_comparison(op: BinaryOp, left: &BoundExpr, right: &BoundExpr) -> bool {
+    matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) && (matches!(left.data_type, Some(DataType::Decimal { .. }))
+        || matches!(right.data_type, Some(DataType::Decimal { .. })))
+        && left.data_type.and_then(exact_numeric_digits).is_some()
+        && right.data_type.and_then(exact_numeric_digits).is_some()
+}
+
+fn bind_exact_decimal_comparison(
+    op: BinaryOp,
+    mut left: BoundExpr,
+    mut right: BoundExpr,
+) -> BoundExpr {
+    if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
+        // Keep equality as a binary predicate so the physical planner can
+        // still extract equi-join keys. Casting both sides to one scale also
+        // gives the text-backed DECIMAL carrier one canonical hash key.
+        let (left_scale, left_integer) =
+            exact_numeric_digits(left.data_type.expect("typed")).expect("exact numeric comparison");
+        let (right_scale, right_integer) = exact_numeric_digits(right.data_type.expect("typed"))
+            .expect("exact numeric comparison");
+        let scale = left_scale.max(right_scale);
+        let unified = DataType::Decimal {
+            precision: left_integer
+                .max(right_integer)
+                .saturating_add(scale)
+                .min(MAX_DECIMAL_PRECISION),
+            scale,
+        };
+        wrap_in_decimal_cast(&mut left, unified);
+        wrap_in_decimal_cast(&mut right, unified);
+        return BoundExpr {
+            nullable: left.nullable || right.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+        };
+    }
+    BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type: Some(DataType::Boolean),
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::DecimalComparison { op },
+            args: vec![left, right],
+        },
+    }
 }
 
 /// Top-level AND conjuncts of a predicate expression.
@@ -4169,9 +4208,10 @@ fn substitute_named_windows(
                         if let Some(extension) = extension {
                             if !extension.partition_by.is_empty()
                                 || (!merged.order_by.is_empty() && !extension.order_by.is_empty())
-                                || (merged.window_frame.is_some()
-                                    && extension.window_frame.is_some())
-                                || (merged.window_frame.is_some() && !extension.order_by.is_empty())
+                                // MySQL permits `OVER w` for a framed base,
+                                // but forbids inheriting that frame through
+                                // the parenthesized `OVER (w)` form.
+                                || merged.window_frame.is_some()
                             {
                                 return Err(BindError::UnsupportedQueryClause(format!(
                                     "OVER ({name} …) illegally redefines a named window"
@@ -5161,6 +5201,26 @@ mod tests {
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
 
         assert!(bind("SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id)").is_err());
+    }
+
+    #[test]
+    fn decimal_equality_remains_an_extractable_join_key() {
+        let query = bind(
+            "SELECT p.amount FROM payments p \
+             JOIN payments q ON p.amount = q.amount",
+        )
+        .expect("decimal equi-join binds");
+        let condition = query.from[0].joins[0]
+            .condition
+            .as_ref()
+            .expect("join condition");
+        assert!(matches!(
+            condition.kind,
+            BoundExprKind::Binary {
+                op: BinaryOp::Equal,
+                ..
+            }
+        ));
     }
 
     #[test]

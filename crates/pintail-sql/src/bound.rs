@@ -414,7 +414,7 @@ pub enum DatePart {
     Week,
     /// ISO 8601 week (`WEEK` mode 3 / `WEEKOFYEAR`).
     IsoWeek,
-    /// Explicit `WEEK(date, mode)` mode in MySQL's 0-7 inventory.
+    /// Explicit `WEEK(date, mode)` mode in `MySQL`'s 0-7 inventory.
     WeekMode(u8),
 }
 

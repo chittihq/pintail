@@ -2029,6 +2029,12 @@ mod tests {
         )
         .expect("parse illegal named-window redefinition");
         assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
+        let statement = parse_statement(
+            "SELECT SUM(id) OVER (w) FROM events \
+             WINDOW w AS (ROWS UNBOUNDED PRECEDING)",
+        )
+        .expect("parse illegal frame inheritance");
+        assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
     }
 
     /// Explicit ROWS frames: the running total and the moving window that

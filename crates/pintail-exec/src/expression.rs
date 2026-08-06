@@ -1799,6 +1799,11 @@ fn evaluate_eager_scalar(
         ScalarFunction::RegexpLike { negated } => {
             let text = scalar_string(&values[0])?;
             let match_type = values.get(2).map(scalar_string).transpose()?;
+            let text = if match_type.as_deref().unwrap_or("").contains('u') {
+                text
+            } else {
+                normalize_mysql_regex_line_endings(&text)
+            };
             let matched = compiled_regex_with_match_type(
                 &scalar_string(&values[1])?,
                 match_type.as_deref().unwrap_or(""),
@@ -3022,6 +3027,27 @@ fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
     compiled_regex_with_match_type(pattern, "")
 }
 
+/// ICU treats CR, CRLF, NEL, LS, and PS as line endings by default. Rust's
+/// regex engine treats only LF specially, so normalize those sequences for
+/// `REGEXP_LIKE` unless `MySQL`'s `u` (Unix-lines-only) match flag is present.
+fn normalize_mysql_regex_line_endings(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                normalized.push('\n');
+            }
+            '\u{0085}' | '\u{2028}' | '\u{2029}' => normalized.push('\n'),
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
 fn compiled_regex_with_match_type(
     pattern: &str,
     match_type: &str,
@@ -3036,7 +3062,7 @@ fn compiled_regex_with_match_type(
             'i' => case_insensitive = true,
             'm' => multi_line = true,
             'n' => dot_matches_new_line = true,
-            // Rust's regex engine already treats only LF as a line ending.
+            // Subject normalization, not compilation, implements this flag.
             'u' => {}
             _ => return Err(ExecError::InvalidExpressionType),
         }
@@ -4246,6 +4272,8 @@ mod tests {
         assert_eq!(regexp("Abc", "abc", "ci"), Value::Boolean(true));
         assert_eq!(regexp("a\nb", "^b$", "m"), Value::Boolean(true));
         assert_eq!(regexp("a\nb", "a.b", "n"), Value::Boolean(true));
+        assert_eq!(regexp("a\rb", "^b$", "m"), Value::Boolean(true));
+        assert_eq!(regexp("a\rb", "^b$", "mu"), Value::Boolean(false));
         assert!(
             super::evaluate_eager_scalar(
                 ScalarFunction::RegexpLike { negated: false },
