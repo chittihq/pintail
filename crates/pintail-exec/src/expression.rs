@@ -719,7 +719,10 @@ impl CompiledExpr {
                     | ScalarFunction::JsonSearch
                     | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
-                    | ScalarFunction::Cast(_) => first,
+                    | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
+                    // Numeric and temporal casts can expand compact input
+                    // (`'12'` -> `00:00:12`, scaled DECIMAL, and so on).
+                    ScalarFunction::Cast(_) => first.max(128),
                     ScalarFunction::JsonExtract { .. } => first
                         .saturating_mul(args.len().saturating_sub(1))
                         .saturating_add(args.len().saturating_mul(2)),
@@ -872,7 +875,8 @@ impl CompiledExpr {
                     | ScalarFunction::JsonSearch
                     | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
-                    | ScalarFunction::Cast(_) => first,
+                    | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
+                    ScalarFunction::Cast(_) => first.max(128),
                     ScalarFunction::JsonExtract { .. } => first
                         .saturating_mul(args.len().saturating_sub(1))
                         .saturating_add(args.len().saturating_mul(2)),
@@ -2708,6 +2712,11 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
                     Value::Utf8(format_with_fraction(parsed, fsp, "%Y-%m-%d %H:%M:%S"))
                 }));
         }
+        Some(DataType::Time64 { fsp }) => {
+            return Ok(
+                cast_mysql_time(&scalar_string(value)?, fsp).map_or(Value::Null, Value::Utf8)
+            );
+        }
         _ => {}
     }
     match data_type.map(DataType::storage_type) {
@@ -2720,6 +2729,128 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         Some(DataType::Binary) => Ok(Value::Binary(scalar_string(value)?.into_bytes())),
         Some(_) => unreachable!("storage_type returns a physical scalar type"),
     }
+}
+
+/// Converts `MySQL`'s interval-shaped `TIME` syntax without routing through a
+/// civil clock type. Hours may exceed 23, optional day prefixes are folded
+/// into hours, compact numerics are read as HHMMSS, and the declared FSP is
+/// rounded before the documented +/-838:59:59 clamp.
+fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
+    let text = text.trim();
+    if let Ok(datetime) = parse_mysql_datetime(text) {
+        let fraction = format!("{:06}", datetime.and_utc().timestamp_subsec_micros());
+        return format_mysql_time(
+            false,
+            u64::from(datetime.hour()),
+            u64::from(datetime.minute()),
+            u64::from(datetime.second()),
+            &fraction,
+            fsp,
+        );
+    }
+
+    let (negative, unsigned) = text
+        .strip_prefix('-')
+        .map_or((false, text), |unsigned| (true, unsigned));
+    let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
+    let (clock, fraction) = unsigned
+        .split_once('.')
+        .map_or((unsigned, ""), |(clock, fraction)| (clock, fraction));
+    if !fraction.bytes().all(|digit| digit.is_ascii_digit()) {
+        return None;
+    }
+
+    let (days, clock) = clock.split_once(' ').map_or((0, clock), |(days, clock)| {
+        (days.parse::<u64>().unwrap_or(u64::MAX), clock)
+    });
+    let parts = clock.split(':').collect::<Vec<_>>();
+    let (hours, minutes, seconds) = match parts.as_slice() {
+        [hours, minutes, seconds] => (
+            hours.parse::<u64>().ok()?,
+            minutes.parse::<u64>().ok()?,
+            seconds.parse::<u64>().ok()?,
+        ),
+        [hours, minutes] => (hours.parse::<u64>().ok()?, minutes.parse::<u64>().ok()?, 0),
+        [compact] if !compact.is_empty() && compact.bytes().all(|digit| digit.is_ascii_digit()) => {
+            let value = compact.parse::<u64>().ok()?;
+            (value / 10_000, value / 100 % 100, value % 100)
+        }
+        _ => return None,
+    };
+    if minutes > 59 || seconds > 59 || days == u64::MAX {
+        return None;
+    }
+    format_mysql_time(
+        negative,
+        days.checked_mul(24)?.checked_add(hours)?,
+        minutes,
+        seconds,
+        fraction,
+        fsp,
+    )
+}
+
+fn format_mysql_time(
+    negative: bool,
+    hours: u64,
+    minutes: u64,
+    seconds: u64,
+    fraction: &str,
+    fsp: u8,
+) -> Option<String> {
+    const MAX_TIME_SECONDS: u64 = 838 * 3600 + 59 * 60 + 59;
+
+    let fsp = fsp.min(6);
+    let scale = 10_u64.checked_pow(u32::from(fsp))?;
+    let kept = fraction
+        .bytes()
+        .take(usize::from(fsp))
+        .try_fold(0_u64, |value, digit| {
+            digit
+                .is_ascii_digit()
+                .then_some(value * 10 + u64::from(digit - b'0'))
+        })?;
+    let present = u32::try_from(fraction.len().min(usize::from(fsp))).ok()?;
+    let mut fraction_units = kept.checked_mul(10_u64.pow(u32::from(fsp) - present))?;
+    if fraction
+        .as_bytes()
+        .get(usize::from(fsp))
+        .is_some_and(|digit| *digit >= b'5')
+    {
+        fraction_units += 1;
+    }
+
+    let mut total_seconds = hours
+        .checked_mul(3600)?
+        .checked_add(minutes.checked_mul(60)?)?
+        .checked_add(seconds)?;
+    if fraction_units == scale {
+        total_seconds = total_seconds.checked_add(1)?;
+        fraction_units = 0;
+    }
+    if total_seconds > MAX_TIME_SECONDS
+        || (total_seconds == MAX_TIME_SECONDS && fraction_units != 0)
+    {
+        total_seconds = MAX_TIME_SECONDS;
+        fraction_units = 0;
+    }
+
+    let sign = if negative && (total_seconds != 0 || fraction_units != 0) {
+        "-"
+    } else {
+        ""
+    };
+    let suffix = if fsp == 0 {
+        String::new()
+    } else {
+        format!(".{fraction_units:0width$}", width = usize::from(fsp))
+    };
+    Some(format!(
+        "{sign}{:02}:{:02}:{:02}{suffix}",
+        total_seconds / 3600,
+        total_seconds / 60 % 60,
+        total_seconds % 60
+    ))
 }
 
 /// Decimal-typed division is exact: scaled i128 units with `MySQL`'s

@@ -3512,12 +3512,14 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
                 .unwrap_or(0);
             return Some(DataType::DateTime64 { fsp: fsp.min(6) });
         }
-        // CAST AS TIME and CAST AS JSON stay rejected on purpose. MySQL's
-        // TIME spans -838:59:59..=838:59:59, which chrono's NaiveTime cannot
-        // represent, so a partial implementation would answer NULL where
-        // MySQL answers a value; and CAST AS JSON must reject invalid JSON
-        // text rather than pass it through. Both are gaps, not defects — an
-        // explicit rejection beats a plausible wrong answer.
+        SqlDataType::Time(fsp, sqlparser::ast::TimezoneInfo::None) => {
+            let fsp = fsp
+                .and_then(|digits| u8::try_from(digits).ok())
+                .unwrap_or(0);
+            return Some(DataType::Time64 { fsp: fsp.min(6) });
+        }
+        // CAST AS JSON stays rejected until the executor validates and
+        // canonicalizes the document rather than merely relabeling text.
         _ => {}
     }
     let name = data_type.to_string().to_ascii_uppercase();
@@ -5358,6 +5360,15 @@ mod tests {
         assert_eq!(query.projection.len(), 2);
         // The seeded form stays unsupported.
         assert!(bind("SELECT RAND(3) FROM Events").is_err());
+    }
+
+    #[test]
+    fn binds_mysql_time_cast_with_fractional_precision() {
+        let query = bind("SELECT CAST('12:34:56.7896' AS TIME(3)) FROM Events").expect("binds");
+        assert_eq!(
+            query.projection[0].expr.data_type,
+            Some(DataType::Time64 { fsp: 3 })
+        );
     }
 
     #[test]

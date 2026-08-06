@@ -875,7 +875,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT CAST('2024-02-29 12:34:56' AS DATE), \
              CAST('2024-02-29' AS DATETIME), \
              CAST('2024-02-29 12:34:56' AS DATETIME), \
-             CAST('2024-02-29 12:34:56.789' AS DATETIME(3))",
+             CAST('2024-02-29 12:34:56.789' AS DATETIME(3)), \
+             CAST('12:34:56.7896' AS TIME(3)), \
+             CAST('-12:34:56.123456' AS TIME(6)), \
+             CAST('1 02:03:04' AS TIME), CAST('1112' AS TIME), \
+             CAST('2026-08-06 07:08:09.987654' AS TIME(3)), \
+             CAST('850:00:00' AS TIME)",
         ),
         ordered(
             "hand-written cast temporal invalid",

@@ -10677,6 +10677,39 @@ mod tests {
     }
 
     #[test]
+    fn casts_mysql_time_intervals_with_fractional_precision() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            "SELECT CAST('12:34:56.7896' AS TIME(3)), \
+             CAST('-12:34:56.123456' AS TIME(6)), \
+             CAST('1 02:03:04' AS TIME), CAST('1112' AS TIME), \
+             CAST('2026-08-06 07:08:09.987654' AS TIME(3)), \
+             CAST('850:00:00' AS TIME), CAST('not-a-time' AS TIME)",
+        );
+        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        let values = batch
+            .columns()
+            .iter()
+            .map(|column| column.value(0).cloned().expect("value"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                Value::Utf8("12:34:56.790".to_owned()),
+                Value::Utf8("-12:34:56.123456".to_owned()),
+                Value::Utf8("26:03:04".to_owned()),
+                Value::Utf8("00:11:12".to_owned()),
+                Value::Utf8("07:08:09.988".to_owned()),
+                Value::Utf8("838:59:59".to_owned()),
+                Value::Null,
+            ]
+        );
+    }
+
+    #[test]
     fn enforces_the_hard_query_memory_cap() {
         let provider = StaticProvider {
             batches: Mutex::new(vec![source_batch()]),
