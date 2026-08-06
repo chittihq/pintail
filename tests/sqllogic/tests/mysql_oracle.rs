@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 782;
+const EXPECTED_CASES: usize = 786;
 
 struct OracleCase {
     family: &'static str,
@@ -1058,6 +1058,34 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "reviewed maketime fraction",
             "SELECT MAKETIME(12, 15, 30.5), MAKETIME(12, 15, 30), MAKETIME(1, 60, 0)",
+        ),
+        // JSON_SEARCH: MySQL answers NULL for no match, a bare path for one
+        // hit under 'one', and an array once several match under 'all'.
+        ordered(
+            "json search",
+            "SELECT JSON_SEARCH('{\"a\":\"x\",\"b\":\"y\"}', 'one', 'x'), \
+             JSON_SEARCH('{\"a\":\"x\",\"b\":\"x\"}', 'all', 'x'), \
+             JSON_SEARCH('{\"a\":\"x\"}', 'one', 'zzz'), \
+             JSON_SEARCH('[\"abc\",\"abd\"]', 'all', 'ab%'), \
+             JSON_SEARCH('{\"a\":{\"b\":\"deep\"}}', 'one', 'deep'), \
+             JSON_SEARCH('{\"a\":1}', 'one', '1')",
+        ),
+        ordered(
+            "json value",
+            "SELECT JSON_VALUE('{\"a\":\"x\"}', '$.a'), \
+             JSON_VALUE('{\"a\":42}', '$.a'), \
+             JSON_VALUE('{\"a\":42}', '$.zz'), \
+             JSON_VALUE('{\"a\":\"7\"}', '$.a' RETURNING SIGNED), \
+             JSON_VALUE('{\"a\":[1,2]}', '$.a[1]')",
+        ),
+        ordered(
+            "json objectagg",
+            "SELECT JSON_OBJECTAGG(name, score) FROM events",
+        ),
+        ordered(
+            "json objectagg grouped",
+            "SELECT active, JSON_OBJECTAGG(name, score), JSON_ARRAYAGG(score) FROM events \
+             GROUP BY active ORDER BY active",
         ),
         ordered(
             "reviewed json keys ordering",

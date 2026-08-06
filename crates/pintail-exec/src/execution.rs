@@ -3083,6 +3083,11 @@ enum AggregateValue {
         sample: bool,
         stddev: bool,
     },
+    /// `JSON_OBJECTAGG`: each row contributes a one-member object, merged
+    /// left to right. A repeated key keeps the last value, as `MySQL` does.
+    JsonObjectAgg {
+        members: serde_json::Map<String, serde_json::Value>,
+    },
     /// `BIT_AND`/`BIT_OR`/`BIT_XOR`. `seen` exists because `MySQL` folds an
     /// empty group to the operation's identity rather than to NULL, so
     /// `BIT_AND` over no rows is all ones.
@@ -3129,6 +3134,9 @@ impl AggregateState {
                     .collect(),
             },
             AggregateFunction::JsonArrayAgg => AggregateValue::JsonArrayAgg { items: Vec::new() },
+            AggregateFunction::JsonObjectAgg => AggregateValue::JsonObjectAgg {
+                members: serde_json::Map::new(),
+            },
             AggregateFunction::AnyValue => AggregateValue::AnyValue(None),
             AggregateFunction::StdDev { sample } => AggregateValue::Moments {
                 count: 0,
@@ -3182,6 +3190,21 @@ impl AggregateState {
     ) -> Result<(), ExecError> {
         // JSON_ARRAYAGG collects NULLs as JSON nulls, so it intercepts
         // ahead of the NULL skip every other aggregate relies on.
+        // Like JSON_ARRAYAGG, this runs ahead of the NULL skip: MySQL keeps a
+        // NULL value in the object rather than dropping the member.
+        if let AggregateValue::JsonObjectAgg { members } = &mut self.value {
+            let fragment =
+                crate::expression::mysql_json_text(&crate::expression::json_value_of(value));
+            if let Ok(serde_json::Value::Object(pair)) =
+                serde_json::from_str::<serde_json::Value>(&fragment)
+            {
+                for (key, entry) in pair {
+                    memory.reserve(key.len().saturating_add(16))?;
+                    members.insert(key, entry);
+                }
+            }
+            return Ok(());
+        }
         if let AggregateValue::JsonArrayAgg { items } = &mut self.value {
             let fragment =
                 crate::expression::mysql_json_text(&crate::expression::json_value_of(value));
@@ -3215,6 +3238,8 @@ impl AggregateState {
             return self.update_decimal_sum_units(units, scale, false);
         }
         match &mut self.value {
+            // Handled by the early return above, before the NULL skip.
+            AggregateValue::JsonObjectAgg { .. } => {}
             AggregateValue::Count(count) => {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
@@ -3743,6 +3768,9 @@ impl AggregateState {
     fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
+            AggregateValue::JsonObjectAgg { members } => Value::Utf8(
+                crate::expression::mysql_json_text(&serde_json::Value::Object(members)),
+            ),
             AggregateValue::BitFold { accumulator, .. } => Value::UInt64(accumulator),
             AggregateValue::Moments {
                 count,
@@ -3987,6 +4015,12 @@ fn merge_finished_value(
         AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. } => Err(
             ExecError::InvalidPhysicalPlan("STDDEV/VARIANCE finished values cannot be merged"),
         ),
+        // Merging rendered objects would need key-level precedence the
+        // finished text no longer carries; the eligibility gate keeps this
+        // unreachable.
+        AggregateFunction::JsonObjectAgg => Err(ExecError::InvalidPhysicalPlan(
+            "JSON_OBJECTAGG finished values cannot be merged",
+        )),
         AggregateFunction::Count => {
             add_aggregate_value(Some(current), delta, Some(DataType::UInt64))
         }
@@ -4125,6 +4159,7 @@ fn build_hash_aggregate(
                     AggregateFunction::Average
                     | AggregateFunction::GroupConcat
                     | AggregateFunction::JsonArrayAgg
+                    | AggregateFunction::JsonObjectAgg
                     // Needs the moments, not the finished value.
                     | AggregateFunction::StdDev { .. }
                     | AggregateFunction::Variance { .. } => false,
@@ -4283,7 +4318,8 @@ fn try_sma_fold(
             | AggregateFunction::Variance { .. }
             | AggregateFunction::BitAnd
             | AggregateFunction::BitOr
-            | AggregateFunction::BitXor => return Ok(None),
+            | AggregateFunction::BitXor
+            | AggregateFunction::JsonObjectAgg => return Ok(None),
             AggregateFunction::Count => {
                 let total = match column {
                     None => live_rows,
@@ -5144,7 +5180,9 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         AggregateValue::BitFold { accumulator, seen } => {
             SpilledAggregateValue::BitFold { accumulator, seen }
         }
-        AggregateValue::GroupConcat { .. } | AggregateValue::JsonArrayAgg { .. } => {
+        AggregateValue::GroupConcat { .. }
+        | AggregateValue::JsonArrayAgg { .. }
+        | AggregateValue::JsonObjectAgg { .. } => {
             return Err(ExecError::InvalidPhysicalPlan(
                 "aggregation spill reached a non-spillable aggregate state",
             ));
@@ -6527,7 +6565,9 @@ fn two_pass_lanes(
                         },
                     )
                 }
-                AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg => None,
+                AggregateFunction::GroupConcat
+                | AggregateFunction::JsonArrayAgg
+                | AggregateFunction::JsonObjectAgg => None,
             }
         })
         .collect()
@@ -7871,7 +7911,8 @@ fn update_state_from_typed_column(
         | AggregateFunction::Variance { .. }
         | AggregateFunction::BitAnd
         | AggregateFunction::BitOr
-        | AggregateFunction::BitXor => return Ok(false),
+        | AggregateFunction::BitXor
+        | AggregateFunction::JsonObjectAgg => return Ok(false),
         AggregateFunction::Count => {
             state.update_with_number(aggregate, &Value::Boolean(true), None, memory)?;
             return Ok(true);

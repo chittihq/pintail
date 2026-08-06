@@ -2820,10 +2820,29 @@ fn bind_scalar_function(
     let FunctionArguments::List(arguments) = &function.args else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
-    if arguments.duplicate_treatment.is_some() || !arguments.clauses.is_empty() {
+    let function_name = name.to_ascii_uppercase();
+    // JSON_VALUE owns a RETURNING clause; it lowers to a CAST around the
+    // extraction below, so the function itself stays a plain extractor.
+    let mut json_value_returning = None;
+    for clause in &arguments.clauses {
+        match clause {
+            sqlparser::ast::FunctionArgumentClause::JsonReturningClause(returning)
+                if function_name == "JSON_VALUE" =>
+            {
+                json_value_returning =
+                    Some(cast_data_type(&returning.data_type).ok_or_else(|| {
+                        BindError::InvalidScalarFunction(format!(
+                            "JSON_VALUE RETURNING {}",
+                            returning.data_type
+                        ))
+                    })?);
+            }
+            _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+        }
+    }
+    if arguments.duplicate_treatment.is_some() {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     }
-    let function_name = name.to_ascii_uppercase();
     if matches!(function_name.as_str(), "DATE_ADD" | "DATE_SUB") {
         return bind_date_interval(
             function,
@@ -2945,6 +2964,8 @@ fn bind_scalar_function(
         "CONV" if args.len() == 3 => ScalarFunction::Conv,
         "MAKETIME" if args.len() == 3 => ScalarFunction::MakeTime,
         "JSON_VALID" if args.len() == 1 => ScalarFunction::JsonValid,
+        "JSON_SEARCH" if matches!(args.len(), 3 | 4) => ScalarFunction::JsonSearch,
+        "JSON_VALUE" if args.len() == 2 => ScalarFunction::JsonValue,
         "JSON_TYPE" if args.len() == 1 => ScalarFunction::JsonType,
         "JSON_LENGTH" if matches!(args.len(), 1 | 2) => ScalarFunction::JsonLength,
         "JSON_KEYS" if matches!(args.len(), 1 | 2) => ScalarFunction::JsonKeys,
@@ -2975,7 +2996,13 @@ fn bind_scalar_function(
         "FROM_UNIXTIME" if args.len() == 1 => ScalarFunction::FromUnixTime,
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
-    bind_scalar(scalar, args)
+    let bound = bind_scalar(scalar, args)?;
+    // RETURNING is a cast over the extracted member, which keeps JSON_VALUE
+    // itself a single job and reuses the CAST target table wholesale.
+    match json_value_returning {
+        Some(target) => bind_scalar(ScalarFunction::Cast(target), vec![bound]),
+        None => Ok(bound),
+    }
 }
 
 /// `TIMESTAMPADD(unit, amount, datetime)` is `DATE_ADD` with reordered
@@ -3559,6 +3586,10 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         // a target that is not an object.
         | ScalarFunction::JsonType
         | ScalarFunction::JsonKeys
+        // JSON_SEARCH answers NULL when nothing matches; JSON_VALUE answers
+        // NULL for an absent path.
+        | ScalarFunction::JsonSearch
+        | ScalarFunction::JsonValue
         // CONV and MAKETIME answer NULL for an unparseable number or an
         // out-of-range minute/second.
         | ScalarFunction::Conv
@@ -3767,6 +3798,7 @@ fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindErr
     })
 }
 
+#[allow(clippy::too_many_lines)] // one aggregate-shape table, clearer unsplit
 fn bind_aggregate(
     function: &Function,
     tables: &[BoundTable],
@@ -3795,7 +3827,13 @@ fn bind_aggregate(
     let FunctionArguments::List(arguments) = &function.args else {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     };
-    if arguments.args.len() != 1 {
+    // JSON_OBJECTAGG is the one aggregate taking a pair. Rather than widen
+    // BoundAggregate to carry two expressions — which would ripple through
+    // spill, the two-pass lanes and merging — the pair becomes a single
+    // JSON_OBJECT(k, v) per row, reusing its key coercion and escaping. The
+    // aggregate then merges those one-member objects.
+    let expected_arity = usize::from(aggregate_function == AggregateFunction::JsonObjectAgg) + 1;
+    if arguments.args.len() != expected_arity {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     }
     // GROUP_CONCAT owns SEPARATOR and an aggregate-local ORDER BY; every
@@ -3834,16 +3872,27 @@ fn bind_aggregate(
     if distinct && aggregate_function == AggregateFunction::JsonArrayAgg {
         return Err(BindError::UnsupportedAggregate(function.to_string()));
     }
-    let expr = match &arguments.args[0] {
-        FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
-            Some(bind_expr(expr, tables, subqueries)?)
+    let expr = if aggregate_function == AggregateFunction::JsonObjectAgg {
+        let mut pair = Vec::with_capacity(2);
+        for argument in &arguments.args {
+            let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = argument else {
+                return Err(BindError::UnsupportedAggregate(function.to_string()));
+            };
+            pair.push(bind_expr(expr, tables, subqueries)?);
         }
-        FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
-            if aggregate_function == AggregateFunction::Count && !distinct =>
-        {
-            None
+        Some(bind_scalar(ScalarFunction::JsonObject, pair)?)
+    } else {
+        match &arguments.args[0] {
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
+                Some(bind_expr(expr, tables, subqueries)?)
+            }
+            FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
+                if aggregate_function == AggregateFunction::Count && !distinct =>
+            {
+                None
+            }
+            _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
         }
-        _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
     };
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let aggregate = BoundAggregate {
@@ -3886,6 +3935,7 @@ fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
         "MAX" => Some(AggregateFunction::Maximum),
         "GROUP_CONCAT" => Some(AggregateFunction::GroupConcat),
         "JSON_ARRAYAGG" => Some(AggregateFunction::JsonArrayAgg),
+        "JSON_OBJECTAGG" => Some(AggregateFunction::JsonObjectAgg),
         "ANY_VALUE" => Some(AggregateFunction::AnyValue),
         // MySQL spells the population forms three ways and the sample form
         // one; VARIANCE and VAR_POP are likewise the same function.
@@ -3957,7 +4007,9 @@ fn aggregate_result_type(
         AggregateFunction::Minimum | AggregateFunction::Maximum if is_mysql_scalar(input_type) => {
             Ok((input_type, true))
         }
-        AggregateFunction::GroupConcat | AggregateFunction::JsonArrayAgg
+        AggregateFunction::GroupConcat
+        | AggregateFunction::JsonArrayAgg
+        | AggregateFunction::JsonObjectAgg
             if is_mysql_scalar(input_type) =>
         {
             Ok((Some(DataType::Utf8), true))

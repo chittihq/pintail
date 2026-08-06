@@ -668,6 +668,10 @@ impl CompiledExpr {
                     | ScalarFunction::JsonUnquote
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
+                    // JSON_SEARCH renders paths, JSON_VALUE a member: both
+                    // are bounded by the document they read.
+                    | ScalarFunction::JsonSearch
+                    | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(_) => first,
                     // JSON_TYPE returns one of a handful of fixed names.
@@ -808,6 +812,10 @@ impl CompiledExpr {
                     | ScalarFunction::JsonUnquote
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
+                    // JSON_SEARCH renders paths, JSON_VALUE a member: both
+                    // are bounded by the document they read.
+                    | ScalarFunction::JsonSearch
+                    | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(_) => first,
                     // JSON_TYPE returns one of a handful of fixed names.
@@ -1829,6 +1837,53 @@ fn evaluate_eager_scalar(
                     None => rendered,
                 })
                 .map_or(Value::Null, Value::Utf8))
+        }
+        ScalarFunction::JsonValue => {
+            // JSON_VALUE extracts and unquotes; a RETURNING type is lowered
+            // to a CAST around this, so the extraction stays one job.
+            let document = parse_json_argument(&values[0])?;
+            let path = scalar_string(&values[1])?;
+            Ok(
+                json_path_lookup(&document, &path)?.map_or(Value::Null, |found| {
+                    Value::Utf8(match found {
+                        serde_json::Value::String(text) => text.clone(),
+                        other => mysql_json_text(other),
+                    })
+                }),
+            )
+        }
+        ScalarFunction::JsonSearch => {
+            let document = parse_json_argument(&values[0])?;
+            let mode = scalar_string(&values[1])?;
+            let all = if mode.eq_ignore_ascii_case("all") {
+                true
+            } else if mode.eq_ignore_ascii_case("one") {
+                false
+            } else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            let pattern = scalar_string(&values[2])?;
+            let escape = match values.get(3) {
+                None | Some(Value::Null) => Some('\\'),
+                Some(value) => scalar_string(value)?.chars().next().or(Some('\\')),
+            };
+            let mut found = Vec::new();
+            json_search(&document, &pattern, escape, all, "$", &mut found);
+            Ok(match found.len() {
+                // MySQL answers NULL when nothing matches, one bare path for
+                // a single hit, and an array once there are several.
+                0 => Value::Null,
+                1 if !all => {
+                    Value::Utf8(mysql_json_text(&serde_json::Value::String(found.remove(0))))
+                }
+                _ => {
+                    if !all {
+                        found.truncate(1);
+                    }
+                    let paths = found.into_iter().map(serde_json::Value::String).collect();
+                    Value::Utf8(mysql_json_text(&serde_json::Value::Array(paths)))
+                }
+            })
         }
         ScalarFunction::JsonValid => {
             // JSON_VALID answers 0 or 1 for any non-NULL input rather than
@@ -3181,6 +3236,62 @@ fn json_contains(target: &serde_json::Value, candidate: &serde_json::Value) -> b
             })
         }
         (left, right) => left == right,
+    }
+}
+
+/// Collects the paths of every string in `document` matching `pattern`.
+///
+/// `MySQL` matches with `LIKE` semantics — `%` for any run, `_` for one
+/// character — against string values only; numbers and booleans never match.
+/// Search stops at the first hit unless `all` is set.
+fn json_search(
+    document: &serde_json::Value,
+    pattern: &str,
+    escape: Option<char>,
+    all: bool,
+    here: &str,
+    found: &mut Vec<String>,
+) {
+    if !all && !found.is_empty() {
+        return;
+    }
+    match document {
+        serde_json::Value::String(text) => {
+            if like_matches(&text.to_lowercase(), &pattern.to_lowercase(), escape) {
+                found.push(here.to_owned());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                json_search(
+                    item,
+                    pattern,
+                    escape,
+                    all,
+                    &format!("{here}[{index}]"),
+                    found,
+                );
+                if !all && !found.is_empty() {
+                    return;
+                }
+            }
+        }
+        serde_json::Value::Object(members) => {
+            for (key, value) in members {
+                // A key needing quotes in a path gets them, so the answer can
+                // be fed straight back into JSON_EXTRACT.
+                let step = if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    format!("{here}.{key}")
+                } else {
+                    format!("{here}.\"{key}\"")
+                };
+                json_search(value, pattern, escape, all, &step, found);
+                if !all && !found.is_empty() {
+                    return;
+                }
+            }
+        }
+        _ => {}
     }
 }
 

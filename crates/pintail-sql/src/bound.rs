@@ -311,6 +311,11 @@ pub enum ScalarFunction {
     MakeTime,
     /// `JSON_VALID(doc)`.
     JsonValid,
+    /// `JSON_SEARCH(doc, 'one'|'all', pattern)`: paths to matching strings.
+    JsonSearch,
+    /// `JSON_VALUE(doc, path)`, optionally `RETURNING` a type. The cast is
+    /// lowered separately, so this only extracts and unquotes.
+    JsonValue,
     /// `JSON_TYPE(doc)`.
     JsonType,
     /// `JSON_LENGTH(doc[, path])`.
@@ -438,6 +443,8 @@ pub enum AggregateFunction {
     GroupConcat,
     /// Collect values (including NULLs) into a JSON array.
     JsonArrayAgg,
+    /// Collect key/value pairs into a JSON object.
+    JsonObjectAgg,
     /// Any one non-NULL value from the group. Clients emit this to satisfy
     /// `ONLY_FULL_GROUP_BY` for a column they know is functionally dependent
     /// on the grouping key, so which row wins is not observable to them.
