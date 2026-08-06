@@ -192,7 +192,20 @@ async fn dashboard() -> Response {
 }
 
 async fn dashboard_asset(Path(path): Path<String>) -> Response {
-    embedded_asset(&path)
+    // Real asset files (hashed JS/CSS, favicon, fonts) live at their exact
+    // embedded path and 404 if truly missing. Route-like paths with no
+    // extension are Nuxt pages: nuxt generate prerenders known routes as
+    // `{path}/index.html`, but a dynamic route like `/databases/{id}` has
+    // no prerendered file, so it falls through to the SPA shell (Nitro's
+    // own `200.html`) and Vue Router resolves it client-side.
+    if std::path::Path::new(&path).extension().is_some() {
+        return embedded_asset(&path);
+    }
+    let nested_index = format!("{path}/index.html");
+    if Dashboard::get(&nested_index).is_some() {
+        return embedded_asset(&nested_index);
+    }
+    embedded_asset("200.html")
 }
 
 fn embedded_asset(path: &str) -> Response {
