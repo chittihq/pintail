@@ -3013,11 +3013,13 @@ fn bind_scalar_function(
         "CONVERT_TZ" if args.len() == 3 => ScalarFunction::ConvertTz,
         "CHAR" if !args.is_empty() => ScalarFunction::Char,
         "RAND" if args.is_empty() => ScalarFunction::Rand,
-        "REGEXP_LIKE" if args.len() == 2 => ScalarFunction::RegexpLike { negated: false },
+        "REGEXP_LIKE" if matches!(args.len(), 2 | 3) => {
+            ScalarFunction::RegexpLike { negated: false }
+        }
         "REGEXP_SUBSTR" if args.len() == 2 => ScalarFunction::RegexpSubstr,
         "REGEXP_INSTR" if args.len() == 2 => ScalarFunction::RegexpInstr,
         "REGEXP_REPLACE" if args.len() == 3 => ScalarFunction::RegexpReplace,
-        "JSON_EXTRACT" if args.len() == 2 => ScalarFunction::JsonExtract { unquote: false },
+        "JSON_EXTRACT" if args.len() >= 2 => ScalarFunction::JsonExtract { unquote: false },
         "JSON_UNQUOTE" if args.len() == 1 => ScalarFunction::JsonUnquote,
         "SUBSTRING_INDEX" if args.len() == 3 => ScalarFunction::SubstringIndex,
         "CONV" if args.len() == 3 => ScalarFunction::Conv,
@@ -5201,6 +5203,17 @@ mod tests {
         let query = bind("SELECT MD5(Name) FROM Events").expect("MD5 binds");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
         assert!(bind("SELECT MD5(Name, Name) FROM Events").is_err());
+    }
+
+    #[test]
+    fn binds_json_and_regexp_optional_arguments() {
+        let query = bind(
+            "SELECT JSON_EXTRACT(Name, '$.a', '$.b'), \
+             REGEXP_LIKE(Name, '^x', 'cm') FROM Events",
+        )
+        .expect("JSON paths and REGEXP match_type bind");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
     }
 
     #[test]

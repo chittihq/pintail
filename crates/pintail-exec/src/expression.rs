@@ -665,7 +665,6 @@ impl CompiledExpr {
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
                     | ScalarFunction::RegexpSubstr
-                    | ScalarFunction::JsonExtract { .. }
                     | ScalarFunction::JsonUnquote
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
@@ -675,6 +674,9 @@ impl CompiledExpr {
                     | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(_) => first,
+                    ScalarFunction::JsonExtract { .. } => first
+                        .saturating_mul(args.len().saturating_sub(1))
+                        .saturating_add(args.len().saturating_mul(2)),
                     // JSON_TYPE returns one of a handful of fixed names.
                     ScalarFunction::JsonType => 16,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
@@ -810,7 +812,6 @@ impl CompiledExpr {
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
                     | ScalarFunction::RegexpSubstr
-                    | ScalarFunction::JsonExtract { .. }
                     | ScalarFunction::JsonUnquote
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
@@ -820,6 +821,9 @@ impl CompiledExpr {
                     | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(_) => first,
+                    ScalarFunction::JsonExtract { .. } => first
+                        .saturating_mul(args.len().saturating_sub(1))
+                        .saturating_add(args.len().saturating_mul(2)),
                     // JSON_TYPE returns one of a handful of fixed names.
                     ScalarFunction::JsonType => 16,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
@@ -1778,7 +1782,12 @@ fn evaluate_eager_scalar(
         ScalarFunction::Rand => Ok(Value::float64(rand::random::<f64>())),
         ScalarFunction::RegexpLike { negated } => {
             let text = scalar_string(&values[0])?;
-            let matched = compiled_regex(&scalar_string(&values[1])?)?.is_match(&text);
+            let match_type = values.get(2).map(scalar_string).transpose()?;
+            let matched = compiled_regex_with_match_type(
+                &scalar_string(&values[1])?,
+                match_type.as_deref().unwrap_or(""),
+            )?
+            .is_match(&text);
             Ok(Value::Boolean(matched != negated))
         }
         ScalarFunction::RegexpSubstr => {
@@ -1805,11 +1814,23 @@ fn evaluate_eager_scalar(
         }
         ScalarFunction::JsonExtract { unquote } => {
             let document = scalar_string(&values[0])?;
-            let path = scalar_string(&values[1])?;
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&document) else {
                 return Err(ExecError::InvalidExpressionType);
             };
-            let Some(found) = json_path_lookup(&parsed, &path)? else {
+            if values.len() > 2 {
+                let mut found = Vec::with_capacity(values.len() - 1);
+                for path in &values[1..] {
+                    if let Some(value) = json_path_lookup(&parsed, &scalar_string(path)?)? {
+                        found.push(value.clone());
+                    }
+                }
+                return Ok(if found.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Utf8(mysql_json_text(&serde_json::Value::Array(found)))
+                });
+            }
+            let Some(found) = json_path_lookup(&parsed, &scalar_string(&values[1])?)? else {
                 return Ok(Value::Null);
             };
             Ok(Value::Utf8(match found {
@@ -2927,9 +2948,9 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
-// Compiled regex cache: patterns are almost always literals, so each
-// worker thread compiles a pattern once. Case-insensitive by default to
-// match the ci collations (docs/limitations.md).
+// Compiled regex cache: patterns and match flags are almost always literals,
+// so each worker thread compiles a combination once. Case-insensitive by
+// default to match the ci collations (docs/limitations.md).
 thread_local! {
     static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, &'static regex::Regex>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -2981,14 +3002,44 @@ fn unicode_posix_classes(pattern: &str) -> String {
 }
 
 fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
+    compiled_regex_with_match_type(pattern, "")
+}
+
+fn compiled_regex_with_match_type(
+    pattern: &str,
+    match_type: &str,
+) -> Result<&'static regex::Regex, ExecError> {
+    let mut case_insensitive = true;
+    let mut multi_line = false;
+    let mut dot_matches_new_line = false;
+    for option in match_type.chars() {
+        match option {
+            // When c and i conflict, MySQL lets the rightmost flag win.
+            'c' => case_insensitive = false,
+            'i' => case_insensitive = true,
+            'm' => multi_line = true,
+            'n' => dot_matches_new_line = true,
+            // Rust's regex engine already treats only LF as a line ending.
+            'u' => {}
+            _ => return Err(ExecError::InvalidExpressionType),
+        }
+    }
+    let cache_key = format!(
+        "{}{}{}\0{pattern}",
+        u8::from(case_insensitive),
+        u8::from(multi_line),
+        u8::from(dot_matches_new_line)
+    );
     REGEX_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(compiled) = cache.get(pattern) {
+        if let Some(compiled) = cache.get(&cache_key) {
             return Ok(*compiled);
         }
         let translated = unicode_posix_classes(pattern);
         let compiled = regex::RegexBuilder::new(&translated)
-            .case_insensitive(true)
+            .case_insensitive(case_insensitive)
+            .multi_line(multi_line)
+            .dot_matches_new_line(dot_matches_new_line)
             .size_limit(1 << 20)
             .build()
             .map_err(|_| ExecError::InvalidExpressionType)?;
@@ -2997,7 +3048,7 @@ fn compiled_regex(pattern: &str) -> Result<&'static regex::Regex, ExecError> {
         // &'static borrows could not survive.
         let leaked: &'static regex::Regex = Box::leak(Box::new(compiled));
         if cache.len() < 256 {
-            cache.insert(pattern.to_owned(), leaked);
+            cache.insert(cache_key, leaked);
         }
         Ok(leaked)
     })
@@ -4146,6 +4197,52 @@ mod tests {
         assert_eq!(digest(Value::Null), Value::Null);
     }
 
+    #[test]
+    fn json_extract_and_regexp_like_honor_optional_arguments() {
+        use pintail_types::{DataType, Value};
+
+        let json = super::evaluate_eager_scalar(
+            ScalarFunction::JsonExtract { unquote: false },
+            &[
+                Value::Utf8(r#"{"a":1,"b":"x"}"#.to_owned()),
+                Value::Utf8("$.a".to_owned()),
+                Value::Utf8("$.b".to_owned()),
+            ],
+            Some(DataType::Utf8),
+        )
+        .expect("multi-path JSON_EXTRACT evaluates");
+        assert_eq!(json, Value::Utf8(r#"[1, "x"]"#.to_owned()));
+
+        let regexp = |text: &str, pattern: &str, match_type: &str| {
+            super::evaluate_eager_scalar(
+                ScalarFunction::RegexpLike { negated: false },
+                &[
+                    Value::Utf8(text.to_owned()),
+                    Value::Utf8(pattern.to_owned()),
+                    Value::Utf8(match_type.to_owned()),
+                ],
+                Some(DataType::Boolean),
+            )
+            .expect("REGEXP_LIKE evaluates")
+        };
+        assert_eq!(regexp("Abc", "abc", "c"), Value::Boolean(false));
+        assert_eq!(regexp("Abc", "abc", "ci"), Value::Boolean(true));
+        assert_eq!(regexp("a\nb", "^b$", "m"), Value::Boolean(true));
+        assert_eq!(regexp("a\nb", "a.b", "n"), Value::Boolean(true));
+        assert!(
+            super::evaluate_eager_scalar(
+                ScalarFunction::RegexpLike { negated: false },
+                &[
+                    Value::Utf8("abc".to_owned()),
+                    Value::Utf8("abc".to_owned()),
+                    Value::Utf8("x".to_owned()),
+                ],
+                Some(DataType::Boolean),
+            )
+            .is_err()
+        );
+    }
+
     /// Hostile arguments must return or error, never abort the process.
     ///
     /// Three defects this session were invisible to a value-comparison
@@ -4178,6 +4275,8 @@ mod tests {
         // (function, arity the binder accepts)
         let surface = [
             (ScalarFunction::SubstringIndex, 3),
+            (ScalarFunction::RegexpLike { negated: false }, 3),
+            (ScalarFunction::JsonExtract { unquote: false }, 3),
             (ScalarFunction::Conv, 3),
             (ScalarFunction::MakeTime, 3),
             (ScalarFunction::Lpad, 3),

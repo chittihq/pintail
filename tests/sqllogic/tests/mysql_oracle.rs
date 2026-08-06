@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 789;
+const EXPECTED_CASES: usize = 791;
 
 struct OracleCase {
     family: &'static str,
@@ -1503,6 +1503,16 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT id, REGEXP_LIKE(name, 'EVENT'), REGEXP_SUBSTR(name, '[0-9]+'), \
              REGEXP_INSTR(name, '-'), REGEXP_REPLACE(name, '-0', '#') \
              FROM events ORDER BY id",
+        ),
+        ordered(
+            "regexp match type",
+            "SELECT REGEXP_LIKE('Abc', 'abc', 'c'), REGEXP_LIKE('Abc', 'abc', 'ci'), \
+             REGEXP_LIKE(CONCAT('a', CHAR(10), 'b'), '^b$', 'm'), \
+             REGEXP_LIKE(CONCAT('a', CHAR(10), 'b'), 'a.b', 'n')",
+        ),
+        ordered(
+            "json extract multiple paths",
+            "SELECT JSON_EXTRACT('{\"a\":1,\"b\":\"x\"}', '$.a', '$.b')",
         ),
         unordered(
             "union distinct",

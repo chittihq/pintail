@@ -4,7 +4,7 @@ What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
 Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
-789 cases, all byte-exact.
+791 cases, all byte-exact.
 
 ## Surface
 
@@ -19,8 +19,8 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 | Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form; correlated scalar aggregates and unique-key lookups, decorrelated to joins |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form |
-| JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`. Read: `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH` |
-| Regex | `REGEXP_LIKE`, `REGEXP_INSTR`, `REGEXP_REPLACE`, `REGEXP_SUBSTR`, and the `REGEXP`/`RLIKE` operators including their `NOT` forms. POSIX bracket classes follow ICU's Unicode definitions, not ASCII |
+| JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`. Read: single- and multi-path `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH` |
+| Regex | `REGEXP_LIKE` with optional `match_type` (`c`/`i`/`m`/`n`/`u`), `REGEXP_INSTR`, `REGEXP_REPLACE`, `REGEXP_SUBSTR`, and the `REGEXP`/`RLIKE` operators including their `NOT` forms. POSIX bracket classes follow ICU's Unicode definitions, not ASCII |
 | Conversion | `CAST`, `CONVERT(value, type)`, `CONVERT(value USING charset)` |
 | `information_schema` | 7 tables, simple projection/filter/order/limit and `COUNT(*)` |
 

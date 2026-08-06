@@ -64,6 +64,11 @@ stays readable as a list of things to fix.
 - `JSON_OBJECT`/`JSON_ARRAY`/`JSON_ARRAYAGG` encode DECIMAL and temporal
   values as JSON strings where MySQL emits numbers or datetime scalars, because
   there is no JSON column type in the executor.
+- JSON paths support member and numeric-index steps. Wildcards, recursive
+  descent, ranges, and `last`-relative indexes still reject (#8).
+- `REGEXP_LIKE` accepts MySQL's optional `match_type`; the longer positional
+  overloads of `REGEXP_INSTR`, `REGEXP_REPLACE`, and `REGEXP_SUBSTR`, plus
+  `REGEXP_COUNT`, remain unimplemented (#8).
 - `CONVERT(value USING charset)` does not perform byte-level transcoding among
   MySQL character sets.
 - `CAST(value AS TIME)` and `CAST(value AS JSON)` reject. MySQL's `TIME` spans
