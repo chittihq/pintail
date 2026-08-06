@@ -720,6 +720,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
+                    ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
                     // Numeric and temporal casts can expand compact input
                     // (`'12'` -> `00:00:12`, scaled DECIMAL, and so on).
                     ScalarFunction::Cast(_) => first.max(128),
@@ -876,6 +877,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonValue
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
+                    ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
                     ScalarFunction::Cast(_) => first.max(128),
                     ScalarFunction::JsonExtract { .. } => first
                         .saturating_mul(args.len().saturating_sub(1))
@@ -2716,6 +2718,11 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             return Ok(
                 cast_mysql_time(&scalar_string(value)?, fsp).map_or(Value::Null, Value::Utf8)
             );
+        }
+        Some(DataType::Json) => {
+            let document = serde_json::from_str(&scalar_string(value)?)
+                .map_err(|_| ExecError::InvalidExpressionType)?;
+            return Ok(Value::Utf8(mysql_json_text(&document)));
         }
         _ => {}
     }

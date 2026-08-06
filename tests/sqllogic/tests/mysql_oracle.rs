@@ -890,7 +890,9 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written cast targets",
             "SELECT CAST(42 AS CHAR), CAST('42' AS SIGNED), CAST('42' AS UNSIGNED), \
-             CAST(-1 AS SIGNED), CAST('3.7' AS DECIMAL(10,2)), CAST(1 AS CHAR(4))",
+             CAST(-1 AS SIGNED), CAST('3.7' AS DECIMAL(10,2)), CAST(1 AS CHAR(4)), \
+             CAST('{\"aa\":1,\"b\":[true,null]}' AS JSON), \
+             JSON_TYPE(CAST('[1,2]' AS JSON))",
         ),
         // JSON containment is asymmetric and recursive, which is the part
         // most likely to be subtly wrong: an array contains a bare scalar

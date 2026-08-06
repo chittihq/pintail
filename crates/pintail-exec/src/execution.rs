@@ -10710,6 +10710,34 @@ mod tests {
     }
 
     #[test]
+    fn casts_only_valid_documents_to_canonical_json() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let plan = physical(
+            r#"SELECT CAST('{"aa":1,"b":[true,null]}' AS JSON),
+               JSON_TYPE(CAST('[1,2]' AS JSON))"#,
+        );
+        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Utf8(r#"{"b": [true, null], "aa": 1}"#.to_owned()))
+        );
+        assert_eq!(
+            batch.column(1).and_then(|column| column.value(0)),
+            Some(&Value::Utf8("ARRAY".to_owned()))
+        );
+
+        let invalid = physical("SELECT CAST('not-json' AS JSON)");
+        let mut execution = Execution::start(invalid, &provider, 32 * 1024).expect("execution");
+        assert!(matches!(
+            execution.next_batch(),
+            Err(ExecError::InvalidExpressionType)
+        ));
+    }
+
+    #[test]
     fn enforces_the_hard_query_memory_cap() {
         let provider = StaticProvider {
             batches: Mutex::new(vec![source_batch()]),

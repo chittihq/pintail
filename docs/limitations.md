@@ -86,9 +86,8 @@ stays readable as a list of things to fix.
   MySQL character sets.
 - `CAST(value AS TIME[(fsp)])` accepts MySQL's interval-shaped, compact, day-
   prefixed, and datetime inputs, rounds to the declared fractional precision,
-  and clamps to `-838:59:59`..`838:59:59`. `CAST AS JSON` still rejects until
-  invalid documents can be rejected while valid ones are canonicalized;
-  `CAST AS YEAR` also rejects (#17).
+  and clamps to `-838:59:59`..`838:59:59`. `CAST AS JSON` validates and
+  canonicalizes documents. `CAST AS YEAR` still rejects (#17).
 - `information_schema` does not support joins, aggregates beyond `COUNT(*)`, or
   metadata tables outside the served set.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,

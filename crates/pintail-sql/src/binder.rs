@@ -3518,8 +3518,7 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
                 .unwrap_or(0);
             return Some(DataType::Time64 { fsp: fsp.min(6) });
         }
-        // CAST AS JSON stays rejected until the executor validates and
-        // canonicalizes the document rather than merely relabeling text.
+        SqlDataType::JSON => return Some(DataType::Json),
         _ => {}
     }
     let name = data_type.to_string().to_ascii_uppercase();
@@ -5369,6 +5368,12 @@ mod tests {
             query.projection[0].expr.data_type,
             Some(DataType::Time64 { fsp: 3 })
         );
+    }
+
+    #[test]
+    fn binds_json_cast_as_a_typed_document() {
+        let query = bind(r#"SELECT CAST('{"a":1}' AS JSON) FROM Events"#).expect("binds");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
     }
 
     #[test]
