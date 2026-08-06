@@ -39,6 +39,10 @@ stays readable as a list of things to fix.
   storage types matching the anchor's. `cte_max_recursion_depth` is not
   configurable; a non-converging recursion aborts with an explicit error.
 - `RIGHT JOIN` supports only the two-table form.
+- Parenthesized root INNER/CROSS join groups bind by flattening their left-deep
+  chain. Aliased groups, nested right inputs, and parenthesized groups that
+  contain outer/semi/anti joins reject because the current bound plan cannot
+  preserve their join tree (#16).
 - `GROUP_CONCAT`'s `group_concat_max_len` session variable is not configurable
   and the truncation warning is not raised.
 - Aggregates are limited to `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`,

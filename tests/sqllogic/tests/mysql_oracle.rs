@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
-const EXPECTED_CASES: usize = 788;
+const EXPECTED_CASES: usize = 789;
 
 struct OracleCase {
     family: &'static str,
@@ -642,6 +642,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written natural join",
             "SELECT id, name FROM events NATURAL LEFT JOIN users ORDER BY id",
+        ),
+        ordered(
+            "hand-written parenthesized inner join",
+            "SELECT e.id, e.name, u.name FROM \
+             (events e INNER JOIN users u ON e.id = u.id) ORDER BY e.id",
         ),
         ordered(
             "hand-written scalar subquery",

@@ -2730,7 +2730,7 @@ mod tests {
 
         let statement = parse_statement(
             "SELECT events.name AS event_name, users.name AS user_name \
-             FROM events INNER JOIN users ON events.id = users.id",
+             FROM (events INNER JOIN users ON events.id = users.id)",
         )
         .expect("parse hash join");
         let bound = Binder::new(&catalog, Some("app"))

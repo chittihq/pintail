@@ -4,7 +4,7 @@ What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
 Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
-788 cases, all byte-exact.
+789 cases, all byte-exact.
 
 ## Surface
 
@@ -15,7 +15,7 @@ Verified by the differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) —
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; `RANGE BETWEEN` with offsetless bounds, where `CURRENT ROW` covers the peer group; `RANGE` with an offset and `GROUPS` reject |
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; the extending form `OVER (w …)` rejects |
-| Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities |
+| Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root INNER/CROSS groups |
 | Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form; correlated scalar aggregates and unique-key lookups, decorrelated to joins |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form |

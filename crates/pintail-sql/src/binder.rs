@@ -7,8 +7,8 @@ use sqlparser::ast::{
     DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
     GroupByExpr, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query,
     Select, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier,
-    Statement, TableFactor, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
-    WindowType,
+    Statement, TableFactor, TableWithJoins, UnaryOperator, Value as SqlValue,
+    WildcardAdditionalOptions, WindowType,
 };
 
 use crate::bound::{
@@ -1010,6 +1010,8 @@ impl<'catalog> Binder<'catalog> {
         // remaining right columns.
         let mut wildcard_order: Vec<BoundColumn> = Vec::new();
         for table_with_joins in &select.from {
+            let flattened = flatten_parenthesized_inner_joins(table_with_joins)?;
+            let table_with_joins = flattened.as_ref().unwrap_or(table_with_joins);
             // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs; the linear
             // join chain expresses the two-table form directly. RIGHT JOINs
             // inside longer chains keep rejecting in bind_join_operator.
@@ -1627,6 +1629,43 @@ fn bind_join_operator(
             Err(BindError::UnsupportedJoinOperator(format!("{operator:?}")))
         }
     }
+}
+
+/// Removes parentheses around a root left-deep INNER/CROSS join group. This
+/// is exactly representable by [`BoundFrom`]. A nested group used as a join's
+/// right input, an aliased group, or a group containing outer/semi/anti joins
+/// keeps rejecting because flattening those forms can change row preservation
+/// or visible names.
+fn flatten_parenthesized_inner_joins(
+    table: &TableWithJoins,
+) -> Result<Option<TableWithJoins>, BindError> {
+    let TableFactor::NestedJoin {
+        table_with_joins: nested,
+        alias,
+    } = &table.relation
+    else {
+        return Ok(None);
+    };
+    if alias.is_some() {
+        return Err(BindError::UnsupportedTableFactor(
+            table.relation.to_string(),
+        ));
+    }
+    let recursively_flattened = flatten_parenthesized_inner_joins(nested)?;
+    let mut flattened = recursively_flattened.unwrap_or_else(|| (**nested).clone());
+    for join in &flattened.joins {
+        if matches!(join.relation, TableFactor::NestedJoin { .. }) {
+            return Err(BindError::UnsupportedTableFactor(join.relation.to_string()));
+        }
+        let (kind, _) = bind_join_operator(&join.join_operator)?;
+        if !matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Cross) {
+            return Err(BindError::UnsupportedTableFactor(
+                table.relation.to_string(),
+            ));
+        }
+    }
+    flattened.joins.extend(table.joins.iter().cloned());
+    Ok(Some(flattened))
 }
 
 fn validate_select_shape(select: &Select) -> Result<(), BindError> {
@@ -5113,6 +5152,8 @@ mod tests {
         assert_eq!(query.from.len(), 1);
         assert_eq!(query.from[0].joins.len(), 1);
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
+
+        assert!(bind("SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id)").is_err());
     }
 
     #[test]
