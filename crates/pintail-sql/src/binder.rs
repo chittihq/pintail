@@ -253,6 +253,9 @@ impl<'catalog> Binder<'catalog> {
                 return Err(unsupported());
             }
         }
+        if !matches!(quantifier, SetQuantifier::All) && has_json_projection(&anchor) {
+            return Err(unsupported());
+        }
         anchor.recursive = Some(Box::new(BoundRecursive {
             database_id,
             table_id,
@@ -290,6 +293,7 @@ impl<'catalog> Binder<'catalog> {
                 }
                 unify_union_layout(&mut left, &mut right)?;
                 if !matches!(quantifier, SetQuantifier::All) {
+                    reject_json_set_keys(&left)?;
                     left.union_distinct = true;
                 }
                 left.union_all.push(right);
@@ -305,6 +309,7 @@ impl<'catalog> Binder<'catalog> {
                 let mut left = self.bind_set_expr(left, ctes)?;
                 let mut right = self.bind_set_expr(right, ctes)?;
                 unify_union_layout(&mut left, &mut right)?;
+                reject_json_set_keys(&left)?;
                 let all = matches!(quantifier, SetQuantifier::All);
                 let kind = match (op, all) {
                     (SetOperator::Intersect, false) => BoundSetOpKind::Intersect,
@@ -540,6 +545,15 @@ impl<'catalog> Binder<'catalog> {
                 return Err(BindError::UnsupportedQueryClause("DISTINCT ON".to_owned()));
             }
         };
+        if distinct
+            && projection
+                .iter()
+                .any(|item| item.expr.data_type == Some(DataType::Json))
+        {
+            return Err(BindError::UnsupportedQueryClause(
+                "DISTINCT over JSON values requires JSON-aware equality".to_owned(),
+            ));
+        }
         Ok(BoundQuery {
             from,
             tables,
@@ -1452,6 +1466,23 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
     Ok(())
 }
 
+fn has_json_projection(query: &BoundQuery) -> bool {
+    query
+        .projection
+        .iter()
+        .any(|item| item.expr.data_type == Some(DataType::Json))
+}
+
+fn reject_json_set_keys(query: &BoundQuery) -> Result<(), BindError> {
+    if has_json_projection(query) {
+        Err(BindError::IncompatibleSetOperation(
+            "set duplicate handling over JSON values requires JSON-aware equality".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Wraps a UNION branch expression in a CAST to the unified decimal type
 /// unless it already has it (or is a bare NULL, which any type absorbs).
 fn wrap_in_decimal_cast(expr: &mut BoundExpr, unified: DataType) {
@@ -1767,7 +1798,7 @@ fn bind_group_by(
     if !modifiers.is_empty() {
         return Err(BindError::UnsupportedQueryClause(group_by.to_string()));
     }
-    expressions
+    let groups = expressions
         .iter()
         .map(|expr| {
             let Expr::Identifier(identifier) = expr else {
@@ -1793,7 +1824,16 @@ fn bind_group_by(
                 ))),
             }
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if groups
+        .iter()
+        .any(|expression| expression.data_type == Some(DataType::Json))
+    {
+        return Err(BindError::InvalidGrouping(
+            "GROUP BY over JSON values requires JSON-aware equality".to_owned(),
+        ));
+    }
+    Ok(groups)
 }
 
 fn reject_wildcard_options(options: &WildcardAdditionalOptions) -> Result<(), BindError> {
@@ -2835,6 +2875,22 @@ fn bind_window_function(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if partition_by
+        .iter()
+        .any(|expression| expression.data_type == Some(DataType::Json))
+    {
+        return Err(BindError::InvalidGrouping(
+            "window PARTITION BY over JSON requires JSON-aware equality".to_owned(),
+        ));
+    }
+    if order_by
+        .iter()
+        .any(|key| key.expr.data_type == Some(DataType::Json))
+    {
+        return Err(BindError::InvalidOrderBy(
+            "window ORDER BY over JSON requires JSON-aware ordering".to_owned(),
+        ));
+    }
     let frame = bind_window_frame(spec, function)?;
     // FIRST_VALUE and LAST_VALUE read the frame by definition — LAST_VALUE's
     // whole reputation for surprise comes from the default frame — so a
@@ -3945,6 +4001,11 @@ fn bind_aggregate(
             sqlparser::ast::FunctionArgumentClause::OrderBy(keys) => {
                 for key in keys {
                     let bound = bind_expr(&key.expr, tables, subqueries)?;
+                    if bound.data_type == Some(DataType::Json) {
+                        return Err(BindError::UnsupportedAggregate(format!(
+                            "{function}: ORDER BY over JSON requires JSON-aware ordering"
+                        )));
+                    }
                     order_within.push((bound, key.options.asc.unwrap_or(true)));
                 }
             }
@@ -3981,6 +4042,12 @@ fn bind_aggregate(
             _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
         }
     };
+    if distinct && expr.as_ref().and_then(|expression| expression.data_type) == Some(DataType::Json)
+    {
+        return Err(BindError::UnsupportedAggregate(format!(
+            "{function}: DISTINCT over JSON requires JSON-aware equality"
+        )));
+    }
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let aggregate = BoundAggregate {
         function: aggregate_function,
@@ -4091,7 +4158,9 @@ fn aggregate_result_type(
             };
             Ok((Some(result), true))
         }
-        AggregateFunction::Minimum | AggregateFunction::Maximum if is_mysql_scalar(input_type) => {
+        AggregateFunction::Minimum | AggregateFunction::Maximum
+            if is_mysql_scalar(input_type) && input_type != Some(DataType::Json) =>
+        {
             Ok((input_type, true))
         }
         AggregateFunction::GroupConcat if is_mysql_scalar(input_type) => {
@@ -4518,7 +4587,10 @@ fn arithmetic_type(
 }
 
 fn comparable(left: Option<DataType>, right: Option<DataType>) -> bool {
-    is_mysql_scalar(left) && is_mysql_scalar(right)
+    is_mysql_scalar(left)
+        && is_mysql_scalar(right)
+        && left != Some(DataType::Json)
+        && right != Some(DataType::Json)
 }
 
 fn is_numeric(data_type: Option<DataType>) -> bool {
@@ -4627,6 +4699,15 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                 &bound.tables,
                 allow_hidden,
             )?;
+            if bound
+                .projection
+                .get(index)
+                .is_some_and(|projection| projection.expr.data_type == Some(DataType::Json))
+            {
+                return Err(BindError::InvalidOrderBy(
+                    "ORDER BY over JSON values requires JSON-aware ordering".to_owned(),
+                ));
+            }
             let ascending = order.options.asc.unwrap_or(true);
             Ok(BoundOrderKey {
                 index,
@@ -5281,6 +5362,77 @@ mod tests {
         .expect("JSON paths and REGEXP match_type bind");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
         assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
+    }
+
+    #[test]
+    fn rejects_json_operations_without_json_aware_key_semantics() {
+        let json = "JSON_EXTRACT(Name, '$.a')";
+        assert!(matches!(
+            bind(&format!("SELECT {json} = {json} FROM Events")),
+            Err(BindError::InvalidBinaryTypes { .. })
+        ));
+        assert!(matches!(
+            bind(&format!("SELECT {json} IN ({json}) FROM Events")),
+            Err(BindError::InvalidScalarFunction(_))
+        ));
+        assert!(matches!(
+            bind(&format!(
+                "SELECT {json} BETWEEN {json} AND {json} FROM Events"
+            )),
+            Err(BindError::InvalidScalarFunction(_))
+        ));
+        assert!(matches!(
+            bind(&format!("SELECT {json} FROM Events GROUP BY {json}")),
+            Err(BindError::InvalidGrouping(_))
+        ));
+        assert!(matches!(
+            bind(&format!("SELECT DISTINCT {json} FROM Events")),
+            Err(BindError::UnsupportedQueryClause(_))
+        ));
+        assert!(matches!(
+            bind(&format!(
+                "SELECT {json} AS document FROM Events ORDER BY document"
+            )),
+            Err(BindError::InvalidOrderBy(_))
+        ));
+        assert!(matches!(
+            bind(&format!("SELECT MIN({json}) FROM Events")),
+            Err(BindError::InvalidAggregateType { .. })
+        ));
+        assert!(matches!(
+            bind(&format!("SELECT COUNT(DISTINCT {json}) FROM Events")),
+            Err(BindError::UnsupportedAggregate(_))
+        ));
+        assert!(matches!(
+            bind(&format!(
+                "SELECT ROW_NUMBER() OVER (PARTITION BY {json}) FROM Events"
+            )),
+            Err(BindError::InvalidGrouping(_))
+        ));
+        assert!(matches!(
+            bind(&format!(
+                "SELECT ROW_NUMBER() OVER (ORDER BY {json}) FROM Events"
+            )),
+            Err(BindError::InvalidOrderBy(_))
+        ));
+        assert!(matches!(
+            bind(&format!(
+                "SELECT GROUP_CONCAT(Name ORDER BY {json}) FROM Events"
+            )),
+            Err(BindError::UnsupportedAggregate(_))
+        ));
+        assert!(matches!(
+            bind(&format!(
+                "SELECT {json} FROM Events UNION SELECT {json} FROM Events"
+            )),
+            Err(BindError::IncompatibleSetOperation(_))
+        ));
+        assert!(
+            bind(&format!(
+                "SELECT {json} FROM Events UNION ALL SELECT {json} FROM Events"
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
