@@ -61,6 +61,9 @@ The corpus has three layers:
 3. **Typed diversify cases** (40 cases) — multi-table `orders` seed with
    `DECIMAL` / `DATETIME` / `JSON` columns, joins against `users`, and
    column-native aggregates, windows, JSON extract, and temporal grains.
+4. **Collation differential matrix** (12 cases) — Unicode equality, ordering,
+   grouping, DISTINCT, joins, `IN`, extrema, and character-counted `LIKE`
+   behavior under the advertised `utf8mb4_0900_ai_ci` profile.
 
 A separate non-Docker unit test (`documented_rejects_stay_explicit`) pins
 twelve limitation shapes so they fail closed with an explicit error rather
@@ -88,7 +91,7 @@ DDL). After every phase it re-verifies each base table over the wire protocol
 plus 47 differential query shapes covering joins, windows, aggregates,
 subqueries, CTEs, set operations, JSON extract, and decimal averages. A pinned Sequelize, Prisma, and Drizzle
 matrix additionally compares generated read queries, decoded results, and
-schema-introspection artifacts against MySQL. The complete gate records 506
+schema-introspection artifacts against MySQL. The complete gate records 637
 passing checks; that headline is checks across phases, not independent
 behaviors. Documented gaps report WARN. `E2E_PHASES` selects a subset while
 iterating, and `PINTAIL_E2E_BINARY` skips the release build. The M3 and M4 gates

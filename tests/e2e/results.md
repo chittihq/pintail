@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-07T17:21:25.333Z.
+Measured 2026-08-07T22:09:51.902Z.
 
-**506 passed, 0 failed, 3 documented-gap warnings.**
+**637 passed, 0 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -47,6 +47,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | snapshot | query:window ranking per group | PASS |  |
 | snapshot | query:window share of total over grouped output | PASS |  |
 | snapshot | query:window running total | PASS |  |
+| snapshot | query:decimal column average beyond simple sum | PASS |  |
+| snapshot | query:json extract filter on customer meta | PASS |  |
+| snapshot | query:fan-out join group concat line products | PASS |  |
+| snapshot | query:outer join customers without recent orders | PASS |  |
+| snapshot | query:set op union distinct tiers and statuses | PASS |  |
+| snapshot | query:temporal convert and date_format grain | PASS |  |
+| snapshot | query:correlated not exists open orders | PASS |  |
+| snapshot | query:window lag payment-shaped totals | PASS |  |
+| snapshot | query:multi-key join items to orders | PASS |  |
+| snapshot | query:between and null-safe coalesce on balance | PASS |  |
+| snapshot | query:intersect all-style customer buyers | PASS |  |
+| snapshot | query:derived table status revenue share | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -112,6 +124,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | orm-compat | query:window ranking per group | PASS |  |
 | orm-compat | query:window share of total over grouped output | PASS |  |
 | orm-compat | query:window running total | PASS |  |
+| orm-compat | query:decimal column average beyond simple sum | PASS |  |
+| orm-compat | query:json extract filter on customer meta | PASS |  |
+| orm-compat | query:fan-out join group concat line products | PASS |  |
+| orm-compat | query:outer join customers without recent orders | PASS |  |
+| orm-compat | query:set op union distinct tiers and statuses | PASS |  |
+| orm-compat | query:temporal convert and date_format grain | PASS |  |
+| orm-compat | query:correlated not exists open orders | PASS |  |
+| orm-compat | query:window lag payment-shaped totals | PASS |  |
+| orm-compat | query:multi-key join items to orders | PASS |  |
+| orm-compat | query:between and null-safe coalesce on balance | PASS |  |
+| orm-compat | query:intersect all-style customer buyers | PASS |  |
+| orm-compat | query:derived table status revenue share | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -153,6 +177,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | crud | query:window ranking per group | PASS |  |
 | crud | query:window share of total over grouped output | PASS |  |
 | crud | query:window running total | PASS |  |
+| crud | query:decimal column average beyond simple sum | PASS |  |
+| crud | query:json extract filter on customer meta | PASS |  |
+| crud | query:fan-out join group concat line products | PASS |  |
+| crud | query:outer join customers without recent orders | PASS |  |
+| crud | query:set op union distinct tiers and statuses | PASS |  |
+| crud | query:temporal convert and date_format grain | PASS |  |
+| crud | query:correlated not exists open orders | PASS |  |
+| crud | query:window lag payment-shaped totals | PASS |  |
+| crud | query:multi-key join items to orders | PASS |  |
+| crud | query:between and null-safe coalesce on balance | PASS |  |
+| crud | query:intersect all-style customer buyers | PASS |  |
+| crud | query:derived table status revenue share | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -194,6 +230,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | type-edges | query:window ranking per group | PASS |  |
 | type-edges | query:window share of total over grouped output | PASS |  |
 | type-edges | query:window running total | PASS |  |
+| type-edges | query:decimal column average beyond simple sum | PASS |  |
+| type-edges | query:json extract filter on customer meta | PASS |  |
+| type-edges | query:fan-out join group concat line products | PASS |  |
+| type-edges | query:outer join customers without recent orders | PASS |  |
+| type-edges | query:set op union distinct tiers and statuses | PASS |  |
+| type-edges | query:temporal convert and date_format grain | PASS |  |
+| type-edges | query:correlated not exists open orders | PASS |  |
+| type-edges | query:window lag payment-shaped totals | PASS |  |
+| type-edges | query:multi-key join items to orders | PASS |  |
+| type-edges | query:between and null-safe coalesce on balance | PASS |  |
+| type-edges | query:intersect all-style customer buyers | PASS |  |
+| type-edges | query:derived table status revenue share | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
@@ -236,6 +284,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | ddl | query:window ranking per group | PASS |  |
 | ddl | query:window share of total over grouped output | PASS |  |
 | ddl | query:window running total | PASS |  |
+| ddl | query:decimal column average beyond simple sum | PASS |  |
+| ddl | query:json extract filter on customer meta | PASS |  |
+| ddl | query:fan-out join group concat line products | PASS |  |
+| ddl | query:outer join customers without recent orders | PASS |  |
+| ddl | query:set op union distinct tiers and statuses | PASS |  |
+| ddl | query:temporal convert and date_format grain | PASS |  |
+| ddl | query:correlated not exists open orders | PASS |  |
+| ddl | query:window lag payment-shaped totals | PASS |  |
+| ddl | query:multi-key join items to orders | PASS |  |
+| ddl | query:between and null-safe coalesce on balance | PASS |  |
+| ddl | query:intersect all-style customer buyers | PASS |  |
+| ddl | query:derived table status revenue share | PASS |  |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
@@ -284,6 +344,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | churn | query:window ranking per group | PASS |  |
 | churn | query:window share of total over grouped output | PASS |  |
 | churn | query:window running total | PASS |  |
+| churn | query:decimal column average beyond simple sum | PASS |  |
+| churn | query:json extract filter on customer meta | PASS |  |
+| churn | query:fan-out join group concat line products | PASS |  |
+| churn | query:outer join customers without recent orders | PASS |  |
+| churn | query:set op union distinct tiers and statuses | PASS |  |
+| churn | query:temporal convert and date_format grain | PASS |  |
+| churn | query:correlated not exists open orders | PASS |  |
+| churn | query:window lag payment-shaped totals | PASS |  |
+| churn | query:multi-key join items to orders | PASS |  |
+| churn | query:between and null-safe coalesce on balance | PASS |  |
+| churn | query:intersect all-style customer buyers | PASS |  |
+| churn | query:derived table status revenue share | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -330,9 +402,21 @@ Measured 2026-08-07T17:21:25.333Z.
 | spill | query:window ranking per group | PASS |  |
 | spill | query:window share of total over grouped output | PASS |  |
 | spill | query:window running total | PASS |  |
+| spill | query:decimal column average beyond simple sum | PASS |  |
+| spill | query:json extract filter on customer meta | PASS |  |
+| spill | query:fan-out join group concat line products | PASS |  |
+| spill | query:outer join customers without recent orders | PASS |  |
+| spill | query:set op union distinct tiers and statuses | PASS |  |
+| spill | query:temporal convert and date_format grain | PASS |  |
+| spill | query:correlated not exists open orders | PASS |  |
+| spill | query:window lag payment-shaped totals | PASS |  |
+| spill | query:multi-key join items to orders | PASS |  |
+| spill | query:between and null-safe coalesce on balance | PASS |  |
+| spill | query:intersect all-style customer buyers | PASS |  |
+| spill | query:derived table status revenue share | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
-| pooling | pool:session-reset-between-borrows | WARN | time_zone leaked across borrows as +05:30 |
+| pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
 | pooling | converge:audit_log | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
@@ -375,6 +459,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | pooling | query:window ranking per group | PASS |  |
 | pooling | query:window share of total over grouped output | PASS |  |
 | pooling | query:window running total | PASS |  |
+| pooling | query:decimal column average beyond simple sum | PASS |  |
+| pooling | query:json extract filter on customer meta | PASS |  |
+| pooling | query:fan-out join group concat line products | PASS |  |
+| pooling | query:outer join customers without recent orders | PASS |  |
+| pooling | query:set op union distinct tiers and statuses | PASS |  |
+| pooling | query:temporal convert and date_format grain | PASS |  |
+| pooling | query:correlated not exists open orders | PASS |  |
+| pooling | query:window lag payment-shaped totals | PASS |  |
+| pooling | query:multi-key join items to orders | PASS |  |
+| pooling | query:between and null-safe coalesce on balance | PASS |  |
+| pooling | query:intersect all-style customer buyers | PASS |  |
+| pooling | query:derived table status revenue share | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
@@ -417,6 +513,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | restart | query:window ranking per group | PASS |  |
 | restart | query:window share of total over grouped output | PASS |  |
 | restart | query:window running total | PASS |  |
+| restart | query:decimal column average beyond simple sum | PASS |  |
+| restart | query:json extract filter on customer meta | PASS |  |
+| restart | query:fan-out join group concat line products | PASS |  |
+| restart | query:outer join customers without recent orders | PASS |  |
+| restart | query:set op union distinct tiers and statuses | PASS |  |
+| restart | query:temporal convert and date_format grain | PASS |  |
+| restart | query:correlated not exists open orders | PASS |  |
+| restart | query:window lag payment-shaped totals | PASS |  |
+| restart | query:multi-key join items to orders | PASS |  |
+| restart | query:between and null-safe coalesce on balance | PASS |  |
+| restart | query:intersect all-style customer buyers | PASS |  |
+| restart | query:derived table status revenue share | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -473,6 +581,18 @@ Measured 2026-08-07T17:21:25.333Z.
 | control-plane | query:window ranking per group | PASS |  |
 | control-plane | query:window share of total over grouped output | PASS |  |
 | control-plane | query:window running total | PASS |  |
+| control-plane | query:decimal column average beyond simple sum | PASS |  |
+| control-plane | query:json extract filter on customer meta | PASS |  |
+| control-plane | query:fan-out join group concat line products | PASS |  |
+| control-plane | query:outer join customers without recent orders | PASS |  |
+| control-plane | query:set op union distinct tiers and statuses | PASS |  |
+| control-plane | query:temporal convert and date_format grain | PASS |  |
+| control-plane | query:correlated not exists open orders | PASS |  |
+| control-plane | query:window lag payment-shaped totals | PASS |  |
+| control-plane | query:multi-key join items to orders | PASS |  |
+| control-plane | query:between and null-safe coalesce on balance | PASS |  |
+| control-plane | query:intersect all-style customer buyers | PASS |  |
+| control-plane | query:derived table status revenue share | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
@@ -516,3 +636,15 @@ Measured 2026-08-07T17:21:25.333Z.
 | ddl-documented-gaps | query:window ranking per group | PASS |  |
 | ddl-documented-gaps | query:window share of total over grouped output | PASS |  |
 | ddl-documented-gaps | query:window running total | PASS |  |
+| ddl-documented-gaps | query:decimal column average beyond simple sum | PASS |  |
+| ddl-documented-gaps | query:json extract filter on customer meta | PASS |  |
+| ddl-documented-gaps | query:fan-out join group concat line products | SKIP |  |
+| ddl-documented-gaps | query:outer join customers without recent orders | PASS |  |
+| ddl-documented-gaps | query:set op union distinct tiers and statuses | PASS |  |
+| ddl-documented-gaps | query:temporal convert and date_format grain | PASS |  |
+| ddl-documented-gaps | query:correlated not exists open orders | PASS |  |
+| ddl-documented-gaps | query:window lag payment-shaped totals | PASS |  |
+| ddl-documented-gaps | query:multi-key join items to orders | SKIP |  |
+| ddl-documented-gaps | query:between and null-safe coalesce on balance | PASS |  |
+| ddl-documented-gaps | query:intersect all-style customer buyers | PASS |  |
+| ddl-documented-gaps | query:derived table status revenue share | PASS |  |

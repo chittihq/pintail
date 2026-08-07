@@ -236,9 +236,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ceiling sized above one input batch and below accumulated operator state;
   live sort, grouped aggregation, standalone DISTINCT, and hash join must each
   report nonzero spill files and bytes before normal configuration is restored.
-- The clean repository gate passes formatting and strict workspace Clippy, 399
-  nextest cases, all 822 byte-exact MySQL 8.4 differential cases, and E2E with
-  506 passes, zero failures, and three documented-gap warnings.
+- The clean repository gate passes formatting and strict workspace Clippy, 408
+  nextest cases, all 874 byte-exact MySQL 8.4 differential cases, and E2E with
+  637 passes, zero failures, and two documented-gap warnings.
 - The deterministic 20-million-order benchmark matches MySQL results and
   passes the required 50x aggregate-speedup gate. The ci-profile production
   snapshot and cold-query acceptance workload also passes with its declared
