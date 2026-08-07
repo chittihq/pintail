@@ -21,7 +21,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 862;
+const EXPECTED_CASES: usize = 874;
 
 struct OracleCase {
     family: &'static str,
@@ -1268,6 +1268,64 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "hand-written collation",
             "SELECT MIN(note), MAX(note), 'a' = 'a ', \
              'a' COLLATE utf8mb4_0900_ai_ci = 'A' FROM events",
+        ),
+        ordered(
+            "collation unicode equality",
+            "SELECT 'A' = 'a', 'É' = 'e', 'é' = 'e\u{301}', 'ß' = 'ss'",
+        ),
+        ordered(
+            "collation locale-sensitive equality",
+            "SELECT 'İ' = 'i', 'ı' = 'i', 'Æ' = 'ae', 'Œ' = 'oe'",
+        ),
+        ordered(
+            "collation supplementary equality and order",
+            "SELECT '😀' < '😁', '🪿' = '🪿', '𝔄' = 'A'",
+        ),
+        ordered(
+            "collation no-pad and binary",
+            "SELECT 'a' = 'a ', CAST('A' AS BINARY) = CAST('a' AS BINARY), \
+             CAST('é' AS BINARY) = CAST('e' AS BINARY)",
+        ),
+        ordered(
+            "collation explicit profile",
+            "SELECT 'É' COLLATE utf8mb4_0900_ai_ci = \
+             'e' COLLATE utf8mb4_0900_ai_ci",
+        ),
+        ordered(
+            "collation grouping",
+            "SELECT value, COUNT(*) FROM \
+             (SELECT 'É' AS value UNION ALL SELECT 'e' UNION ALL SELECT 'z') c \
+             GROUP BY value ORDER BY value",
+        ),
+        ordered(
+            "collation distinct",
+            "SELECT COUNT(DISTINCT value) FROM \
+             (SELECT 'É' AS value UNION ALL SELECT 'e' UNION ALL SELECT 'z') c",
+        ),
+        ordered(
+            "collation join",
+            "SELECT COUNT(*) FROM (SELECT 'É' AS value) l \
+             JOIN (SELECT 'e' AS value) r ON l.value = r.value",
+        ),
+        ordered(
+            "collation membership",
+            "SELECT 'É' IN ('e', 'z'), 'ß' IN ('ss'), 'x' IN ('y')",
+        ),
+        ordered(
+            "collation pattern matching",
+            "SELECT 'Éclair' LIKE 'e%', LOCATE('SS', 'straße'), \
+             'straße' LIKE 'stra_e'",
+        ),
+        ordered(
+            "collation extrema",
+            "SELECT MIN(value), MAX(value) FROM \
+             (SELECT 'Zulu' AS value UNION ALL SELECT 'alpha') c",
+        ),
+        ordered(
+            "collation ordering",
+            "SELECT value FROM \
+             (SELECT 'éclair' AS value UNION ALL SELECT 'Elephant' UNION ALL SELECT 'zebra') c \
+             ORDER BY value",
         ),
         ordered(
             "hand-written left join aggregate",

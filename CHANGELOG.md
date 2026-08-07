@@ -20,7 +20,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   collation. CDC restart coverage also proves schema-history charset and
   collation metadata survive reopening a tracked table.
 - MySQL differential oracle diversify batch: typed multi-table `orders` seed
-  (`DECIMAL` / `DATETIME` / `JSON`), forty column-native match cases (862 total),
+  (`DECIMAL` / `DATETIME` / `JSON`), forty column-native match cases plus a
+  twelve-case collation matrix (874 total),
   twelve fail-closed reject shapes (`documented_rejects_stay_explicit`), twelve
   additional e2e differential query shapes (47 total), and
   `scripts/oracle-coverage.ts` for family/template/function inventory. Prefer
