@@ -451,12 +451,20 @@ impl PhysicalPlanner {
                         condition,
                     });
                 }
+                // An ON clause routinely carries ordinary predicates beside
+                // its join keys. Apply those to one input instead of letting
+                // a single non-key conjunct reject the whole join.
+                let (condition, left_filter, right_filter) =
+                    split_join_condition(condition, &left, &right, kind);
+                let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
                 let mut pairs = equi_join_key_pairs(&condition, &left, &right)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
+                let left_input = filtered(Self::plan(*left)?, left_filter);
+                let right_input = filtered(Self::plan(*right)?, right_filter);
                 Ok(PhysicalPlan::HashJoin {
-                    left: Box::new(Self::plan(*left)?),
-                    right: Box::new(Self::plan(*right)?),
+                    left: Box::new(left_input),
+                    right: Box::new(right_input),
                     kind,
                     left_key,
                     extra_keys: pairs,
@@ -484,6 +492,88 @@ fn plan_limit(input: LogicalPlan, offset: u64, count: u64) -> Result<PhysicalPla
     })
 }
 
+fn and_conjuncts(expr: &BoundExpr, out: &mut Vec<BoundExpr>) {
+    if let BoundExprKind::Binary {
+        op: BinaryOp::And,
+        left,
+        right,
+    } = &expr.kind
+    {
+        and_conjuncts(left, out);
+        and_conjuncts(right, out);
+    } else {
+        out.push(expr.clone());
+    }
+}
+
+fn and_all(parts: Vec<BoundExpr>) -> Option<BoundExpr> {
+    parts.into_iter().reduce(|left, right| BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type: Some(DataType::Boolean),
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::And,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    })
+}
+
+fn filtered(input: PhysicalPlan, predicate: Option<BoundExpr>) -> PhysicalPlan {
+    match predicate {
+        None => input,
+        Some(predicate) => PhysicalPlan::Filter {
+            input: Box::new(input),
+            predicate,
+        },
+    }
+}
+
+/// Separates an ON clause into conjuncts that span both inputs and conjuncts
+/// confined to one of them, so an ordinary predicate sitting beside the join
+/// keys does not make the whole join unplannable.
+///
+/// A conjunct over only the RIGHT input decides which rows are eligible to
+/// match, so evaluating it on that input first is exact for every kind: inner
+/// and semi keep the same matches, anti observes the same absence of a match,
+/// and left/scalar null-extend exactly the same unmatched rows.
+///
+/// A conjunct over only the LEFT input is not equivalent under a
+/// row-preserving kind — a left row failing it must still be emitted
+/// NULL-extended rather than dropped — so it moves only for INNER, where ON
+/// and WHERE mean the same thing.
+fn split_join_condition(
+    condition: BoundExpr,
+    left: &LogicalPlan,
+    right: &LogicalPlan,
+    kind: BoundJoinKind,
+) -> (Option<BoundExpr>, Option<BoundExpr>, Option<BoundExpr>) {
+    let left_tables = logical_tables(left);
+    let right_tables = logical_tables(right);
+    // Provenance is tracked per (database, table), which cannot tell two
+    // aliases of one table apart. In a self-join every conjunct looks like it
+    // belongs to both sides, so splitting would strip the join key; leave the
+    // condition whole and let the key extractor's two-orientation test handle
+    // it exactly as before.
+    if !left_tables.is_disjoint(&right_tables) {
+        return (Some(condition), None, None);
+    }
+    let mut conjuncts = Vec::new();
+    and_conjuncts(&condition, &mut conjuncts);
+    let (mut spanning, mut left_only, mut right_only) = (Vec::new(), Vec::new(), Vec::new());
+    for conjunct in conjuncts {
+        if expression_belongs_to(&conjunct, &right_tables) {
+            right_only.push(conjunct);
+        } else if matches!(kind, BoundJoinKind::Inner)
+            && expression_belongs_to(&conjunct, &left_tables)
+        {
+            left_only.push(conjunct);
+        } else {
+            spanning.push(conjunct);
+        }
+    }
+    (and_all(spanning), and_all(left_only), and_all(right_only))
+}
+
 /// Splits a join condition into oriented equality key pairs. Every AND-ed
 /// conjunct must be a hashable equality spanning the two sides; anything
 /// else rejects the whole condition.
@@ -492,19 +582,7 @@ fn equi_join_key_pairs(
     left: &LogicalPlan,
     right: &LogicalPlan,
 ) -> Option<Vec<(BoundExpr, BoundExpr)>> {
-    fn conjuncts_of(expr: &BoundExpr, out: &mut Vec<BoundExpr>) {
-        if let BoundExprKind::Binary {
-            op: BinaryOp::And,
-            left,
-            right,
-        } = &expr.kind
-        {
-            conjuncts_of(left, out);
-            conjuncts_of(right, out);
-        } else {
-            out.push(expr.clone());
-        }
-    }
+    let conjuncts_of = and_conjuncts;
     let left_tables = logical_tables(left);
     let right_tables = logical_tables(right);
     let mut conjuncts = Vec::new();
