@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { and, asc, count, eq, gte, isNotNull, lte, sum } from 'drizzle-orm'
@@ -102,6 +102,22 @@ function artifacts(directory: string, root = directory): Record<string, string> 
   return result
 }
 
+function stableArtifacts(directory: string): Record<string, string> {
+  const generated = artifacts(directory)
+  const migration = Object.entries(generated).find(([path]) => path.endsWith('.sql'))?.[1]
+  if (migration === undefined) throw new Error('drizzle-kit did not generate a migration')
+  const required = ['schema.ts', 'relations.ts', 'meta/0000_snapshot.json'] as const
+  for (const path of required) {
+    if (generated[path] === undefined) throw new Error(`drizzle-kit did not generate ${path}`)
+  }
+  return {
+    'migration.sql': migration,
+    'schema.ts': generated['schema.ts'],
+    'relations.ts': generated['relations.ts'],
+    'meta/0000_snapshot.json': generated['meta/0000_snapshot.json'],
+  }
+}
+
 async function introspect(endpoint: MysqlEndpoint): Promise<Captured<Record<string, string>>> {
   const temporary = mkdtempSync(join(tmpdir(), 'pintail-drizzle-'))
   const output = join(temporary, 'schema')
@@ -123,10 +139,12 @@ async function introspect(endpoint: MysqlEndpoint): Promise<Captured<Record<stri
       new Response(child.stderr).text(),
       child.exited,
     ])
-    if (exitCode !== 0) {
-      throw new Error(`drizzle-kit pull failed (${exitCode}): ${stderr.trim() || stdout.trim()}`)
+    if (exitCode !== 0 && !existsSync(join(output, 'schema.ts'))) {
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
+      const safeOutput = output.replaceAll(endpoint.password, '<redacted>')
+      throw new Error(`drizzle-kit pull failed (${exitCode}): ${safeOutput}`)
     }
-    return { value: artifacts(output), sql: [] }
+    return { value: stableArtifacts(output), sql: [] }
   } finally {
     rmSync(temporary, { recursive: true, force: true })
   }

@@ -28,11 +28,15 @@ async function withClient<T>(
   )
   const statements: string[] = []
   const client = new PrismaClient({ adapter, log: [{ emit: 'event', level: 'query' }] })
-  client.$on('query', (event) => statements.push(event.query))
+  client.$on('query', (event) => statements.push(`${event.query} -- params ${event.params}`))
   try {
     await client.$connect()
     statements.length = 0
-    return { value: await run(client), sql: statements }
+    try {
+      return { value: await run(client), sql: statements }
+    } catch (error) {
+      throw new Error(`${error}\ngenerated statements: ${JSON.stringify(statements)}`)
+    }
   } finally {
     await client.$disconnect()
   }
