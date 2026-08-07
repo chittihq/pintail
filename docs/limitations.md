@@ -32,10 +32,10 @@ stays readable as a list of things to fix.
   `cte_max_recursion_depth` to `1..=1000000`; MySQL's unbounded value `0` is
   rejected so a session cannot disable the recursive resource guard.
 - `RIGHT JOIN` supports only the two-table form.
-- Parenthesized root INNER/CROSS join groups bind by flattening their left-deep
-  chain. Aliased groups, nested right inputs, and parenthesized groups that
-  contain outer/semi/anti joins reject because the current bound plan cannot
-  preserve their join tree (#16).
+- Parenthesized root INNER/CROSS join groups and a complete root LEFT JOIN
+  group bind by flattening their left-deep chain. Aliased groups, nested right
+  inputs, and outer groups followed by another join reject because the current
+  bound plan cannot preserve their join tree (#16).
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,

@@ -1016,7 +1016,7 @@ impl<'catalog> Binder<'catalog> {
         // remaining right columns.
         let mut wildcard_order: Vec<BoundColumn> = Vec::new();
         for table_with_joins in &select.from {
-            let flattened = flatten_parenthesized_inner_joins(table_with_joins)?;
+            let flattened = flatten_parenthesized_root_joins(table_with_joins)?;
             let table_with_joins = flattened.as_ref().unwrap_or(table_with_joins);
             // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs; the linear
             // join chain expresses the two-table form directly. RIGHT JOINs
@@ -1657,12 +1657,11 @@ fn bind_join_operator(
     }
 }
 
-/// Removes parentheses around a root left-deep INNER/CROSS join group. This
-/// is exactly representable by [`BoundFrom`]. A nested group used as a join's
-/// right input, an aliased group, or a group containing outer/semi/anti joins
-/// keeps rejecting because flattening those forms can change row preservation
-/// or visible names.
-fn flatten_parenthesized_inner_joins(
+/// Removes parentheses around a root left-deep join group that is exactly
+/// representable by [`BoundFrom`]. INNER/CROSS chains flatten generally; a
+/// LEFT chain also flattens when the parenthesized group is the complete root
+/// item, so no following join can change its row-preservation boundary.
+fn flatten_parenthesized_root_joins(
     table: &TableWithJoins,
 ) -> Result<Option<TableWithJoins>, BindError> {
     let TableFactor::NestedJoin {
@@ -1677,14 +1676,15 @@ fn flatten_parenthesized_inner_joins(
             table.relation.to_string(),
         ));
     }
-    let recursively_flattened = flatten_parenthesized_inner_joins(nested)?;
+    let recursively_flattened = flatten_parenthesized_root_joins(nested)?;
     let mut flattened = recursively_flattened.unwrap_or_else(|| (**nested).clone());
     for join in &flattened.joins {
         if matches!(join.relation, TableFactor::NestedJoin { .. }) {
             return Err(BindError::UnsupportedTableFactor(join.relation.to_string()));
         }
         let (kind, _) = bind_join_operator(&join.join_operator)?;
-        if !matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Cross) {
+        let safe_root_left = table.joins.is_empty() && kind == BoundJoinKind::Left;
+        if !matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Cross) && !safe_root_left {
             return Err(BindError::UnsupportedTableFactor(
                 table.relation.to_string(),
             ));
@@ -5728,7 +5728,17 @@ mod tests {
         assert_eq!(query.from[0].joins.len(), 1);
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Inner);
 
-        assert!(bind("SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id)").is_err());
+        let query = bind("SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id)")
+            .expect("complete parenthesized left join group");
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+        assert!(
+            bind(
+                "SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id) \
+                 JOIN payments p ON p.amount = e.id"
+            )
+            .is_err(),
+            "a following join keeps the outer-group boundary explicit"
+        );
     }
 
     #[test]
