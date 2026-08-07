@@ -1276,41 +1276,18 @@ fn placeholder_count(sql: &str) -> usize {
 /// prepare time. Track clause context at each nesting depth so only pagination
 /// placeholders receive a zero preview.
 fn placeholder_preview_literals(sql: &str) -> Vec<String> {
-    let bytes = sql.as_bytes();
+    let code = sql_code_only(sql);
     let mut previews = Vec::new();
     let mut limit_context = vec![false];
-    let mut quote = None;
     let mut word_start = None;
-    let mut index = 0;
-    while index <= bytes.len() {
-        let byte = bytes.get(index).copied();
-        if let Some(delimiter) = quote {
-            match byte {
-                Some(b'\\') => {
-                    index = index.saturating_add(2);
-                    continue;
-                }
-                Some(value) if value == delimiter => {
-                    if bytes.get(index + 1) == Some(&delimiter) {
-                        index += 2;
-                        continue;
-                    }
-                    quote = None;
-                }
-                None => break,
-                _ => {}
-            }
-            index += 1;
-            continue;
-        }
-
+    for index in 0..=code.len() {
+        let byte = code.get(index).copied();
         if byte.is_some_and(|value| value.is_ascii_alphanumeric() || value == b'_') {
             word_start.get_or_insert(index);
-            index += 1;
             continue;
         }
         if let Some(start) = word_start.take() {
-            let word = sql[start..index].to_ascii_lowercase();
+            let word = String::from_utf8_lossy(&code[start..index]).to_ascii_lowercase();
             let context = limit_context.last_mut().expect("root preview context");
             if matches!(word.as_str(), "limit" | "offset") {
                 *context = true;
@@ -1333,7 +1310,6 @@ fn placeholder_preview_literals(sql: &str) -> Vec<String> {
             }
         }
         match byte {
-            Some(value @ (b'\'' | b'"' | b'`')) => quote = Some(value),
             Some(b'(') => limit_context.push(false),
             Some(b')') if limit_context.len() > 1 => {
                 limit_context.pop();
@@ -1349,7 +1325,6 @@ fn placeholder_preview_literals(sql: &str) -> Vec<String> {
             None => break,
             _ => {}
         }
-        index += 1;
     }
     previews
 }
@@ -1371,33 +1346,81 @@ fn substitute_parameters(sql: &str, parameters: &[String]) -> Result<String, Str
     Ok(output)
 }
 
-fn placeholder_offsets(sql: &str) -> Vec<usize> {
+/// Blanks every byte that is not executable SQL — string literals, quoted
+/// identifiers and comments — while preserving byte length so offsets into
+/// the result still index the original statement.
+///
+/// `MySQL` executes the body of a version comment (`/*! ... */`), so its
+/// contents stay visible; a `?` in there really is a parameter.
+fn sql_code_only(sql: &str) -> Vec<u8> {
     let bytes = sql.as_bytes();
-    let mut offsets = Vec::new();
-    let mut quote = None;
+    let mut code = vec![b' '; bytes.len()];
     let mut index = 0;
     while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-                continue;
-            }
-            if byte == delimiter {
-                if bytes.get(index + 1) == Some(&delimiter) {
-                    index += 2;
-                    continue;
+        match bytes[index] {
+            delimiter @ (b'\'' | b'"' | b'`') => {
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        index += 2;
+                        continue;
+                    }
+                    if bytes[index] == delimiter {
+                        if bytes.get(index + 1) == Some(&delimiter) {
+                            index += 2;
+                            continue;
+                        }
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
                 }
-                quote = None;
             }
-        } else if matches!(byte, b'\'' | b'"' | b'`') {
-            quote = Some(byte);
-        } else if byte == b'?' {
-            offsets.push(index);
+            b'#' => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'-' if bytes.get(index + 1) == Some(&b'-')
+                && matches!(
+                    bytes.get(index + 2),
+                    None | Some(b' ' | b'\t' | b'\n' | b'\r')
+                ) =>
+            {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                let executable = bytes.get(index + 2) == Some(&b'!');
+                index += if executable { 3 } else { 2 };
+                while index < bytes.len() {
+                    if bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                        index += 2;
+                        break;
+                    }
+                    if executable {
+                        code[index] = bytes[index];
+                    }
+                    index += 1;
+                }
+            }
+            byte => {
+                code[index] = byte;
+                index += 1;
+            }
         }
-        index += 1;
     }
-    offsets
+    code
+}
+
+fn placeholder_offsets(sql: &str) -> Vec<usize> {
+    sql_code_only(sql)
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'?')
+        .map(|(index, _)| index)
+        .collect()
 }
 
 fn parameter_literal(value: ValueInner<'_>) -> Result<String, String> {
@@ -1728,6 +1751,32 @@ mod tests {
         assert_eq!(
             placeholder_preview_literals("SELECT '?' AS literal LIMIT ?"),
             vec!["0"]
+        );
+    }
+
+    #[test]
+    fn placeholder_scanning_ignores_comments() {
+        // A comment must not contribute placeholders, and a keyword inside
+        // one must not flip clause context. Both scanners share one view of
+        // what is executable, so they cannot disagree on the count.
+        assert_eq!(
+            placeholder_offsets("SELECT ? FROM t -- ? trailing\nWHERE x = ?").len(),
+            2
+        );
+        assert_eq!(placeholder_offsets("SELECT ? FROM t # ? trailing").len(), 1);
+        assert_eq!(placeholder_offsets("SELECT /* ? */ ? FROM t").len(), 1);
+        // MySQL executes a version comment, so a parameter inside one counts.
+        assert_eq!(placeholder_offsets("SELECT /*!40001 ? */ FROM t").len(), 1);
+
+        // "limit" inside a comment previously flipped the clause context and
+        // produced an integer preview for an ordinary expression parameter.
+        assert_eq!(
+            placeholder_preview_literals("SELECT /* limit */ ? FROM t"),
+            vec!["NULL"]
+        );
+        assert_eq!(
+            placeholder_preview_literals("SELECT ? FROM t -- limit\nLIMIT ?"),
+            vec!["NULL", "0"]
         );
     }
 

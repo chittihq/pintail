@@ -786,6 +786,14 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .get_conn()
         .await
         .expect("virtual information_schema connection");
+    // Connecting with database=information_schema relaxes only the check
+    // that the requested name matches the key's database. Authentication
+    // still resolves the replica from the USERNAME and validates the key
+    // against that database's keys, and the catalog handed to metadata is
+    // built from that replica alone — so scoping holds by construction
+    // rather than by this assertion. With a single-database fixture this
+    // count cannot distinguish scoped from unscoped; it guards that the
+    // virtual schema answers at all.
     let schema_rows: Option<u64> = virtual_connection
         .query_first("SELECT COUNT(*) FROM information_schema.schemata")
         .await
