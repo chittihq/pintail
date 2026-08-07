@@ -23,6 +23,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
+import { runOrmCompatibility, type MysqlEndpoint } from './orm-compat'
 import { differentialQueries } from './queries'
 
 const repository = resolve(import.meta.dir, '..', '..')
@@ -60,6 +61,7 @@ let pintailUrl = ''
 let token = ''
 let databaseId = ''
 let mysqlStarted = false
+let mysqlEndpoint: MysqlEndpoint | undefined
 
 function log(message: string) {
   console.log(`[e2e] ${message}`)
@@ -839,6 +841,29 @@ async function phasePooling() {
   }
 }
 
+async function phaseOrmCompatibility() {
+  const phase = 'orm-compat'
+  if (!mysqlEndpoint) throw new Error('MySQL ORM endpoint was not initialized')
+  const pintailEndpoint: MysqlEndpoint = {
+    host: '127.0.0.1',
+    port: pintailWirePort,
+    user: DATABASE,
+    password: wireSecret,
+    database: DATABASE,
+  }
+  for (const result of await runOrmCompatibility(mysqlEndpoint, pintailEndpoint)) {
+    results.push({
+      phase,
+      check: `${result.client}:${result.check}`,
+      status: result.status,
+      detail: result.detail,
+    })
+    if (result.status === 'FAIL') {
+      log(`FAIL ${result.client}:${result.check} — ${result.detail}`)
+    }
+  }
+}
+
 async function phaseRestart() {
   log('SIGKILLing pintail mid-stream')
   pintailProcess!.kill(9)
@@ -1350,6 +1375,13 @@ async function main() {
   mysqlStarted = true
   const mysqlPort = await publishedPort(mysqlName, 3306)
   mysqlConnection = await waitForMysql(host, mysqlPort)
+  mysqlEndpoint = {
+    host,
+    port: mysqlPort,
+    user: 'pintail',
+    password: 'pintail',
+    database: DATABASE,
+  }
   await sql(`USE ${DATABASE}`)
   await sql(`CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'`)
   await sql(
@@ -1404,6 +1436,7 @@ async function main() {
 
   const phases: Array<[string, () => Promise<void>]> = [
     ['snapshot', async () => {}],
+    ['orm-compat', phaseOrmCompatibility],
     ['crud', phaseCrud],
     ['type-edges', phaseTypeEdges],
     ['ddl', phaseDdl],

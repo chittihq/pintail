@@ -69,3 +69,9 @@ covering the `SHOW`, index, column, view, alias, join, and aggregate shapes
 used by MySQL CLI, DBeaver/Metabase-style inspectors, and ORMs. The GUI clients
 themselves are not automated by this gate; their SQL shapes are replayed by
 the deterministic protocol clients above.
+
+The end-to-end differential gate also runs pinned read-only ORM clients against
+the MySQL source and its converged Pintail replica. Sequelize exercises schema
+discovery plus generated point, filtered, relation, grouped, ordered, and
+paginated reads. The gate compares both ORM-decoded values and normalized SQL;
+it never invokes synchronization, migration, or mutation APIs.

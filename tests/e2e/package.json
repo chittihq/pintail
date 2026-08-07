@@ -3,9 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e": "bun run run.ts"
+    "e2e": "bun run run.ts",
+    "test:orm": "bun test orm-compat"
   },
   "dependencies": {
-    "mysql2": "3.23.2"
+    "mysql2": "3.23.2",
+    "sequelize": "6.37.8"
   }
 }
