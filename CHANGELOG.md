@@ -149,6 +149,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The E2E differential corpus no longer uses MySQL's reserved `LINES` keyword
+  as an alias, and the documented table-rename metadata warning now verifies
+  that the table name is the only differing field across the full projection.
 - Low-cardinality and two-pass string grouping now merge dictionary codes on
   the shared ICU collation key, including accent and expansion equivalents;
   `LIKE` also keeps `_` bound to one original character instead of one

@@ -310,7 +310,7 @@ export const differentialQueries: DifferentialQuery[] = [
   {
     name: 'fan-out join group concat line products',
     sql:
-      'SELECT o.id, o.customer_id, COUNT(i.line_no) AS lines, ' +
+      'SELECT o.id, o.customer_id, COUNT(i.line_no) AS line_count, ' +
       'ROUND(SUM(i.qty * i.price), 2) AS items_total ' +
       'FROM orders o JOIN order_items i ON i.order_id = o.id ' +
       'GROUP BY o.id, o.customer_id HAVING COUNT(i.line_no) >= 1 ' +

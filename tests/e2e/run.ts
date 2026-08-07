@@ -653,7 +653,7 @@ async function phaseDdlDocumentedGaps() {
   documentedGapTables.set('audit_log', /unknown table/)
   documentedGapTables.set('audit_history', /unknown table/)
   documentedMetadataGaps.push(
-    /^row \d+:\n  mysql   audit_history \| note \| 1\.0000 \| varchar \| NO\n  pintail audit_log \| note \| 1\.0000 \| varchar \| NO$/,
+    /^row \d+:\n  mysql   audit_history( \|.*)\n  pintail audit_log\1$/,
   )
   await sql(`RENAME TABLE audit_log TO audit_history`)
   await sql(`INSERT INTO audit_history VALUES ('post rename')`)
