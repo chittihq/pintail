@@ -18,7 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The analytical benchmark's four ad-hoc query shapes now report medians over
   five distinct memo-cold predicate variants instead of one noisy cold run;
   MySQL expectations are cached per variant and JSON results retain the full
-  cold-query evidence separately from the warm release gate.
+  cold-query evidence separately from the warm release gate. The first 20M-row
+  `venus-002` run matched MySQL exactly and measured Pintail at 525/1,031/426/
+  1,017 ms for N1-N4 versus MySQL at 1,086/10,732/5,893/52,533 ms.
 - Query result metadata now retains the resolved source/default text collation
   through the shared query engine and HTTP response; non-text fields report no
   collation. CDC restart coverage also proves schema-history charset and
