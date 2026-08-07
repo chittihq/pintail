@@ -50,7 +50,7 @@ dependent-correlation cases.
 | Behaviour | Parity |
 |---|---|
 | Memory | Hard per-query cap on joins, aggregation, sort, distinct, subquery materialization and cross joins |
-| Spill | Sort, standalone DISTINCT, grouped aggregation and hash-join build sides spill into query-isolated directories; grace joins re-partition up to 3 times; per-query/global disk quotas, Prometheus counters and EXPLAIN ANALYZE counters are enforced |
+| Spill | Sort, standalone DISTINCT, `INTERSECT`/`EXCEPT`, grouped aggregation and hash-join build sides spill into query-isolated directories; grace joins re-partition up to 3 times; per-query/global disk quotas, Prometheus counters and EXPLAIN ANALYZE counters are enforced |
 | Parallelism | Segment header and late-materialization work on a Pintail-owned Rayon pool |
 | Merge-on-read | Key/version/tombstone merge in chunks of ≤8,192 rows |
 | Aggregate fold | Per-segment SMAs answer bare `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` without scanning when provably exact |

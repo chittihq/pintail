@@ -40,6 +40,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   removes adjacent equal rows with the same collation and exact-DECIMAL
   comparator used by ordering; forced-spill and in-memory results are pinned
   byte-for-byte in differential tests.
+- `INTERSECT [ALL]` and `EXCEPT [ALL]` now use an external sort-merge path
+  instead of retaining the complete right side in memory. Distinct and
+  multiset counts share the ordering, collation, exact-DECIMAL, memory, and
+  spill-quota rules used by sort and standalone DISTINCT.
 - An experiment lab (`experiments/`) benchmarks contested engine designs as
   checksum-verified head-to-heads on both reference machines; verdicts and
   three literature results that failed to replicate are recorded in

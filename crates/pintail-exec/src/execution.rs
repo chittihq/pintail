@@ -361,25 +361,12 @@ impl PhysicalPlanner {
                 all,
                 left,
                 right,
-            } => {
-                // Distinct semantics deduplicate the left side upstream;
-                // ALL semantics feed it through untouched and let the
-                // operator consume right-side occurrence counts.
-                let left = Self::plan(*left)?;
-                let left = if all {
-                    left
-                } else {
-                    PhysicalPlan::Distinct {
-                        input: Box::new(left),
-                    }
-                };
-                Ok(PhysicalPlan::SetOp {
-                    keep_matching,
-                    all,
-                    left: Box::new(left),
-                    right: Box::new(Self::plan(*right)?),
-                })
-            }
+            } => Ok(PhysicalPlan::SetOp {
+                keep_matching,
+                all,
+                left: Box::new(Self::plan(*left)?),
+                right: Box::new(Self::plan(*right)?),
+            }),
             LogicalPlan::Recursive {
                 working_database,
                 working_table,
@@ -1409,8 +1396,9 @@ fn bound_expr_has_outer_refs(expression: &BoundExpr) -> bool {
             bound_expr_has_outer_refs(left) || bound_expr_has_outer_refs(right)
         }
         BoundExprKind::Scalar { args, .. } => args.iter().any(bound_expr_has_outer_refs),
-        BoundExprKind::ScalarSubquery(query) => bound_query_has_outer_refs(query),
-        BoundExprKind::ExistsSubquery { query, .. } => bound_query_has_outer_refs(query),
+        BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+            bound_query_has_outer_refs(query)
+        }
         BoundExprKind::InSubquery { expr, query, .. } => {
             bound_expr_has_outer_refs(expr) || bound_query_has_outer_refs(query)
         }
@@ -1617,8 +1605,7 @@ fn resolve_dependent_expr_subqueries(
                 memory.deadline,
                 Some(1),
             )?;
-            expression.kind =
-                BoundExprKind::Literal(Value::Boolean(!values.is_empty() != *negated));
+            expression.kind = BoundExprKind::Literal(Value::Boolean(values.is_empty() == *negated));
             expression.nullable = false;
         }
         BoundExprKind::InSubquery {
@@ -1790,11 +1777,12 @@ enum PullOperator {
         state: Option<DistinctRows>,
     },
     SetOp {
-        input: Box<Self>,
+        left: Option<Box<Self>>,
         right: Option<Box<Self>>,
-        membership: HashMap<Vec<Value>, u64>,
         keep_matching: bool,
         all: bool,
+        column_types: Vec<DataType>,
+        state: Option<SetOpRows>,
     },
     /// Pre-materialized rows (recursive-CTE fixpoint output).
     Rows {
@@ -2080,66 +2068,33 @@ impl PullOperator {
                 Ok(Some(RecordBatch::new(chunk.len(), columns)?))
             }
             Self::SetOp {
-                input,
+                left,
                 right,
-                membership,
                 keep_matching,
                 all,
+                column_types,
+                state,
             } => {
-                // First call drains the membership side completely.
-                if let Some(mut side) = right.take() {
-                    while let Some(batch) = side.next_batch(memory)? {
-                        let batch_bytes = batch.estimated_bytes();
-                        reserve_hash_map_entries(
-                            membership,
-                            batch.visible_row_count(),
-                            size_of::<(Vec<Value>, u64)>().saturating_add(HASH_ENTRY_OVERHEAD),
-                            batch_bytes,
-                            memory,
-                        )?;
-                        for row in 0..batch.row_count() {
-                            if !batch.selection().is_selected(row) {
-                                continue;
-                            }
-                            let key = normalized_batch_row(&batch, row)?;
-                            let row_bytes = estimated_row_payload_bytes(&key);
-                            memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
-                            memory.reserve(row_bytes)?;
-                            *membership.entry(key).or_insert(0) += 1;
-                        }
-                    }
+                if state.is_none() {
+                    let mut left = left.take().ok_or(ExecError::InvalidPhysicalPlan(
+                        "set operation has no left input",
+                    ))?;
+                    let mut right = right.take().ok_or(ExecError::InvalidPhysicalPlan(
+                        "set operation has no right input",
+                    ))?;
+                    *state = Some(build_set_operation(
+                        &mut left,
+                        &mut right,
+                        column_types,
+                        *keep_matching,
+                        *all,
+                        memory,
+                    )?);
                 }
-                loop {
-                    let Some(mut batch) = input.next_batch(memory)? else {
-                        return Ok(None);
-                    };
-                    for row in 0..batch.row_count() {
-                        if !batch.selection().is_selected(row) {
-                            continue;
-                        }
-                        let key = normalized_batch_row(&batch, row)?;
-                        // ALL consumes one right-side occurrence per match so
-                        // each row repeats min(l, r) (INTERSECT ALL) or
-                        // l - min(l, r) (EXCEPT ALL) times.
-                        let matched = if *all {
-                            match membership.get_mut(&key) {
-                                Some(count) if *count > 0 => {
-                                    *count -= 1;
-                                    true
-                                }
-                                _ => false,
-                            }
-                        } else {
-                            membership.contains_key(&key)
-                        };
-                        if matched != *keep_matching {
-                            batch.selection_mut().set(row, false)?;
-                        }
-                    }
-                    if batch.visible_row_count() > 0 {
-                        return Ok(Some(batch));
-                    }
-                }
+                state
+                    .as_mut()
+                    .expect("initialized above")
+                    .next_batch(column_types, memory)
             }
             Self::Distinct {
                 input,
@@ -2617,13 +2572,18 @@ fn build_operator(
         } => {
             let (left, columns) = build_operator(*left, provider, memory)?;
             let (right, _) = build_operator(*right, provider, memory)?;
+            let column_types = columns
+                .iter()
+                .map(|column| column.data_type)
+                .collect::<Vec<_>>();
             Ok((
                 PullOperator::SetOp {
-                    input: Box::new(left),
+                    left: Some(Box::new(left)),
                     right: Some(Box::new(right)),
-                    membership: HashMap::new(),
                     keep_matching,
                     all,
+                    column_types,
+                    state: None,
                 },
                 columns,
             ))
@@ -9941,6 +9901,17 @@ enum SortedRows {
 }
 
 impl SortedRows {
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
+        match self {
+            Self::Memory(rows) => {
+                let row = rows.rows.get(rows.position).cloned();
+                rows.position = rows.position.saturating_add(usize::from(row.is_some()));
+                Ok(row)
+            }
+            Self::Spilled(merge) => merge.next_row(),
+        }
+    }
+
     fn next_batch(
         &mut self,
         column_types: &[DataType],
@@ -10002,6 +9973,176 @@ impl DistinctRows {
             }
         }
     }
+}
+
+/// External sort-merge state for INTERSECT and EXCEPT. Both inputs use the
+/// shared full-row comparator, so spilling preserves exact DECIMAL and `MySQL`
+/// collation equivalence instead of introducing a second key definition.
+struct SetOpRows {
+    left: SortedRowCursor,
+    right: SortedRowCursor,
+    keys: Vec<BoundOrderKey>,
+    keep_matching: bool,
+    all: bool,
+    pending: Option<(Vec<Value>, u64)>,
+    pending_reserved: usize,
+}
+
+struct SortedRowCursor {
+    rows: SortedRows,
+    head: Option<Vec<Value>>,
+    exhausted: bool,
+}
+
+impl SortedRowCursor {
+    fn new(rows: SortedRows) -> Self {
+        Self {
+            rows,
+            head: None,
+            exhausted: false,
+        }
+    }
+
+    fn ensure_head(&mut self) -> Result<(), ExecError> {
+        if self.head.is_none() && !self.exhausted {
+            self.head = self.rows.next_row()?;
+            self.exhausted = self.head.is_none();
+        }
+        Ok(())
+    }
+
+    fn take_group(&mut self, keys: &[BoundOrderKey]) -> Result<(Vec<Value>, u64), ExecError> {
+        self.ensure_head()?;
+        let first = self
+            .head
+            .take()
+            .ok_or(ExecError::InvalidPhysicalPlan("set input group is empty"))?;
+        let mut count = 1_u64;
+        loop {
+            let Some(next) = self.rows.next_row()? else {
+                self.exhausted = true;
+                break;
+            };
+            if compare_sort_rows(&first, &next, keys).is_eq() {
+                count = count.saturating_add(1);
+            } else {
+                self.head = Some(next);
+                break;
+            }
+        }
+        Ok((first, count))
+    }
+}
+
+impl SetOpRows {
+    fn next_group(
+        &mut self,
+        memory: &MemoryTracker,
+    ) -> Result<Option<(Vec<Value>, u64)>, ExecError> {
+        loop {
+            memory.check_deadline()?;
+            self.left.ensure_head()?;
+            self.right.ensure_head()?;
+            let ordering = match (self.left.head.as_ref(), self.right.head.as_ref()) {
+                (None, _) => return Ok(None),
+                (Some(_), None) => Ordering::Less,
+                (Some(left), Some(right)) => compare_sort_rows(left, right, &self.keys),
+            };
+            match ordering {
+                Ordering::Less => {
+                    let (row, left_count) = self.left.take_group(&self.keys)?;
+                    if !self.keep_matching {
+                        return Ok(Some((row, if self.all { left_count } else { 1 })));
+                    }
+                }
+                Ordering::Greater => {
+                    let _ = self.right.take_group(&self.keys)?;
+                }
+                Ordering::Equal => {
+                    let (row, left_count) = self.left.take_group(&self.keys)?;
+                    let (_, right_count) = self.right.take_group(&self.keys)?;
+                    let output_count = if self.keep_matching {
+                        if self.all {
+                            left_count.min(right_count)
+                        } else {
+                            1
+                        }
+                    } else if self.all {
+                        left_count.saturating_sub(right_count)
+                    } else {
+                        0
+                    };
+                    if output_count > 0 {
+                        return Ok(Some((row, output_count)));
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_batch(
+        &mut self,
+        column_types: &[DataType],
+        memory: &MemoryTracker,
+    ) -> Result<Option<RecordBatch>, ExecError> {
+        let mut rows = Vec::with_capacity(DEFAULT_BATCH_ROWS);
+        while rows.len() < DEFAULT_BATCH_ROWS {
+            if self.pending.is_none() {
+                let Some((row, count)) = self.next_group(memory)? else {
+                    break;
+                };
+                let bytes = estimated_row_payload_bytes(&row);
+                memory.reserve(bytes)?;
+                self.pending_reserved = bytes;
+                self.pending = Some((row, count));
+            }
+            let (row, count) = self.pending.as_mut().expect("initialized above");
+            rows.push(row.clone());
+            *count -= 1;
+            if *count == 0 {
+                self.pending = None;
+                memory.release(self.pending_reserved);
+                self.pending_reserved = 0;
+            }
+        }
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        memory.ensure_transient(estimated_record_batch_bytes(&rows, column_types.len()))?;
+        let columns = rows_to_columns(&rows, column_types)?;
+        Ok(Some(RecordBatch::new(rows.len(), columns)?))
+    }
+}
+
+fn build_set_operation(
+    left: &mut PullOperator,
+    right: &mut PullOperator,
+    column_types: &[DataType],
+    keep_matching: bool,
+    all: bool,
+    memory: &MemoryTracker,
+) -> Result<SetOpRows, ExecError> {
+    let keys = column_types
+        .iter()
+        .enumerate()
+        .map(|(index, data_type)| BoundOrderKey {
+            index,
+            ascending: true,
+            nulls_first: true,
+            decimal: matches!(data_type, DataType::Decimal { .. }),
+        })
+        .collect::<Vec<_>>();
+    let left = build_sort(left, &keys, None, None, memory)?;
+    let right = build_sort(right, &keys, None, None, memory)?;
+    Ok(SetOpRows {
+        left: SortedRowCursor::new(left),
+        right: SortedRowCursor::new(right),
+        keys,
+        keep_matching,
+        all,
+        pending: None,
+        pending_reserved: 0,
+    })
 }
 
 fn build_distinct(
@@ -10728,22 +10869,6 @@ impl BatchStream for RowsBatchStream {
     }
 }
 
-fn normalized_batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
-    batch
-        .columns()
-        .iter()
-        .map(|column| {
-            column
-                .value(row)
-                .cloned()
-                .map(normalized_collation_value)
-                .ok_or(ExecError::InvalidBatch(
-                    "set-operation row is outside an input column",
-                ))
-        })
-        .collect()
-}
-
 fn estimated_record_batch_bytes(rows: &[Vec<Value>], column_count: usize) -> usize {
     size_of::<RecordBatch>()
         .saturating_add(column_count.saturating_mul(size_of::<ColumnVector>().saturating_mul(2)))
@@ -11089,7 +11214,11 @@ impl From<BatchError> for ExecError {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, mem::size_of, sync::Mutex};
+    use std::{
+        collections::{HashMap, VecDeque},
+        mem::size_of,
+        sync::Mutex,
+    };
 
     fn drain_partitions(runs: &mut [super::GraceRun]) -> Vec<u64> {
         let mut ids = Vec::new();
@@ -12192,6 +12321,68 @@ mod tests {
         assert_eq!(memory_spill.files, 0);
         assert!(spill.files > 0, "the tight execution must use spill files");
         assert!(spill.written_bytes > 0);
+    }
+
+    #[test]
+    fn forced_set_operation_spill_matches_multiset_semantics() {
+        let batches = (0..64)
+            .map(|batch| {
+                let ids = (0..512)
+                    .map(|row| Value::UInt64((batch * 512 + row) % 5_000))
+                    .collect::<Vec<_>>();
+                let names = ids
+                    .iter()
+                    .map(|id| match id {
+                        Value::UInt64(id) => Value::Utf8(format!("name-{id:05}-payload")),
+                        _ => unreachable!("generated ids are unsigned integers"),
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    ids.len(),
+                    vec![
+                        ColumnVector::new(DataType::UInt64, ids).expect("ids"),
+                        ColumnVector::new(DataType::Utf8, names).expect("names"),
+                    ],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |memory_limit, sql| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution =
+                Execution::start(physical(sql), &provider, memory_limit).expect("execution");
+            let mut counts = HashMap::<Vec<Value>, usize>::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                for row in batch.selection().selected_rows() {
+                    let values = batch
+                        .columns()
+                        .iter()
+                        .map(|column| column.value(row).cloned().expect("set value"))
+                        .collect::<Vec<_>>();
+                    *counts.entry(values).or_insert(0) += 1;
+                }
+            }
+            (counts, execution.spill_metrics())
+        };
+        for sql in [
+            "SELECT id, name FROM events WHERE id % 2 = 0 \
+             INTERSECT SELECT id, name FROM events WHERE id % 3 = 0",
+            "SELECT id, name FROM events WHERE id % 2 = 0 \
+             INTERSECT ALL SELECT id, name FROM events WHERE id % 3 = 0",
+            "SELECT id, name FROM events WHERE id % 2 = 0 \
+             EXCEPT SELECT id, name FROM events WHERE id % 3 = 0",
+            "SELECT id, name FROM events WHERE id % 2 = 0 \
+             EXCEPT ALL SELECT id, name FROM events WHERE id % 3 = 0",
+        ] {
+            let (reference, memory_spill) = execute(16 * 1024 * 1024, sql);
+            assert_eq!(memory_spill.files, 0);
+            let (spilled, spill) = execute(1024 * 1024, sql);
+            assert_eq!(spilled, reference);
+            assert!(spill.files > 0, "the tight execution must use spill files");
+            assert!(spill.written_bytes > 0);
+        }
     }
 
     #[test]
