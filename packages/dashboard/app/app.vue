@@ -66,15 +66,17 @@ onMounted(async () => {
     await router.replace({ path: route.path, query: rest })
   }
   let googleSignedIn = false
+  let googleLinked = false
   if (authCode) {
     setToken(null)
     try {
-      const response = await request<{ token: string }>('/auth/google/exchange', {
+      const response = await request<{ token: string, outcome: 'signed_in' | 'linked' }>('/auth/google/exchange', {
         method: 'POST',
         body: JSON.stringify({ code: authCode }),
       })
       setToken(response.token)
-      googleSignedIn = true
+      googleLinked = response.outcome === 'linked'
+      googleSignedIn = !googleLinked
     } catch (failure) {
       error.value = messageOf(failure)
     }
@@ -94,7 +96,8 @@ onMounted(async () => {
       await loadWorkspaces()
       await loadControlPlane()
       startEventStream()
-      if (googleSignedIn) toast('Signed in with Google')
+      if (googleLinked) toast('Google account linked')
+      else if (googleSignedIn) toast('Signed in with Google')
     }
   } catch {
     setToken(null)

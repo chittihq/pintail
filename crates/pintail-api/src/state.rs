@@ -46,7 +46,13 @@ struct ApiStateInner {
 
 struct PendingOauthExchange {
     token: String,
+    outcome: String,
     expires_at: Instant,
+}
+
+pub(crate) struct OauthExchange {
+    pub(crate) token: String,
+    pub(crate) outcome: String,
 }
 
 #[derive(Default)]
@@ -243,7 +249,11 @@ impl ApiState {
 
     /// Stores a session token behind a short-lived, one-time browser exchange
     /// code. The callback URL carries only the opaque code, never the JWT.
-    pub(crate) fn create_oauth_exchange(&self, token: String) -> Result<String, ApiError> {
+    pub(crate) fn create_oauth_exchange(
+        &self,
+        token: String,
+        outcome: &str,
+    ) -> Result<String, ApiError> {
         let inner = self
             .inner
             .as_ref()
@@ -261,6 +271,7 @@ impl ApiState {
             code.clone(),
             PendingOauthExchange {
                 token,
+                outcome: outcome.to_owned(),
                 expires_at: now + OAUTH_EXCHANGE_LIFETIME,
             },
         );
@@ -268,7 +279,7 @@ impl ApiState {
     }
 
     /// Consumes a browser exchange exactly once.
-    pub(crate) fn consume_oauth_exchange(&self, code: &str) -> Result<String, ApiError> {
+    pub(crate) fn consume_oauth_exchange(&self, code: &str) -> Result<OauthExchange, ApiError> {
         let inner = self
             .inner
             .as_ref()
@@ -278,7 +289,10 @@ impl ApiState {
         exchanges.retain(|_, exchange| exchange.expires_at > now);
         exchanges
             .remove(code)
-            .map(|exchange| exchange.token)
+            .map(|exchange| OauthExchange {
+                token: exchange.token,
+                outcome: exchange.outcome,
+            })
             .ok_or_else(|| ApiError::bad_request("sign-in exchange code is invalid or expired"))
     }
 
@@ -388,14 +402,13 @@ mod tests {
         )
         .expect("API state");
         let code = state
-            .create_oauth_exchange("session-token".to_owned())
+            .create_oauth_exchange("session-token".to_owned(), "linked")
             .expect("create exchange");
-        assert_eq!(
-            state
-                .consume_oauth_exchange(&code)
-                .expect("consume exchange"),
-            "session-token"
-        );
+        let exchange = state
+            .consume_oauth_exchange(&code)
+            .expect("consume exchange");
+        assert_eq!(exchange.token, "session-token");
+        assert_eq!(exchange.outcome, "linked");
         assert!(state.consume_oauth_exchange(&code).is_err());
     }
 }

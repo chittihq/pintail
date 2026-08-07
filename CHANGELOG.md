@@ -76,6 +76,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Google OAuth redirect URIs come from a validated administrator-configured
   public origin rather than forwarded request headers. Incomplete identities,
   disabled users, and silent email-based account linking now fail closed.
+- Existing users can explicitly link a matching verified Google identity from
+  an authenticated Settings session. The signed link intent names that user,
+  refuses cross-email or cross-account binding, and never replaces an existing
+  different subject.
 
 ### Verification
 

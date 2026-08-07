@@ -298,21 +298,27 @@ impl MetaStore {
             .context("failed to read user")
     }
 
-    /// Links a Google OIDC subject to an existing user, enabling
-    /// sign-in-with-Google for that identity from now on.
+    /// Links a Google OIDC subject to an existing user without replacing a
+    /// different subject already bound to that account.
     ///
     /// # Errors
     ///
-    /// Returns an error when the subject is already linked elsewhere or the
-    /// row cannot be updated.
+    /// Returns an error when the user is absent, either identity is already
+    /// linked differently, or the row cannot be updated.
     pub fn set_user_google_subject(&self, user_id: &str, subject: &str) -> Result<()> {
-        self.connection
+        let changed = self
+            .connection
             .execute(
-                "UPDATE users SET google_subject = ?2 WHERE id = ?1",
+                "UPDATE users SET google_subject = ?2 \
+                 WHERE id = ?1 AND (google_subject IS NULL OR google_subject = ?2)",
                 (user_id, subject),
             )
             .context("failed to link Google identity")?;
-        Ok(())
+        if changed == 1 {
+            Ok(())
+        } else {
+            bail!("user is absent or already linked to another Google identity")
+        }
     }
 
     /// Lists users in email order.

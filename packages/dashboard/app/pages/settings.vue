@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { KeyRound, LoaderCircle, Moon, Server, Sun } from '@lucide/vue'
+import { KeyRound, Link2, LoaderCircle, Moon, Server, Sun } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { messageOf } from '@/lib/format'
 import type { GoogleOAuthSettings } from '@/types/pintail'
@@ -10,6 +10,8 @@ const { request } = usePintailApi()
 const isAdmin = computed(() => session.value?.role === 'admin')
 const googleLoaded = ref(false)
 const googleSaving = ref(false)
+const googleLinking = ref(false)
+const googleEnabled = ref(false)
 const googleForm = reactive({ enabled: false, clientId: '', clientSecret: '', publicUrl: '' })
 const googleConfigured = ref(false)
 
@@ -28,7 +30,30 @@ async function loadGoogleSettings() {
   }
 }
 
-onMounted(loadGoogleSettings)
+async function loadGoogleStatus() {
+  try {
+    googleEnabled.value = (await request<{ enabled: boolean }>('/auth/google/status')).enabled
+  } catch {
+    googleEnabled.value = false
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([loadGoogleSettings(), loadGoogleStatus()])
+})
+
+async function linkGoogle() {
+  googleLinking.value = true
+  try {
+    const response = await request<{ authorization_url: string }>('/settings/oauth/google/link', {
+      method: 'POST',
+    })
+    window.location.assign(response.authorization_url)
+  } catch (failure) {
+    error.value = messageOf(failure)
+    googleLinking.value = false
+  }
+}
 
 async function saveGoogleSettings() {
   googleSaving.value = true
@@ -65,6 +90,7 @@ async function saveGoogleSettings() {
           <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Scopes</dt><dd class="mt-1 text-sm">{{ session.scopes.join(', ') }}</dd></div>
           <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Session</dt><dd class="mt-1 text-sm">12-hour signed JWT</dd></div>
         </dl>
+        <Button v-if="googleEnabled" class="mt-4" variant="outline" :disabled="googleLinking" @click="linkGoogle"><LoaderCircle v-if="googleLinking" class="animate-spin" /><Link2 v-else /> Link Google account</Button>
       </Card>
       <Card class="p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Appearance</p><h2 class="text-base font-semibold">Interface</h2></div><Button variant="ghost" size="icon" @click="toggleTheme"><Sun v-if="dark" /><Moon v-else /></Button></div>
@@ -94,7 +120,7 @@ async function saveGoogleSettings() {
           <div class="grid content-start gap-1.5"><Label for="google-client-secret">Client secret</Label><Input id="google-client-secret" v-model="googleForm.clientSecret" type="password" autocomplete="new-password" placeholder="Leave blank to preserve" /></div>
         </div>
         <div class="flex w-full items-center justify-between py-1">
-          <span><strong class="block text-sm">Allow sign-in with Google</strong><small class="text-muted-foreground text-xs">Only invited or existing members can complete it.</small></span>
+          <span><strong class="block text-sm">Allow sign-in with Google</strong><small class="text-muted-foreground text-xs">Invited identities sign in directly; existing accounts link explicitly above.</small></span>
           <Switch :model-value="googleForm.enabled" @update:model-value="(value) => googleForm.enabled = value === true" />
         </div>
         <Button :disabled="googleSaving || !googleLoaded" @click="saveGoogleSettings"><LoaderCircle v-if="googleSaving" class="animate-spin" /><KeyRound v-else /> Save Google settings</Button>

@@ -74,7 +74,8 @@ use crate::keys::{
 use crate::metrics::metrics;
 use crate::oauth::{
     callback as google_callback, exchange as google_exchange, get_settings as get_google_settings,
-    put_settings as put_google_settings, start as google_start, status as google_status,
+    link_start as google_link_start, put_settings as put_google_settings, start as google_start,
+    status as google_status,
 };
 use crate::query::{list_tables, query, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
@@ -114,6 +115,7 @@ pub fn router_with_state(state: ApiState) -> Router {
             "/settings/oauth/google",
             get(get_google_settings).put(put_google_settings),
         )
+        .route("/settings/oauth/google/link", post(google_link_start))
         .route("/databases", get(list_databases).post(create_database))
         .route(
             "/databases/{id}",

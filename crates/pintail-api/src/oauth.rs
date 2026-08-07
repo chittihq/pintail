@@ -191,16 +191,31 @@ pub(crate) async fn status(
 #[derive(Serialize, Deserialize)]
 struct StateClaims {
     nonce: String,
+    intent: StateIntent,
+    user_id: Option<String>,
     iss: String,
     iat: u64,
     exp: u64,
 }
 
-fn sign_state(state: &ApiState) -> Result<(String, String), ApiError> {
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StateIntent {
+    Login,
+    Link,
+}
+
+fn sign_state(
+    state: &ApiState,
+    intent: StateIntent,
+    user_id: Option<String>,
+) -> Result<(String, String), ApiError> {
     let issued_at = u64::try_from(Utc::now().timestamp()).map_err(ApiError::internal)?;
     let nonce = random_identifier("", 12);
     let claims = StateClaims {
         nonce: nonce.clone(),
+        intent,
+        user_id,
         iss: STATE_ISSUER.to_owned(),
         iat: issued_at,
         exp: issued_at + STATE_LIFETIME_SECS,
@@ -214,10 +229,14 @@ fn sign_state(state: &ApiState) -> Result<(String, String), ApiError> {
     Ok((token, nonce))
 }
 
-fn verify_state(state: &ApiState, token: &str, browser_nonce: &str) -> Result<(), ApiError> {
+fn verify_state(
+    state: &ApiState,
+    token: &str,
+    browser_nonce: &str,
+) -> Result<StateClaims, ApiError> {
     let mut validation = Validation::new(JwtAlgorithm::HS256);
     validation.set_issuer(&[STATE_ISSUER]);
-    validation.set_required_spec_claims(&["exp", "iat", "iss"]);
+    validation.set_required_spec_claims(&["exp", "iat", "iss", "intent"]);
     let token = decode::<StateClaims>(
         token,
         &DecodingKey::from_secret(state.jwt_secret()?),
@@ -229,7 +248,7 @@ fn verify_state(state: &ApiState, token: &str, browser_nonce: &str) -> Result<()
             "the sign-in attempt did not originate in this browser",
         ));
     }
-    Ok(())
+    Ok(token.claims)
 }
 
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -280,23 +299,28 @@ fn redirect_uri(config: &GoogleConfig) -> String {
     format!("{}/api/auth/google/callback", config.public_origin)
 }
 
+fn authorization_url(config: &GoogleConfig, state_token: &str) -> Result<String, ApiError> {
+    let mut url = reqwest::Url::parse(AUTH_URL).map_err(ApiError::internal)?;
+    url.query_pairs_mut()
+        .append_pair("client_id", &config.client_id)
+        .append_pair("redirect_uri", &redirect_uri(config))
+        .append_pair("response_type", "code")
+        .append_pair("scope", "openid email profile")
+        .append_pair("state", state_token)
+        .append_pair("access_type", "online")
+        .append_pair("prompt", "select_account");
+    Ok(url.into())
+}
+
 pub(crate) async fn start(State(state): State<ApiState>) -> Result<Response, ApiError> {
     let config = load_config(&state)?;
     if !config.is_active() {
         return Err(ApiError::conflict("Google sign-in is not configured"));
     }
     let callback_uri = redirect_uri(&config);
-    let (state_token, browser_nonce) = sign_state(&state)?;
-    let mut url = reqwest::Url::parse(AUTH_URL).map_err(ApiError::internal)?;
-    url.query_pairs_mut()
-        .append_pair("client_id", &config.client_id)
-        .append_pair("redirect_uri", &callback_uri)
-        .append_pair("response_type", "code")
-        .append_pair("scope", "openid email profile")
-        .append_pair("state", &state_token)
-        .append_pair("access_type", "online")
-        .append_pair("prompt", "select_account");
-    let mut response = Redirect::to(url.as_str()).into_response();
+    let (state_token, browser_nonce) = sign_state(&state, StateIntent::Login, None)?;
+    let authorization_url = authorization_url(&config, &state_token)?;
+    let mut response = Redirect::to(&authorization_url).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
         state_cookie(
@@ -305,6 +329,48 @@ pub(crate) async fn start(State(state): State<ApiState>) -> Result<Response, Api
             callback_uri.starts_with("https://"),
         )?,
     );
+    Ok(response)
+}
+
+#[derive(Serialize)]
+struct LinkStartResponse {
+    authorization_url: String,
+}
+
+pub(crate) async fn link_start(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+) -> Result<Response, ApiError> {
+    principal.require_workspace()?;
+    let metadata = state.metadata()?;
+    let user = metadata
+        .user_by_id(&principal.subject)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::unauthorized("the session user no longer exists"))?;
+    if !user.enabled {
+        return Err(ApiError::unauthorized("this account is disabled"));
+    }
+    let config = load_config(&state)?;
+    if !config.is_active() {
+        return Err(ApiError::conflict("Google sign-in is not configured"));
+    }
+    let (state_token, browser_nonce) =
+        sign_state(&state, StateIntent::Link, Some(principal.subject.clone()))?;
+    let mut response = Json(LinkStartResponse {
+        authorization_url: authorization_url(&config, &state_token)?,
+    })
+    .into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        state_cookie(
+            &browser_nonce,
+            STATE_LIFETIME_SECS,
+            config.public_origin.starts_with("https://"),
+        )?,
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(response)
 }
 
@@ -335,6 +401,7 @@ pub(crate) struct ExchangeRequest {
 #[derive(Serialize)]
 struct ExchangeResponse {
     token: String,
+    outcome: String,
 }
 
 pub(crate) async fn exchange(
@@ -344,8 +411,12 @@ pub(crate) async fn exchange(
     if request.code.is_empty() {
         return Err(ApiError::bad_request("sign-in exchange code is required"));
     }
-    let token = state.consume_oauth_exchange(&request.code)?;
-    let mut response = Json(ExchangeResponse { token }).into_response();
+    let exchange = state.consume_oauth_exchange(&request.code)?;
+    let mut response = Json(ExchangeResponse {
+        token: exchange.token,
+        outcome: exchange.outcome,
+    })
+    .into_response();
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -360,7 +431,7 @@ pub(crate) async fn callback(
     let secure_cookie =
         load_config(&state).is_ok_and(|config| config.public_origin.starts_with("https://"));
     let mut response = match callback_inner(&state, &headers, &query).await {
-        Ok(token) => match state.create_oauth_exchange(token) {
+        Ok(success) => match state.create_oauth_exchange(success.token, success.outcome) {
             Ok(code) => Redirect::to(&format!("/?auth_code={code}")).into_response(),
             Err(_) => Redirect::to("/?auth_error=sign_in_failed").into_response(),
         },
@@ -385,7 +456,7 @@ async fn callback_inner(
     state: &ApiState,
     headers: &HeaderMap,
     query: &CallbackQuery,
-) -> Result<String, ApiError> {
+) -> Result<CallbackSuccess, ApiError> {
     if let Some(error) = &query.error {
         return Err(ApiError::bad_request(format!(
             "Google sign-in was cancelled: {error}"
@@ -401,7 +472,7 @@ async fn callback_inner(
         .ok_or_else(|| ApiError::bad_request("missing state"))?;
     let browser_nonce = cookie_value(headers, STATE_COOKIE)
         .ok_or_else(|| ApiError::bad_request("the sign-in browser state is missing"))?;
-    verify_state(state, state_token, &browser_nonce)?;
+    let state_claims = verify_state(state, state_token, &browser_nonce)?;
 
     let config = load_config(state)?;
     if !config.is_active() {
@@ -424,6 +495,33 @@ async fn callback_inner(
     let metadata = state.metadata()?;
     let now = Utc::now().to_rfc3339();
 
+    if state_claims.intent == StateIntent::Link {
+        let user_id = state_claims
+            .user_id
+            .as_deref()
+            .ok_or_else(|| ApiError::bad_request("the account-link state is incomplete"))?;
+        let token = link_existing_user(state, &metadata, user_id, &email, google_subject, &now)?;
+        return Ok(CallbackSuccess {
+            token,
+            outcome: "linked",
+        });
+    }
+
+    login_google_user(state, &metadata, &email, google_subject, &now)
+}
+
+struct CallbackSuccess {
+    token: String,
+    outcome: &'static str,
+}
+
+fn login_google_user(
+    state: &ApiState,
+    metadata: &pintail_meta::MetaStore,
+    email: &str,
+    google_subject: &str,
+    now: &str,
+) -> Result<CallbackSuccess, ApiError> {
     if let Some(user) = metadata
         .user_by_google_subject(google_subject)
         .map_err(ApiError::internal)?
@@ -431,15 +529,18 @@ async fn callback_inner(
         if !user.enabled {
             return Err(ApiError::unauthorized("this account is disabled"));
         }
-        let (workspace_id, role) = default_workspace_for_user(&metadata, &user.id)?;
+        let (workspace_id, role) = default_workspace_for_user(metadata, &user.id)?;
         metadata
-            .touch_user_login(&user.id, &now)
+            .touch_user_login(&user.id, now)
             .map_err(ApiError::internal)?;
-        return issue_token(state, &user.id, &role, &workspace_id);
+        return Ok(CallbackSuccess {
+            token: issue_token(state, &user.id, &role, &workspace_id)?,
+            outcome: "signed_in",
+        });
     }
 
     if metadata
-        .user_by_email(&email)
+        .user_by_email(email)
         .map_err(ApiError::internal)?
         .is_some()
     {
@@ -451,7 +552,7 @@ async fn callback_inner(
     // Brand new identity: only admissible through a pending, unexpired
     // invite for this exact email.
     let invite = metadata
-        .invites_by_email(&email)
+        .invites_by_email(email)
         .map_err(ApiError::internal)?
         .into_iter()
         .find(|invite| {
@@ -465,13 +566,13 @@ async fn callback_inner(
 
     let user_id = random_identifier("usr_", 16);
     metadata
-        .create_user_via_google(&user_id, &email, google_subject, &invite.role, &now)
+        .create_user_via_google(&user_id, email, google_subject, &invite.role, now)
         .map_err(ApiError::internal)?;
     metadata
-        .add_workspace_member(&invite.workspace_id, &user_id, &invite.role, &now)
+        .add_workspace_member(&invite.workspace_id, &user_id, &invite.role, now)
         .map_err(ApiError::internal)?;
     metadata
-        .mark_invite_accepted(&invite.id, &now)
+        .mark_invite_accepted(&invite.id, now)
         .map_err(ApiError::internal)?;
     let new_member = AuthPrincipal {
         subject: user_id.clone(),
@@ -487,7 +588,72 @@ async fn callback_inner(
         Some(("invite", &invite.id)),
         Some(serde_json::json!({"email": email})),
     );
-    issue_token(state, &user_id, &invite.role, &invite.workspace_id)
+    Ok(CallbackSuccess {
+        token: issue_token(state, &user_id, &invite.role, &invite.workspace_id)?,
+        outcome: "signed_in",
+    })
+}
+
+fn link_existing_user(
+    state: &ApiState,
+    metadata: &pintail_meta::MetaStore,
+    user_id: &str,
+    google_email: &str,
+    google_subject: &str,
+    now: &str,
+) -> Result<String, ApiError> {
+    let user = metadata
+        .user_by_id(user_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::unauthorized("the account no longer exists"))?;
+    if !user.enabled {
+        return Err(ApiError::unauthorized("this account is disabled"));
+    }
+    if !user.email.eq_ignore_ascii_case(google_email) {
+        return Err(ApiError::conflict(
+            "the Google email must match the existing account email",
+        ));
+    }
+    if let Some(owner) = metadata
+        .user_by_google_subject(google_subject)
+        .map_err(ApiError::internal)?
+        && owner.id != user.id
+    {
+        return Err(ApiError::conflict(
+            "this Google account is already linked to another user",
+        ));
+    }
+    if user
+        .google_subject
+        .as_deref()
+        .is_some_and(|subject| subject != google_subject)
+    {
+        return Err(ApiError::conflict(
+            "this account is already linked to a different Google identity",
+        ));
+    }
+    metadata
+        .set_user_google_subject(&user.id, google_subject)
+        .map_err(ApiError::internal)?;
+    let (workspace_id, role) = default_workspace_for_user(metadata, &user.id)?;
+    metadata
+        .touch_user_login(&user.id, now)
+        .map_err(ApiError::internal)?;
+    let principal = AuthPrincipal {
+        subject: user.id.clone(),
+        role: role.clone(),
+        database_id: None,
+        workspace_id: Some(workspace_id.clone()),
+        scopes: vec!["*".to_owned()],
+    };
+    audit::record(
+        state,
+        &principal,
+        "user.google_link",
+        Some(("user", &user.id)),
+        Some(serde_json::json!({"email": google_email})),
+    );
+    issue_token(state, &user.id, &role, &workspace_id)
 }
 
 async fn exchange_code(
@@ -564,7 +730,8 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        STATE_COOKIE_PATH, normalize_public_origin, sign_state, state_cookie, verify_state,
+        STATE_COOKIE_PATH, StateIntent, link_existing_user, normalize_public_origin, sign_state,
+        state_cookie, verify_state,
     };
     use crate::ApiState;
 
@@ -578,8 +745,9 @@ mod tests {
             &"11".repeat(32),
         )
         .expect("API state");
-        let (token, nonce) = sign_state(&state).expect("signed state");
-        verify_state(&state, &token, &nonce).expect("matching browser nonce");
+        let (token, nonce) = sign_state(&state, StateIntent::Login, None).expect("signed state");
+        let claims = verify_state(&state, &token, &nonce).expect("matching browser nonce");
+        assert_eq!(claims.intent, StateIntent::Login);
         assert!(verify_state(&state, &token, "another-browser").is_err());
     }
 
@@ -609,5 +777,68 @@ mod tests {
         assert!(normalize_public_origin("http://pintail.example").is_err());
         assert!(normalize_public_origin("https://pintail.example/oauth").is_err());
         assert!(normalize_public_origin("https://user@pintail.example").is_err());
+    }
+
+    #[test]
+    fn explicit_link_requires_the_same_email_and_never_overwrites() {
+        let data = tempfile::tempdir().expect("temporary API state");
+        let state = ApiState::new(
+            data.path(),
+            data.path().join("meta.db"),
+            b"test-jwt-secret-with-enough-entropy",
+            &"11".repeat(32),
+        )
+        .expect("API state");
+        let metadata = state.metadata().expect("metadata");
+        metadata
+            .create_user("usr_test", "member@example.com", "unused", "admin", "now")
+            .expect("user");
+        metadata
+            .create_workspace("ws_test", "Workspace", "workspace", "now")
+            .expect("workspace");
+        metadata
+            .add_workspace_member("ws_test", "usr_test", "admin", "now")
+            .expect("membership");
+
+        assert!(
+            link_existing_user(
+                &state,
+                &metadata,
+                "usr_test",
+                "other@example.com",
+                "google-subject",
+                "now",
+            )
+            .is_err()
+        );
+        link_existing_user(
+            &state,
+            &metadata,
+            "usr_test",
+            "member@example.com",
+            "google-subject",
+            "now",
+        )
+        .expect("explicit link");
+        assert_eq!(
+            metadata
+                .user_by_id("usr_test")
+                .expect("user query")
+                .expect("user")
+                .google_subject
+                .as_deref(),
+            Some("google-subject")
+        );
+        assert!(
+            link_existing_user(
+                &state,
+                &metadata,
+                "usr_test",
+                "member@example.com",
+                "another-subject",
+                "now",
+            )
+            .is_err()
+        );
     }
 }
