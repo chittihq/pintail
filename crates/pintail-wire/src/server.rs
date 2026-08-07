@@ -303,8 +303,22 @@ impl Backend {
         salt: &[u8],
         response: &[u8],
     ) -> io::Result<bool> {
-        let Ok(username) = std::str::from_utf8(username) else {
+        let Some(authenticated) = self.verify_wire_key(username, salt, response, None)? else {
             return Ok(false);
+        };
+        *self.authentication.lock().map_err(io_other)? = Some(authenticated);
+        Ok(true)
+    }
+
+    fn verify_wire_key(
+        &self,
+        username: &[u8],
+        salt: &[u8],
+        response: &[u8],
+        requested_database: Option<&[u8]>,
+    ) -> io::Result<Option<Authenticated>> {
+        let Ok(username) = std::str::from_utf8(username) else {
+            return Ok(None);
         };
         let metadata = MetaStore::open(&self.metadata_path).map_err(io_other)?;
         let Some(database) = metadata
@@ -313,24 +327,35 @@ impl Backend {
             .into_iter()
             .find(|database| database.name.eq_ignore_ascii_case(username))
         else {
-            return Ok(false);
+            return Ok(None);
         };
+        if requested_database.is_some_and(|requested| {
+            !requested.is_empty() && !database.name.as_bytes().eq_ignore_ascii_case(requested)
+        }) {
+            return Ok(None);
+        }
         let key = metadata
             .api_keys(&database.id)
             .map_err(io_other)?
             .into_iter()
             .find(|key| wire_key_is_valid(key, salt, response));
         let Some(key) = key else {
-            return Ok(false);
+            return Ok(None);
         };
         metadata
             .touch_api_key(&key.id, &Utc::now().to_rfc3339())
             .map_err(io_other)?;
-        *self.authentication.lock().map_err(io_other)? = Some(Authenticated {
+        Ok(Some(Authenticated {
             database_id: database.id,
             database_name: database.name,
-        });
-        Ok(true)
+        }))
+    }
+
+    fn reset_session_state(&mut self) -> io::Result<()> {
+        *self.session.lock().map_err(io_other)? = Session::default();
+        self.prepared.clear();
+        self.next_statement_id = 1;
+        Ok(())
     }
 
     fn execute(&self, sql: &str) -> Result<QueryOutput, QueryError> {
@@ -597,6 +622,36 @@ where
 
     async fn on_close(&mut self, statement: u32) {
         self.prepared.remove(&statement);
+    }
+
+    async fn on_reset_statement(&mut self, statement: u32) -> io::Result<bool> {
+        Ok(self.prepared.contains_key(&statement))
+    }
+
+    async fn on_reset(&mut self) -> io::Result<()> {
+        self.reset_session_state()
+    }
+
+    async fn on_change_user(
+        &mut self,
+        user: &[u8],
+        auth_plugin: Option<&[u8]>,
+        auth_response: &[u8],
+        database: &[u8],
+    ) -> io::Result<bool> {
+        if auth_plugin.is_some_and(|plugin| {
+            !matches!(plugin, b"caching_sha2_password" | b"mysql_native_password")
+        }) {
+            return Ok(false);
+        }
+        let Some(authenticated) =
+            self.verify_wire_key(user, &self.salt, auth_response, Some(database))?
+        else {
+            return Ok(false);
+        };
+        self.reset_session_state()?;
+        *self.authentication.lock().map_err(io_other)? = Some(authenticated);
+        Ok(true)
     }
 
     async fn on_query<'a>(

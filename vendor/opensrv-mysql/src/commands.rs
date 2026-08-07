@@ -179,8 +179,45 @@ pub enum Command<'a> {
         param: u16,
         data: &'a [u8],
     },
+    ResetStatement(u32),
+    ChangeUser {
+        user: &'a [u8],
+        auth_response: &'a [u8],
+        database: &'a [u8],
+        auth_plugin: Option<&'a [u8]>,
+    },
+    ResetConnection,
     Ping,
     Quit,
+}
+
+fn nul_terminated(i: &[u8]) -> nom::IResult<&[u8], &[u8]> {
+    use nom::{bytes::complete::{tag, take_until}, sequence::terminated};
+    terminated(take_until(&b"\0"[..]), tag(&b"\0"[..]))(i)
+}
+
+fn change_user(i: &[u8]) -> nom::IResult<&[u8], Command<'_>> {
+    use nom::bytes::complete::take;
+    let (i, user) = nul_terminated(i)?;
+    let (i, auth_length) = nom::number::complete::le_u8(i)?;
+    let (i, auth_response) = take(auth_length)(i)?;
+    let (i, database) = nul_terminated(i)?;
+    let (i, _character_set) = take(2_u8)(i)?;
+    let auth_plugin = if i.is_empty() {
+        None
+    } else {
+        let (_, plugin) = nul_terminated(i)?;
+        Some(plugin)
+    };
+    Ok((
+        &[],
+        Command::ChangeUser {
+            user,
+            auth_response,
+            database,
+            auth_plugin,
+        },
+    ))
 }
 
 pub fn execute(i: &[u8]) -> nom::IResult<&[u8], Command<'_>> {
@@ -231,10 +268,22 @@ pub fn parse(i: &[u8]) -> nom::IResult<&[u8], Command<'_>> {
         ),
         map(
             preceded(
+                tag(&[CommandByte::COM_STMT_RESET as u8]),
+                nom::number::complete::le_u32,
+            ),
+            Command::ResetStatement,
+        ),
+        map(
+            preceded(
                 tag(&[CommandByte::COM_STMT_CLOSE as u8]),
                 nom::number::complete::le_u32,
             ),
             Command::Close,
+        ),
+        preceded(tag(&[CommandByte::COM_CHANGE_USER as u8]), change_user),
+        map(
+            tag(&[CommandByte::COM_RESET_CONNECTION as u8]),
+            |_| Command::ResetConnection,
         ),
         map(tag(&[CommandByte::COM_QUIT as u8]), |_| Command::Quit),
         map(tag(&[CommandByte::COM_PING as u8]), |_| Command::Ping),

@@ -105,8 +105,11 @@ mod roundtrip_bin {
                 let mut col = Column {
                     table: String::new(),
                     column: String::new(),
+                    column_length: 0,
+                    character_set: 63,
                     coltype: $ct,
                     colflags: ColumnFlags::empty(),
+                    decimals: 0,
                 };
 
                 if !$sig {

@@ -3,7 +3,7 @@ use std::hash::{Hash as _, Hasher as _};
 use std::process::Command;
 
 use mysql_async::{
-    Opts, Pool,
+    ChangeUserOpts, Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts,
     consts::{ColumnFlags, ColumnType},
     prelude::Queryable as _,
 };
@@ -117,7 +117,12 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
     });
 
     let dsn = format!("mysql://analytics:pk_wire_secret@{address}/analytics");
-    let pool = Pool::new(Opts::from_url(&dsn).expect("wire DSN"));
+    let pool = Pool::new(
+        OptsBuilder::from_opts(Opts::from_url(&dsn).expect("wire DSN"))
+            .pool_opts(PoolOpts::default().with_constraints(
+                PoolConstraints::new(1, 1).expect("single-connection test pool"),
+            )),
+    );
     let mut connection = pool.get_conn().await.expect("authenticated wire client");
     connection
         .query_drop("SET NAMES utf8mb4")
@@ -533,6 +538,64 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("BI aggregate");
     assert_eq!(total, Some(2));
+
+    // Pool-safe lifecycle commands preserve the physical connection while
+    // discarding session and prepared-statement state.
+    let connection_id = connection.id();
+    let reset_statement = connection
+        .prep("SELECT name FROM events WHERE id = ?")
+        .await
+        .expect("prepare before reset");
+    connection
+        .query_drop("SET time_zone = '+05:30'")
+        .await
+        .expect("dirty session before reset");
+    assert!(connection.reset().await.expect("COM_RESET_CONNECTION"));
+    assert_eq!(connection.id(), connection_id);
+    let reset_zone: Option<String> = connection
+        .query_first("SELECT @@session.time_zone")
+        .await
+        .expect("session after reset");
+    assert_eq!(reset_zone.as_deref(), Some("SYSTEM"));
+    assert!(
+        connection
+            .exec_drop(&reset_statement, (1_u64,))
+            .await
+            .is_err(),
+        "connection reset must invalidate prepared statements"
+    );
+
+    let change_user_statement = connection
+        .prep("SELECT name FROM events WHERE id = ?")
+        .await
+        .expect("prepare before change-user");
+    connection
+        .query_drop("SET sql_mode = 'ANSI_QUOTES'")
+        .await
+        .expect("dirty session before change-user");
+    connection
+        .change_user(ChangeUserOpts::new())
+        .await
+        .expect("COM_CHANGE_USER");
+    assert_eq!(connection.id(), connection_id);
+    let reset_mode: Option<String> = connection
+        .query_first("SELECT @@sql_mode")
+        .await
+        .expect("session after change-user");
+    assert!(
+        !reset_mode
+            .as_deref()
+            .unwrap_or_default()
+            .contains("ANSI_QUOTES"),
+        "change-user must restore default session state"
+    );
+    assert!(
+        connection
+            .exec_drop(&change_user_statement, (1_u64,))
+            .await
+            .is_err(),
+        "change-user must invalidate prepared statements"
+    );
     let explain: Vec<String> = connection
         .query("EXPLAIN SELECT id FROM events WHERE id = 2")
         .await
@@ -545,6 +608,23 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect_err("writes must fail");
     assert!(error.to_string().contains("read-only"), "{error}");
+    connection
+        .query_drop("SET time_zone = '+05:30'")
+        .await
+        .expect("dirty pooled session");
+    drop(connection);
+
+    let mut connection = pool.get_conn().await.expect("reuse pooled connection");
+    assert_eq!(
+        connection.id(),
+        connection_id,
+        "pool should reuse the reset physical connection"
+    );
+    let pooled_zone: Option<String> = connection
+        .query_first("SELECT @@session.time_zone")
+        .await
+        .expect("pooled session after automatic reset");
+    assert_eq!(pooled_zone.as_deref(), Some("SYSTEM"));
     drop(connection);
     pool.disconnect().await.expect("disconnect wire client");
 

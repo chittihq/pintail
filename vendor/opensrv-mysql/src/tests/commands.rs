@@ -96,3 +96,41 @@ fn it_handles_list_fields() {
         Command::ListFields(&b"select @@version_comment limit 1"[..])
     );
 }
+
+#[test]
+fn it_parses_reset_connection() {
+    assert_eq!(
+        parse(&[0x1f]).expect("reset command").1,
+        Command::ResetConnection
+    );
+}
+
+#[test]
+fn it_parses_reset_statement() {
+    let mut packet = vec![0x1a];
+    packet.extend_from_slice(&42_u32.to_le_bytes());
+    assert_eq!(
+        parse(&packet).expect("statement-reset command").1,
+        Command::ResetStatement(42)
+    );
+}
+
+#[test]
+fn it_parses_change_user() {
+    let mut packet = vec![0x11];
+    packet.extend_from_slice(b"analytics\0");
+    packet.push(3);
+    packet.extend_from_slice(&[1, 2, 3]);
+    packet.extend_from_slice(b"analytics\0");
+    packet.extend_from_slice(&45_u16.to_le_bytes());
+    packet.extend_from_slice(b"caching_sha2_password\0");
+    assert_eq!(
+        parse(&packet).expect("change-user command").1,
+        Command::ChangeUser {
+            user: b"analytics",
+            auth_response: &[1, 2, 3],
+            database: b"analytics",
+            auth_plugin: Some(b"caching_sha2_password"),
+        }
+    );
+}

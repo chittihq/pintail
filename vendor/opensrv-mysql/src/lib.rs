@@ -193,6 +193,27 @@ pub trait AsyncMysqlShim<W: Send> {
     where
         W: 'async_trait;
 
+    /// Called when the client resets a prepared statement without closing it.
+    async fn on_reset_statement(&mut self, _stmt: u32) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    /// Called when a pool resets an authenticated connection for reuse.
+    async fn on_reset(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Re-authenticates an open connection and resets its session state.
+    async fn on_change_user(
+        &mut self,
+        _user: &[u8],
+        _auth_plugin: Option<&[u8]>,
+        _auth_response: &[u8],
+        _database: &[u8],
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     /// Called when the client issues a query for immediate execution.
     ///
     /// Results should be returned using the given
@@ -653,12 +674,16 @@ where
                                 .await?;
                         }
                         Command::Execute { stmt, params } => {
-                            let state = stmts.get_mut(&stmt).ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    format!("asked to execute unknown statement {}", stmt),
+                            let Some(state) = stmts.get_mut(&stmt) else {
+                                writers::write_err(
+                                    ErrorKind::ER_UNKNOWN_STMT_HANDLER,
+                                    b"unknown prepared statement",
+                                    &mut self.writer,
                                 )
-                            })?;
+                                .await?;
+                                self.writer.flush_all().await?;
+                                continue;
+                            };
                             {
                                 let params = params::ParamParser::new(params, state);
                                 let w = QueryResultWriter::new(
@@ -687,10 +712,80 @@ where
                                 .or_insert_with(Vec::new)
                                 .extend(data);
                         }
+                        Command::ResetStatement(stmt) => {
+                            let Some(state) = stmts.get_mut(&stmt) else {
+                                writers::write_err(
+                                    ErrorKind::ER_UNKNOWN_STMT_HANDLER,
+                                    b"unknown prepared statement",
+                                    &mut self.writer,
+                                )
+                                .await?;
+                                self.writer.flush_all().await?;
+                                continue;
+                            };
+                            if self.shim.on_reset_statement(stmt).await? {
+                                state.long_data.clear();
+                                writers::write_ok_packet(
+                                    &mut self.writer,
+                                    self.client_capabilities,
+                                    OkResponse::default(),
+                                )
+                                .await?;
+                            } else {
+                                writers::write_err(
+                                    ErrorKind::ER_UNKNOWN_STMT_HANDLER,
+                                    b"unknown prepared statement",
+                                    &mut self.writer,
+                                )
+                                .await?;
+                            }
+                        }
                         Command::Close(stmt) => {
                             self.shim.on_close(stmt).await;
                             stmts.remove(&stmt);
                             // NOTE: spec dictates no response from server
+                        }
+                        Command::ResetConnection => {
+                            self.shim.on_reset().await?;
+                            stmts.clear();
+                            writers::write_ok_packet(
+                                &mut self.writer,
+                                self.client_capabilities,
+                                OkResponse::default(),
+                            )
+                            .await?;
+                        }
+                        Command::ChangeUser {
+                            user,
+                            auth_response,
+                            database,
+                            auth_plugin,
+                        } => {
+                            if self
+                                .shim
+                                .on_change_user(
+                                    user,
+                                    auth_plugin,
+                                    auth_response,
+                                    database,
+                                )
+                                .await?
+                            {
+                                stmts.clear();
+                                writers::write_ok_packet(
+                                    &mut self.writer,
+                                    self.client_capabilities,
+                                    OkResponse::default(),
+                                )
+                                .await?;
+                            } else {
+                                writers::write_err(
+                                    ErrorKind::ER_ACCESS_DENIED_ERROR,
+                                    b"access denied during COM_CHANGE_USER",
+                                    &mut self.writer,
+                                )
+                                .await?;
+                            }
                         }
                         Command::ListFields(_) => {
                             // mysql_list_fields (CommandByte::COM_FIELD_LIST / 0x04) has been deprecated in mysql 5.7
@@ -738,12 +833,10 @@ where
                     self.writer.flush_all().await?;
                 }
                 Err(_) => {
-                    // if parser err, we need also stay the conn,
-                    // because we can not support all command.
-                    writers::write_ok_packet(
+                    writers::write_err(
+                        ErrorKind::ER_UNKNOWN_COM_ERROR,
+                        b"unsupported or malformed command",
                         &mut self.writer,
-                        self.client_capabilities,
-                        OkResponse::default(),
                     )
                     .await?;
                     self.writer.flush_all().await?;
