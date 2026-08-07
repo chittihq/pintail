@@ -226,13 +226,29 @@ async function dockerHostPreflight(): Promise<string | null> {
   if (ping.timedOut || ping.code !== 0) {
     return 'docker daemon unreachable or wedged (a stalled bulk transfer blocks every call; kill it and retry)'
   }
-  const contexts = await docker(['context', 'show'])
-  const remote = !contexts.output.includes('desktop')
+  const context = await docker(['context', 'show'])
+  const inspected = await docker([
+    'context',
+    'inspect',
+    context.output.trim(),
+    '--format',
+    '{{.Endpoints.docker.Host}}',
+  ])
+  // DOCKER_HOST overrides Docker's selected context. Use that same effective
+  // endpoint for the SSH disk check or the preflight can probe one machine
+  // while every Docker command targets another.
+  const endpoint = process.env.DOCKER_HOST?.trim() || inspected.output.trim()
+  const remote = endpoint.startsWith('ssh://')
   if (remote) {
+    const sshTarget = endpoint.slice('ssh://'.length).replace(/\/.*$/, '').replace(/:\d+$/, '')
     const disk = await run([
-      'bash', '-c',
-      `TARGET=$(docker context inspect $(docker context show) --format '{{.Endpoints.docker.Host}}' | sed 's|^ssh://||; s|:.*$||'); ` +
-      `ssh -o BatchMode=yes -o ConnectTimeout=10 "$TARGET" "df -kP / | tail -1 | awk '{print \\$4}'"`,
+      'ssh',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+      sshTarget,
+      "df -kP / | tail -1 | awk '{print $4}'",
     ], { timeoutMinutes: 2 })
     const freeKb = Number(disk.output.trim().split('\n').pop())
     if (Number.isFinite(freeKb)) {
@@ -245,9 +261,13 @@ async function dockerHostPreflight(): Promise<string | null> {
         await docker(['builder', 'prune', '-f'])
         await docker(['image', 'prune', '-f'])
         const after = await run([
-          'bash', '-c',
-          `TARGET=$(docker context inspect $(docker context show) --format '{{.Endpoints.docker.Host}}' | sed 's|^ssh://||; s|:.*$||'); ` +
-          `ssh -o BatchMode=yes -o ConnectTimeout=10 "$TARGET" "df -kP / | tail -1 | awk '{print \$4}'"`,
+          'ssh',
+          '-o',
+          'BatchMode=yes',
+          '-o',
+          'ConnectTimeout=10',
+          sshTarget,
+          "df -kP / | tail -1 | awk '{print $4}'",
         ], { timeoutMinutes: 5 })
         const afterKb = Number(after.output.trim().split('\n').pop())
         if (Number.isFinite(afterKb)) freeGb = afterKb / 1024 / 1024
