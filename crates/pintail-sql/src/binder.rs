@@ -1164,13 +1164,26 @@ impl<'catalog> Binder<'catalog> {
                 if join.global {
                     return Err(BindError::UnsupportedQueryClause(join.to_string()));
                 }
-                let relation = self.bind_join_relation(&join.relation, ctes)?;
+                let (kind, constraint) = bind_join_operator(&join.join_operator)?;
+                let mut relation = self.bind_join_relation(&join.relation, ctes)?;
                 for visible in &relation.tables {
                     reject_duplicate_relation(&tables, visible)?;
                 }
+                if matches!(kind, BoundJoinKind::Left | BoundJoinKind::Scalar) {
+                    for column in &mut relation.table.columns {
+                        column.nullable = true;
+                    }
+                    for column in &mut relation.wildcard_order {
+                        column.nullable = true;
+                    }
+                    for visible in &mut relation.tables {
+                        for column in &mut visible.columns {
+                            column.nullable = true;
+                        }
+                    }
+                }
                 tables.extend(relation.tables);
                 let table = relation.table;
-                let (kind, constraint) = bind_join_operator(&join.join_operator)?;
                 let condition = match constraint {
                     JoinConstraint::On(condition) => {
                         item_wildcard.extend(relation.wildcard_order.iter().cloned());
@@ -6050,13 +6063,16 @@ mod tests {
         assert_eq!(query.from[0].joins[1].kind, BoundJoinKind::Inner);
 
         let query = bind(
-            "SELECT e.Name, u.email, manager.email FROM Events e \
+            "SELECT e.id, u.email, manager.email FROM Events e \
              LEFT JOIN (users u LEFT JOIN users manager ON manager.id = u.id) \
              ON u.id = e.id",
         )
         .expect("bushy right-side outer join group");
         assert_eq!(query.tables.len(), 3);
         assert!(query.from[0].joins[0].table.input.is_some());
+        assert!(!query.projection[0].expr.nullable);
+        assert!(query.projection[1].expr.nullable);
+        assert!(query.projection[2].expr.nullable);
     }
 
     #[test]

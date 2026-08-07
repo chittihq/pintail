@@ -113,6 +113,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Nested LEFT JOIN groups now carry null-extension through their bound column
+  layouts, so downstream expression nullability and derived metadata agree
+  with the rows produced by bushy outer joins.
 - Dependent subquery executions subtract the live outer batch from their child
   memory allowance, so retained parent state, the current row batch, and inner
   materialization cannot jointly exceed the query ceiling.
