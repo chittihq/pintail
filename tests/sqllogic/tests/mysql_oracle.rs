@@ -17,8 +17,11 @@ use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchem
 const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
+const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
-const EXPECTED_CASES: usize = 822;
+/// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
+/// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
+const EXPECTED_CASES: usize = 862;
 
 struct OracleCase {
     family: &'static str,
@@ -194,6 +197,14 @@ fn run_oracle() -> Result<(), String> {
            id BIGINT PRIMARY KEY,\
            name VARCHAR(32) NOT NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
+         CREATE TABLE orders (\
+           id BIGINT UNSIGNED PRIMARY KEY,\
+           user_id BIGINT NOT NULL,\
+           total DECIMAL(12,2) NOT NULL,\
+           placed_at DATETIME NOT NULL,\
+           status VARCHAR(16) NOT NULL,\
+           meta JSON NULL\
+         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          INSERT INTO events VALUES\
            (1,'event-01',10,0,'Alpha'),(2,'event-02',20,1,'alpha'),\
            (3,'event-03',30,0,NULL),(4,'event-04',40,1,'Beta'),\
@@ -202,14 +213,30 @@ fn run_oracle() -> Result<(), String> {
            (9,'event-09',90,0,NULL),(10,'event-10',100,1,'Beta');\
          INSERT INTO users VALUES\
            (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
-           (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');",
+           (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');\
+         INSERT INTO orders VALUES\
+           (1,1,10.50,'2024-01-15 10:00:00','shipped','{\"tags\":[\"premium\"],\"score\":1.5,\"items\":[1,2,3,4]}'),\
+           (2,1,198.82,'2024-02-29 12:34:56','shipped','{\"tags\":[\"bulk\"],\"score\":2.0,\"items\":[1]}'),\
+           (3,2,0.01,'2024-03-01 00:00:00','pending',NULL),\
+           (4,2,99999999.99,'2024-03-08 06:30:00','cancelled','{\"tags\":[],\"score\":0,\"items\":[]}'),\
+           (5,3,12.35,'2024-06-15 18:00:00','shipped','{\"tags\":[\"premium\",\"rush\"],\"score\":9.9,\"items\":[1,2,3,4,5]}'),\
+           (6,3,50.00,'2024-07-04 09:15:00','pending','{\"tags\":[\"gift\"],\"score\":3,\"items\":[7,8]}'),\
+           (7,4,7.00,'2024-11-01 01:30:00','shipped',NULL),\
+           (8,5,100.00,'2025-01-01 00:00:00','delivered','{\"tags\":[\"premium\"],\"score\":1,\"items\":[1,2]}'),\
+           (9,9,25.25,'2025-02-01 12:00:00','pending','{\"tags\":[\"orphan\"],\"score\":0.5,\"items\":[9]}'),\
+           (10,1,0.00,'2025-02-28 23:59:59','cancelled',NULL),\
+           (11,6,33.33,'2025-03-01 08:00:00','shipped','{\"tags\":[\"a\"],\"score\":4.25,\"items\":[1,2,3]}'),\
+           (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}');",
     )?;
 
     let events_directory =
         tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
     let users_directory = tempfile::tempdir().map_err(|error| format!("users tempdir: {error}"))?;
+    let orders_directory =
+        tempfile::tempdir().map_err(|error| format!("orders tempdir: {error}"))?;
     let events_schema = events_schema()?;
     let users_schema = users_schema()?;
+    let orders_schema = orders_schema()?;
     let mut events = TableStore::open(
         events_directory.path(),
         events_schema.clone(),
@@ -222,18 +249,29 @@ fn run_oracle() -> Result<(), String> {
         StoreOptions::default(),
     )
     .map_err(|error| format!("open users: {error}"))?;
+    let mut orders = TableStore::open(
+        orders_directory.path(),
+        orders_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open orders: {error}"))?;
     events
         .ingest((1..=10).map(event_row).collect())
         .map_err(|error| format!("ingest events: {error}"))?;
     users
         .ingest((1..=8).map(user_row).collect())
         .map_err(|error| format!("ingest users: {error}"))?;
+    orders
+        .ingest(order_rows())
+        .map_err(|error| format!("ingest orders: {error}"))?;
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
-    let catalog = catalog(events_schema, users_schema)?;
+    let orders_snapshot = orders.snapshot();
+    let catalog = catalog(events_schema, users_schema, orders_schema)?;
     let provider = SnapshotScanProvider::new([
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
+        (DATABASE_ID, ORDERS_ID, &orders_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
@@ -2073,11 +2111,399 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT id, CEIL(score / 3) AS c, FLOOR(score / 3) AS f FROM events ORDER BY id",
         ),
     ]
+    .into_iter()
+    .chain(diversify_cases())
+    .collect()
+}
+
+/// Typed multi-table cases on the `orders` seed — DECIMAL / DATETIME / JSON
+/// columns and joins against `users`. These raise template entropy without
+/// another parametric 0..90 loop.
+#[allow(clippy::too_many_lines)]
+fn diversify_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    let unordered = |family, sql: &str| OracleCase {
+        family,
+        sql: sql.to_owned(),
+        ordered: false,
+    };
+    vec![
+        ordered(
+            "diversify decimal column aggregates",
+            "SELECT COUNT(*), SUM(total), AVG(total), MIN(total), MAX(total), \
+             ROUND(AVG(total), 2) FROM orders",
+        ),
+        ordered(
+            "diversify decimal column aggregates",
+            "SELECT status, COUNT(*), SUM(total), ROUND(AVG(total), 2) \
+             FROM orders GROUP BY status HAVING COUNT(*) >= 1 ORDER BY status",
+        ),
+        ordered(
+            "diversify decimal column math",
+            "SELECT id, total, total * 2, total + 0.50, ROUND(total / 3, 4), \
+             TRUNCATE(total, 1) FROM orders WHERE id <= 6 ORDER BY id",
+        ),
+        ordered(
+            "diversify decimal beyond float64",
+            "SELECT id, total FROM orders \
+             WHERE total = CAST('99999999.99' AS DECIMAL(12,2)) ORDER BY id",
+        ),
+        ordered(
+            "diversify decimal join key",
+            "SELECT o.id, u.name, o.total FROM orders o \
+             JOIN users u ON o.user_id = u.id \
+             WHERE o.total > CAST('20.00' AS DECIMAL(12,2)) \
+             ORDER BY o.total DESC, o.id",
+        ),
+        ordered(
+            "diversify outer join nullability",
+            "SELECT u.id, u.name, COUNT(o.id) AS n, \
+             COALESCE(SUM(o.total), 0) AS spend \
+             FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             GROUP BY u.id, u.name ORDER BY spend DESC, u.id",
+        ),
+        ordered(
+            "diversify outer join unmatched orders",
+            "SELECT o.id, o.user_id, u.name FROM orders o \
+             LEFT JOIN users u ON u.id = o.user_id \
+             WHERE u.id IS NULL ORDER BY o.id",
+        ),
+        ordered(
+            "diversify temporal column",
+            "SELECT id, YEAR(placed_at), MONTH(placed_at), DAY(placed_at), \
+             DATE(placed_at), DATE_FORMAT(placed_at, '%Y-%m-%d %H:%i:%s') \
+             FROM orders ORDER BY id",
+        ),
+        ordered(
+            "diversify temporal bucketing",
+            "SELECT YEAR(placed_at) AS yr, MONTH(placed_at) AS mo, COUNT(*), SUM(total) \
+             FROM orders GROUP BY yr, mo ORDER BY yr, mo",
+        ),
+        ordered(
+            "diversify convert_tz on column",
+            "SELECT id, CONVERT_TZ(placed_at, '+00:00', '+05:30'), \
+             CONVERT_TZ(placed_at, 'UTC', 'America/New_York') \
+             FROM orders WHERE id IN (1, 2, 7) ORDER BY id",
+        ),
+        ordered(
+            "diversify json column extract",
+            "SELECT id, JSON_EXTRACT(meta, '$.score'), JSON_UNQUOTE(JSON_EXTRACT(meta, '$.tags[0]')), \
+             meta -> '$.score', meta ->> '$.tags[0]' \
+             FROM orders WHERE meta IS NOT NULL ORDER BY id",
+        ),
+        ordered(
+            "diversify json contains and length",
+            "SELECT id, JSON_CONTAINS(meta, '\"premium\"', '$.tags'), \
+             JSON_LENGTH(meta, '$.items'), JSON_TYPE(JSON_EXTRACT(meta, '$.score')) \
+             FROM orders WHERE meta IS NOT NULL ORDER BY id",
+        ),
+        ordered(
+            "diversify json null rows",
+            "SELECT id, meta IS NULL, COALESCE(JSON_LENGTH(meta), -1) \
+             FROM orders ORDER BY id",
+        ),
+        ordered(
+            "diversify window on decimal",
+            "SELECT id, status, total, \
+             ROUND(SUM(total) OVER (PARTITION BY status ORDER BY id), 2) AS running, \
+             ROW_NUMBER() OVER (PARTITION BY status ORDER BY total DESC, id) AS rank_in_status \
+             FROM orders ORDER BY status, rank_in_status, id",
+        ),
+        ordered(
+            "diversify correlated scalar on orders",
+            "SELECT u.id, u.name, \
+             (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS n, \
+             (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.user_id = u.id) AS spend \
+             FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "diversify correlated exists",
+            "SELECT u.id, u.name FROM users u \
+             WHERE EXISTS (SELECT 1 FROM orders o \
+                           WHERE o.user_id = u.id AND o.status = 'shipped') \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "diversify in subquery",
+            "SELECT id, name FROM users \
+             WHERE id IN (SELECT user_id FROM orders WHERE total > 50) \
+             ORDER BY id",
+        ),
+        ordered(
+            "diversify set ops with columns",
+            "SELECT user_id AS id FROM orders WHERE status = 'shipped' \
+             UNION \
+             SELECT id FROM users WHERE id <= 3 \
+             ORDER BY id",
+        ),
+        ordered(
+            "diversify set ops except",
+            "SELECT id FROM users \
+             EXCEPT \
+             SELECT user_id FROM orders \
+             ORDER BY id",
+        ),
+        ordered(
+            "diversify three table join",
+            "SELECT o.id, u.name, e.name, o.total \
+             FROM orders o \
+             JOIN users u ON o.user_id = u.id \
+             JOIN events e ON e.id = u.id \
+             WHERE o.status <> 'cancelled' \
+             ORDER BY o.id",
+        ),
+        ordered(
+            "diversify case on status and decimal",
+            "SELECT CASE WHEN total >= 100 THEN 'high' \
+                         WHEN total >= 20 THEN 'mid' ELSE 'low' END AS bucket, \
+                    COUNT(*), SUM(total) \
+             FROM orders GROUP BY bucket ORDER BY bucket",
+        ),
+        ordered(
+            "diversify group_concat statuses",
+            "SELECT user_id, GROUP_CONCAT(status ORDER BY id) AS statuses, \
+             COUNT(*) AS n FROM orders GROUP BY user_id \
+             HAVING COUNT(*) >= 2 ORDER BY user_id",
+        ),
+        ordered(
+            "diversify filter null json and temporal range",
+            "SELECT id, total, placed_at FROM orders \
+             WHERE meta IS NULL AND placed_at >= '2024-07-01' \
+             ORDER BY id",
+        ),
+        ordered(
+            "diversify distinct status total pairs",
+            "SELECT DISTINCT status, ROUND(total, 0) AS whole \
+             FROM orders ORDER BY status, whole",
+        ),
+        ordered(
+            "diversify decimal average by user",
+            "SELECT user_id, AVG(total), COUNT(*) FROM orders \
+             GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "diversify date_add on column",
+            "SELECT id, placed_at, DATE_ADD(placed_at, INTERVAL 1 DAY), \
+             DATE_SUB(placed_at, INTERVAL 1 MONTH) \
+             FROM orders WHERE id <= 4 ORDER BY id",
+        ),
+        ordered(
+            "diversify like and string on status",
+            "SELECT id, UPPER(status), status LIKE '%ship%' \
+             FROM orders ORDER BY id",
+        ),
+        ordered(
+            "diversify multi-key style equality join",
+            "SELECT o.id, u.id, o.status, u.name \
+             FROM orders o JOIN users u \
+               ON o.user_id = u.id AND u.name = CONCAT('user-0', u.id) \
+             WHERE o.id <= 5 ORDER BY o.id",
+        ),
+        unordered(
+            "diversify distinct user ids with orders",
+            "SELECT DISTINCT user_id FROM orders",
+        ),
+        ordered(
+            "diversify having on decimal sum",
+            "SELECT user_id, SUM(total) AS spend FROM orders \
+             GROUP BY user_id HAVING SUM(total) >= 50 ORDER BY spend DESC, user_id",
+        ),
+        ordered(
+            "diversify order by decimal column",
+            "SELECT id, total FROM orders ORDER BY total DESC, id LIMIT 5",
+        ),
+        ordered(
+            "diversify coalesce meta length",
+            "SELECT id, COALESCE(JSON_LENGTH(meta, '$.tags'), 0) AS tag_n \
+             FROM orders ORDER BY id",
+        ),
+        ordered(
+            "diversify between on decimal",
+            "SELECT id, total FROM orders \
+             WHERE total BETWEEN 10 AND 100 ORDER BY id",
+        ),
+        ordered(
+            "diversify not in statuses",
+            "SELECT id, status FROM orders \
+             WHERE status NOT IN ('cancelled', 'pending') ORDER BY id",
+        ),
+        ordered(
+            "diversify derived table on orders",
+            "SELECT status, AVG(total) AS avg_total FROM ( \
+               SELECT status, total FROM orders WHERE total > 0 \
+             ) d GROUP BY status ORDER BY status",
+        ),
+        ordered(
+            "diversify cte spend",
+            "WITH spend AS ( \
+               SELECT user_id, SUM(total) AS lifetime FROM orders GROUP BY user_id \
+             ) \
+             SELECT u.id, u.name, ROUND(s.lifetime, 2) AS lifetime \
+             FROM users u JOIN spend s ON s.user_id = u.id \
+             ORDER BY lifetime DESC, u.id",
+        ),
+        ordered(
+            "diversify lag lead on totals",
+            "SELECT id, total, \
+             LAG(total, 1) OVER (ORDER BY id) AS prev_total, \
+             LEAD(total, 1) OVER (ORDER BY id) AS next_total \
+             FROM orders WHERE user_id = 1 ORDER BY id",
+        ),
+        ordered(
+            "diversify json object constructor with column",
+            "SELECT id, JSON_OBJECT('id', id, 'total', total, 'status', status) \
+             FROM orders WHERE id <= 3 ORDER BY id",
+        ),
+        ordered(
+            "diversify unsigned order id filter",
+            "SELECT id, user_id, total FROM orders WHERE id >= 10 ORDER BY id",
+        ),
+        ordered(
+            "diversify min max datetime",
+            "SELECT MIN(placed_at), MAX(placed_at), COUNT(*) FROM orders",
+        ),
+    ]
+}
+
+#[test]
+fn documented_rejects_stay_explicit() {
+    let events_schema = events_schema().expect("events schema");
+    let users_schema = users_schema().expect("users schema");
+    let orders_schema = orders_schema().expect("orders schema");
+    let events_directory = tempfile::tempdir().expect("events dir");
+    let users_directory = tempfile::tempdir().expect("users dir");
+    let orders_directory = tempfile::tempdir().expect("orders dir");
+    let mut events = TableStore::open(
+        events_directory.path(),
+        events_schema.clone(),
+        StoreOptions::default(),
+    )
+    .expect("open events");
+    let mut users = TableStore::open(
+        users_directory.path(),
+        users_schema.clone(),
+        StoreOptions::default(),
+    )
+    .expect("open users");
+    let mut orders = TableStore::open(
+        orders_directory.path(),
+        orders_schema.clone(),
+        StoreOptions::default(),
+    )
+    .expect("open orders");
+    events
+        .ingest((1..=10).map(event_row).collect())
+        .expect("ingest events");
+    users
+        .ingest((1..=8).map(user_row).collect())
+        .expect("ingest users");
+    orders.ingest(order_rows()).expect("ingest orders");
+    let events_snapshot = events.snapshot();
+    let users_snapshot = users.snapshot();
+    let orders_snapshot = orders.snapshot();
+    let catalog = catalog(events_schema, users_schema, orders_schema).expect("catalog");
+    let provider = SnapshotScanProvider::new([
+        (DATABASE_ID, EVENTS_ID, &events_snapshot),
+        (DATABASE_ID, USERS_ID, &users_snapshot),
+        (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+    ])
+    .expect("provider");
+
+    for (family, sql, needle) in reject_cases() {
+        let error = match execute_pintail(sql, &catalog, &provider) {
+            Ok(rows) => panic!(
+                "{family}: expected reject for `{sql}`, got {} row(s)",
+                rows.len()
+            ),
+            Err(error) => error,
+        };
+        let lower = error.to_ascii_lowercase();
+        let ok = needle.is_empty()
+            || needle
+                .split('|')
+                .any(|part| lower.contains(&part.to_ascii_lowercase()));
+        assert!(
+            ok,
+            "{family}: error `{error}` missing needle `{needle}` for `{sql}`"
+        );
+    }
+}
+
+/// Shapes that must fail closed (explicit error), never return a plausible
+/// wrong result. Needles are matched case-insensitively on the error string.
+fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        (
+            "reject non-equality join",
+            "SELECT e.id, u.id FROM events e JOIN users u ON e.id > u.id",
+            "join|equality|unsupported|bind",
+        ),
+        (
+            "reject json table",
+            "SELECT * FROM JSON_TABLE('[1,2]', '$[*]' COLUMNS (v INT PATH '$')) AS jt",
+            "unsupported|json_table|parse|bind|table",
+        ),
+        (
+            "reject soundex",
+            "SELECT SOUNDEX(name) FROM users",
+            "unsupported",
+        ),
+        (
+            "reject recursive with aggregate",
+            "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT SUM(n) FROM t) SELECT * FROM t",
+            "recursive|unsupported|unknown|aggregate",
+        ),
+        (
+            "reject json compare",
+            "SELECT id FROM orders WHERE meta = CAST('{\"a\":1}' AS JSON)",
+            "json",
+        ),
+        (
+            "reject json order by",
+            "SELECT id, meta FROM orders WHERE meta IS NOT NULL ORDER BY meta",
+            "json",
+        ),
+        (
+            "reject unknown collate",
+            "SELECT name FROM users ORDER BY name COLLATE utf8mb4_bin",
+            "collat",
+        ),
+        (
+            "reject trig function",
+            "SELECT SIN(score) FROM events WHERE id = 1",
+            "unsupported",
+        ),
+        (
+            "reject full text match",
+            "SELECT id FROM events WHERE MATCH(name) AGAINST ('event')",
+            "unsupported|match|parse|bind",
+        ),
+        (
+            "reject update statement",
+            "UPDATE orders SET total = 0 WHERE id = 1",
+            "unsupported|update|statement|parse|bind",
+        ),
+        (
+            "reject compound year_month interval",
+            "SELECT DATE_ADD(placed_at, INTERVAL '1-2' YEAR_MONTH) FROM orders",
+            "unsupported|interval|year_month|parse|bind",
+        ),
+        (
+            "reject aliased parenthesized join group",
+            "SELECT * FROM (events e JOIN users u ON e.id = u.id) AS j",
+            "unsupported|alias|join|bind|parse",
+        ),
+    ]
 }
 
 fn catalog(
     events_schema: TableSchema,
     users_schema: TableSchema,
+    orders_schema: TableSchema,
 ) -> Result<CatalogSnapshot, String> {
     let events = TableEntry::new(
         EVENTS_ID,
@@ -2097,7 +2523,16 @@ fn catalog(
     .map_err(|error| error.to_string())?
     .with_key_columns([1])
     .map_err(|error| error.to_string())?;
-    let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users])
+    let orders = TableEntry::new(
+        ORDERS_ID,
+        "orders",
+        orders_schema,
+        TableStatistics::with_row_count(12),
+    )
+    .map_err(|error| error.to_string())?
+    .with_key_columns([1])
+    .map_err(|error| error.to_string())?;
+    let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users, orders])
         .map_err(|error| error.to_string())?;
     CatalogSnapshot::new([database]).map_err(|error| error.to_string())
 }
@@ -2125,6 +2560,137 @@ fn users_schema() -> Result<TableSchema, String> {
         ],
     )
     .map_err(|error| error.to_string())
+}
+
+fn orders_schema() -> Result<TableSchema, String> {
+    TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "user_id", DataType::Int64, false),
+            Column::new(
+                3,
+                "total",
+                DataType::Decimal {
+                    precision: 12,
+                    scale: 2,
+                },
+                false,
+            ),
+            Column::new(4, "placed_at", DataType::DateTime64 { fsp: 0 }, false),
+            Column::new(5, "status", DataType::Utf8, false),
+            Column::new(6, "meta", DataType::Json, true),
+        ],
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn order_rows() -> Vec<StoredRow> {
+    // Canonical carriers must match the MySQL INSERT seed above.
+    [
+        order_row(
+            1,
+            1,
+            "10.50",
+            "2024-01-15 10:00:00",
+            "shipped",
+            Some(r#"{"tags":["premium"],"score":1.5,"items":[1,2,3,4]}"#),
+        ),
+        order_row(
+            2,
+            1,
+            "198.82",
+            "2024-02-29 12:34:56",
+            "shipped",
+            Some(r#"{"tags":["bulk"],"score":2.0,"items":[1]}"#),
+        ),
+        order_row(3, 2, "0.01", "2024-03-01 00:00:00", "pending", None),
+        order_row(
+            4,
+            2,
+            "99999999.99",
+            "2024-03-08 06:30:00",
+            "cancelled",
+            Some(r#"{"tags":[],"score":0,"items":[]}"#),
+        ),
+        order_row(
+            5,
+            3,
+            "12.35",
+            "2024-06-15 18:00:00",
+            "shipped",
+            Some(r#"{"tags":["premium","rush"],"score":9.9,"items":[1,2,3,4,5]}"#),
+        ),
+        order_row(
+            6,
+            3,
+            "50.00",
+            "2024-07-04 09:15:00",
+            "pending",
+            Some(r#"{"tags":["gift"],"score":3,"items":[7,8]}"#),
+        ),
+        order_row(7, 4, "7.00", "2024-11-01 01:30:00", "shipped", None),
+        order_row(
+            8,
+            5,
+            "100.00",
+            "2025-01-01 00:00:00",
+            "delivered",
+            Some(r#"{"tags":["premium"],"score":1,"items":[1,2]}"#),
+        ),
+        order_row(
+            9,
+            9,
+            "25.25",
+            "2025-02-01 12:00:00",
+            "pending",
+            Some(r#"{"tags":["orphan"],"score":0.5,"items":[9]}"#),
+        ),
+        order_row(10, 1, "0.00", "2025-02-28 23:59:59", "cancelled", None),
+        order_row(
+            11,
+            6,
+            "33.33",
+            "2025-03-01 08:00:00",
+            "shipped",
+            Some(r#"{"tags":["a"],"score":4.25,"items":[1,2,3]}"#),
+        ),
+        order_row(
+            12,
+            7,
+            "64.00",
+            "2025-04-01 16:45:00",
+            "delivered",
+            Some(r#"{"tags":["premium"],"score":8,"items":[2,4,6,8]}"#),
+        ),
+    ]
+    .into()
+}
+
+fn order_row(
+    id: u64,
+    user_id: i64,
+    total: &str,
+    placed_at: &str,
+    status: &str,
+    meta: Option<&str>,
+) -> StoredRow {
+    StoredRow::new(
+        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("non-empty order key"),
+        vec![
+            Value::UInt64(id),
+            Value::Int64(user_id),
+            Value::Utf8(total.to_owned()),
+            Value::Utf8(placed_at.to_owned()),
+            Value::Utf8(status.to_owned()),
+            match meta {
+                Some(document) => Value::Utf8(document.to_owned()),
+                None => Value::Null,
+            },
+        ],
+        id,
+        false,
+    )
 }
 
 fn event_row(id: u64) -> StoredRow {

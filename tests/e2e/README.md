@@ -13,9 +13,10 @@ Pintail stay identical while the source is abused:
    of the pintail process with writes while it is down.
 3. After every phase the gate proves convergence — every MySQL base table
    reads back identically from Pintail, retried until the CDC supervisor
-   catches up — and runs the differential corpus in `queries.ts` (joins,
-   UNION ALL, aggregates, subqueries, CTEs, date/string functions) on both
-   engines, comparing normalized results.
+   catches up — and runs the differential corpus in `queries.ts` (47 shapes:
+   joins, set ops, aggregates, subqueries, CTEs, windows, JSON extract,
+   decimal averages, date/string functions) on both engines, comparing
+   normalized results.
 
 Operations Pintail documents as gaps (table RENAME quarantine, in-place
 type changes) run in a final phase whose divergences report as WARN, not

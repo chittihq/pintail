@@ -50,10 +50,33 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL 8.4 container and compares 822
-generated and hand-written queries — including window-function, interval,
-and TIMESTAMPDIFF families — over equivalent nullable MySQL and Pintail
-data. The end-to-end differential gate (`tests/e2e`) boots a real MySQL 8.4
+The oracle starts a uniquely named MySQL 8.4 container and compares 862
+generated and hand-written queries over equivalent MySQL and Pintail data.
+The corpus has three layers:
+
+1. **Parametric loops** (~557 cases) — small AST templates with a varying
+   scalar; good regression bulk, low template entropy.
+2. **Hand-written edges** (~265 cases) — windows, decimals, JSON, set ops,
+   repaired review findings.
+3. **Typed diversify cases** (40 cases) — multi-table `orders` seed with
+   `DECIMAL` / `DATETIME` / `JSON` columns, joins against `users`, and
+   column-native aggregates, windows, JSON extract, and temporal grains.
+
+A separate non-Docker unit test (`documented_rejects_stay_explicit`) pins
+twelve limitation shapes so they fail closed with an explicit error rather
+than a plausible wrong answer. Inventory and function-gap ranking:
+
+```sh
+bun run scripts/oracle-coverage.ts
+bun run scripts/function-surface.ts tests/corpus/bi-shapes.sql
+```
+
+Prefer unique SQL templates and typed-column coverage over raw case count
+when judging diversity. Optional production BI capture and dual-engine
+replay is documented under `tests/corpus/bi-captured/README.md` (not a
+release requirement).
+
+The end-to-end differential gate (`tests/e2e`) boots a real MySQL 8.4
 source and the release binary, registers the database through the HTTP API,
 and drives eight workload phases (transactional CRUD with rollbacks, type
 edges, live DDL including a mid-stream CREATE TABLE, 400 seeded churn
@@ -62,8 +85,8 @@ writes while the process is down, a control-plane pass that exercises the
 operator API routes — status, metrics, activity, mode switching, resync,
 API-key lifecycle, and database create/update/delete — and documented-gap
 DDL). After every phase it re-verifies each base table over the wire protocol
-plus 35 differential query shapes covering joins, windows, aggregates,
-subqueries, CTEs, and set operations. A pinned Sequelize, Prisma, and Drizzle
+plus 47 differential query shapes covering joins, windows, aggregates,
+subqueries, CTEs, set operations, JSON extract, and decimal averages. A pinned Sequelize, Prisma, and Drizzle
 matrix additionally compares generated read queries, decoded results, and
 schema-introspection artifacts against MySQL. The complete gate records 506
 passing checks; that headline is checks across phases, not independent

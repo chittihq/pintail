@@ -290,4 +290,108 @@ export const differentialQueries: DifferentialQuery[] = [
       'FROM orders ORDER BY id LIMIT 30',
     tables: ['orders'],
   },
+  // --- diversify batch: typed / multi-join / reject-adjacent product shapes ---
+  {
+    name: 'decimal column average beyond simple sum',
+    sql:
+      'SELECT customer_id, ROUND(AVG(total), 4) AS avg_total, ' +
+      'ROUND(SUM(total) / COUNT(*), 4) AS mean_check ' +
+      'FROM orders GROUP BY customer_id HAVING COUNT(*) >= 2 ' +
+      'ORDER BY avg_total DESC, customer_id LIMIT 20',
+    tables: ['orders'],
+  },
+  {
+    name: 'json extract filter on customer meta',
+    sql:
+      "SELECT id, meta ->> '$.tier' AS tier_path, JSON_TYPE(meta) AS meta_type " +
+      'FROM customers WHERE meta IS NOT NULL ORDER BY id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
+    name: 'fan-out join group concat line products',
+    sql:
+      'SELECT o.id, o.customer_id, COUNT(i.line_no) AS lines, ' +
+      'ROUND(SUM(i.qty * i.price), 2) AS items_total ' +
+      'FROM orders o JOIN order_items i ON i.order_id = o.id ' +
+      'GROUP BY o.id, o.customer_id HAVING COUNT(i.line_no) >= 1 ' +
+      'ORDER BY items_total DESC, o.id LIMIT 30',
+    tables: ['orders', 'order_items'],
+  },
+  {
+    name: 'outer join customers without recent orders',
+    sql:
+      'SELECT c.id, c.name, o.id AS order_id ' +
+      'FROM customers c LEFT JOIN orders o ON o.customer_id = c.id AND o.total > 500 ' +
+      'WHERE o.id IS NULL ORDER BY c.id LIMIT 25',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'set op union distinct tiers and statuses',
+    sql:
+      "SELECT CAST(tier AS CHAR) AS label FROM customers WHERE id <= 20 " +
+      'UNION ' +
+      "SELECT CAST(status AS CHAR) AS label FROM orders WHERE id <= 20 " +
+      'ORDER BY label',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'temporal convert and date_format grain',
+    sql:
+      "SELECT DATE_FORMAT(placed_on, '%Y-%m-01') AS month_grain, COUNT(*) AS n, " +
+      'ROUND(SUM(total), 2) AS revenue FROM orders ' +
+      "GROUP BY month_grain ORDER BY month_grain",
+    tables: ['orders'],
+  },
+  {
+    name: 'correlated not exists open orders',
+    sql:
+      'SELECT c.id, c.name FROM customers c ' +
+      "WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.status = 'pending') " +
+      'ORDER BY c.id LIMIT 25',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'window lag payment-shaped totals',
+    sql:
+      'SELECT id, customer_id, total, ' +
+      'LAG(total) OVER (PARTITION BY customer_id ORDER BY id) AS prev_total ' +
+      'FROM orders ORDER BY customer_id, id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'multi-key join items to orders',
+    sql:
+      'SELECT i.order_id, i.line_no, o.status, ROUND(i.qty * i.price, 2) AS line_total ' +
+      'FROM order_items i JOIN orders o ' +
+      'ON i.order_id = o.id AND o.customer_id = o.customer_id ' +
+      "WHERE o.status IN ('delivered', 'shipped') " +
+      'ORDER BY line_total DESC, i.order_id, i.line_no LIMIT 40',
+    tables: ['order_items', 'orders'],
+  },
+  {
+    name: 'between and null-safe coalesce on balance',
+    sql:
+      'SELECT id, name, COALESCE(balance, 0) AS bal FROM customers ' +
+      'WHERE COALESCE(balance, 0) BETWEEN 0 AND 500 ORDER BY bal DESC, id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
+    name: 'intersect all-style customer buyers',
+    sql:
+      'SELECT customer_id AS id FROM orders WHERE total > 10 ' +
+      'INTERSECT ' +
+      'SELECT id FROM customers WHERE id <= 50 ' +
+      'ORDER BY id LIMIT 30',
+    tables: ['orders', 'customers'],
+  },
+  {
+    name: 'derived table status revenue share',
+    sql:
+      'SELECT status, revenue, ' +
+      'ROUND(revenue * 100 / SUM(revenue) OVER (), 2) AS pct ' +
+      'FROM (' +
+      '  SELECT CAST(status AS CHAR) AS status, SUM(total) AS revenue FROM orders GROUP BY status' +
+      ') s ORDER BY revenue DESC, status',
+    tables: ['orders'],
+  },
 ]

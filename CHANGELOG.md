@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- MySQL differential oracle diversify batch: typed multi-table `orders` seed
+  (`DECIMAL` / `DATETIME` / `JSON`), forty column-native match cases (862 total),
+  twelve fail-closed reject shapes (`documented_rejects_stay_explicit`), twelve
+  additional e2e differential query shapes (47 total), and
+  `scripts/oracle-coverage.ts` for family/template/function inventory. Prefer
+  template entropy and typed-column coverage over raw case count.
 - A pinned read-only ORM differential matrix exercises Sequelize, Prisma, and
   Drizzle against MySQL and Pintail, comparing decoded reads, generated query
   shapes, and schema-introspection artifacts. ORM writes and migration
