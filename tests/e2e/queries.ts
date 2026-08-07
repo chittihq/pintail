@@ -135,6 +135,15 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers'],
   },
   {
+    name: 'looker symmetric key helpers',
+    sql:
+      'SELECT id, MD5(CAST(id AS CHAR)) AS digest, ' +
+      'CONV(SUBSTRING(MD5(CAST(id AS CHAR)), 1, 15), 16, 10) AS numeric_key, ' +
+      "SUBSTRING_INDEX(email, '@', -1) AS email_domain " +
+      'FROM customers ORDER BY id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
     name: 'json constructor preserves json versus text',
     sql:
       "SELECT id, JSON_OBJECT('json', meta, 'text', CAST(meta AS CHAR)) AS object_value, " +

@@ -428,6 +428,35 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("prepared wire query");
     assert_eq!(prepared, vec![(2, "land".to_owned())]);
+    let scalar_helpers = connection
+        .exec_first::<mysql_async::Row, _, _>(
+            "SELECT MD5(?), CONV(?, 16, 10), SUBSTRING_INDEX(?, '/', -1), \
+                    IFNULL(?, 'fallback')",
+            ("abc", "ff", "a/b/c", mysql_async::Value::NULL),
+        )
+        .await
+        .expect("prepared scalar-helper query")
+        .expect("prepared scalar-helper row")
+        .unwrap();
+    assert_eq!(
+        scalar_helpers,
+        vec![
+            mysql_async::Value::Bytes(b"900150983cd24fb0d6963f7d28e17f72".to_vec()),
+            mysql_async::Value::Bytes(b"255".to_vec()),
+            mysql_async::Value::Bytes(b"c".to_vec()),
+            mysql_async::Value::Bytes(b"fallback".to_vec()),
+        ]
+    );
+
+    let cast_statement = connection
+        .prep("SELECT CAST(? AS JSON), CAST(? AS YEAR), CAST(? AS TIME(3))")
+        .await
+        .expect("prepare cast result-family query");
+    let cast_columns = cast_statement.columns();
+    assert_eq!(cast_columns[0].column_type(), ColumnType::MYSQL_TYPE_JSON);
+    assert_eq!(cast_columns[1].column_type(), ColumnType::MYSQL_TYPE_YEAR);
+    assert_eq!(cast_columns[2].column_type(), ColumnType::MYSQL_TYPE_TIME);
+    assert_eq!(cast_columns[2].decimals(), 3);
     let by_date: Vec<u64> = connection
         .exec(
             "SELECT id FROM type_fidelity WHERE date_value = ?",
