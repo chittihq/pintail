@@ -77,10 +77,11 @@ From `scripts/function-surface.ts` against `tests/corpus/bi-shapes.sql`.
 
 `tests/corpus/bi-shapes.sql` is **reconstructed** from documented BI-tool
 behaviour, not a captured query log. It establishes which functions are needed,
-not how often. #24 tracks capturing a real log; replace this ranking with its
-output rather than merging the two. The local-only capture, redaction, and
-dual-engine replay workflow is documented in
-`tests/corpus/bi-captured/README.md`; actual dashboard access is still required.
+not how often. Capturing production dashboard traffic is not a release
+requirement: Pintail targets the documented MySQL-compatible SQL surface, not
+tool-specific integrations. An optional local-only capture, redaction, and
+dual-engine replay utility remains documented in
+`tests/corpus/bi-captured/README.md` for diagnostics.
 
 ## Duckling known-limit parity
 

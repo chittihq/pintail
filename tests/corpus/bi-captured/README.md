@@ -1,6 +1,7 @@
 # Captured BI SQL
 
-This directory is the handoff point for issue #24. The existing
+This directory contains an optional diagnostic utility; production BI capture
+is not a Pintail release requirement or a supported-tool integration. The existing
 `tests/corpus/bi-shapes.sql` is reconstructed from BI-tool documentation; it is
 not measured production evidence. Captures here must come from an actual
 Metabase, Tableau, Looker, Superset, or application dashboard session.
