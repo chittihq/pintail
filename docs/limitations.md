@@ -126,10 +126,12 @@ worth refusing.
   hashing, DISTINCT, joins, IN, MIN/MAX, and ordering share one
   primary-strength Unicode collation key, while LIKE/locate use a
   character-preserving case/accent fold and binary values remain bytewise.
-  Source collation names are preserved in metadata, but per-expression
-  coercibility, explicit `COLLATE`, locale-specific collations, and mixed
-  source collations are not yet executable; those shapes reject where the SQL
-  parser exposes them or otherwise use the initial profile.
+  Source collation names propagate from probing through derived query layouts.
+  Lossless projection accepts other source collations, but every supported
+  collation-sensitive operation rejects unsupported or mixed source profiles
+  instead of silently applying the initial profile. Per-expression
+  coercibility, explicit `COLLATE`, locale-specific collations, and execution
+  of mixed source collations remain unsupported.
 
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
 

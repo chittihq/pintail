@@ -69,6 +69,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   initial `utf8mb4_0900_ai_ci` profile. Accent/case folding is no longer an
   opt-in process flag, and LIKE/locate use the same character-level
   case/accent policy while binary values remain bytewise.
+- Source collations now survive probing, catalog binding, and derived-column
+  layouts. Lossless projection remains available for unsupported collations,
+  while collation-sensitive operations reject unsupported or mixed source
+  profiles instead of silently applying `utf8mb4_0900_ai_ci` semantics.
 - Keyless-table identity and mutation guarantees are visible in the table API,
   dashboard, and Prometheus metrics. Ambiguous UPDATE/DELETE behavior is
   documented and acceptance-covered through quarantine plus exact

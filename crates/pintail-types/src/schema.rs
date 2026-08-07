@@ -24,6 +24,7 @@ pub struct Column {
     name: String,
     data_type: DataType,
     nullable: bool,
+    collation: Option<String>,
 }
 
 impl Column {
@@ -35,7 +36,16 @@ impl Column {
             name: name.into(),
             data_type,
             nullable,
+            collation: None,
         }
+    }
+
+    /// Attaches the source text collation used for query semantics. Storage
+    /// encoding is unchanged; non-text columns should leave this absent.
+    #[must_use]
+    pub fn with_collation(mut self, collation: Option<String>) -> Self {
+        self.collation = collation;
+        self
     }
 
     /// Returns the stable column identifier.
@@ -60,6 +70,12 @@ impl Column {
     #[must_use]
     pub fn is_nullable(&self) -> bool {
         self.nullable
+    }
+
+    /// Returns the source text collation, when the column is textual.
+    #[must_use]
+    pub fn collation(&self) -> Option<&str> {
+        self.collation.as_deref()
     }
 }
 

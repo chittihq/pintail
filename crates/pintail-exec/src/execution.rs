@@ -1970,6 +1970,7 @@ fn build_operator(
                     name: format!("<aggregate-{index}>"),
                     data_type: data_type.unwrap_or(DataType::Utf8),
                     nullable,
+                    collation: None,
                     using_shadowed: false,
                 })
                 .collect();

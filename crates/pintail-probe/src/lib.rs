@@ -162,6 +162,7 @@ impl SourceTable {
                         .iter()
                         .any(|name| name.eq_ignore_ascii_case(&column.name));
                     Column::new(column.id, &column.name, column.pintail_type, !sort_key)
+                        .with_collation(column.collation.clone())
                 })
                 .collect(),
             self.key.mode,

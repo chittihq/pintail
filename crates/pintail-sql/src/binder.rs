@@ -186,6 +186,7 @@ impl<'catalog> Binder<'catalog> {
                 ),
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: true,
+                collation: expression_collation_marker(&projection.expr),
                 using_shadowed: false,
             })
             .collect();
@@ -553,6 +554,11 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedQueryClause(
                 "DISTINCT over JSON values requires JSON-aware equality".to_owned(),
             ));
+        }
+        if distinct {
+            for item in &projection {
+                ensure_supported_text_collation(&[&item.expr])?;
+            }
         }
         Ok(BoundQuery {
             from,
@@ -1331,6 +1337,7 @@ impl<'catalog> Binder<'catalog> {
                 name: column.name().to_owned(),
                 data_type: column.data_type(),
                 nullable: column.is_nullable(),
+                collation: column.collation().map(str::to_owned),
                 using_shadowed: false,
             })
             .collect();
@@ -1376,6 +1383,7 @@ impl<'catalog> Binder<'catalog> {
                     .unwrap_or_else(|| projection.name.clone()),
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: projection.expr.nullable,
+                collation: expression_collation_marker(&projection.expr),
                 using_shadowed: false,
             })
             .collect();
@@ -1833,6 +1841,9 @@ fn bind_group_by(
         return Err(BindError::InvalidGrouping(
             "GROUP BY over JSON values requires JSON-aware equality".to_owned(),
         ));
+    }
+    for expression in &groups {
+        ensure_supported_text_collation(&[expression])?;
     }
     Ok(groups)
 }
@@ -2433,7 +2444,7 @@ fn bind_binary(
     }
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
-    // MySQL JSON path operators: `->` extracts, `->>` extracts and unquotes.
+    ensure_binary_collation(operator, &left, &right)?;
     if matches!(operator, BinaryOperator::Arrow | BinaryOperator::LongArrow) {
         return bind_scalar(
             ScalarFunction::JsonExtract {
@@ -2501,7 +2512,6 @@ fn bind_binary(
             });
         }
     };
-
     if is_exact_decimal_comparison(op, &left, &right) {
         return Ok(bind_exact_decimal_comparison(op, left, right));
     }
@@ -2515,6 +2525,29 @@ fn bind_binary(
             right: Box::new(right),
         },
     })
+}
+
+fn is_collation_sensitive_binary(operator: &BinaryOperator) -> bool {
+    matches!(
+        operator,
+        BinaryOperator::Eq
+            | BinaryOperator::NotEq
+            | BinaryOperator::Lt
+            | BinaryOperator::LtEq
+            | BinaryOperator::Gt
+            | BinaryOperator::GtEq
+    )
+}
+
+fn ensure_binary_collation(
+    operator: &BinaryOperator,
+    left: &BoundExpr,
+    right: &BoundExpr,
+) -> Result<(), BindError> {
+    if is_collation_sensitive_binary(operator) {
+        ensure_supported_text_collation(&[left, right])?;
+    }
+    Ok(())
 }
 
 fn is_exact_decimal_comparison(op: BinaryOp, left: &BoundExpr, right: &BoundExpr) -> bool {
@@ -3578,6 +3611,24 @@ fn bind_scalar(function: ScalarFunction, args: Vec<BoundExpr>) -> Result<BoundEx
         },
         other => other,
     };
+    if matches!(
+        function,
+        ScalarFunction::Locate
+            | ScalarFunction::Like { .. }
+            | ScalarFunction::InList { .. }
+            | ScalarFunction::Between { .. }
+            | ScalarFunction::NullIf
+            | ScalarFunction::Greatest { .. }
+            | ScalarFunction::Least { .. }
+            | ScalarFunction::Instr
+            | ScalarFunction::FindInSet
+            | ScalarFunction::RegexpLike { .. }
+            | ScalarFunction::RegexpSubstr
+            | ScalarFunction::RegexpInstr
+            | ScalarFunction::RegexpReplace
+    ) {
+        ensure_supported_text_collation(&args.iter().collect::<Vec<_>>())?;
+    }
     if function == ScalarFunction::StrToDate
         && let Some(BoundExpr {
             kind: BoundExprKind::Literal(Value::Utf8(format)),
@@ -3997,6 +4048,93 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
     }
 }
 
+const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
+const MIXED_COLLATION_PREFIX: &str = "mixed:";
+
+/// Carries source collation through a derived-column layout without widening
+/// every scalar node. A mixed marker is retained so a later comparison cannot
+/// silently adopt whichever source happened to be visited first.
+fn expression_collation_marker(expr: &BoundExpr) -> Option<String> {
+    if expr.data_type != Some(DataType::Utf8) {
+        return None;
+    }
+    let mut collations = Vec::new();
+    collect_expression_collations(expr, &mut collations);
+    collations.sort_unstable();
+    collations.dedup();
+    match collations.as_slice() {
+        [] => Some(DEFAULT_TEXT_COLLATION.to_owned()),
+        [collation] => Some(collation.clone()),
+        _ => Some(format!("{MIXED_COLLATION_PREFIX}{}", collations.join(","))),
+    }
+}
+
+fn collect_expression_collations(expr: &BoundExpr, collations: &mut Vec<String>) {
+    match &expr.kind {
+        BoundExprKind::Column(column) => {
+            if column.data_type == DataType::Utf8 {
+                collations.push(
+                    column
+                        .collation
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_TEXT_COLLATION.to_owned()),
+                );
+            }
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            collect_expression_collations(expr, collations);
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            collect_expression_collations(left, collations);
+            collect_expression_collations(right, collations);
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                collect_expression_collations(argument, collations);
+            }
+        }
+        BoundExprKind::ScalarSubquery(query) => {
+            for projection in &query.projection {
+                collect_expression_collations(&projection.expr, collations);
+            }
+        }
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            collect_expression_collations(expr, collations);
+            for projection in &query.projection {
+                collect_expression_collations(&projection.expr, collations);
+            }
+        }
+        BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::ExistsSubquery { .. }
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::GroupKey(_) => {}
+    }
+}
+
+fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Result<(), BindError> {
+    let mut collations = Vec::new();
+    for expression in expressions {
+        collect_expression_collations(expression, &mut collations);
+    }
+    collations.sort_unstable();
+    collations.dedup();
+    if collations
+        .iter()
+        .all(|collation| collation == DEFAULT_TEXT_COLLATION)
+    {
+        return Ok(());
+    }
+    let detail = if collations.is_empty() {
+        return Ok(());
+    } else {
+        collations.join(", ")
+    };
+    Err(BindError::UnsupportedExpression(format!(
+        "text collation {detail} is unsupported; the initial executable profile is {DEFAULT_TEXT_COLLATION}"
+    )))
+}
+
 fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {
@@ -4005,6 +4143,7 @@ fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindErr
             right: right.data_type,
         });
     }
+    ensure_supported_text_collation(&[&left, &right])?;
     Ok(BoundExpr {
         nullable: left.nullable || right.nullable,
         data_type: Some(DataType::Boolean),
@@ -4090,6 +4229,7 @@ fn bind_aggregate(
                             "{function}: ORDER BY over JSON requires JSON-aware ordering"
                         )));
                     }
+                    ensure_supported_text_collation(&[&bound])?;
                     order_within.push((bound, key.options.asc.unwrap_or(true)));
                 }
             }
@@ -4194,6 +4334,15 @@ fn bind_aggregate(
         return Err(BindError::UnsupportedAggregate(format!(
             "{function}: DISTINCT over JSON requires JSON-aware equality"
         )));
+    }
+    if (distinct
+        || matches!(
+            aggregate_function,
+            AggregateFunction::Minimum | AggregateFunction::Maximum
+        ))
+        && let Some(expression) = &expr
+    {
+        ensure_supported_text_collation(&[expression])?;
     }
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let aggregate = BoundAggregate {
@@ -4978,6 +5127,9 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                     "ORDER BY over JSON values requires JSON-aware ordering".to_owned(),
                 ));
             }
+            if let Some(projection) = bound.projection.get(index) {
+                ensure_supported_text_collation(&[&projection.expr])?;
+            }
             let ascending = order.options.asc.unwrap_or(true);
             Ok(BoundOrderKey {
                 index,
@@ -5408,9 +5560,26 @@ mod tests {
             TableStatistics::default(),
         )
         .expect("table");
-        let database =
-            DatabaseEntry::new(DatabaseId::new(7), "Analytics", [events, users, payments])
-                .expect("database");
+        let legacy = TableEntry::new(
+            TableId::new(14),
+            "legacy",
+            TableSchema::new(
+                1,
+                vec![
+                    Column::new(1, "name", DataType::Utf8, false)
+                        .with_collation(Some("latin1_swedish_ci".to_owned())),
+                ],
+            )
+            .expect("schema"),
+            TableStatistics::default(),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(
+            DatabaseId::new(7),
+            "Analytics",
+            [events, users, payments, legacy],
+        )
+        .expect("database");
         CatalogSnapshot::new([database]).expect("catalog")
     }
 
@@ -5418,6 +5587,26 @@ mod tests {
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         Binder::new(&catalog, Some("analytics")).bind(&statement)
+    }
+
+    #[test]
+    fn unsupported_source_collations_project_but_never_compare_silently() {
+        bind("SELECT name FROM legacy").expect("lossless projection is collation-independent");
+        for sql in [
+            "SELECT name FROM legacy WHERE name = 'a'",
+            "SELECT name, COUNT(*) FROM legacy GROUP BY name",
+            "SELECT DISTINCT name FROM legacy",
+            "SELECT name FROM legacy ORDER BY name",
+            "SELECT MIN(name) FROM legacy",
+            "SELECT name LIKE 'a%' FROM legacy",
+            "SELECT CONCAT(e.Name, l.name) AS x FROM Events e CROSS JOIN legacy l ORDER BY x",
+        ] {
+            let error = bind(sql).expect_err("unsupported collation must reject");
+            assert!(
+                error.to_string().contains("latin1_swedish_ci"),
+                "{sql}: {error}"
+            );
+        }
     }
 
     #[test]
@@ -5575,7 +5764,6 @@ mod tests {
             }
         ));
     }
-
     #[test]
     fn rejects_unsupported_join_directions_and_constraints() {
         // Two-table RIGHT JOIN flips into a LEFT JOIN with swapped inputs.

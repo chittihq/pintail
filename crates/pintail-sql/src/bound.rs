@@ -48,6 +48,9 @@ pub struct BoundColumn {
     pub data_type: DataType,
     /// Whether the value can be `NULL`.
     pub nullable: bool,
+    /// Source text collation, preserved through derived layouts. `None` is a
+    /// non-text value or a synthetic expression using the connection default.
+    pub collation: Option<String>,
     /// Consumed as the right side of a `USING`/`NATURAL` join: hidden from
     /// unqualified name resolution and unqualified `*`, still reachable
     /// through a qualified reference.
