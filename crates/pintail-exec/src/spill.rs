@@ -801,6 +801,36 @@ mod directory_tests {
     }
 
     #[test]
+    fn concurrent_reservations_never_cross_the_global_ceiling() {
+        const WORKERS: usize = 8;
+        const LIMIT: u64 = 257;
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(WORKERS));
+        let handles = (0..WORKERS)
+            .map(|_| {
+                let counter = std::sync::Arc::clone(&counter);
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    (0..64)
+                        .filter(|_| super::reserve_counter(&counter, 1, LIMIT).is_ok())
+                        .count()
+                })
+            })
+            .collect::<Vec<_>>();
+        let accepted = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("quota worker"))
+            .sum::<usize>();
+
+        assert_eq!(
+            u64::try_from(accepted).expect("accepted reservation count fits u64"),
+            LIMIT
+        );
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), LIMIT);
+    }
+
+    #[test]
     fn framed_writes_fail_before_crossing_the_query_quota() {
         let query = QuerySpill::with_limit(8);
         let mut reservation = super::SpillReservation {
