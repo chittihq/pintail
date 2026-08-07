@@ -136,7 +136,7 @@ export interface TableSummary {
    *  and repaired by scheduled reconciliation instead of arriving in seconds. */
   cascade_reconciled: boolean
   /** Physical source identity. append_row_id cannot target UPDATE/DELETE. */
-  key_mode: 'primary' | 'unique' | 'append_row_id'
+  key_mode: 'primary' | 'unique' | 'append_row_id' | null
   mutation_guarantee: 'row_level_cdc' | 'reconciled_polling' | 'generation_replacement' | 'insert_only' | 'quarantined'
   remediation: 'resnapshot' | 'resnapshot_after_update_or_delete' | null
 }

@@ -80,7 +80,7 @@ pub(crate) struct TableSummary {
     cascade_reconciled: bool,
     /// Physical identity selected by the source probe. `append_row_id` means
     /// source UPDATE/DELETE events cannot identify one replica row safely.
-    key_mode: KeyMode,
+    key_mode: Option<KeyMode>,
     /// Operator-facing consistency contract for this table in its current
     /// replication mode.
     mutation_guarantee: &'static str,
@@ -156,7 +156,9 @@ pub(crate) async fn list_tables(
         .into_iter()
         .map(|record| {
             let facts = table_facts.get(&record.name.to_ascii_lowercase());
-            let key_mode = facts.map_or_else(|| durable_key_mode(&record), |facts| facts.key_mode);
+            let key_mode = facts
+                .map(|facts| facts.key_mode)
+                .or_else(|| durable_key_mode(&record));
             TableSummary::new(
                 record,
                 key_mode,
@@ -393,15 +395,19 @@ const fn default_preview_rows() -> usize {
 impl TableSummary {
     fn new(
         record: TableRecord,
-        key_mode: KeyMode,
+        key_mode: Option<KeyMode>,
         cascade_reconciled: bool,
         effective_mode: Option<&str>,
     ) -> Self {
         let (mutation_guarantee, remediation) =
             match (effective_mode, key_mode, record.state.as_str()) {
-                (_, KeyMode::AppendRowId, "needs_resync") => ("quarantined", Some("resnapshot")),
-                (Some("polling"), KeyMode::AppendRowId, _) => ("generation_replacement", None),
-                (_, KeyMode::AppendRowId, _) => {
+                (_, Some(KeyMode::AppendRowId), "needs_resync") => {
+                    ("quarantined", Some("resnapshot"))
+                }
+                (Some("polling"), Some(KeyMode::AppendRowId), _) => {
+                    ("generation_replacement", None)
+                }
+                (_, Some(KeyMode::AppendRowId), _) => {
                     ("insert_only", Some("resnapshot_after_update_or_delete"))
                 }
                 (Some("polling"), _, _) => ("reconciled_polling", None),
@@ -421,15 +427,19 @@ impl TableSummary {
     }
 }
 
-fn durable_key_mode(record: &TableRecord) -> KeyMode {
+fn durable_key_mode(record: &TableRecord) -> Option<KeyMode> {
     if record
         .primary_key_json
         .as_deref()
         .is_none_or(|columns| columns == "[]")
     {
-        KeyMode::AppendRowId
+        Some(KeyMode::AppendRowId)
     } else {
-        KeyMode::Primary
+        // The durable table row predates explicit key-mode storage: a
+        // nonempty key is safe for row-level replication, but cannot tell a
+        // PRIMARY key from the selected NOT NULL UNIQUE fallback. Report the
+        // classification as unknown rather than silently calling it primary.
+        None
     }
 }
 
@@ -492,7 +502,7 @@ mod tests {
     fn keyless_table_summary_states_the_safe_mutation_boundary() {
         let insert_only = TableSummary::new(
             table("streaming", Some("[]")),
-            KeyMode::AppendRowId,
+            Some(KeyMode::AppendRowId),
             false,
             Some("cdc"),
         );
@@ -504,7 +514,7 @@ mod tests {
 
         let quarantined = TableSummary::new(
             table("needs_resync", Some("[]")),
-            KeyMode::AppendRowId,
+            Some(KeyMode::AppendRowId),
             false,
             Some("cdc"),
         );
@@ -516,11 +526,11 @@ mod tests {
     fn durable_identity_fallback_distinguishes_empty_keys() {
         assert_eq!(
             durable_key_mode(&table("streaming", Some("[]"))),
-            KeyMode::AppendRowId
+            Some(KeyMode::AppendRowId)
         );
         assert_eq!(
             durable_key_mode(&table("streaming", Some("[\"id\"]"))),
-            KeyMode::Primary
+            None
         );
     }
 

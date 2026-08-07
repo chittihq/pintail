@@ -114,7 +114,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dashboard, and Prometheus metrics. Ambiguous UPDATE/DELETE behavior is
   documented and acceptance-covered through quarantine plus exact
   duplicate-multiplicity repair; key promotion/demotion remains a safe
-  resnapshot boundary rather than an in-place identity guess.
+  resnapshot boundary rather than an in-place identity guess. If legacy
+  durable metadata has a stable key but no readable probe classification, the
+  table API reports an unknown key mode instead of guessing primary vs unique.
 - Metadata now preserves source MySQL nullability independently from the
   permissive physical normalization carrier and reports it consistently
   through `information_schema`, SHOW/DESCRIBE, SHOW CREATE, and direct
