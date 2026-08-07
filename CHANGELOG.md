@@ -85,6 +85,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   output instead of being erased or reported as ordinary columns.
 - `information_schema.columns.numeric_precision` uses the source MySQL integer
   declaration, preserving SMALLINT and MEDIUMINT widths after normalization.
+- The wire compatibility probe reports `lower_case_table_names=2`, matching
+  Pintail's source-spelling-preserving, case-insensitive catalog lookup.
 
 - Replica temporal policy is explicit and shared by snapshot and CDC: zero or
   invalid DATE/DATETIME values normalize to SQL NULL, `sql_mode` is retained

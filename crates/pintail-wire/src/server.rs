@@ -1180,7 +1180,9 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
     } else if normalized.contains("@@lower_case_table_names") {
-        ("@@lower_case_table_names", Value::UInt64(0))
+        // Catalog names retain their source spelling but resolve
+        // case-insensitively, matching MySQL mode 2.
+        ("@@lower_case_table_names", Value::UInt64(2))
     } else if normalized.contains("@@group_concat_max_len") {
         (
             "@@group_concat_max_len",
@@ -1744,6 +1746,6 @@ mod tests {
             &Session::default(),
         )
         .expect("compatibility response");
-        assert_eq!(casing.rows, vec![vec![pintail_types::Value::UInt64(0)]]);
+        assert_eq!(casing.rows, vec![vec![pintail_types::Value::UInt64(2)]]);
     }
 }
