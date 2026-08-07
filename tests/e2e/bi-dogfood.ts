@@ -86,7 +86,8 @@ function queryClass(sql: string): QueryClass {
   }
   if (keyword && READ_KEYWORDS.has(keyword)) return 'read'
   if (keyword && SESSION_KEYWORDS.has(keyword)) {
-    if (/^SET\s+(?:GLOBAL|PERSIST(?:_ONLY)?|PASSWORD|@@GLOBAL\.)\b/iu.test(stripped)) {
+    const scope = topLevelKeywordWords(stripped)[1]
+    if (scope && ['GLOBAL', 'PERSIST', 'PERSIST_ONLY', 'PASSWORD'].includes(scope)) {
       return 'ignored'
     }
     return 'session'
@@ -215,6 +216,8 @@ function canonical(value: unknown): unknown {
 function topLevelKeywordWords(sql: string): string[] {
   let depth = 0
   let quote = ''
+  let lineComment = false
+  let blockComment = false
   let word = ''
   const words: string[] = []
   const finishWord = () => {
@@ -223,13 +226,40 @@ function topLevelKeywordWords(sql: string): string[] {
   }
   for (let index = 0; index < sql.length; index += 1) {
     const current = sql[index]
+    const next = sql[index + 1] ?? ''
+    if (lineComment) {
+      if (current === '\n') lineComment = false
+      continue
+    }
+    if (blockComment) {
+      if (current === '*' && next === '/') {
+        blockComment = false
+        index += 1
+      }
+      continue
+    }
     if (quote) {
       if (current === '\\') index += 1
-      else if (current === quote) quote = ''
+      else if (current === quote) {
+        if (next === quote) index += 1
+        else quote = ''
+      }
       continue
     }
     if (current === "'" || current === '"' || current === '`') {
       quote = current
+      continue
+    }
+    if ((current === '-' && next === '-') || current === '#') {
+      finishWord()
+      lineComment = true
+      if (current === '-') index += 1
+      continue
+    }
+    if (current === '/' && next === '*') {
+      finishWord()
+      blockComment = true
+      index += 1
       continue
     }
     if (current === '(') {

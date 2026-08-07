@@ -34,6 +34,8 @@ describe('BI dogfood capture', () => {
       "UPDATE users SET email = 'secret@example.com' WHERE id = 7",
       'WITH doomed AS (SELECT id FROM users) DELETE FROM users WHERE id IN (SELECT id FROM doomed)',
       'SET GLOBAL max_connections = 100',
+      'WITH /* SELECT */ doomed AS (SELECT id FROM users) DELETE FROM users',
+      'SET /* dashboard */ @@GLOBAL.max_connections = 100',
     ].join(';'))
     expect(shapes.every((shape) => shape.class === 'ignored')).toBe(true)
     expect(redactSql("SELECT 'secret', 42, 0xfeed, X'CAFE'")).toBe("SELECT '?', ?, ?, ?")

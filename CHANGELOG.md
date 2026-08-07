@@ -113,6 +113,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- BI capture replay ignores interleaved SQL comments when classifying CTEs and
+  session statements, so comments cannot disguise a write or global/persistent
+  mutation as read-only SQL.
 - Canonical correlated scalar lookups preserve MySQL cardinality: zero inner
   matches produce NULL, one produces the value, and more than one raises a
   scalar-subquery row error through a bounded spillable join.
