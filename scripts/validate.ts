@@ -14,6 +14,7 @@
 
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const repository = resolve(import.meta.dir, '..')
@@ -21,6 +22,7 @@ const reportDir = join(repository, 'validate-out')
 const statusPath = join(reportDir, 'validate-status.log')
 const reportPath = join(reportDir, 'validate-report.md')
 const lockPath = join(reportDir, 'validate.lock')
+const cargoBinary = process.env.CARGO ?? join(homedir(), '.cargo', 'bin', 'cargo')
 
 /// Container name prefixes this repository's harnesses create. Cleanup
 /// touches ONLY these — never a deployed compose stack or anything else on
@@ -76,7 +78,11 @@ const STAGES: Stage[] = [
     name: 'fmt',
     remote: false,
     timeoutMinutes: 10,
-    command: ['bash', '-c', 'cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings'],
+    command: [
+      'bash',
+      '-c',
+      '"$CARGO" fmt --all --check && "$CARGO" clippy --workspace --all-targets -- -D warnings',
+    ],
   },
   {
     name: 'unit',
@@ -158,13 +164,17 @@ async function run(
   } = {},
 ): Promise<{ code: number | null; output: string; timedOut: boolean; stalled: boolean }> {
   return new Promise((resolvePromise) => {
-    // Some machines wrap `cargo`; honor CARGO and default the target dir
-    // so builds land in-repo instead of on a slow external volume.
-    const argv =
-      command[0] === 'cargo' && process.env.CARGO ? [process.env.CARGO, ...command.slice(1)] : command
+    // Resolve Cargo explicitly so validation cannot accidentally use a shell
+    // wrapper, and keep every build artifact under the repository target.
+    const argv = command[0] === 'cargo' ? [cargoBinary, ...command.slice(1)] : command
     const child = spawn(argv[0], argv.slice(1), {
       cwd: options.cwd ?? repository,
-      env: { CARGO_TARGET_DIR: join(repository, 'target'), ...process.env, ...options.env },
+      env: {
+        ...process.env,
+        CARGO: cargoBinary,
+        CARGO_TARGET_DIR: join(repository, 'target'),
+        ...options.env,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
