@@ -727,6 +727,8 @@ pub enum BoundJoinKind {
     Inner,
     /// Emit matches and unmatched left rows.
     Left,
+    /// Emit at most one match per left row, erroring on multiple matches.
+    Scalar,
     /// Emit each left row with at least one match.
     Semi,
     /// Emit each left row with no match.

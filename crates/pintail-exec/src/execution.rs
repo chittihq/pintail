@@ -250,7 +250,7 @@ impl PhysicalPlan {
                 let mut fields = left.output_fields();
                 if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
                     let mut right_fields = right.output_fields();
-                    if *kind == BoundJoinKind::Left {
+                    if matches!(kind, BoundJoinKind::Left | BoundJoinKind::Scalar) {
                         for field in &mut right_fields {
                             field.nullable = true;
                         }
@@ -2635,14 +2635,21 @@ fn join_emit(
     match_index: &mut usize,
     right_width: usize,
 ) -> Result<(Option<Vec<Value>>, bool), ExecError> {
+    if kind == BoundJoinKind::Scalar && matches.is_some_and(|rows| rows.len() > 1) {
+        return Err(ExecError::ScalarSubqueryRows {
+            rows: matches.map_or(0, Vec::len),
+        });
+    }
     let output = match kind {
-        BoundJoinKind::Inner | BoundJoinKind::Left => {
+        BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar => {
             if let Some(right_values) = matches.and_then(|matches| matches.get(*match_index)) {
                 *match_index += 1;
                 let mut output = left_values.to_vec();
                 output.extend(right_values.iter().cloned());
                 Some(output)
-            } else if kind == BoundJoinKind::Left && *match_index == 0 {
+            } else if matches!(kind, BoundJoinKind::Left | BoundJoinKind::Scalar)
+                && *match_index == 0
+            {
                 *match_index = 1;
                 let mut output = left_values.to_vec();
                 output.extend(std::iter::repeat_n(Value::Null, right_width));
@@ -2661,7 +2668,9 @@ fn join_emit(
         }
     };
     let complete = match kind {
-        BoundJoinKind::Inner | BoundJoinKind::Left => *match_index >= matches.map_or(1, Vec::len),
+        BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar => {
+            *match_index >= matches.map_or(1, Vec::len)
+        }
         BoundJoinKind::Semi | BoundJoinKind::Anti => true,
         BoundJoinKind::Cross => unreachable!("handled above"),
     };
@@ -2806,7 +2815,7 @@ fn next_grace_join_batch(
                 // NULL keys never match: inner/semi drop the row, left
                 // emits it null-extended, anti passes it through.
                 BoundJoinKind::Inner | BoundJoinKind::Semi => {}
-                BoundJoinKind::Left => {
+                BoundJoinKind::Left | BoundJoinKind::Scalar => {
                     let mut output = left_values.clone();
                     output.extend(std::iter::repeat_n(Value::Null, right_width));
                     push(&mut rows, &mut buffered_bytes, output)?;
@@ -10534,6 +10543,29 @@ mod tests {
             }
         }
         ids
+    }
+
+    #[test]
+    fn scalar_join_null_extends_zero_matches_and_errors_on_two() {
+        use pintail_sql::BoundJoinKind;
+        use pintail_types::Value;
+
+        let left = vec![Value::UInt64(7)];
+        let mut match_index = 0;
+        let (row, complete) =
+            super::join_emit(BoundJoinKind::Scalar, &left, None, &mut match_index, 1)
+                .expect("zero matches");
+        assert_eq!(row, Some(vec![Value::UInt64(7), Value::Null]));
+        assert!(complete);
+
+        let matches = vec![
+            vec![Value::Utf8("first".to_owned())],
+            vec![Value::Utf8("second".to_owned())],
+        ];
+        assert!(matches!(
+            super::join_emit(BoundJoinKind::Scalar, &left, Some(&matches), &mut 0, 1,),
+            Err(super::ExecError::ScalarSubqueryRows { rows: 2 })
+        ));
     }
 
     #[test]

@@ -273,6 +273,7 @@ const fn join_name(kind: BoundJoinKind) -> &'static str {
     match kind {
         BoundJoinKind::Inner => "inner",
         BoundJoinKind::Left => "left",
+        BoundJoinKind::Scalar => "scalar",
         BoundJoinKind::Semi => "semi",
         BoundJoinKind::Anti => "anti",
         BoundJoinKind::Cross => "cross",

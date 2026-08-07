@@ -798,9 +798,9 @@ impl<'catalog> Binder<'catalog> {
     }
 
     /// Rewrites one correlated scalar subquery from the select list into a
-    /// LEFT JOIN. Aggregate forms group by their correlation keys; a
-    /// non-aggregate lookup is accepted only when those keys cover the inner
-    /// table's complete physical unique key, proving at most one matched row.
+    /// scalar or LEFT JOIN. Aggregate forms group by their correlation keys;
+    /// non-aggregate lookups use scalar-join semantics so the executor raises
+    /// `MySQL`'s cardinality error if an outer row matches more than one row.
     /// Returns the replacement expression and whether the caller must fold
     /// NULL to zero (COUNT over an absent group).
     #[allow(clippy::too_many_lines)] // linear canonical-shape validation reads best unsplit
@@ -898,24 +898,6 @@ impl<'catalog> Binder<'catalog> {
         if keys.is_empty() {
             return Err(unsupported());
         }
-        if !aggregate {
-            let mut correlated_ids = keys
-                .iter()
-                .filter_map(|(name, _)| {
-                    probe_table
-                        .columns
-                        .iter()
-                        .find(|column| column.name.eq_ignore_ascii_case(name))
-                        .map(|column| column.column_id)
-                })
-                .collect::<Vec<_>>();
-            let mut unique_ids = probe_table.key_column_ids.clone();
-            correlated_ids.sort_unstable();
-            unique_ids.sort_unstable();
-            if unique_ids.is_empty() || correlated_ids != unique_ids {
-                return Err(unsupported());
-            }
-        }
         let mut derived_query = subquery.clone();
         let SetExpr::Select(derived_select) = derived_query.body.as_mut() else {
             return Err(unsupported());
@@ -976,7 +958,11 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         };
         last.joins.push(BoundJoin {
-            kind: BoundJoinKind::Left,
+            kind: if aggregate {
+                BoundJoinKind::Left
+            } else {
+                BoundJoinKind::Scalar
+            },
             table: derived,
             condition: Some(condition),
         });
@@ -5962,20 +5948,21 @@ mod tests {
             &query.projection[0].expr.kind,
             BoundExprKind::Column(_)
         ));
-        // Correlation through a non-key column does not prove scalar
-        // cardinality and must keep rejecting instead of picking a row.
-        assert!(
+        // Correlation through a non-key column uses a guarded scalar join;
+        // the executor, rather than the binder, owns the cardinality check.
+        let query =
             bind("SELECT (SELECT id FROM users WHERE users.email = Events.Name) FROM Events")
-                .is_err()
-        );
+                .expect("non-unique scalar lookup decorrelates with a runtime guard");
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Scalar);
         // A lookup correlated through the inner table's complete unique key
-        // is also scalar by construction and lowers to the same LEFT JOIN.
+        // is scalar by construction but uses the same guarded operator, so a
+        // stale or incorrect metadata declaration cannot produce a wrong row.
         let query = bind(
             "SELECT (SELECT email FROM users WHERE users.id = Events.id) AS user_name FROM Events",
         )
         .expect("unique-key scalar lookup decorrelates");
         assert_eq!(query.from[0].joins.len(), 1);
-        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Scalar);
         assert!(matches!(
             &query.projection[0].expr.kind,
             BoundExprKind::Column(_)

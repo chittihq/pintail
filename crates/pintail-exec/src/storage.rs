@@ -2721,6 +2721,82 @@ mod tests {
     }
 
     #[test]
+    fn correlated_scalar_lookup_errors_when_one_outer_row_matches_twice() {
+        let events_directory = tempfile::tempdir().expect("events directory");
+        let users_directory = tempfile::tempdir().expect("users directory");
+        let events_schema = schema();
+        let users_schema = signed_schema();
+        let mut events = TableStore::open(
+            events_directory.path(),
+            events_schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("open events");
+        let mut users = TableStore::open(
+            users_directory.path(),
+            users_schema.clone(),
+            StoreOptions::default(),
+        )
+        .expect("open users");
+        events
+            .ingest(vec![row(1, "duplicate")])
+            .expect("ingest event");
+        users
+            .ingest(vec![signed_row(1, "duplicate"), signed_row(2, "duplicate")])
+            .expect("ingest duplicate lookup values");
+        let events_snapshot = events.snapshot();
+        let users_snapshot = users.snapshot();
+
+        let database_id = DatabaseId::new(5);
+        let events_id = TableId::new(7);
+        let users_id = TableId::new(8);
+        let database = DatabaseEntry::new(
+            database_id,
+            "app",
+            [
+                TableEntry::new(
+                    events_id,
+                    "events",
+                    events_schema,
+                    TableStatistics::with_row_count(1),
+                )
+                .expect("events entry"),
+                TableEntry::new(
+                    users_id,
+                    "users",
+                    users_schema,
+                    TableStatistics::with_row_count(2),
+                )
+                .expect("users entry")
+                .with_key_columns([1])
+                .expect("users key"),
+            ],
+        )
+        .expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider = SnapshotScanProvider::new([
+            (database_id, events_id, &events_snapshot),
+            (database_id, users_id, &users_snapshot),
+        ])
+        .expect("provider");
+        let statement = parse_statement(
+            "SELECT (SELECT id FROM users WHERE users.name = events.name) FROM events",
+        )
+        .expect("parse correlated scalar lookup");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind guarded scalar lookup");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("scalar lookup plan");
+        let mut execution =
+            Execution::start(physical, &provider, 64 * 1024).expect("scalar lookup execution");
+        assert!(matches!(
+            execution.next_batch(),
+            Err(ExecError::ScalarSubqueryRows { rows: 2 })
+        ));
+    }
+
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn executes_cross_joins_mixed_numeric_hash_joins_and_subqueries() {
         let events_directory = tempfile::tempdir().expect("events directory");

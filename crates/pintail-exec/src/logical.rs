@@ -181,7 +181,9 @@ impl LogicalPlan {
                 BoundJoinKind::Left => left
                     .estimated_rows()?
                     .checked_mul(right.estimated_rows()?.max(1)),
-                BoundJoinKind::Semi | BoundJoinKind::Anti => left.estimated_rows(),
+                BoundJoinKind::Scalar | BoundJoinKind::Semi | BoundJoinKind::Anti => {
+                    left.estimated_rows()
+                }
             },
             Self::Derived { input, .. }
             | Self::Filter { input, .. }
