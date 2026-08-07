@@ -51,6 +51,14 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers', 'orders'],
   },
   {
+    name: 'right join preserves unmatched rows',
+    sql:
+      'SELECT c.id, c.name, COUNT(o.id) AS order_count ' +
+      'FROM orders o RIGHT JOIN customers c ON o.customer_id = c.id ' +
+      'GROUP BY c.id, c.name ORDER BY order_count DESC, c.id LIMIT 25',
+    tables: ['customers', 'orders'],
+  },
+  {
     name: 'three-way join through items',
     sql:
       'SELECT c.name, i.product, i.qty, ROUND(i.qty * i.price, 2) AS line_total ' +
@@ -67,6 +75,20 @@ export const differentialQueries: DifferentialQuery[] = [
       'UNION ALL ' +
       "SELECT id AS entity_id, 'order' AS kind FROM orders WHERE total > 900 " +
       'ORDER BY kind, entity_id',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'intersect customer identifiers',
+    sql:
+      'SELECT id FROM customers WHERE id <= 30 ' +
+      'INTERSECT SELECT customer_id FROM orders WHERE customer_id <= 30 ORDER BY id',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'except customer identifiers',
+    sql:
+      'SELECT id FROM customers WHERE id <= 30 ' +
+      'EXCEPT SELECT customer_id FROM orders WHERE customer_id <= 30 ORDER BY id',
     tables: ['customers', 'orders'],
   },
   {
@@ -140,6 +162,14 @@ export const differentialQueries: DifferentialQuery[] = [
       'FROM customers c JOIN spend s ON s.customer_id = c.id ' +
       'ORDER BY lifetime DESC, c.id LIMIT 15',
     tables: ['customers', 'orders'],
+  },
+  {
+    name: 'bounded recursive cte',
+    sql:
+      'WITH RECURSIVE seq(n) AS (' +
+      'SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10' +
+      ') SELECT n FROM seq ORDER BY n',
+    tables: [],
   },
   {
     name: 'date bucketing',
