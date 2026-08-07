@@ -7,6 +7,8 @@ bind = "127.0.0.1:8080"
 
 [wire]
 bind = "127.0.0.1:3306"
+# Close authenticated connections after 15 minutes without a command.
+idle_timeout_seconds = 900
 
 [query]
 # Hard memory ceiling shared by HTTP and MySQL wire queries (64 MiB).

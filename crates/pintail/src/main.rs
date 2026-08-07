@@ -100,6 +100,7 @@ async fn main() -> Result<()> {
         &metadata_path,
         config.query_memory_limit_bytes(),
         wire_tls,
+        config.wire_idle_timeout(),
         async move {
             let _ = wire_shutdown.recv().await;
         },

@@ -6,6 +6,7 @@ use std::{
     fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
@@ -24,6 +25,7 @@ const DEFAULT_QUERY_SPILL_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
 const DEFAULT_GLOBAL_SPILL_LIMIT_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const DEFAULT_HTTP_PORT: u16 = 8080;
 const DEFAULT_WIRE_PORT: u16 = 3306;
+const DEFAULT_WIRE_IDLE_TIMEOUT_SECONDS: u64 = 15 * 60;
 
 /// Pintail command-line options.
 #[derive(Clone, Debug, Parser)]
@@ -44,6 +46,10 @@ pub struct Cli {
     /// Address used by `MySQL` wire-protocol clients.
     #[arg(long)]
     pub wire_bind: Option<SocketAddr>,
+
+    /// Seconds before an idle authenticated wire connection is closed.
+    #[arg(long)]
+    pub wire_idle_timeout_seconds: Option<u64>,
 
     /// Hard byte ceiling for each HTTP or `MySQL` wire query.
     #[arg(long)]
@@ -69,6 +75,7 @@ pub struct AppConfig {
     spill_dir: PathBuf,
     http_bind: SocketAddr,
     wire_bind: SocketAddr,
+    wire_idle_timeout_seconds: u64,
     query_memory_limit_bytes: usize,
     query_spill_limit_bytes: u64,
     global_spill_limit_bytes: u64,
@@ -175,6 +182,24 @@ impl AppConfig {
             .or(environment_wire_bind)
             .or(file.wire.bind)
             .unwrap_or_else(default_wire_bind);
+        let environment_wire_idle_timeout = environment
+            .get(&OsString::from("PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS must be a positive integer")
+            })
+            .transpose()?;
+        let wire_idle_timeout_seconds = cli
+            .wire_idle_timeout_seconds
+            .or(environment_wire_idle_timeout)
+            .or(file.wire.idle_timeout_seconds)
+            .unwrap_or(DEFAULT_WIRE_IDLE_TIMEOUT_SECONDS);
+        if wire_idle_timeout_seconds == 0 {
+            bail!("wire idle timeout must be greater than zero");
+        }
         let environment_query_memory_limit = environment
             .get(&OsString::from("PINTAIL_QUERY_MEMORY_LIMIT_BYTES"))
             .map(|value| {
@@ -267,6 +292,7 @@ impl AppConfig {
             spill_dir,
             http_bind,
             wire_bind,
+            wire_idle_timeout_seconds,
             query_memory_limit_bytes,
             query_spill_limit_bytes,
             global_spill_limit_bytes,
@@ -303,6 +329,12 @@ impl AppConfig {
     #[must_use]
     pub fn wire_bind(&self) -> SocketAddr {
         self.wire_bind
+    }
+
+    /// Time an authenticated wire connection may remain idle.
+    #[must_use]
+    pub const fn wire_idle_timeout(&self) -> Duration {
+        Duration::from_secs(self.wire_idle_timeout_seconds)
     }
 
     /// Hard byte ceiling for one HTTP or `MySQL` wire query.
@@ -351,6 +383,7 @@ struct FileHttpConfig {
 #[serde(default, deny_unknown_fields)]
 struct FileWireConfig {
     bind: Option<SocketAddr>,
+    idle_timeout_seconds: Option<u64>,
     tls_certificate: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     require_tls: Option<bool>,
@@ -398,6 +431,8 @@ fn resolve_config_relative(path: PathBuf, config_dir: Option<&Path>) -> PathBuf 
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{AppConfig, Cli, DEFAULT_QUERY_MEMORY_LIMIT};
 
     fn cli() -> Cli {
@@ -406,6 +441,7 @@ mod tests {
             data_dir: None,
             http_bind: None,
             wire_bind: None,
+            wire_idle_timeout_seconds: None,
             query_memory_limit_bytes: None,
             spill_dir: None,
             query_spill_limit_bytes: None,
@@ -439,6 +475,19 @@ mod tests {
             [("PINTAIL_QUERY_MEMORY_LIMIT_BYTES".into(), "0".into())],
         )
         .expect_err("zero limit");
+        assert!(error.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn wire_idle_timeout_defaults_and_must_be_positive() {
+        let default = AppConfig::load_from(&cli(), []).expect("default config");
+        assert_eq!(default.wire_idle_timeout(), Duration::from_secs(900));
+
+        let error = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS".into(), "0".into())],
+        )
+        .expect_err("zero timeout");
         assert!(error.to_string().contains("greater than zero"));
     }
 

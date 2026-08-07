@@ -23,6 +23,6 @@ byteorder = "1.4.3"
 chrono = "0.4.20"
 mysql_common = { version = "0.32.0", features = ["chrono"] }
 nom = "7.1.0"
-tokio = { version = "1.17.0", features = ["io-util", "io-std"] }
+tokio = { version = "1.17.0", features = ["io-util", "io-std", "time"] }
 tokio-rustls = { version = "0.25", optional = true }
 pin-project-lite = { version = "0.2.9", optional = true }

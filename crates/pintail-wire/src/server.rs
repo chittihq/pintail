@@ -7,6 +7,7 @@ use std::{
         Mutex,
         atomic::{AtomicU32, Ordering},
     },
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -33,6 +34,9 @@ use crate::{
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Default time an authenticated wire connection may remain idle.
+pub const DEFAULT_WIRE_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
 /// Accepts `MySQL` clients and serves read-only Pintail queries.
 ///
 /// # Errors
@@ -49,7 +53,7 @@ pub async fn serve(
         let (stream, _) = listener.accept().await?;
         let backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
         tokio::spawn(async move {
-            let _ = serve_connection(stream, backend, None).await;
+            let _ = serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await;
         });
     }
 }
@@ -99,6 +103,7 @@ where
         metadata_path,
         query_memory_limit,
         None,
+        DEFAULT_WIRE_IDLE_TIMEOUT,
         shutdown,
     )
     .await
@@ -168,6 +173,7 @@ pub async fn serve_until_with_options<F>(
     metadata_path: impl Into<PathBuf>,
     query_memory_limit: usize,
     tls: Option<WireTls>,
+    idle_timeout: Duration,
     shutdown: F,
 ) -> io::Result<()>
 where
@@ -185,7 +191,7 @@ where
                 let backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
                 let tls = tls.clone();
                 tokio::spawn(async move {
-                    let _ = serve_connection(stream, backend, tls).await;
+                    let _ = serve_connection(stream, backend, tls, idle_timeout).await;
                 });
             }
         }
@@ -196,11 +202,13 @@ async fn serve_connection(
     stream: TcpStream,
     mut backend: Backend,
     tls: Option<WireTls>,
+    idle_timeout: Duration,
 ) -> io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let options = IntermediaryOptions {
         process_use_statement_on_query: true,
         reject_connection_on_dbname_absence: false,
+        idle_timeout: Some(idle_timeout),
     };
     let tls_config = tls.as_ref().map(|tls| std::sync::Arc::clone(&tls.config));
     let (client_requested_tls, init) =

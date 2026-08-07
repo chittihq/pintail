@@ -8,6 +8,6 @@ pub use engine::{
     ReplicaEngine, table_directory,
 };
 pub use server::{
-    WireTls, load_wire_tls, serve, serve_until, serve_until_with_memory_limit,
-    serve_until_with_options,
+    DEFAULT_WIRE_IDLE_TIMEOUT, WireTls, load_wire_tls, serve, serve_until,
+    serve_until_with_memory_limit, serve_until_with_options,
 };

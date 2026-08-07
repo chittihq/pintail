@@ -308,6 +308,12 @@ worth refusing.
   not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
+- Authenticated wire connections close after 15 idle minutes by default;
+  configure `wire.idle_timeout_seconds`,
+  `PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS`, or
+  `--wire-idle-timeout-seconds` to change it. Active query cancellation is not
+  yet cooperative: a client disconnect is observed after the current engine
+  call returns.
 - DBeaver and Metabase application-level smokes are not automated on this
   workstation.
 ## Operations and backup

@@ -45,10 +45,12 @@ where
 
     let process_use_statement_on_query = opts.process_use_statement_on_query;
     let reject_connection_on_dbname_absence = opts.reject_connection_on_dbname_absence;
+    let idle_timeout = opts.idle_timeout;
     let mut mi = AsyncMysqlIntermediary {
         client_capabilities,
         process_use_statement_on_query,
         reject_connection_on_dbname_absence,
+        idle_timeout,
         shim,
         reader,
         writer,
@@ -76,10 +78,12 @@ where
 
     let process_use_statement_on_query = opts.process_use_statement_on_query;
     let reject_connection_on_dbname_absence = opts.reject_connection_on_dbname_absence;
+    let idle_timeout = opts.idle_timeout;
     let mut mi = AsyncMysqlIntermediary {
         client_capabilities,
         process_use_statement_on_query,
         reject_connection_on_dbname_absence,
+        idle_timeout,
         shim,
         reader,
         writer,

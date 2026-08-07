@@ -241,6 +241,8 @@ pub struct IntermediaryOptions {
     pub process_use_statement_on_query: bool,
     /// reject connection if dbname not provided
     pub reject_connection_on_dbname_absence: bool,
+    /// close an authenticated connection after this long without a command
+    pub idle_timeout: Option<std::time::Duration>,
 }
 
 #[derive(Default)]
@@ -258,6 +260,7 @@ pub struct AsyncMysqlIntermediary<B, S: AsyncRead + Unpin, W> {
     pub(crate) client_capabilities: CapabilityFlags,
     process_use_statement_on_query: bool,
     reject_connection_on_dbname_absence: bool,
+    idle_timeout: Option<std::time::Duration>,
     shim: B,
     reader: packet_reader::PacketReader<S>,
     writer: packet_writer::PacketWriter<W>,
@@ -285,6 +288,7 @@ where
     ) -> Result<(), B::Error> {
         let process_use_statement_on_query = opts.process_use_statement_on_query;
         let reject_connection_on_dbname_absence = opts.reject_connection_on_dbname_absence;
+        let idle_timeout = opts.idle_timeout;
         let (_, (handshake, seq, client_capabilities, input_stream)) =
             AsyncMysqlIntermediary::init_before_ssl(
                 &mut shim,
@@ -302,6 +306,7 @@ where
             client_capabilities,
             process_use_statement_on_query,
             reject_connection_on_dbname_absence,
+            idle_timeout,
             shim,
             reader,
             writer,
@@ -587,7 +592,18 @@ where
         use crate::commands::Command;
 
         let mut stmts: HashMap<u32, _> = HashMap::new();
-        while let Some((seq, packet)) = self.reader.next_async().await? {
+        loop {
+            let packet = if let Some(idle_timeout) = self.idle_timeout {
+                match tokio::time::timeout(idle_timeout, self.reader.next_async()).await {
+                    Ok(packet) => packet?,
+                    Err(_) => return Ok(()),
+                }
+            } else {
+                self.reader.next_async().await?
+            };
+            let Some((seq, packet)) = packet else {
+                break;
+            };
             self.writer.set_seq(seq + 1);
             let res = commands::parse(&packet);
             match res {

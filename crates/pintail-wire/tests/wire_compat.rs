@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, hash_map::DefaultHasher};
 use std::hash::{Hash as _, Hasher as _};
 use std::process::Command;
+use std::time::Duration;
 
 use mysql_async::{
     ChangeUserOpts, Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts,
@@ -50,6 +51,7 @@ async fn wire_tls_negotiates_and_required_tls_refuses_plaintext() {
             server_metadata,
             pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
             Some(tls),
+            pintail_wire::DEFAULT_WIRE_IDLE_TIMEOUT,
             async {
                 let _ = shutdown_rx.await;
             },
@@ -93,6 +95,56 @@ async fn wire_tls_negotiates_and_required_tls_refuses_plaintext() {
 
     let _ = shutdown_tx.send(());
     let _ = server.await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wire_idle_timeout_closes_inactive_authenticated_connections() {
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_replica(data.path(), &metadata_path);
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server_metadata = metadata_path.clone();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until_with_options(
+            listener,
+            data_dir,
+            server_metadata,
+            pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+            None,
+            Duration::from_millis(50),
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+    });
+
+    let pool = Pool::new(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/analytics"
+        ))
+        .expect("wire DSN"),
+    );
+    let mut connection = pool.get_conn().await.expect("authenticated wire client");
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        connection.ping().await.is_err(),
+        "an inactive connection must be closed after its configured timeout"
+    );
+    drop(connection);
+    pool.disconnect().await.ok();
+
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
 }
 
 #[tokio::test(flavor = "multi_thread")]
