@@ -878,7 +878,7 @@ async function phaseSpill() {
     [
       'join',
       `SELECT COUNT(*) FROM orders o JOIN (${repeatedJoinInput}) d ON o.id = d.order_id`,
-      2 * 1024 * 1024,
+      5 * 512 * 1024,
     ],
   ]
 
