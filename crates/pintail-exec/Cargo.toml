@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 chrono.workspace = true
 chrono-tz.workspace = true
+icu_collator.workspace = true
 md-5.workspace = true
 pintail-catalog.workspace = true
 pintail-sql.workspace = true
@@ -21,6 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 unicode-normalization.workspace = true
+unicode-casefold.workspace = true
 rayon.workspace = true
 
 [lints]

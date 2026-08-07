@@ -122,7 +122,14 @@ worth refusing.
 - `ENUM` values compare and sort as their text, not as MySQL's
   declaration-index order. `CAST(col AS CHAR)` on the MySQL side produces
   matching orderings.
-- Text comparison, grouping, hashing, `LIKE`, and ordering use a case-insensitive Unicode-lowercase approximation by default. Setting `PINTAIL_COLLATION=utf8mb4_0900_ai_ci` opts every text comparison into an accent-insensitive approximation of MySQL's default collation (NFD with combining marks stripped, then lowercased) — closer to `utf8mb4_0900_ai_ci` for Latin scripts, but still not the UCA weight tables, locale tailoring, coercibility rules, or pad-space behavior. The flag reads once at process start and cannot change per session. Binary values remain bytewise.
+- The initial text profile is `utf8mb4_0900_ai_ci`: comparison, grouping,
+  hashing, DISTINCT, joins, IN, MIN/MAX, and ordering share one
+  primary-strength Unicode collation key, while LIKE/locate use a
+  character-preserving case/accent fold and binary values remain bytewise.
+  Source collation names are preserved in metadata, but per-expression
+  coercibility, explicit `COLLATE`, locale-specific collations, and mixed
+  source collations are not yet executable; those shapes reject where the SQL
+  parser exposes them or otherwise use the initial profile.
 
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
 

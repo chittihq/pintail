@@ -8509,25 +8509,37 @@ fn normalized_collation_value(value: Value) -> Value {
 }
 
 /// Text normalization for grouping, hashing, DISTINCT, and set membership.
-/// The default is the historical case-insensitive lowercase approximation;
-/// `PINTAIL_COLLATION=utf8mb4_0900_ai_ci` opts into an accent-insensitive
-/// approximation of `MySQL`'s default collation (NFD, combining marks
-/// stripped, then lowercased). The flag reads once per process.
+/// The returned hexadecimal ICU primary sort key compares bytewise in the
+/// same order as [`compare_collated_text`], so every hash-based and ordered
+/// operator shares one case- and accent-insensitive equivalence relation.
 pub(crate) fn normalized_collation_text(text: &str) -> String {
-    if accent_insensitive_collation() {
-        use unicode_normalization::UnicodeNormalization as _;
-        text.nfd()
-            .filter(|character| !unicode_normalization::char::is_combining_mark(*character))
-            .flat_map(char::to_lowercase)
-            .collect()
-    } else {
-        text.to_lowercase()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut key = Vec::new();
+    MYSQL_DEFAULT_COLLATOR.with(|collator| {
+        collator
+            .write_sort_key_to(text, &mut key)
+            .expect("Vec-backed collation keys cannot fail");
+    });
+    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
+    for byte in key {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
+    encoded
 }
 
-pub(crate) fn accent_insensitive_collation() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("PINTAIL_COLLATION").as_deref() == Ok("utf8mb4_0900_ai_ci"))
+/// Compares text with the initial `utf8mb4_0900_ai_ci` compatibility profile.
+pub(crate) fn compare_collated_text(left: &str, right: &str) -> std::cmp::Ordering {
+    MYSQL_DEFAULT_COLLATOR.with(|collator| collator.compare(left, right))
+}
+
+thread_local! {
+    static MYSQL_DEFAULT_COLLATOR: icu_collator::CollatorBorrowed<'static> = {
+        let mut options = icu_collator::options::CollatorOptions::default();
+        options.strength = Some(icu_collator::options::Strength::Primary);
+        icu_collator::Collator::try_new(icu_collator::CollatorPreferences::default(), options)
+            .expect("compiled ICU root collation data is available")
+    };
 }
 
 struct MaterializedRows {
@@ -10473,20 +10485,28 @@ mod tests {
     }
 
     #[test]
-    fn collation_normalization_folds_case_and_optionally_accents() {
-        // Default: lowercase only — accents survive, matching the
-        // documented approximation.
-        // (The env flag reads once per process, so this test asserts only
-        // the default path; the ai_ci path is covered by the pure helper
-        // below through explicit NFD expectations.)
-        use unicode_normalization::UnicodeNormalization as _;
-        assert_eq!(super::normalized_collation_text("CaFé"), "café");
-        let folded: String = "CaFé"
-            .nfd()
-            .filter(|character| !unicode_normalization::char::is_combining_mark(*character))
-            .flat_map(char::to_lowercase)
-            .collect();
-        assert_eq!(folded, "cafe");
+    fn collation_keys_match_comparison_for_case_accents_and_expansions() {
+        use std::cmp::Ordering;
+
+        for (left, right) in [
+            ("CaFé", "cafe"),
+            ("é", "e\u{301}"),
+            ("Straße", "STRASSE"),
+            ("Ａ", "a"),
+        ] {
+            assert_eq!(super::compare_collated_text(left, right), Ordering::Equal);
+            assert_eq!(
+                super::normalized_collation_text(left),
+                super::normalized_collation_text(right)
+            );
+        }
+        assert_eq!(
+            super::compare_collated_text("Émile", "Ernie"),
+            Ordering::Less
+        );
+        assert!(
+            super::normalized_collation_text("Émile") < super::normalized_collation_text("Ernie")
+        );
     }
 
     use pintail_catalog::{

@@ -64,6 +64,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Text equality, ordering, grouping, hashing, DISTINCT, joins, IN, and
+  aggregate extrema now share a primary-strength Unicode collation key for the
+  initial `utf8mb4_0900_ai_ci` profile. Accent/case folding is no longer an
+  opt-in process flag, and LIKE/locate use the same character-level
+  case/accent policy while binary values remain bytewise.
 - Keyless-table identity and mutation guarantees are visible in the table API,
   dashboard, and Prometheus metrics. Ambiguous UPDATE/DELETE behavior is
   documented and acceptance-covered through quarantine plus exact

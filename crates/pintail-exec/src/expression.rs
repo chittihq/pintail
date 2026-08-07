@@ -1570,8 +1570,9 @@ fn evaluate_eager_scalar_typed(
             Ok(Value::UInt64(locate(&needle, &haystack, start)))
         }
         ScalarFunction::Like { negated, escape } => {
-            let value = scalar_string(&values[0])?.to_lowercase();
-            let pattern = scalar_string(&values[1])?.to_lowercase();
+            let binary = binary_operand(&values[0..2]);
+            let value = fold_unless_binary(&scalar_string(&values[0])?, binary);
+            let pattern = fold_unless_binary(&scalar_string(&values[1])?, binary);
             let matched = like_matches(&value, &pattern, escape);
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
@@ -3656,13 +3657,20 @@ fn binary_operand(values: &[Value]) -> bool {
     values.iter().any(|value| matches!(value, Value::Binary(_)))
 }
 
-/// Case-folds for the engine's case-insensitive default, unless a binary
-/// operand demands an exact byte comparison.
+/// Applies the character-preserving case/accent fold used by LIKE and locate
+/// functions, unless a binary operand demands exact byte comparison. Ordered
+/// and hash operators use ICU sort keys; pattern matching keeps one code point
+/// per base character so `_` retains `MySQL`'s one-character meaning.
 fn fold_unless_binary(text: &str, binary: bool) -> String {
     if binary {
         text.to_owned()
     } else {
-        text.to_lowercase()
+        use unicode_casefold::UnicodeCaseFold as _;
+        use unicode_normalization::UnicodeNormalization as _;
+        text.nfd()
+            .filter(|character| !unicode_normalization::char::is_combining_mark(*character))
+            .case_fold()
+            .collect()
     }
 }
 
@@ -4111,7 +4119,11 @@ fn json_search(
     }
     match document {
         serde_json::Value::String(text) => {
-            if like_matches(&text.to_lowercase(), &pattern.to_lowercase(), escape) {
+            if like_matches(
+                &fold_unless_binary(text, false),
+                &fold_unless_binary(pattern, false),
+                escape,
+            ) {
                 found.push(here.to_owned());
             }
         }
@@ -4511,19 +4523,7 @@ pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, Exe
 }
 
 pub(crate) fn compare_utf8_mysql(left: &str, right: &str) -> Ordering {
-    if left.is_ascii() && right.is_ascii() {
-        return left
-            .bytes()
-            .map(|byte| byte.to_ascii_lowercase())
-            .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()));
-    }
-    if crate::execution::accent_insensitive_collation() {
-        return crate::execution::normalized_collation_text(left)
-            .cmp(&crate::execution::normalized_collation_text(right));
-    }
-    left.chars()
-        .flat_map(char::to_lowercase)
-        .cmp(right.chars().flat_map(char::to_lowercase))
+    crate::execution::compare_collated_text(left, right)
 }
 
 fn evaluate_arithmetic(
@@ -4942,6 +4942,23 @@ mod tests {
             call(
                 ScalarFunction::Instr,
                 vec![Value::Utf8("A".into()), Value::Utf8("a".into())]
+            ),
+            Value::Utf8("1".into())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::Instr,
+                vec![Value::Utf8("CAFÉ".into()), Value::Utf8("cafe".into())]
+            ),
+            Value::Utf8("1".into())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::Like {
+                    negated: false,
+                    escape: None,
+                },
+                vec![Value::Utf8("Chloé".into()), Value::Utf8("CHLO_".into())]
             ),
             Value::Utf8("1".into())
         );
