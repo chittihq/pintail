@@ -16,7 +16,7 @@ including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; value-based `RANGE` bounds over numeric keys (including exact fractional DECIMAL offsets) and simple temporal `INTERVAL` offsets; `GROUPS` and DISTINCT window aggregates reject as MySQL 8.4 requires |
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; chained earlier definitions and legal additive inheritance without clause redefinition; forward/cyclic references and parenthesized inheritance from a framed base reject as MySQL requires |
-| Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root INNER/CROSS groups |
+| Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root INNER/CROSS/LEFT chains, including later left-deep joins |
 | Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form; correlated scalar aggregates and unique-key lookups, decorrelated to joins |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form, with duplicate-eliminating fixpoints, query-memory accounting, and session `cte_max_recursion_depth` |
@@ -64,7 +64,7 @@ including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
 | Session vars | `SET time_zone`; `SET NAMES`/`character_set_results` (utf8 family and binary, including result metadata); `SET sql_mode` (echoed); `SET max_execution_time` (cooperative millisecond deadline, error 1317) |
 | Prepared statements | Numeric, decimal, temporal, JSON, text, binary tags; params incl. binary `DATE`/`DATETIME`/`TIME`; type-derived length, session result charset, DECIMAL scale and temporal FSP metadata |
 | TLS | rustls, default modern policy; `PINTAIL_WIRE_TLS_CERT`/`_KEY` PEM paths or `[wire]` config keys, `PINTAIL_WIRE_REQUIRE_TLS` to refuse plaintext |
-| Client gate | `mysql_async`, MySQL 8.4 CLI, mysql2, PyMySQL, Go `database/sql`/go-sql-driver/mysql |
+| Client gate | `mysql_async`, MySQL 8.4 CLI, mysql2, PyMySQL, Go `database/sql`/go-sql-driver/mysql with parameter interpolation |
 
 ## Ranked gaps
 

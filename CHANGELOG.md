@@ -135,16 +135,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Verification
 
 - The nightly external wire matrix now includes Go `database/sql` with
-  go-sql-driver/mysql, covering authentication, a bound parameter,
+  go-sql-driver/mysql parameter interpolation, covering authentication, a bound parameter,
   and information-schema discovery alongside mysql_async, mysql2, PyMySQL,
   and the MySQL 8.4 CLI.
-- The production E2E binary is restarted briefly with a 256 KiB query ceiling
-  and must report nonzero spill files and bytes for live sort, grouped
-  aggregation, standalone DISTINCT, and hash-join workloads before the gate
-  restores the normal process configuration.
-- The clean repository gate passes formatting and strict workspace Clippy, 371
+- The production E2E binary is restarted per spillable operator with a small
+  ceiling sized above one input batch and below accumulated operator state;
+  live sort, grouped aggregation, standalone DISTINCT, and hash join must each
+  report nonzero spill files and bytes before normal configuration is restored.
+- The clean repository gate passes formatting and strict workspace Clippy, 394
   nextest cases, all 806 byte-exact MySQL 8.4 differential cases, and E2E with
-  323 passes, zero failures, and three documented-gap warnings.
+  441 passes, zero failures, and three documented-gap warnings.
 - The deterministic 20-million-order benchmark matches MySQL results and
   passes the required 50x aggregate-speedup gate. The ci-profile production
   snapshot and cold-query acceptance workload also passes with its declared
