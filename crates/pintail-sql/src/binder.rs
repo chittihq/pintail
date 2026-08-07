@@ -15,8 +15,8 @@ use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
     BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
-    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction,
-    UnaryOp, WindowFunction,
+    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
+    IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
 
 /// Binds parsed SQL against one immutable catalog view.
@@ -4324,74 +4324,14 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
     }
 }
 
-const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
-const MIXED_COLLATION_PREFIX: &str = "mixed:";
-
-/// Carries source collation through a derived-column layout without widening
-/// every scalar node. A mixed marker is retained so a later comparison cannot
-/// silently adopt whichever source happened to be visited first.
 fn expression_collation_marker(expr: &BoundExpr) -> Option<String> {
-    if expr.data_type != Some(DataType::Utf8) {
-        return None;
-    }
-    let mut collations = Vec::new();
-    collect_expression_collations(expr, &mut collations);
-    collations.sort_unstable();
-    collations.dedup();
-    match collations.as_slice() {
-        [] => Some(DEFAULT_TEXT_COLLATION.to_owned()),
-        [collation] => Some(collation.clone()),
-        _ => Some(format!("{MIXED_COLLATION_PREFIX}{}", collations.join(","))),
-    }
-}
-
-fn collect_expression_collations(expr: &BoundExpr, collations: &mut Vec<String>) {
-    match &expr.kind {
-        BoundExprKind::Column(column) => {
-            if column.data_type == DataType::Utf8 {
-                collations.push(
-                    column
-                        .collation
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_TEXT_COLLATION.to_owned()),
-                );
-            }
-        }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            collect_expression_collations(expr, collations);
-        }
-        BoundExprKind::Binary { left, right, .. } => {
-            collect_expression_collations(left, collations);
-            collect_expression_collations(right, collations);
-        }
-        BoundExprKind::Scalar { args, .. } => {
-            for argument in args {
-                collect_expression_collations(argument, collations);
-            }
-        }
-        BoundExprKind::ScalarSubquery(query) => {
-            for projection in &query.projection {
-                collect_expression_collations(&projection.expr, collations);
-            }
-        }
-        BoundExprKind::InSubquery { expr, query, .. } => {
-            collect_expression_collations(expr, collations);
-            for projection in &query.projection {
-                collect_expression_collations(&projection.expr, collations);
-            }
-        }
-        BoundExprKind::Aggregate(_)
-        | BoundExprKind::Window(_)
-        | BoundExprKind::ExistsSubquery { .. }
-        | BoundExprKind::Literal(_)
-        | BoundExprKind::GroupKey(_) => {}
-    }
+    expr.result_collation()
 }
 
 fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Result<(), BindError> {
     let mut collations = Vec::new();
     for expression in expressions {
-        collect_expression_collations(expression, &mut collations);
+        expression.collect_source_collations(&mut collations);
     }
     collations.sort_unstable();
     collations.dedup();
@@ -4407,7 +4347,8 @@ fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Result<(), Bin
         collations.join(", ")
     };
     Err(BindError::UnsupportedExpression(format!(
-        "text collation {detail} is unsupported; the initial executable profile is {DEFAULT_TEXT_COLLATION}"
+        "text collation {detail} is unsupported; the initial executable profile is \
+         {DEFAULT_TEXT_COLLATION}"
     )))
 }
 

@@ -42,6 +42,7 @@ pub(crate) struct QueryField {
     name: String,
     data_type: Option<DataType>,
     nullable: bool,
+    collation: Option<String>,
 }
 
 #[derive(Default, Serialize)]
@@ -267,6 +268,7 @@ fn execute_query(
                 name: field.name,
                 data_type: field.data_type,
                 nullable: field.nullable,
+                collation: field.collation,
             })
             .collect(),
         stats: QueryStats {

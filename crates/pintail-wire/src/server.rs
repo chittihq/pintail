@@ -18,6 +18,7 @@ use opensrv_mysql::{
     ToMysqlValue, ValueInner, plain_run_with_options, secure_run_with_options,
 };
 use pintail_meta::{ApiKeyRecord, MetaStore};
+use pintail_sql::DEFAULT_TEXT_COLLATION;
 use pintail_types::{DataType, Value};
 use rand::RngCore as _;
 use sha1::{Digest as _, Sha1};
@@ -1129,42 +1130,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
     if normalized.starts_with("show warnings") {
-        return Some(QueryOutput {
-            fields: vec![
-                QueryField {
-                    name: "Level".to_owned(),
-                    data_type: Some(DataType::Utf8),
-                    nullable: false,
-                    group_concat: false,
-                },
-                QueryField {
-                    name: "Code".to_owned(),
-                    data_type: Some(DataType::UInt64),
-                    nullable: false,
-                    group_concat: false,
-                },
-                QueryField {
-                    name: "Message".to_owned(),
-                    data_type: Some(DataType::Utf8),
-                    nullable: false,
-                    group_concat: false,
-                },
-            ],
-            rows: (1..=session.group_concat_warnings)
-                .map(|row| {
-                    vec![
-                        Value::Utf8("Warning".to_owned()),
-                        Value::UInt64(1260),
-                        Value::Utf8(format!("Row {row} was cut by GROUP_CONCAT()")),
-                    ]
-                })
-                .collect(),
-            stats: QueryStats {
-                rows: usize::try_from(session.group_concat_warnings).unwrap_or(usize::MAX),
-                ..QueryStats::default()
-            },
-            truncated: false,
-        });
+        return Some(group_concat_warnings_output(session));
     }
     let (name, value) = if normalized.starts_with("select version()") {
         ("VERSION()", Value::Utf8(mysql_compat_version()))
@@ -1218,6 +1184,8 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
             name: name.to_owned(),
             data_type: value.data_type(),
             nullable: false,
+            collation: (value.data_type() == Some(DataType::Utf8))
+                .then(|| DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: false,
         }],
         rows: vec![vec![value]],
@@ -1227,6 +1195,48 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         },
         truncated: false,
     })
+}
+
+fn group_concat_warnings_output(session: &Session) -> QueryOutput {
+    QueryOutput {
+        fields: vec![
+            QueryField {
+                name: "Level".to_owned(),
+                data_type: Some(DataType::Utf8),
+                nullable: false,
+                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
+                group_concat: false,
+            },
+            QueryField {
+                name: "Code".to_owned(),
+                data_type: Some(DataType::UInt64),
+                nullable: false,
+                collation: None,
+                group_concat: false,
+            },
+            QueryField {
+                name: "Message".to_owned(),
+                data_type: Some(DataType::Utf8),
+                nullable: false,
+                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
+                group_concat: false,
+            },
+        ],
+        rows: (1..=session.group_concat_warnings)
+            .map(|row| {
+                vec![
+                    Value::Utf8("Warning".to_owned()),
+                    Value::UInt64(1260),
+                    Value::Utf8(format!("Row {row} was cut by GROUP_CONCAT()")),
+                ]
+            })
+            .collect(),
+        stats: QueryStats {
+            rows: usize::try_from(session.group_concat_warnings).unwrap_or(usize::MAX),
+            ..QueryStats::default()
+        },
+        truncated: false,
+    }
 }
 
 fn mysql_compat_version() -> String {
@@ -1523,6 +1533,7 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
 #[cfg(test)]
 mod tests {
     use opensrv_mysql::{ColumnFlags, ColumnType};
+    use pintail_sql::DEFAULT_TEXT_COLLATION;
     use pintail_types::DataType;
     use sha1::{Digest as _, Sha1};
     use sha2::Digest as _;
@@ -1541,6 +1552,7 @@ mod tests {
                 name: "document".to_owned(),
                 data_type: Some(DataType::Json),
                 nullable: true,
+                collation: None,
                 group_concat: false,
             },
             1024,
@@ -1556,6 +1568,7 @@ mod tests {
                 name: "ordinal_position".to_owned(),
                 data_type: Some(DataType::UInt64),
                 nullable: false,
+                collation: None,
                 group_concat: false,
             },
             1024,
@@ -1570,6 +1583,7 @@ mod tests {
                 name: "column_default".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: true,
+                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
             },
             1024,
@@ -1583,6 +1597,7 @@ mod tests {
                 name: "payload".to_owned(),
                 data_type: Some(DataType::Binary),
                 nullable: true,
+                collation: None,
                 group_concat: false,
             },
             1024,
@@ -1604,6 +1619,7 @@ mod tests {
                     scale: 4,
                 }),
                 nullable: false,
+                collation: None,
                 group_concat: false,
             },
             1024,
@@ -1618,6 +1634,7 @@ mod tests {
                 name: "created_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 6 }),
                 nullable: false,
+                collation: None,
                 group_concat: false,
             },
             1024,
@@ -1633,6 +1650,7 @@ mod tests {
             name: "labels".to_owned(),
             data_type: Some(DataType::Utf8),
             nullable: true,
+            collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: true,
         };
         assert_eq!(
@@ -1651,6 +1669,7 @@ mod tests {
             name: "label".to_owned(),
             data_type: Some(DataType::Utf8),
             nullable: false,
+            collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: false,
         };
         assert_eq!(mysql_column(&field, 1024, "utf8mb3").character_set, 33);

@@ -15,8 +15,8 @@ use pintail_exec::{
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
-    Binder, BoundExprKind, BoundJoinKind, BoundQuery, ColumnFacts, IndexFacts, MetadataError,
-    SourceFacts, Statement, execute_metadata, parse_statement,
+    Binder, BoundExprKind, BoundJoinKind, BoundQuery, ColumnFacts, DEFAULT_TEXT_COLLATION,
+    IndexFacts, MetadataError, SourceFacts, Statement, execute_metadata, parse_statement,
 };
 use pintail_store::TableSnapshot;
 use pintail_types::{DataType, Value};
@@ -33,6 +33,8 @@ pub struct QueryField {
     pub name: String,
     pub data_type: Option<DataType>,
     pub nullable: bool,
+    /// Resolved text collation, absent for non-text results.
+    pub collation: Option<String>,
     /// Direct `GROUP_CONCAT` projections choose VARCHAR versus TEXT/BLOB on
     /// the wire from the connection's `group_concat_max_len`.
     pub group_concat: bool,
@@ -289,6 +291,11 @@ impl ReplicaEngine {
             .bind(statement)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
         let result_nullability = source_result_nullability(&bound, catalog, facts);
+        let result_collations = bound
+            .projection
+            .iter()
+            .map(|projection| projection.expr.result_collation())
+            .collect::<Vec<_>>();
         let group_concat = bound
             .projection
             .iter()
@@ -321,6 +328,7 @@ impl ReplicaEngine {
                     .copied()
                     .flatten()
                     .unwrap_or(field.nullable),
+                collation: result_collations.get(index).cloned().flatten(),
                 group_concat: group_concat.get(index).copied().unwrap_or(false),
             })
             .collect();
@@ -367,6 +375,7 @@ impl ReplicaEngine {
                 name: "plan".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
+                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
             }],
             rows: vec![vec![Value::Utf8(plan)]],
@@ -481,6 +490,8 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
                 name: field.name,
                 data_type: Some(field.data_type),
                 nullable: field.nullable,
+                collation: (field.data_type == DataType::Utf8)
+                    .then(|| DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
             })
             .collect(),

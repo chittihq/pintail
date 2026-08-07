@@ -15,6 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Query result metadata now retains the resolved source/default text collation
+  through the shared query engine and HTTP response; non-text fields report no
+  collation. CDC restart coverage also proves schema-history charset and
+  collation metadata survive reopening a tracked table.
 - MySQL differential oracle diversify batch: typed multi-table `orders` seed
   (`DECIMAL` / `DATETIME` / `JSON`), forty column-native match cases (862 total),
   twelve fail-closed reject shapes (`documented_rejects_stay_explicit`), twelve

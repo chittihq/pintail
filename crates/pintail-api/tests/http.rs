@@ -784,6 +784,11 @@ async fn query_and_table_routes_read_the_same_mirrored_snapshot() {
         query["rows"],
         serde_json::json!([[1, "launch"], [2, "land"]])
     );
+    assert_eq!(query["fields"][0]["collation"], serde_json::Value::Null);
+    assert_eq!(
+        query["fields"][1]["collation"],
+        serde_json::json!("utf8mb4_0900_ai_ci")
+    );
     assert_eq!(query["stats"]["rows"], 2);
 
     let write = app

@@ -1,6 +1,10 @@
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_types::{DataType, Value};
 
+/// The one text collation Pintail currently executes rather than rejecting.
+pub const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
+const MIXED_COLLATION_PREFIX: &str = "mixed:";
+
 /// A table made unambiguous against one catalog snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundTable {
@@ -70,6 +74,73 @@ pub struct BoundExpr {
     pub data_type: Option<DataType>,
     /// Whether evaluating the expression can produce `NULL`.
     pub nullable: bool,
+}
+
+impl BoundExpr {
+    /// Returns the result collation retained by a text expression.
+    ///
+    /// Text literals and other synthetic text expressions use the declared
+    /// default profile. Source columns retain their probed collation. A mixed
+    /// marker is internal evidence for the binder's fail-closed checks and is
+    /// never produced by a successfully bound collation-sensitive expression.
+    #[must_use]
+    pub fn result_collation(&self) -> Option<String> {
+        if self.data_type != Some(DataType::Utf8) {
+            return None;
+        }
+        let mut collations = Vec::new();
+        self.collect_source_collations(&mut collations);
+        collations.sort_unstable();
+        collations.dedup();
+        match collations.as_slice() {
+            [] => Some(DEFAULT_TEXT_COLLATION.to_owned()),
+            [collation] => Some(collation.clone()),
+            _ => Some(format!("{MIXED_COLLATION_PREFIX}{}", collations.join(","))),
+        }
+    }
+
+    pub(crate) fn collect_source_collations(&self, collations: &mut Vec<String>) {
+        match &self.kind {
+            BoundExprKind::Column(column) => {
+                if column.data_type == DataType::Utf8 {
+                    collations.push(
+                        column
+                            .collation
+                            .clone()
+                            .unwrap_or_else(|| DEFAULT_TEXT_COLLATION.to_owned()),
+                    );
+                }
+            }
+            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+                expr.collect_source_collations(collations);
+            }
+            BoundExprKind::Binary { left, right, .. } => {
+                left.collect_source_collations(collations);
+                right.collect_source_collations(collations);
+            }
+            BoundExprKind::Scalar { args, .. } => {
+                for argument in args {
+                    argument.collect_source_collations(collations);
+                }
+            }
+            BoundExprKind::ScalarSubquery(query) => {
+                for projection in &query.projection {
+                    projection.expr.collect_source_collations(collations);
+                }
+            }
+            BoundExprKind::InSubquery { expr, query, .. } => {
+                expr.collect_source_collations(collations);
+                for projection in &query.projection {
+                    projection.expr.collect_source_collations(collations);
+                }
+            }
+            BoundExprKind::Aggregate(_)
+            | BoundExprKind::Window(_)
+            | BoundExprKind::ExistsSubquery { .. }
+            | BoundExprKind::Literal(_)
+            | BoundExprKind::GroupKey(_) => {}
+        }
+    }
 }
 
 /// Operations represented by a bound scalar expression.
