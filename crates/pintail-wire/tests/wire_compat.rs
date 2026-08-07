@@ -851,9 +851,9 @@ fn external_client_gate(address: std::net::SocketAddr) {
 
     let pymysql = Command::new("uv")
         .args(["run", "--with", "pymysql", "python", "client.py"])
-        .current_dir(clients)
+        .current_dir(&clients)
         .env("PINTAIL_WIRE_HOST", "127.0.0.1")
-        .env("PINTAIL_WIRE_PORT", port)
+        .env("PINTAIL_WIRE_PORT", &port)
         .output()
         .expect("run PyMySQL client with uv");
     assert!(
@@ -867,6 +867,23 @@ fn external_client_gate(address: std::net::SocketAddr) {
         "{pymysql_output}"
     );
     assert!(pymysql_output.contains("PRIMARY"), "{pymysql_output}");
+
+    let go = Command::new("go")
+        .args(["run", "."])
+        .current_dir(&clients)
+        .env("PINTAIL_WIRE_HOST", "127.0.0.1")
+        .env("PINTAIL_WIRE_PORT", &port)
+        .output()
+        .expect("run Go MySQL client");
+    assert!(
+        go.status.success(),
+        "Go MySQL client failed: {}",
+        String::from_utf8_lossy(&go.stderr)
+    );
+    let go_output = String::from_utf8_lossy(&go.stdout);
+    assert!(go_output.contains(r#""bound_name":"land""#), "{go_output}");
+    assert!(go_output.contains(r#""columns":2"#), "{go_output}");
+    assert!(go_output.contains(r#""tables":2"#), "{go_output}");
 }
 
 #[allow(clippy::too_many_lines)]

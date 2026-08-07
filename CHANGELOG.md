@@ -134,6 +134,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Verification
 
+- The nightly external wire matrix now includes Go `database/sql` with
+  go-sql-driver/mysql, covering authentication, a bound parameter,
+  and information-schema discovery alongside mysql_async, mysql2, PyMySQL,
+  and the MySQL 8.4 CLI.
 - The production E2E binary is restarted briefly with a 256 KiB query ceiling
   and must report nonzero spill files and bytes for live sort, grouped
   aggregation, standalone DISTINCT, and hash-join workloads before the gate

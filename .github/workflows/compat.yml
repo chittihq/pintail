@@ -63,6 +63,11 @@ jobs:
           bun install --frozen-lockfile
       - uses: astral-sh/setup-uv@v5
         if: matrix.suite == 'wire'
+      - uses: actions/setup-go@v5
+        if: matrix.suite == 'wire'
+        with:
+          go-version-file: tests/integration/wire-clients/go.mod
+          cache-dependency-path: tests/integration/wire-clients/go.sum
       - name: Run suite
         run: ${{ matrix.command }}
         env:

@@ -64,7 +64,7 @@ including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
 | Session vars | `SET time_zone`; `SET NAMES`/`character_set_results` (utf8 family and binary, including result metadata); `SET sql_mode` (echoed); `SET max_execution_time` (cooperative millisecond deadline, error 1317) |
 | Prepared statements | Numeric, decimal, temporal, JSON, text, binary tags; params incl. binary `DATE`/`DATETIME`/`TIME`; type-derived length, session result charset, DECIMAL scale and temporal FSP metadata |
 | TLS | rustls, default modern policy; `PINTAIL_WIRE_TLS_CERT`/`_KEY` PEM paths or `[wire]` config keys, `PINTAIL_WIRE_REQUIRE_TLS` to refuse plaintext |
-| Client gate | `mysql_async`, MySQL 8.4 CLI, mysql2, PyMySQL |
+| Client gate | `mysql_async`, MySQL 8.4 CLI, mysql2, PyMySQL, Go `database/sql`/go-sql-driver/mysql |
 
 ## Ranked gaps
 

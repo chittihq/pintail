@@ -51,7 +51,7 @@ end-to-end supervisor/API suites will compose these gates from this directory.
 M7's wire compatibility gate lives at
 `crates/pintail-wire/tests/wire_compat.rs`. Its default run uses a real Rust
 MySQL client; set the external-client flag to add the `mysql` CLI, mysql2 under
-Bun, and PyMySQL:
+Bun, PyMySQL, and Go's `database/sql` with go-sql-driver/mysql:
 
 ```sh
 PINTAIL_EXTERNAL_WIRE_CLIENTS=1 \
