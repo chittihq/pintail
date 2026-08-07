@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-07T14:28:27.762Z.
+Measured 2026-08-07T17:21:25.333Z.
 
-**441 passed, 0 failed, 3 documented-gap warnings.**
+**506 passed, 0 failed, 3 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -47,6 +47,71 @@ Measured 2026-08-07T14:28:27.762Z.
 | snapshot | query:window ranking per group | PASS |  |
 | snapshot | query:window share of total over grouped output | PASS |  |
 | snapshot | query:window running total | PASS |  |
+| orm-compat | sequelize:metadata:result | PASS |  |
+| orm-compat | sequelize:metadata:generated-sql | PASS |  |
+| orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
+| orm-compat | sequelize:point-and-filtered-reads:generated-sql | PASS |  |
+| orm-compat | sequelize:relation-read:result | PASS |  |
+| orm-compat | sequelize:relation-read:generated-sql | PASS |  |
+| orm-compat | sequelize:grouped-aggregate:result | PASS |  |
+| orm-compat | sequelize:grouped-aggregate:generated-sql | PASS |  |
+| orm-compat | drizzle:introspection:result | PASS |  |
+| orm-compat | drizzle:introspection:generated-sql | PASS |  |
+| orm-compat | drizzle:point-and-filtered-reads:result | PASS |  |
+| orm-compat | drizzle:point-and-filtered-reads:generated-sql | PASS |  |
+| orm-compat | drizzle:relation-read:result | PASS |  |
+| orm-compat | drizzle:relation-read:generated-sql | PASS |  |
+| orm-compat | drizzle:grouped-aggregate:result | PASS |  |
+| orm-compat | drizzle:grouped-aggregate:generated-sql | PASS |  |
+| orm-compat | prisma:introspection:result | PASS |  |
+| orm-compat | prisma:introspection:generated-sql | PASS |  |
+| orm-compat | prisma:point-and-filtered-reads:result | PASS |  |
+| orm-compat | prisma:point-and-filtered-reads:generated-sql | PASS |  |
+| orm-compat | prisma:relation-read:result | PASS |  |
+| orm-compat | prisma:relation-read:generated-sql | PASS |  |
+| orm-compat | prisma:grouped-aggregate:result | PASS |  |
+| orm-compat | prisma:grouped-aggregate:generated-sql | PASS |  |
+| orm-compat | converge:audit_log | PASS |  |
+| orm-compat | converge:counters | PASS |  |
+| orm-compat | converge:customers | PASS |  |
+| orm-compat | converge:order_items | PASS |  |
+| orm-compat | converge:orders | PASS |  |
+| orm-compat | converge:information_schema.columns | PASS |  |
+| orm-compat | query:point lookup by key | PASS |  |
+| orm-compat | query:range scan with compound predicate | PASS |  |
+| orm-compat | query:inner join with aggregation | PASS |  |
+| orm-compat | query:left join preserves unmatched rows | PASS |  |
+| orm-compat | query:right join preserves unmatched rows | PASS |  |
+| orm-compat | query:three-way join through items | PASS |  |
+| orm-compat | query:union all across sources | PASS |  |
+| orm-compat | query:intersect customer identifiers | PASS |  |
+| orm-compat | query:except customer identifiers | PASS |  |
+| orm-compat | query:group by with having | PASS |  |
+| orm-compat | query:conditional decimal sum keeps the fraction | PASS |  |
+| orm-compat | query:distinct count and min max | PASS |  |
+| orm-compat | query:uncorrelated in-subquery | PASS |  |
+| orm-compat | query:correlated exists with inner predicate | PASS |  |
+| orm-compat | query:correlated scalar aggregate | PASS |  |
+| orm-compat | query:correlated scalar unique lookup | PASS |  |
+| orm-compat | query:scalar subquery threshold | PASS |  |
+| orm-compat | query:non-recursive cte | PASS |  |
+| orm-compat | query:bounded recursive cte | PASS |  |
+| orm-compat | query:date bucketing | PASS |  |
+| orm-compat | query:string functions and like | PASS |  |
+| orm-compat | query:looker symmetric key helpers | PASS |  |
+| orm-compat | query:json constructor preserves json versus text | PASS |  |
+| orm-compat | query:json aggregate embeds documents | PASS |  |
+| orm-compat | query:regular expression read transforms | PASS |  |
+| orm-compat | query:case expression buckets | PASS |  |
+| orm-compat | query:null handling | PASS |  |
+| orm-compat | query:coalesce and ifnull | PASS |  |
+| orm-compat | query:enum and set filters | PASS |  |
+| orm-compat | query:unsigned boundary readback | PASS |  |
+| orm-compat | query:derived table | PASS |  |
+| orm-compat | query:group_concat single expression | PASS |  |
+| orm-compat | query:window ranking per group | PASS |  |
+| orm-compat | query:window share of total over grouped output | PASS |  |
+| orm-compat | query:window running total | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
