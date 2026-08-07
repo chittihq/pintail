@@ -3233,6 +3233,31 @@ mod tests {
             Err(ExecError::ScalarSubqueryRows { rows: 2 })
         ));
 
+        assert_eq!(
+            execute_rows(
+                "SELECT events.id, \
+                        IF(events.id > 0, 'chosen', \
+                           (SELECT users.name FROM users WHERE users.id >= events.id)), \
+                        COALESCE('chosen', \
+                           (SELECT users.name FROM users WHERE users.id >= events.id)) \
+                 FROM events ORDER BY events.id",
+                &catalog,
+                &provider,
+            ),
+            [
+                vec![
+                    Value::UInt64(1),
+                    Value::Utf8("chosen".to_owned()),
+                    Value::Utf8("chosen".to_owned()),
+                ],
+                vec![
+                    Value::UInt64(2),
+                    Value::Utf8("chosen".to_owned()),
+                    Value::Utf8("chosen".to_owned()),
+                ],
+            ]
+        );
+
         let statement = parse_statement(
             "SELECT events.id, (SELECT MAX(id) FROM users) AS largest_user, \
              events.id IN (SELECT id FROM users WHERE id = 2) AS selected \

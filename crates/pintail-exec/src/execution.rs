@@ -1702,10 +1702,8 @@ fn resolve_dependent_expr_subqueries(
             resolve_dependent_expr_subqueries(left, batch, row, columns, provider, memory)?;
             resolve_dependent_expr_subqueries(right, batch, row, columns, provider, memory)?;
         }
-        BoundExprKind::Scalar { args, .. } => {
-            for argument in args {
-                resolve_dependent_expr_subqueries(argument, batch, row, columns, provider, memory)?;
-            }
+        BoundExprKind::Scalar { function, args } => {
+            resolve_dependent_scalar_args(*function, args, batch, row, columns, provider, memory)?;
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -1714,6 +1712,73 @@ fn resolve_dependent_expr_subqueries(
         | BoundExprKind::Literal(_) => {}
     }
     Ok(())
+}
+
+fn resolve_dependent_scalar_args(
+    function: ScalarFunction,
+    args: &mut [BoundExpr],
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[BoundColumn],
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    match function {
+        ScalarFunction::If if args.len() == 3 => {
+            resolve_dependent_expr_subqueries(&mut args[0], batch, row, columns, provider, memory)?;
+            let condition = evaluate_and_literalize(&mut args[0], batch, row, columns)?;
+            let selected = if predicate_truth(&condition)? { 1 } else { 2 };
+            let skipped = if selected == 1 { 2 } else { 1 };
+            resolve_dependent_expr_subqueries(
+                &mut args[selected],
+                batch,
+                row,
+                columns,
+                provider,
+                memory,
+            )?;
+            args[skipped].nullable = true;
+            args[skipped].kind = BoundExprKind::Literal(Value::Null);
+        }
+        ScalarFunction::Coalesce => {
+            for index in 0..args.len() {
+                resolve_dependent_expr_subqueries(
+                    &mut args[index],
+                    batch,
+                    row,
+                    columns,
+                    provider,
+                    memory,
+                )?;
+                let value = evaluate_and_literalize(&mut args[index], batch, row, columns)?;
+                if !matches!(value, Value::Null) {
+                    for skipped in &mut args[index + 1..] {
+                        skipped.nullable = true;
+                        skipped.kind = BoundExprKind::Literal(Value::Null);
+                    }
+                    break;
+                }
+            }
+        }
+        _ => {
+            for argument in args {
+                resolve_dependent_expr_subqueries(argument, batch, row, columns, provider, memory)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn evaluate_and_literalize(
+    expression: &mut BoundExpr,
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[BoundColumn],
+) -> Result<Value, ExecError> {
+    let value = CompiledExpr::compile(expression, columns)?.evaluate(batch, row)?;
+    expression.nullable = matches!(value, Value::Null);
+    expression.kind = BoundExprKind::Literal(value.clone());
+    Ok(value)
 }
 
 fn materialize_subquery(

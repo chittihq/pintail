@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
-const EXPECTED_CASES: usize = 820;
+const EXPECTED_CASES: usize = 822;
 
 struct OracleCase {
     family: &'static str,
@@ -1742,6 +1742,18 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "dependent correlated subqueries",
             "SELECT e.id, (SELECT (SELECT e.name FROM users e WHERE e.id = u.id) \
              FROM users u WHERE u.id = e.id) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, IF(e.id > 0, 'chosen', \
+             (SELECT u.name FROM users u WHERE u.id >= e.id)) \
+             FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, COALESCE('chosen', \
+             (SELECT u.name FROM users u WHERE u.id >= e.id)) \
+             FROM events e ORDER BY e.id",
         ),
         ordered(
             "recursive cte",

@@ -113,6 +113,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Dependent scalar subqueries in unselected `IF`/`CASE` branches and after the
+  first non-NULL `COALESCE` argument no longer execute eagerly, preserving
+  MySQL short-circuit behavior and avoiding spurious cardinality errors.
 - BI capture replay ignores interleaved SQL comments when classifying CTEs and
   session statements, so comments cannot disguise a write or global/persistent
   mutation as read-only SQL.
