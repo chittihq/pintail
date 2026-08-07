@@ -361,14 +361,21 @@ async function main() {
   }
   writeFileSync(lockPath, `${process.pid} ${new Date().toISOString()}\n`)
   writeFileSync(statusPath, '')
-  /// Commits known harness result ledgers so remote stages see one clean
-  /// commit. Returns false when non-artifact paths are dirty.
-  async function commitHarnessArtifacts(context: string): Promise<boolean> {
-    const ARTIFACT_PREFIXES = [
-      'tests/e2e/results',
-      'benchmark/results.',
-      'benchmark/workloads/commerce-production-v1/results/',
-    ]
+  /// The benchmark refuses a dirty tree, and earlier stages rewrite result
+  /// ledgers. Rather than committing a receipt to the product branch for
+  /// every gate — which made roughly one commit in eight a scoreboard entry
+  /// — set the ledgers aside so the tree is clean for the remote stages and
+  /// put them back when the run finishes. The evidence survives on disk;
+  /// committing it stays a deliberate act.
+  const ARTIFACT_PREFIXES = [
+    'tests/e2e/results',
+    'benchmark/results.',
+    'benchmark/workloads/commerce-production-v1/results/',
+  ]
+  const shelfDir = join(reportDir, 'artifact-shelf')
+  let shelved: string[] = []
+
+  async function shelveHarnessArtifacts(context: string): Promise<boolean> {
     const porcelain = await run(['git', 'status', '--porcelain'])
     // No global trim: it would eat the first line's leading status space
     // and shift the path slice by one.
@@ -381,10 +388,35 @@ async function main() {
       status(`dirty non-artifact paths: ${dirtyPaths.join(', ')}`)
       return false
     }
-    await run(['git', 'add', ...dirtyPaths])
-    const committed = await run(['git', 'commit', '-m', `harness: bank gate artifacts (before ${context})`])
-    if (committed.code === 0) status(`${context}: banked harness artifacts as one commit`)
-    return committed.code === 0
+    for (const path of dirtyPaths) {
+      const shelfPath = join(shelfDir, path)
+      mkdirSync(join(shelfPath, '..'), { recursive: true })
+      if (existsSync(join(repository, path))) {
+        writeFileSync(shelfPath, readFileSync(join(repository, path)))
+      }
+      if (!shelved.includes(path)) shelved.push(path)
+    }
+    // Restore the committed content so the remote stages see a clean tree.
+    const restored = await run(['git', 'checkout', '--', ...dirtyPaths])
+    if (restored.code === 0) {
+      status(`${context}: shelved ${dirtyPaths.length} harness ledger(s); tree clean`)
+    }
+    return restored.code === 0
+  }
+
+  /// Returns the shelved ledgers to the working tree so the run's evidence is
+  /// on disk, uncommitted, for whoever decides to keep it.
+  function unshelveHarnessArtifacts(): void {
+    for (const path of shelved) {
+      const shelfPath = join(shelfDir, path)
+      if (!existsSync(shelfPath)) continue
+      mkdirSync(join(repository, path, '..'), { recursive: true })
+      writeFileSync(join(repository, path), readFileSync(shelfPath))
+    }
+    if (shelved.length > 0) {
+      status(`restored ${shelved.length} harness ledger(s) to the working tree, uncommitted`)
+    }
+    shelved = []
   }
 
   const results: Array<{ name: string; verdict: string; minutes: number; note: string }> = []
@@ -393,7 +425,7 @@ async function main() {
     // The benchmark refuses dirty trees; fail everything fast instead of
     // discovering it forty minutes in. Harness artifacts (results ledgers
     // earlier stages rewrite) are auto-committed instead of aborting.
-    if (requested.includes('bench') && !(await commitHarnessArtifacts('launch'))) {
+    if (requested.includes('bench') && !(await shelveHarnessArtifacts('launch'))) {
       status('ABORT: working tree has non-artifact changes and bench is requested — commit first')
       process.exit(2)
     }
@@ -427,7 +459,7 @@ async function main() {
     const runStage = async (stage: (typeof STAGES)[number]) => {
         // Earlier stages rewrite harness artifacts and the benchmark
         // refuses dirty trees: bank artifacts before every remote stage.
-        if (stage.remote && !(await commitHarnessArtifacts(stage.name))) {
+        if (stage.remote && !(await shelveHarnessArtifacts(stage.name))) {
           status(`ABORT before ${stage.name}: working tree has non-artifact changes — commit first`)
           results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
           return undefined
@@ -504,6 +536,9 @@ async function main() {
       if (outcomes.some((outcome) => outcome.verdict !== 'PASS')) break
     }
   } finally {
+    // Always give the ledgers back, including on abort — the evidence is the
+    // point of the run, and it must not be lost just because a stage failed.
+    unshelveHarnessArtifacts()
     rmSync(lockPath, { force: true })
   }
 
