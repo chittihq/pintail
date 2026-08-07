@@ -347,6 +347,31 @@ update pattern (recent-hot keys) and 8-11x under adversarial uniform updates
 normalized memcmp byte keys are rejected for heap merges (e12: 17-61% slower
 on both machines).
 
+### Temporal reads use one stable replica policy
+
+Source `DATE` and `DATETIME` values with zero components or an impossible
+calendar date normalize to SQL `NULL` during both snapshot and CDC decoding.
+The two ingestion paths share the same mapper, so an existing row and a later
+change event cannot disagree. `YEAR 0` remains a valid year value, and invalid
+`TIME` encodings fail decoding rather than becoming a plausible clock value.
+This policy is independent of the querying connection's `sql_mode`: Pintail is
+a read replica and does not reinterpret already-ingested source bytes when a
+client changes modes. `SET sql_mode` is retained and echoed for client
+compatibility but does not alter expression or temporal semantics.
+
+`SYSTEM` means the process host timezone. Explicit session `time_zone` names
+use the embedded IANA database, numeric offsets are fixed, fall-back folds take
+the earlier offset, and nonexistent spring-forward local times produce `NULL`.
+`CONVERT_TZ` always uses its explicit source and destination arguments, not the
+session default. Operators that need host-independent behavior should set a
+named zone or offset; a separate server-timezone setting would duplicate that
+control without improving determinism.
+
+Compound interval qualifiers remain deferred until captured workload demand
+justifies maintaining a parser fork. sqlparser currently rejects those tokens
+before binding, so the deferral is an explicit error rather than guessed date
+arithmetic.
+
 ### Operator choices
 
 Low-cardinality aggregation runs on dictionary codes with direct-array

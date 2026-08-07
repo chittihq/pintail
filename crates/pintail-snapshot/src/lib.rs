@@ -1256,8 +1256,24 @@ mod tests {
     fn normalizes_zero_and_invalid_dates_to_null() {
         assert_eq!(normalize_date(&MysqlValue::Date(0, 0, 0, 0, 0, 0, 0)), None);
         assert_eq!(
+            normalize_date(&MysqlValue::Date(2024, 0, 1, 0, 0, 0, 0)),
+            None
+        );
+        assert_eq!(
+            normalize_date(&MysqlValue::Date(2024, 2, 30, 0, 0, 0, 0)),
+            None
+        );
+        assert_eq!(
+            normalize_date(&MysqlValue::Bytes(b"0000-00-00".to_vec())),
+            None
+        );
+        assert_eq!(
             normalize_date(&MysqlValue::Date(1000, 1, 1, 0, 0, 0, 0)),
             Some("1000-01-01".to_owned())
+        );
+        assert_eq!(
+            normalize_datetime(&MysqlValue::Date(2024, 2, 30, 12, 0, 0, 0), 0),
+            None
         );
         assert_eq!(
             normalize_datetime(&MysqlValue::Date(2024, 2, 29, 12, 34, 56, 123_456), 3),
