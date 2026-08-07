@@ -24,6 +24,9 @@ pub struct Binder<'catalog> {
     catalog: &'catalog CatalogSnapshot,
     current_database: Option<&'catalog str>,
     next_derived_id: Cell<u64>,
+    /// Relations visible only to expressions in this query. They are never
+    /// added to its FROM plan; their columns carry `outer = true`.
+    outer_tables: Vec<BoundTable>,
 }
 
 #[derive(Clone)]
@@ -49,7 +52,31 @@ impl<'catalog> Binder<'catalog> {
             catalog,
             current_database,
             next_derived_id: Cell::new(u64::MAX),
+            outer_tables: Vec::new(),
         }
+    }
+
+    fn bind_subquery(
+        &self,
+        query: &Query,
+        ctes: &[BoundCte],
+        visible_tables: &[BoundTable],
+    ) -> Result<BoundQuery, BindError> {
+        let mut outer_tables = visible_tables.to_vec();
+        for table in &mut outer_tables {
+            for column in &mut table.columns {
+                column.outer = true;
+            }
+        }
+        let nested = Self {
+            catalog: self.catalog,
+            current_database: self.current_database,
+            next_derived_id: Cell::new(self.next_derived_id.get()),
+            outer_tables,
+        };
+        let result = nested.bind_query(query, ctes);
+        self.next_derived_id.set(nested.next_derived_id.get());
+        result
     }
 
     /// Resolves and type-checks a parsed query statement.
@@ -187,6 +214,7 @@ impl<'catalog> Binder<'catalog> {
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: true,
                 collation: expression_collation_marker(&projection.expr),
+                outer: false,
                 using_shadowed: false,
             })
             .collect();
@@ -334,7 +362,9 @@ impl<'catalog> Binder<'catalog> {
             mut tables,
             wildcard_order,
         } = self.bind_from(select, ctes)?;
-        let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
+        let filter_scope = expression_scope(&tables, &self.outer_tables);
+        let resolve_filter_subquery =
+            |query: &Query| self.bind_subquery(query, ctes, &filter_scope);
         // Correlated EXISTS conjuncts decorrelate into semi/anti joins
         // before general binding; everything else re-ANDs below.
         let mut residual_filter: Option<BoundExpr> = None;
@@ -343,8 +373,13 @@ impl<'catalog> Binder<'catalog> {
                 let bound = if let Expr::Exists { subquery, negated } = conjunct
                     && self.bind_query(subquery, ctes).is_err()
                 {
-                    self.decorrelate_exists(subquery, *negated, &mut from, &mut tables, ctes)?;
-                    continue;
+                    if self
+                        .decorrelate_exists(subquery, *negated, &mut from, &mut tables, ctes)
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                    bind_expr(conjunct, &filter_scope, Some(&resolve_filter_subquery))?
                 } else if let Expr::InSubquery {
                     expr,
                     subquery,
@@ -352,10 +387,15 @@ impl<'catalog> Binder<'catalog> {
                 } = conjunct
                     && self.bind_query(subquery, ctes).is_err()
                 {
-                    self.decorrelate_in(expr, subquery, *negated, &mut from, &mut tables, ctes)?;
-                    continue;
+                    if self
+                        .decorrelate_in(expr, subquery, *negated, &mut from, &mut tables, ctes)
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                    bind_expr(conjunct, &filter_scope, Some(&resolve_filter_subquery))?
                 } else {
-                    bind_expr(conjunct, &tables, Some(&resolve_subquery))?
+                    bind_expr(conjunct, &filter_scope, Some(&resolve_filter_subquery))?
                 };
                 residual_filter = Some(match residual_filter {
                     None => bound,
@@ -428,9 +468,12 @@ impl<'catalog> Binder<'catalog> {
         }
         let mut aggregates = Vec::new();
         let mut windows = Vec::new();
+        let expression_tables = expression_scope(&tables, &self.outer_tables);
+        let resolve_subquery = |query: &Query| self.bind_subquery(query, ctes, &expression_tables);
         let mut projection = bind_projection(
             &projection_items,
             &tables,
+            &expression_tables,
             &wildcard_order,
             Some(&mut aggregates),
             Some(&mut windows),
@@ -465,14 +508,19 @@ impl<'catalog> Binder<'catalog> {
         let group_by = bind_group_by(
             &select.group_by,
             &projection_items,
-            &tables,
+            &expression_tables,
             Some(&resolve_subquery),
         )?;
         let mut having = select
             .having
             .as_ref()
             .map(|expr| {
-                bind_aggregate_expr(expr, &tables, &mut aggregates, Some(&resolve_subquery))
+                bind_aggregate_expr(
+                    expr,
+                    &expression_tables,
+                    &mut aggregates,
+                    Some(&resolve_subquery),
+                )
             })
             .transpose()?;
         if let Some(predicate) = &having
@@ -1324,6 +1372,7 @@ impl<'catalog> Binder<'catalog> {
                 data_type: column.data_type(),
                 nullable: column.is_nullable(),
                 collation: column.collation().map(str::to_owned),
+                outer: false,
                 using_shadowed: false,
             })
             .collect();
@@ -1370,6 +1419,7 @@ impl<'catalog> Binder<'catalog> {
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: projection.expr.nullable,
                 collation: expression_collation_marker(&projection.expr),
+                outer: false,
                 using_shadowed: false,
             })
             .collect();
@@ -1723,6 +1773,7 @@ fn validate_select_shape(select: &Select) -> Result<(), BindError> {
 fn bind_projection(
     items: &[SelectItem],
     tables: &[BoundTable],
+    expression_tables: &[BoundTable],
     wildcard_order: &[BoundColumn],
     mut aggregates: Option<&mut Vec<BoundAggregate>>,
     mut windows: Option<&mut Vec<BoundWindow>>,
@@ -1732,16 +1783,26 @@ fn bind_projection(
     for item in items {
         match item {
             SelectItem::UnnamedExpr(expr) => {
-                let bound =
-                    bind_expr_inner(expr, tables, &mut aggregates, &mut windows, subqueries)?;
+                let bound = bind_expr_inner(
+                    expr,
+                    expression_tables,
+                    &mut aggregates,
+                    &mut windows,
+                    subqueries,
+                )?;
                 projection.push(BoundProjection {
                     name: projection_name(expr),
                     expr: bound,
                 });
             }
             SelectItem::ExprWithAlias { expr, alias } => {
-                let bound =
-                    bind_expr_inner(expr, tables, &mut aggregates, &mut windows, subqueries)?;
+                let bound = bind_expr_inner(
+                    expr,
+                    expression_tables,
+                    &mut aggregates,
+                    &mut windows,
+                    subqueries,
+                )?;
                 projection.push(BoundProjection {
                     name: alias.value.clone(),
                     expr: bound,
@@ -1873,6 +1934,7 @@ fn resolve_wildcard_table<'a>(
             _ => false,
         })
         .collect::<Vec<_>>();
+
     match matches.as_slice() {
         [table] => Ok(*table),
         [] => Err(BindError::UnknownRelation(name.to_string())),
@@ -2141,11 +2203,17 @@ fn bind_scalar_subquery(
             let resolver =
                 subqueries.ok_or_else(|| BindError::UnsupportedSubquery(query.to_string()))?;
             let query = resolver(query)?;
-            let [projection] = query.projection.as_slice() else {
+            if query
+                .projection
+                .len()
+                .saturating_sub(query.hidden_sort_columns)
+                != 1
+            {
                 return Err(BindError::UnsupportedSubquery(
                     "scalar subquery must produce exactly one column".to_owned(),
                 ));
-            };
+            }
+            let projection = &query.projection[0];
             let data_type = projection.expr.data_type;
             return Ok(BoundExpr {
                 kind: BoundExprKind::ScalarSubquery(Box::new(query)),
@@ -2182,11 +2250,17 @@ fn bind_in_subquery(
             let resolver =
                 subqueries.ok_or_else(|| BindError::UnsupportedSubquery(query.to_string()))?;
             let query = resolver(query)?;
-            let [projection] = query.projection.as_slice() else {
+            if query
+                .projection
+                .len()
+                .saturating_sub(query.hidden_sort_columns)
+                != 1
+            {
                 return Err(BindError::UnsupportedSubquery(
                     "IN subquery must produce exactly one column".to_owned(),
                 ));
-            };
+            }
+            let projection = &query.projection[0];
             if !comparable(expr.data_type, projection.expr.data_type) {
                 return Err(BindError::InvalidScalarFunction("IN subquery".to_owned()));
             }
@@ -2281,7 +2355,7 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
 }
 
 fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr, BindError> {
-    let matches = tables
+    let mut matches = tables
         .iter()
         .flat_map(|table| &table.columns)
         .filter(|column| match identifiers {
@@ -2307,6 +2381,14 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
             _ => false,
         })
         .collect::<Vec<_>>();
+
+    // SQL name resolution searches the innermost query scope first. An
+    // unqualified local column therefore shadows an identically named outer
+    // column instead of becoming ambiguous merely because correlation is
+    // available.
+    if matches.iter().any(|column| !column.outer) {
+        matches.retain(|column| !column.outer);
+    }
 
     let column = match matches.as_slice() {
         [column] => (*column).clone(),
@@ -4931,6 +5013,13 @@ struct BoundFromScope {
     from: Vec<BoundFrom>,
     tables: Vec<BoundTable>,
     wildcard_order: Vec<BoundColumn>,
+}
+
+fn expression_scope(local: &[BoundTable], outer: &[BoundTable]) -> Vec<BoundTable> {
+    let mut visible = Vec::with_capacity(local.len().saturating_add(outer.len()));
+    visible.extend_from_slice(local);
+    visible.extend_from_slice(outer);
+    visible
 }
 
 const DIVISION_SCALE_INCREMENT: u8 = 4;

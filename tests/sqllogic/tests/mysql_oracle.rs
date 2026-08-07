@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
-const EXPECTED_CASES: usize = 806;
+const EXPECTED_CASES: usize = 813;
 
 struct OracleCase {
     family: &'static str,
@@ -1670,6 +1670,43 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT u.id FROM users u \
              WHERE u.id NOT IN (SELECT e.id FROM events e \
              WHERE e.score = u.id * 10 AND e.active = 1) ORDER BY u.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, (SELECT u.name FROM users u WHERE u.id >= e.id \
+             ORDER BY u.id LIMIT 1) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id FROM events e WHERE EXISTS \
+             (SELECT 1 FROM users u WHERE u.id > e.id) ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id FROM events e WHERE e.id + 1 IN \
+             (SELECT u.id FROM users u WHERE u.id > e.id) ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, COUNT(*) FROM events e GROUP BY e.id HAVING EXISTS \
+             (SELECT 1 FROM users u WHERE u.id > e.id) ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, (WITH candidates AS (SELECT id, name FROM users) \
+             SELECT name FROM candidates WHERE candidates.id >= e.id \
+             ORDER BY candidates.id LIMIT 1) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, (SELECT (SELECT u2.name FROM users u2 \
+             WHERE u2.id >= u1.id AND u2.id >= e.id ORDER BY u2.id LIMIT 1) \
+             FROM users u1 WHERE u1.id = e.id) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "dependent correlated subqueries",
+            "SELECT e.id, (SELECT (SELECT e.name FROM users e WHERE e.id = u.id) \
+             FROM users u WHERE u.id = e.id) FROM events e ORDER BY e.id",
         ),
         ordered(
             "recursive cte",

@@ -168,6 +168,10 @@ worth refusing.
 - Uncorrelated scalar and `EXISTS` subqueries stop after two and one rows,
   respectively. Large `IN (subquery)` membership still materializes in memory
   under the query ceiling rather than using an external membership index.
+- Dependent correlated execution reruns its bounded inner plan for each outer
+  row and does not cache repeated parameter tuples. Correlated subqueries in
+  join `ON` predicates remain unsupported. Nullable correlated `NOT IN` shapes
+  that cannot be proven safe still reject rather than risk a different answer.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
 - Aggregate pushdown removes only unreferenced predicate-free cross-join inputs

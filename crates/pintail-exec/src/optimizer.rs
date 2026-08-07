@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundProjection, ScalarFunction,
+    BoundProjection, BoundQuery, ScalarFunction, WindowFunction,
 };
 use pintail_types::{DataType, Value};
 
@@ -1178,13 +1178,88 @@ fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
                 collect_expr_columns(argument, columns);
             }
         }
-        BoundExprKind::InSubquery { expr, .. } => collect_expr_columns(expr, columns),
-        BoundExprKind::ScalarSubquery(_)
-        | BoundExprKind::ExistsSubquery { .. }
-        | BoundExprKind::Literal(_)
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            collect_expr_columns(expr, columns);
+            collect_bound_query_columns(query, columns);
+        }
+        BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+            collect_bound_query_columns(query, columns);
+        }
+        BoundExprKind::Literal(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
         | BoundExprKind::Window(_) => {}
+    }
+}
+
+fn collect_bound_query_columns(query: &BoundQuery, columns: &mut BTreeSet<ColumnKey>) {
+    for projection in &query.projection {
+        collect_expr_columns(&projection.expr, columns);
+    }
+    if let Some(filter) = &query.filter {
+        collect_expr_columns(filter, columns);
+    }
+    for expression in &query.group_by {
+        collect_expr_columns(expression, columns);
+    }
+    for aggregate in &query.aggregates {
+        if let Some(expression) = &aggregate.expr {
+            collect_expr_columns(expression, columns);
+        }
+        for (expression, _) in &aggregate.order_within {
+            collect_expr_columns(expression, columns);
+        }
+    }
+    for window in &query.windows {
+        match &window.function {
+            WindowFunction::Aggregate(aggregate) => {
+                if let Some(expression) = &aggregate.expr {
+                    collect_expr_columns(expression, columns);
+                }
+            }
+            WindowFunction::Offset { expr, default, .. } => {
+                collect_expr_columns(expr, columns);
+                if let Some(default) = default {
+                    collect_expr_columns(default, columns);
+                }
+            }
+            WindowFunction::Extreme { expr, .. } => collect_expr_columns(expr, columns),
+            WindowFunction::RowNumber
+            | WindowFunction::Rank
+            | WindowFunction::DenseRank
+            | WindowFunction::NTile(_) => {}
+        }
+        for expression in &window.partition_by {
+            collect_expr_columns(expression, columns);
+        }
+        for key in &window.order_by {
+            collect_expr_columns(&key.expr, columns);
+        }
+    }
+    if let Some(having) = &query.having {
+        collect_expr_columns(having, columns);
+    }
+    for source in &query.from {
+        if let Some(input) = &source.base.input {
+            collect_bound_query_columns(input, columns);
+        }
+        for join in &source.joins {
+            if let Some(input) = &join.table.input {
+                collect_bound_query_columns(input, columns);
+            }
+            if let Some(condition) = &join.condition {
+                collect_expr_columns(condition, columns);
+            }
+        }
+    }
+    for branch in &query.union_all {
+        collect_bound_query_columns(branch, columns);
+    }
+    for (_, right) in &query.set_ops {
+        collect_bound_query_columns(right, columns);
+    }
+    if let Some(recursive) = &query.recursive {
+        collect_bound_query_columns(&recursive.member, columns);
     }
 }
 

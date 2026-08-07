@@ -51,6 +51,10 @@ pub struct BoundColumn {
     /// Source text collation, preserved through derived layouts. `None` is a
     /// non-text value or a synthetic expression using the connection default.
     pub collation: Option<String>,
+    /// Whether this reference resolves in an enclosing query scope rather
+    /// than the query that owns the expression. Dependent execution replaces
+    /// it with the current outer-row value before compiling the inner plan.
+    pub outer: bool,
     /// Consumed as the right side of a `USING`/`NATURAL` join: hidden from
     /// unqualified name resolution and unqualified `*`, still reachable
     /// through a qualified reference.

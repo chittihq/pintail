@@ -3,9 +3,10 @@
 What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
-The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 806
-cases. All 806 pass byte-exactly against MySQL 8.4 in the full repository gate,
-including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
+The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 813
+cases. The repository gate requires every case to pass byte-exactly against
+MySQL 8.4, including the focused JSON, temporal-parsing, DECIMAL-chain, and
+dependent-correlation cases.
 
 ## Surface
 
@@ -17,7 +18,7 @@ including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; value-based `RANGE` bounds over numeric keys (including exact fractional DECIMAL offsets) and simple temporal `INTERVAL` offsets; `GROUPS` and DISTINCT window aggregates reject as MySQL 8.4 requires |
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; chained earlier definitions and legal additive inheritance without clause redefinition; forward/cyclic references and parenthesized inheritance from a framed base reject as MySQL requires |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root INNER/CROSS/LEFT chains, including later left-deep joins |
-| Subqueries | Uncorrelated scalar/`IN`; correlated `EXISTS`/`IN` in the single-table equality form; correlated scalar aggregates and unique-key lookups, decorrelated to joins |
+| Subqueries | Uncorrelated scalar/`IN`; canonical correlated `EXISTS`/`IN`, scalar aggregates, and unique-key lookups decorrelated to joins; bounded dependent execution for wider and nested correlations in projection, filtering, HAVING, CTEs, and derived tables |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form, with duplicate-eliminating fixpoints, query-memory accounting, and session `cte_max_recursion_depth` |
 | JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, with JSON-vs-VARCHAR identity retained through execution and `MYSQL_TYPE_JSON` results. Read: single- and multi-path `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH`. Unsupported JSON key semantics reject explicitly |

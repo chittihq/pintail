@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Correlated scalar, `EXISTS`, and `IN` subqueries that cannot use the canonical
+  decorrelation rewrites now have a bounded dependent-execution fallback. It
+  supports wider predicates, nested scopes with local alias shadowing, HAVING,
+  non-recursive CTEs, and derived-table shapes while retaining scalar
+  cardinality errors and the query memory/deadline ceilings.
 - MySQL wire sessions now implement `COM_RESET_CONNECTION`,
   `COM_CHANGE_USER`, and `COM_STMT_RESET`, restoring defaults, repeating
   scoped authentication where required, and invalidating stale prepared

@@ -12,8 +12,8 @@ const HASH_ENTRY_OVERHEAD: usize = 3 * size_of::<usize>();
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundJoinKind, BoundOrderKey, BoundProjection, BoundWindow, DatePart, ScalarFunction,
-    WindowFunction,
+    BoundJoinKind, BoundOrderKey, BoundProjection, BoundQuery, BoundWindow, DatePart,
+    ScalarFunction, WindowFunction,
 };
 use pintail_types::{DataType, Value};
 use rayon::prelude::*;
@@ -1237,6 +1237,7 @@ fn resolve_expr_subqueries(
     retained_bytes: &mut usize,
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
+        BoundExprKind::ScalarSubquery(query) if bound_query_has_outer_refs(query) => {}
         BoundExprKind::ScalarSubquery(query) => {
             let values = materialize_subquery(
                 (**query).clone(),
@@ -1255,6 +1256,7 @@ fn resolve_expr_subqueries(
             reserve_subquery_values(std::slice::from_ref(&value), memory_limit, retained_bytes)?;
             expression.kind = BoundExprKind::Literal(value);
         }
+        BoundExprKind::ExistsSubquery { query, .. } if bound_query_has_outer_refs(query) => {}
         BoundExprKind::ExistsSubquery { query, negated } => {
             let values = materialize_subquery(
                 (**query).clone(),
@@ -1272,6 +1274,9 @@ fn resolve_expr_subqueries(
             negated,
         } => {
             resolve_expr_subqueries(expr, provider, memory_limit, deadline, retained_bytes)?;
+            if bound_query_has_outer_refs(query) {
+                return Ok(());
+            }
             let projection_type = query
                 .projection
                 .first()
@@ -1312,6 +1317,346 @@ fn resolve_expr_subqueries(
                     deadline,
                     retained_bytes,
                 )?;
+            }
+        }
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => {}
+    }
+    Ok(())
+}
+
+fn bound_query_has_outer_refs(query: &BoundQuery) -> bool {
+    query
+        .projection
+        .iter()
+        .any(|projection| bound_expr_has_outer_refs(&projection.expr))
+        || query.filter.as_ref().is_some_and(bound_expr_has_outer_refs)
+        || query.group_by.iter().any(bound_expr_has_outer_refs)
+        || query.aggregates.iter().any(|aggregate| {
+            aggregate
+                .expr
+                .as_ref()
+                .is_some_and(bound_expr_has_outer_refs)
+                || aggregate
+                    .order_within
+                    .iter()
+                    .any(|(expression, _)| bound_expr_has_outer_refs(expression))
+        })
+        || query.windows.iter().any(bound_window_has_outer_refs)
+        || query.having.as_ref().is_some_and(bound_expr_has_outer_refs)
+        || query.from.iter().any(|source| {
+            source
+                .base
+                .input
+                .as_deref()
+                .is_some_and(bound_query_has_outer_refs)
+                || source.joins.iter().any(|join| {
+                    join.table
+                        .input
+                        .as_deref()
+                        .is_some_and(bound_query_has_outer_refs)
+                        || join
+                            .condition
+                            .as_ref()
+                            .is_some_and(bound_expr_has_outer_refs)
+                })
+        })
+        || query.union_all.iter().any(bound_query_has_outer_refs)
+        || query
+            .set_ops
+            .iter()
+            .any(|(_, right)| bound_query_has_outer_refs(right))
+        || query
+            .recursive
+            .as_deref()
+            .is_some_and(|recursive| bound_query_has_outer_refs(&recursive.member))
+}
+
+fn bound_window_has_outer_refs(window: &BoundWindow) -> bool {
+    let function = match &window.function {
+        WindowFunction::Aggregate(aggregate) => aggregate
+            .expr
+            .as_ref()
+            .is_some_and(bound_expr_has_outer_refs),
+        WindowFunction::Offset { expr, default, .. } => {
+            bound_expr_has_outer_refs(expr)
+                || default.as_deref().is_some_and(bound_expr_has_outer_refs)
+        }
+        WindowFunction::Extreme { expr, .. } => bound_expr_has_outer_refs(expr),
+        WindowFunction::RowNumber
+        | WindowFunction::Rank
+        | WindowFunction::DenseRank
+        | WindowFunction::NTile(_) => false,
+    };
+    function
+        || window.partition_by.iter().any(bound_expr_has_outer_refs)
+        || window
+            .order_by
+            .iter()
+            .any(|key| bound_expr_has_outer_refs(&key.expr))
+}
+
+fn bound_expr_has_outer_refs(expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::Column(column) => column.outer,
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            bound_expr_has_outer_refs(expr)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            bound_expr_has_outer_refs(left) || bound_expr_has_outer_refs(right)
+        }
+        BoundExprKind::Scalar { args, .. } => args.iter().any(bound_expr_has_outer_refs),
+        BoundExprKind::ScalarSubquery(query) => bound_query_has_outer_refs(query),
+        BoundExprKind::ExistsSubquery { query, .. } => bound_query_has_outer_refs(query),
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            bound_expr_has_outer_refs(expr) || bound_query_has_outer_refs(query)
+        }
+        BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => false,
+    }
+}
+
+fn expression_has_dependent_subquery(expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+            bound_query_has_outer_refs(query)
+        }
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            bound_query_has_outer_refs(query) || expression_has_dependent_subquery(expr)
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            expression_has_dependent_subquery(expr)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            expression_has_dependent_subquery(left) || expression_has_dependent_subquery(right)
+        }
+        BoundExprKind::Scalar { args, .. } => args.iter().any(expression_has_dependent_subquery),
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => false,
+    }
+}
+
+fn substitute_outer_query(
+    query: &mut BoundQuery,
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[BoundColumn],
+) -> Result<(), ExecError> {
+    for projection in &mut query.projection {
+        substitute_outer_expr(&mut projection.expr, batch, row, columns)?;
+    }
+    if let Some(filter) = &mut query.filter {
+        substitute_outer_expr(filter, batch, row, columns)?;
+    }
+    for expression in &mut query.group_by {
+        substitute_outer_expr(expression, batch, row, columns)?;
+    }
+    for aggregate in &mut query.aggregates {
+        if let Some(expression) = &mut aggregate.expr {
+            substitute_outer_expr(expression, batch, row, columns)?;
+        }
+        for (expression, _) in &mut aggregate.order_within {
+            substitute_outer_expr(expression, batch, row, columns)?;
+        }
+    }
+    for window in &mut query.windows {
+        match &mut window.function {
+            WindowFunction::Aggregate(aggregate) => {
+                if let Some(expression) = &mut aggregate.expr {
+                    substitute_outer_expr(expression, batch, row, columns)?;
+                }
+            }
+            WindowFunction::Offset { expr, default, .. } => {
+                substitute_outer_expr(expr, batch, row, columns)?;
+                if let Some(default) = default {
+                    substitute_outer_expr(default, batch, row, columns)?;
+                }
+            }
+            WindowFunction::Extreme { expr, .. } => {
+                substitute_outer_expr(expr, batch, row, columns)?;
+            }
+            WindowFunction::RowNumber
+            | WindowFunction::Rank
+            | WindowFunction::DenseRank
+            | WindowFunction::NTile(_) => {}
+        }
+        for expression in &mut window.partition_by {
+            substitute_outer_expr(expression, batch, row, columns)?;
+        }
+        for key in &mut window.order_by {
+            substitute_outer_expr(&mut key.expr, batch, row, columns)?;
+        }
+    }
+    if let Some(having) = &mut query.having {
+        substitute_outer_expr(having, batch, row, columns)?;
+    }
+    for source in &mut query.from {
+        if let Some(input) = &mut source.base.input {
+            substitute_outer_query(input, batch, row, columns)?;
+        }
+        for join in &mut source.joins {
+            if let Some(input) = &mut join.table.input {
+                substitute_outer_query(input, batch, row, columns)?;
+            }
+            if let Some(condition) = &mut join.condition {
+                substitute_outer_expr(condition, batch, row, columns)?;
+            }
+        }
+    }
+    for branch in &mut query.union_all {
+        substitute_outer_query(branch, batch, row, columns)?;
+    }
+    for (_, right) in &mut query.set_ops {
+        substitute_outer_query(right, batch, row, columns)?;
+    }
+    if let Some(recursive) = &mut query.recursive {
+        substitute_outer_query(&mut recursive.member, batch, row, columns)?;
+    }
+    Ok(())
+}
+
+fn substitute_outer_expr(
+    expression: &mut BoundExpr,
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[BoundColumn],
+) -> Result<(), ExecError> {
+    match &mut expression.kind {
+        BoundExprKind::Column(column) if column.outer => {
+            let position = columns.iter().position(|candidate| {
+                candidate.database_id == column.database_id
+                    && candidate.table_id == column.table_id
+                    && candidate.column_id == column.column_id
+                    && candidate
+                        .relation_name
+                        .eq_ignore_ascii_case(&column.relation_name)
+            });
+            if let Some(position) = position {
+                let value = batch
+                    .column(position)
+                    .and_then(|values| values.value(row))
+                    .cloned()
+                    .ok_or(ExecError::InvalidBatch(
+                        "dependent subquery outer row is outside its input",
+                    ))?;
+                expression.nullable = matches!(value, Value::Null);
+                expression.kind = BoundExprKind::Literal(value);
+            }
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            substitute_outer_expr(expr, batch, row, columns)?;
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            substitute_outer_expr(left, batch, row, columns)?;
+            substitute_outer_expr(right, batch, row, columns)?;
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                substitute_outer_expr(argument, batch, row, columns)?;
+            }
+        }
+        BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+            substitute_outer_query(query, batch, row, columns)?;
+        }
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            substitute_outer_expr(expr, batch, row, columns)?;
+            substitute_outer_query(query, batch, row, columns)?;
+        }
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => {}
+    }
+    Ok(())
+}
+
+fn resolve_dependent_expr_subqueries(
+    expression: &mut BoundExpr,
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[BoundColumn],
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    memory.check_deadline()?;
+    match &mut expression.kind {
+        BoundExprKind::ScalarSubquery(query) => {
+            let mut query = (**query).clone();
+            substitute_outer_query(&mut query, batch, row, columns)?;
+            let values = materialize_subquery(
+                query,
+                provider,
+                memory.remaining(),
+                memory.deadline,
+                Some(2),
+            )?;
+            let value = match values.as_slice() {
+                [] => Value::Null,
+                [value] => value.clone(),
+                _ => return Err(ExecError::ScalarSubqueryRows { rows: values.len() }),
+            };
+            expression.nullable = matches!(value, Value::Null);
+            expression.kind = BoundExprKind::Literal(value);
+        }
+        BoundExprKind::ExistsSubquery { query, negated } => {
+            let mut query = (**query).clone();
+            substitute_outer_query(&mut query, batch, row, columns)?;
+            let values = materialize_subquery(
+                query,
+                provider,
+                memory.remaining(),
+                memory.deadline,
+                Some(1),
+            )?;
+            expression.kind =
+                BoundExprKind::Literal(Value::Boolean(!values.is_empty() != *negated));
+            expression.nullable = false;
+        }
+        BoundExprKind::InSubquery {
+            expr,
+            query,
+            negated,
+        } => {
+            resolve_dependent_expr_subqueries(expr, batch, row, columns, provider, memory)?;
+            let projection_type = query
+                .projection
+                .first()
+                .and_then(|projection| projection.expr.data_type);
+            let mut query = (**query).clone();
+            substitute_outer_query(&mut query, batch, row, columns)?;
+            let values =
+                materialize_subquery(query, provider, memory.remaining(), memory.deadline, None)?;
+            let mut args = Vec::with_capacity(values.len().saturating_add(1));
+            args.push((**expr).clone());
+            args.extend(values.into_iter().map(|value| BoundExpr {
+                data_type: projection_type.or_else(|| value.data_type()),
+                nullable: matches!(value, Value::Null),
+                kind: BoundExprKind::Literal(value),
+            }));
+            expression.kind = BoundExprKind::Scalar {
+                function: ScalarFunction::InList { negated: *negated },
+                args,
+            };
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            resolve_dependent_expr_subqueries(expr, batch, row, columns, provider, memory)?;
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            resolve_dependent_expr_subqueries(left, batch, row, columns, provider, memory)?;
+            resolve_dependent_expr_subqueries(right, batch, row, columns, provider, memory)?;
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                resolve_dependent_expr_subqueries(argument, batch, row, columns, provider, memory)?;
             }
         }
         BoundExprKind::Column(_)
@@ -2036,7 +2381,46 @@ fn build_operator(
             ))
         }
         PhysicalPlan::Filter { input, predicate } => {
-            let (input, columns) = build_operator(*input, provider, memory)?;
+            let dependent = expression_has_dependent_subquery(&predicate);
+            let (mut input, columns) = build_operator(*input, provider, memory)?;
+            if dependent {
+                let column_types = columns
+                    .iter()
+                    .map(|column| column.data_type)
+                    .collect::<Vec<_>>();
+                let mut rows = Vec::new();
+                while let Some(batch) = input.next_batch(memory)? {
+                    let batch_bytes = batch.estimated_bytes();
+                    for row in batch.selection().selected_rows() {
+                        let mut expression = predicate.clone();
+                        resolve_dependent_expr_subqueries(
+                            &mut expression,
+                            &batch,
+                            row,
+                            &columns,
+                            provider,
+                            memory,
+                        )?;
+                        let compiled = CompiledExpr::compile(&expression, &columns)?;
+                        if !predicate_truth(&compiled.evaluate(&batch, row)?)? {
+                            continue;
+                        }
+                        let values = batch_row(&batch, row)?;
+                        let row_bytes = estimated_row_payload_bytes(&values);
+                        memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+                        memory.reserve(row_bytes)?;
+                        rows.push(values);
+                    }
+                }
+                return Ok((
+                    PullOperator::Rows {
+                        rows,
+                        cursor: 0,
+                        column_types,
+                    },
+                    columns,
+                ));
+            }
             let predicate = CompiledExpr::compile(&predicate, &columns)?;
             Ok((
                 PullOperator::Filter {
@@ -2067,16 +2451,8 @@ fn build_operator(
             // real column entries so their own type layout and appended
             // outputs line up; synthetic identities keep Column resolution
             // unambiguous, matching the window-output convention.
-            let output_columns = group_by
-                .iter()
-                .map(|expression| (expression.data_type, expression.nullable))
-                .chain(
-                    aggregates
-                        .iter()
-                        .map(|aggregate| (aggregate.data_type, aggregate.nullable)),
-                )
-                .enumerate()
-                .map(|(index, (data_type, nullable))| BoundColumn {
+            let synthetic =
+                |index: usize, data_type: Option<DataType>, nullable: bool| BoundColumn {
                     database_id: DatabaseId::new(u64::MAX),
                     table_id: TableId::new(u64::MAX - 1),
                     column_id: u32::try_from(index).unwrap_or(u32::MAX),
@@ -2085,9 +2461,29 @@ fn build_operator(
                     data_type: data_type.unwrap_or(DataType::Utf8),
                     nullable,
                     collation: None,
+                    outer: false,
                     using_shadowed: false,
+                };
+            let mut output_columns = group_by
+                .iter()
+                .enumerate()
+                .map(|(index, expression)| match &expression.kind {
+                    BoundExprKind::Column(column) => {
+                        let mut column = column.clone();
+                        column.outer = false;
+                        column.nullable = expression.nullable;
+                        column
+                    }
+                    _ => synthetic(index, expression.data_type, expression.nullable),
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            output_columns.extend(aggregates.iter().enumerate().map(|(offset, aggregate)| {
+                synthetic(
+                    group_by.len().saturating_add(offset),
+                    aggregate.data_type,
+                    aggregate.nullable,
+                )
+            }));
             let group_by = group_by
                 .iter()
                 .map(|expression| CompiledExpr::compile(expression, &columns))
@@ -2108,7 +2504,48 @@ fn build_operator(
             ))
         }
         PhysicalPlan::Project { input, expressions } => {
-            let (input, columns) = build_operator(*input, provider, memory)?;
+            let dependent = expressions
+                .iter()
+                .any(|projection| expression_has_dependent_subquery(&projection.expr));
+            let (mut input, columns) = build_operator(*input, provider, memory)?;
+            if dependent {
+                let column_types = expressions
+                    .iter()
+                    .map(|projection| projection.expr.data_type.unwrap_or(DataType::Utf8))
+                    .collect::<Vec<_>>();
+                let mut rows = Vec::new();
+                while let Some(batch) = input.next_batch(memory)? {
+                    let batch_bytes = batch.estimated_bytes();
+                    for row in batch.selection().selected_rows() {
+                        let mut values = Vec::with_capacity(expressions.len());
+                        for projection in &expressions {
+                            let mut expression = projection.expr.clone();
+                            resolve_dependent_expr_subqueries(
+                                &mut expression,
+                                &batch,
+                                row,
+                                &columns,
+                                provider,
+                                memory,
+                            )?;
+                            let compiled = CompiledExpr::compile(&expression, &columns)?;
+                            values.push(compiled.evaluate(&batch, row)?);
+                        }
+                        let row_bytes = estimated_row_payload_bytes(&values);
+                        memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+                        memory.reserve(row_bytes)?;
+                        rows.push(values);
+                    }
+                }
+                return Ok((
+                    PullOperator::Rows {
+                        rows,
+                        cursor: 0,
+                        column_types,
+                    },
+                    Vec::new(),
+                ));
+            }
             let expressions = expressions
                 .iter()
                 .map(|projection| {

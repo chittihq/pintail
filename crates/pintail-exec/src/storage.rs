@@ -1238,6 +1238,7 @@ fn build_prewhere_spec(scan: &Scan, snapshot: &TableSnapshot) -> Option<Prewhere
             data_type: column.data_type(),
             nullable: column.is_nullable(),
             collation: column.collation().map(str::to_owned),
+            outer: false,
             using_shadowed: false,
         });
         data_types.push(column.data_type());
@@ -3003,6 +3004,139 @@ mod tests {
                 Value::Utf8("user-b".to_owned()),
             ]
         );
+
+        let rows = execute_rows(
+            "SELECT events.id, \
+             (SELECT users.name FROM users \
+              WHERE users.id >= events.id ORDER BY users.id LIMIT 1) AS next_user \
+             FROM events ORDER BY events.id",
+            &catalog,
+            &provider,
+        );
+        assert_eq!(
+            rows,
+            [
+                vec![Value::UInt64(1), Value::Utf8("user-a".to_owned())],
+                vec![Value::UInt64(2), Value::Utf8("user-b".to_owned())],
+            ]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT (SELECT users.name FROM users \
+                         WHERE users.id >= events.id ORDER BY users.id LIMIT 1) \
+                 FROM events",
+                &catalog,
+                &provider,
+            ),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
+            ]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT (SELECT (SELECT u2.name FROM users u2 \
+                                 WHERE u2.id >= u1.id AND u2.id >= events.id \
+                                 ORDER BY u2.id LIMIT 1) \
+                         FROM users u1 WHERE u1.id = events.id) \
+                 FROM events",
+                &catalog,
+                &provider,
+            ),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
+            ]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT (SELECT (SELECT e.name FROM users e WHERE e.id = u.id) \
+                         FROM users u WHERE u.id = e.id) \
+                 FROM events e",
+                &catalog,
+                &provider,
+            ),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
+            ]
+        );
+
+        assert_eq!(
+            execute_values(
+                "SELECT events.id FROM events \
+                 WHERE EXISTS (SELECT 1 FROM users WHERE users.id > events.id) \
+                 ORDER BY events.id",
+                &catalog,
+                &provider,
+            ),
+            [Value::UInt64(1)]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT events.id FROM events \
+                 WHERE events.id + 1 IN \
+                       (SELECT users.id FROM users WHERE users.id > events.id) \
+                 ORDER BY events.id",
+                &catalog,
+                &provider,
+            ),
+            [Value::UInt64(1)]
+        );
+        assert_eq!(
+            execute_rows(
+                "SELECT events.id, COUNT(*) FROM events GROUP BY events.id \
+                 HAVING EXISTS (SELECT 1 FROM users WHERE users.id > events.id) \
+                 ORDER BY events.id",
+                &catalog,
+                &provider,
+            ),
+            [vec![Value::UInt64(1), Value::UInt64(1)]]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT (WITH candidates AS (SELECT id, name FROM users) \
+                         SELECT name FROM candidates \
+                         WHERE candidates.id >= events.id \
+                         ORDER BY candidates.id LIMIT 1) \
+                 FROM events",
+                &catalog,
+                &provider,
+            ),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
+            ]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT (SELECT candidates.name \
+                         FROM (SELECT id, name FROM users) candidates \
+                         WHERE candidates.id >= events.id \
+                         ORDER BY candidates.id LIMIT 1) \
+                 FROM events",
+                &catalog,
+                &provider,
+            ),
+            [
+                Value::Utf8("user-a".to_owned()),
+                Value::Utf8("user-b".to_owned()),
+            ]
+        );
+
+        let statement = parse_statement(
+            "SELECT (SELECT users.name FROM users WHERE users.id >= events.id) FROM events",
+        )
+        .expect("parse dependent scalar cardinality query");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&statement)
+            .expect("bind dependent scalar cardinality query");
+        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
+            .expect("plan dependent scalar cardinality query");
+        assert!(matches!(
+            Execution::start(physical, &provider, 64 * 1024),
+            Err(ExecError::ScalarSubqueryRows { rows: 2 })
+        ));
 
         let statement = parse_statement(
             "SELECT events.id, (SELECT MAX(id) FROM users) AS largest_user, \
