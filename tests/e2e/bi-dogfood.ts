@@ -13,7 +13,7 @@ export interface CapturedShape {
   class: QueryClass
 }
 
-interface QueryOutcome {
+export interface QueryOutcome {
   ok: boolean
   fields?: string[]
   rows?: unknown[]
@@ -25,10 +25,22 @@ interface QueryOutcome {
   }
 }
 
-interface ReplayEntry extends CapturedShape {
+export interface ReplayEntry extends CapturedShape {
   mysql?: QueryOutcome
   pintail?: QueryOutcome
   status: string
+}
+
+export interface SanitizedQueryOutcome {
+  ok: boolean
+  fields?: string[]
+  rowCount?: number
+  error?: QueryOutcome['error']
+}
+
+export interface SanitizedReplayEntry extends Omit<ReplayEntry, 'mysql' | 'pintail'> {
+  mysql?: SanitizedQueryOutcome
+  pintail?: SanitizedQueryOutcome
 }
 
 const READ_KEYWORDS = new Set([
@@ -301,28 +313,30 @@ async function connect(dsn: string): Promise<Connection> {
   })
 }
 
-function sanitized(entries: ReplayEntry[]): ReplayEntry[] {
+function sanitizedOutcome(outcome: QueryOutcome | undefined): SanitizedQueryOutcome | undefined {
+  if (!outcome) return undefined
+  if (outcome.ok) {
+    return {
+      ok: true,
+      fields: outcome.fields,
+      rowCount: Array.isArray(outcome.rows) ? outcome.rows.length : undefined,
+    }
+  }
+  return {
+    ok: false,
+    error: outcome.error && {
+      ...outcome.error,
+      message: redactSql(outcome.error.message),
+    },
+  }
+}
+
+export function sanitized(entries: ReplayEntry[]): SanitizedReplayEntry[] {
   return entries.map((entry) => ({
     ...entry,
     query: entry.shape,
-    mysql: entry.mysql?.ok
-      ? entry.mysql
-      : {
-          ...entry.mysql,
-          error: entry.mysql?.error && {
-            ...entry.mysql.error,
-            message: redactSql(entry.mysql.error.message),
-          },
-        },
-    pintail: entry.pintail?.ok
-      ? entry.pintail
-      : {
-          ...entry.pintail,
-          error: entry.pintail?.error && {
-            ...entry.pintail.error,
-            message: redactSql(entry.pintail.error.message),
-          },
-        },
+    mysql: sanitizedOutcome(entry.mysql),
+    pintail: sanitizedOutcome(entry.pintail),
   }))
 }
 
@@ -336,15 +350,15 @@ async function main(): Promise<void> {
   const report = argument('--report')
   if (!input || !report) {
     throw new Error(
-      'usage: bun run bi-dogfood.ts --input CAPTURE --report LOCAL_REPORT.raw.json [--mysql-dsn DSN --pintail-dsn DSN]',
+      'usage: bun run bi-dogfood.ts --input CAPTURE --report LOCAL_REPORT.raw.json (optional replay: BI_MYSQL_DSN + BI_PINTAIL_DSN)',
     )
   }
   if (!report.endsWith('.raw.json')) {
     throw new Error('--report must end in .raw.json so the exact report remains gitignored')
   }
   const shapes = extractShapes(readFileSync(resolve(input), 'utf8'))
-  const mysqlDsn = argument('--mysql-dsn') ?? process.env.BI_MYSQL_DSN
-  const pintailDsn = argument('--pintail-dsn') ?? process.env.BI_PINTAIL_DSN
+  const mysqlDsn = process.env.BI_MYSQL_DSN
+  const pintailDsn = process.env.BI_PINTAIL_DSN
   const entries: ReplayEntry[] = shapes.map((shape) => ({
     ...shape,
     status: shape.class === 'ignored' ? 'ignored_non_read' : 'captured',

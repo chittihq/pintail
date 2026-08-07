@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { capturedQueries, extractShapes, redactSql, splitSql } from './bi-dogfood'
+import { capturedQueries, extractShapes, redactSql, sanitized, splitSql } from './bi-dogfood'
 
 describe('BI dogfood capture', () => {
   test('splits SQL without treating quoted semicolons or comments as boundaries', () => {
@@ -46,5 +46,22 @@ describe('BI dogfood capture', () => {
       'WITH doomed AS (SELECT 1 AS id) DELETE FROM users WHERE id IN (SELECT id FROM doomed)',
     ].join(';'))
     expect(shapes.map((shape) => shape.class).sort()).toEqual(['ignored', 'read', 'read'])
+  })
+
+  test('sanitized reports never retain successful result values', () => {
+    const [entry] = sanitized([{
+      query: "SELECT email FROM users WHERE tenant_id = 'private'",
+      shape: "SELECT email FROM users WHERE tenant_id = '?'",
+      count: 1,
+      class: 'read',
+      status: 'match',
+      mysql: { ok: true, fields: ['email'], rows: [['person@example.com']] },
+      pintail: { ok: true, fields: ['email'], rows: [['person@example.com']] },
+    }])
+    expect(entry.query).toBe(entry.shape)
+    expect(entry.mysql).toEqual({ ok: true, fields: ['email'], rowCount: 1 })
+    expect(entry.pintail).toEqual({ ok: true, fields: ['email'], rowCount: 1 })
+    expect(JSON.stringify(entry)).not.toContain('person@example.com')
+    expect(JSON.stringify(entry)).not.toContain('private')
   })
 })

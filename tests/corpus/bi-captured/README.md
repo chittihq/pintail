@@ -31,9 +31,7 @@ cd tests/e2e
 bun install --frozen-lockfile
 bun run bi-dogfood.ts \
   --input ../corpus/bi-captured/raw/metabase-general-log.jsonl \
-  --report ../corpus/bi-captured/report.raw.json \
-  --mysql-dsn "$BI_MYSQL_DSN" \
-  --pintail-dsn "$BI_PINTAIL_DSN"
+  --report ../corpus/bi-captured/report.raw.json
 ```
 
 Without both DSNs the command still extracts, classifies, redacts, and
@@ -45,7 +43,8 @@ Pintail error objects.
 The command writes two files:
 
 - `report.raw.json`: exact exemplar SQL and errors for local diagnosis only;
-- `report.sanitized.json`: literals and error text redacted for review.
+- `report.sanitized.json`: literals and error text redacted, with successful
+  results reduced to field names and row counts for review.
 
 Review every sanitized entry before sharing it. For each `pintail_reject` or
 `result_mismatch`, add the sanitized shape, exact Pintail error code/message,

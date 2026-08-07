@@ -18,8 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A BI dogfooding harness ingests JSONL, MySQL general-log exports, or plain
   SQL; keeps exact captures and replay evidence local; frequency-deduplicates
   redacted query shapes; excludes data-changing statements; and can compare
-  MySQL and Pintail results through the same mysql2 client. Real dashboard
-  capture remains an access-dependent step tracked by #24.
+  MySQL and Pintail results through the same mysql2 client. Shareable reports
+  omit result values, and replay credentials are read only from the process
+  environment. Real dashboard capture remains an access-dependent step tracked
+  by #24.
 - Unaliased parenthesized join groups can now occupy a later join's right side,
   preserving bushy INNER/CROSS/LEFT boundaries, constituent qualified names,
   wildcard order, and nested nullability. Correlated subqueries in `ON`
