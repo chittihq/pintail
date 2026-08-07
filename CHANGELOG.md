@@ -117,7 +117,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   resnapshot boundary rather than an in-place identity guess.
 - Metadata now preserves source MySQL nullability independently from the
   permissive physical normalization carrier and reports it consistently
-  through `information_schema`, SHOW/DESCRIBE, SHOW CREATE, and wire results.
+  through `information_schema`, SHOW/DESCRIBE, SHOW CREATE, and direct
+  text/prepared `SELECT` result fields, including non-key columns.
 - Production image builds include the vendored `opensrv-mysql` path dependency
   in both cargo-chef stages; benchmark baselines retain an opaque host
   fingerprint instead of a private infrastructure name.

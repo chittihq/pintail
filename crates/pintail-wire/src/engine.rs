@@ -15,8 +15,8 @@ use pintail_exec::{
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
-    Binder, ColumnFacts, IndexFacts, MetadataError, SourceFacts, Statement, execute_metadata,
-    parse_statement,
+    Binder, BoundExprKind, BoundJoinKind, BoundQuery, ColumnFacts, IndexFacts, MetadataError,
+    SourceFacts, Statement, execute_metadata, parse_statement,
 };
 use pintail_store::TableSnapshot;
 use pintail_types::{DataType, Value};
@@ -250,6 +250,7 @@ impl ReplicaEngine {
                 &statement,
                 &catalog,
                 &provider,
+                &facts,
                 &replica.database.name,
                 table_count,
                 started,
@@ -277,6 +278,7 @@ impl ReplicaEngine {
         statement: &Statement,
         catalog: &CatalogSnapshot,
         provider: &SnapshotScanProvider<'_>,
+        facts: &SourceFacts,
         database_name: &str,
         table_count: usize,
         started: Instant,
@@ -286,6 +288,7 @@ impl ReplicaEngine {
         let bound = Binder::new(catalog, Some(database_name))
             .bind(statement)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
+        let result_nullability = source_result_nullability(&bound, catalog, facts);
         let group_concat = bound
             .projection
             .iter()
@@ -313,7 +316,11 @@ impl ReplicaEngine {
             .map(|(index, field)| QueryField {
                 name: field.name.clone(),
                 data_type: field.data_type,
-                nullable: field.nullable,
+                nullable: result_nullability
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(field.nullable),
                 group_concat: group_concat.get(index).copied().unwrap_or(false),
             })
             .collect();
@@ -561,6 +568,52 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
         }
     }
     facts
+}
+
+/// Restores source-declared nullability for direct result columns without
+/// changing the executor's deliberately permissive physical schema. The
+/// physical carrier must allow normalized invalid temporals to become NULL;
+/// `MySQL` result metadata still describes a direct source column by its source
+/// declaration. Outer-join extension takes precedence over that declaration.
+fn source_result_nullability(
+    query: &BoundQuery,
+    catalog: &CatalogSnapshot,
+    facts: &SourceFacts,
+) -> Vec<Option<bool>> {
+    if query.union_distinct || !query.union_all.is_empty() || !query.set_ops.is_empty() {
+        return vec![None; query.projection.len()];
+    }
+    let null_extended = query
+        .from
+        .iter()
+        .flat_map(|source| &source.joins)
+        .filter(|join| matches!(join.kind, BoundJoinKind::Left | BoundJoinKind::Scalar))
+        .map(|join| (join.table.database_id, join.table.table_id))
+        .collect::<Vec<_>>();
+
+    query
+        .projection
+        .iter()
+        .map(|projection| {
+            let BoundExprKind::Column(column) = &projection.expr.kind else {
+                return None;
+            };
+            if null_extended.contains(&(column.database_id, column.table_id)) {
+                return Some(true);
+            }
+            let database = catalog.database_by_id(column.database_id)?;
+            let table = database.table_by_id(column.table_id)?;
+            facts
+                .columns
+                .iter()
+                .find(|fact| {
+                    fact.database.eq_ignore_ascii_case(database.name())
+                        && fact.table.eq_ignore_ascii_case(table.name())
+                        && fact.column.eq_ignore_ascii_case(&column.name)
+                })
+                .and_then(|fact| fact.nullable)
+        })
+        .collect()
 }
 
 fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError> {

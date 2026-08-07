@@ -233,9 +233,11 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_iter("SELECT name FROM events LIMIT 1")
         .await
         .expect("utf8mb3 result metadata");
-    assert_eq!(
-        utf8mb3_result.columns().expect("utf8mb3 columns")[0].character_set(),
-        33
+    let name_column = &utf8mb3_result.columns().expect("utf8mb3 columns")[0];
+    assert_eq!(name_column.character_set(), 33);
+    assert!(
+        name_column.flags().contains(ColumnFlags::NOT_NULL_FLAG),
+        "direct result metadata must retain source NOT NULL for a non-key column"
     );
     let _: Vec<mysql_async::Row> = utf8mb3_result.collect().await.expect("utf8mb3 rows");
     connection
@@ -1047,7 +1049,7 @@ fn source_table() -> SourceTable {
                 mysql_data_type: "varchar".to_owned(),
                 mysql_column_type: "varchar(255)".to_owned(),
                 pintail_type: DataType::Utf8,
-                nullable: true,
+                nullable: false,
                 character_set: Some("utf8mb4".to_owned()),
                 collation: Some("utf8mb4_0900_ai_ci".to_owned()),
                 generated_stored: false,
