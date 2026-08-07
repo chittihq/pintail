@@ -1658,9 +1658,11 @@ fn bind_join_operator(
 }
 
 /// Removes parentheses around a root left-deep join group that is exactly
-/// representable by [`BoundFrom`]. INNER/CROSS chains flatten generally; a
-/// LEFT chain also flattens when the parenthesized group is the complete root
-/// item, so no following join can change its row-preservation boundary.
+/// representable by [`BoundFrom`]. INNER/CROSS/LEFT chains flatten generally:
+/// the logical planner lowers the resulting vector in order, preserving the
+/// parenthesized group's left-associative row-preservation boundary. A nested
+/// group used as a later join's right input still rejects because that needs a
+/// bushy join tree rather than [`BoundFrom`]'s linear representation.
 fn flatten_parenthesized_root_joins(
     table: &TableWithJoins,
 ) -> Result<Option<TableWithJoins>, BindError> {
@@ -1683,8 +1685,10 @@ fn flatten_parenthesized_root_joins(
             return Err(BindError::UnsupportedTableFactor(join.relation.to_string()));
         }
         let (kind, _) = bind_join_operator(&join.join_operator)?;
-        let safe_root_left = table.joins.is_empty() && kind == BoundJoinKind::Left;
-        if !matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Cross) && !safe_root_left {
+        if !matches!(
+            kind,
+            BoundJoinKind::Inner | BoundJoinKind::Cross | BoundJoinKind::Left
+        ) {
             return Err(BindError::UnsupportedTableFactor(
                 table.relation.to_string(),
             ));
@@ -5773,14 +5777,14 @@ mod tests {
         let query = bind("SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id)")
             .expect("complete parenthesized left join group");
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
-        assert!(
-            bind(
-                "SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id) \
-                 JOIN payments p ON p.amount = e.id"
-            )
-            .is_err(),
-            "a following join keeps the outer-group boundary explicit"
-        );
+        let query = bind(
+            "SELECT * FROM (Events e LEFT JOIN users u ON e.id = u.id) \
+             JOIN payments p ON p.amount = e.id",
+        )
+        .expect("root parenthesized left join followed by inner join");
+        assert_eq!(query.from[0].joins.len(), 2);
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
+        assert_eq!(query.from[0].joins[1].kind, BoundJoinKind::Inner);
     }
 
     #[test]
