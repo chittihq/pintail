@@ -50,7 +50,7 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL 8.4 container and compares 625
+The oracle starts a uniquely named MySQL 8.4 container and compares 806
 generated and hand-written queries — including window-function, interval,
 and TIMESTAMPDIFF families — over equivalent nullable MySQL and Pintail
 data. The end-to-end differential gate (`tests/e2e`) boots a real MySQL 8.4
@@ -61,13 +61,13 @@ operations with live queries every 100 operations, a SIGKILL restart with
 writes while the process is down, a control-plane pass that exercises the
 operator API routes — status, metrics, activity, mode switching, resync,
 API-key lifecycle, and database create/update/delete — and documented-gap
-DDL). After every phase it re-verifies 27 unique invariants:
-each base table read back identically over the wire protocol, plus a
-differential query corpus of joins, windows, aggregates, subqueries, CTEs,
-and UNION ALL. A PASS is those invariants holding in every phase (the
-headline count is checks x phases, not independent behaviors); documented
-gaps report WARN. `E2E_PHASES` selects a subset while iterating and
-`PINTAIL_E2E_BINARY` skips the release build. The M3 and M4 gates additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
+DDL). After every phase it re-verifies each base table over the wire protocol
+plus 35 differential query shapes covering joins, windows, aggregates,
+subqueries, CTEs, and set operations. The complete gate currently records 441
+passing checks; that headline is checks across phases, not independent
+behaviors. Documented gaps report WARN. `E2E_PHASES` selects a subset while
+iterating, and `PINTAIL_E2E_BINARY` skips the release build. The M3 and M4 gates
+additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
 and a binlog-disabled source. They snapshot one million rows, SIGKILL real
 snapshot and CDC worker processes, verify restart replay, exercise GTID and
 file/position CRUD plus MyISAM boundaries, quarantine a decode failure, and
@@ -77,8 +77,9 @@ same-token delete/insert repair, composite-key reconciliation, secondary
 UNIQUE reuse, CDC-invisible cascades, and idle-cycle storage invariance.
 The M7 wire gate additionally covers native challenge authentication, metadata
 discovery, prepared statements, BI-style aggregates, read-only errors, and
-typed binary results with a Rust client, MySQL CLI, mysql2 under Bun, and
-PyMySQL. The M8 gates exercise a full/incremental/checksum-verified restore
+typed binary results with a Rust client, MySQL CLI, mysql2 under Bun, PyMySQL,
+and Go `database/sql` with go-sql-driver/mysql parameter interpolation. The M8
+gates exercise a full/incremental/checksum-verified restore
 against MinIO and three independently supervised MySQL sources in mixed CDC
 and polling modes while one source fails. The M9 release matrix ran this
 complete sequence twice consecutively, including all three ignored API gates,
@@ -110,4 +111,3 @@ The nightly e2e workflow also runs the browser smoke suite
 first-boot operator setup, the add-database wizard against a live MySQL
 source, replication reaching streaming, the SQL console returning typed
 results, and a 390-pixel login render, capturing screenshots on failure.
-

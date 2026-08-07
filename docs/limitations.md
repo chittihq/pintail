@@ -32,10 +32,9 @@ stays readable as a list of things to fix.
   `cte_max_recursion_depth` to `1..=1000000`; MySQL's unbounded value `0` is
   rejected so a session cannot disable the recursive resource guard.
 - `RIGHT JOIN` supports only the two-table form.
-- Parenthesized root INNER/CROSS join groups and a complete root LEFT JOIN
-  group bind by flattening their left-deep chain. Aliased groups, nested right
-  inputs, and outer groups followed by another join reject because the current
-  bound plan cannot preserve their join tree (#16).
+- Aliased parenthesized join groups and parenthesized groups used as a later
+  join's right input reject because the current bound plan cannot represent a
+  bushy join tree (#16).
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
@@ -77,10 +76,9 @@ stays readable as a list of things to fix.
   so no program can outlive the row that requested it.
 - Byte-level transcoding among character sets other than UTF-8 and binary is
   unsupported and rejects explicitly.
-- Explicit `COLLATE` accepts only `utf8mb4_0900_ai_ci`, the declared initial
-  executable profile. Other collations and cross-profile coercibility reject
-  instead of borrowing that profile silently. The supported profile follows
-  its MySQL 8 NO PAD behavior, so trailing spaces remain significant.
+- Explicit `COLLATE` names other than `utf8mb4_0900_ai_ci` reject. Cross-profile
+  coercibility is not implemented, so mixed source profiles reject on every
+  collation-sensitive operation (#10).
 - The `information_schema` client-discovery interpreter rejects CTEs, set
   operations, DISTINCT, window functions, derived tables, and metadata tables
   outside the eight served tables.
@@ -127,16 +125,9 @@ worth refusing.
 - `ENUM` values compare and sort as their text, not as MySQL's
   declaration-index order. `CAST(col AS CHAR)` on the MySQL side produces
   matching orderings.
-- The initial text profile is `utf8mb4_0900_ai_ci`: comparison, grouping,
-  hashing, DISTINCT, joins, IN, MIN/MAX, and ordering share one
-  primary-strength Unicode collation key, while LIKE/locate use a
-  character-preserving case/accent fold and binary values remain bytewise.
-  Source collation names propagate from probing through derived query layouts.
-  Lossless projection accepts other source collations, but every supported
-  collation-sensitive operation rejects unsupported or mixed source profiles
-  instead of silently applying the initial profile. Per-expression
-  coercibility, explicit `COLLATE`, locale-specific collations, and execution
-  of mixed source collations remain unsupported.
+- Locale-specific collation profiles, full per-expression coercibility, and
+  collation-sensitive execution over mixed source profiles remain unsupported
+  (#10).
 
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
 
@@ -303,14 +294,6 @@ worth refusing.
   the mysql_native_password verifier.
 - The endpoint is read-only. `SET sql_mode` is stored and echoed with no
   semantic effect. Multiple SQL statements in one command are not supported.
-- Connection pools may use `COM_RESET_CONNECTION` or `COM_CHANGE_USER`.
-  Both restore Pintail's session defaults and invalidate every prepared
-  statement while keeping the physical connection open; change-user also
-  repeats API-key authentication and rejects a database outside that key's
-  database scope. `COM_STMT_RESET` clears a statement's pending parameter data
-  without deallocating it. Pools that reset connections on return therefore do
-  not leak `time_zone`, `sql_mode`, charset, warning, or prepared-statement
-  state between borrowers.
 - Variable-width text, binary, and JSON expressions without a retained source
   declaration report a type-derived `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB
@@ -318,13 +301,8 @@ worth refusing.
   not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
-- Authenticated wire connections close after 15 idle minutes by default;
-  configure `wire.idle_timeout_seconds`,
-  `PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS`, or
-  `--wire-idle-timeout-seconds` to change it. `SET max_execution_time = N`
-  applies a cooperative per-statement deadline in milliseconds and returns
-  MySQL error 1317 when it expires. Client-disconnect cancellation is observed
-  after the current engine call returns; explicit `KILL QUERY` is unsupported.
+- Client-disconnect cancellation is observed only after the current engine
+  call returns; explicit `KILL QUERY` is unsupported (#15).
 - DBeaver and Metabase application-level smokes are not automated in CI.
 ## Operations and backup
 

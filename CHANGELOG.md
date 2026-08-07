@@ -92,8 +92,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   matches produce NULL, one produces the value, and more than one raises a
   scalar-subquery row error through a bounded spillable join.
 - A complete parenthesized root LEFT JOIN now binds without flattening away
-  its outer semantics; unsupported nested or followed outer-join trees still
-  reject explicitly.
+  its outer semantics, including when a later join extends the root's
+  left-deep chain. Aliased groups and bushy right-side join groups still reject
+  explicitly.
 - Uncorrelated `EXISTS` stops its inner execution after one row, and scalar
   subqueries stop after the second row needed to raise the MySQL cardinality
   error; neither materializes an irrelevant tail before deciding its result.
@@ -121,6 +122,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   permissive physical normalization carrier and reports it consistently
   through `information_schema`, SHOW/DESCRIBE, SHOW CREATE, and direct
   text/prepared `SELECT` result fields, including non-key columns.
+- Interrupted HTTP queries now return Request Timeout instead of being
+  misreported as an internal server error.
 - Production image builds include the vendored `opensrv-mysql` path dependency
   in both cargo-chef stages; benchmark baselines retain an opaque host
   fingerprint instead of a private infrastructure name.
