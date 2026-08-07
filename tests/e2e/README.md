@@ -38,3 +38,7 @@ The crate-level matrices under `crates/*/tests/` remain the deep gates for
 each subsystem (snapshot key matrix, CDC compatibility/DDL/purge, polling,
 wire compatibility, sqllogic oracle). This suite is the composition check:
 the whole loop, one process each, no shortcuts.
+
+For production BI dogfooding, use `bi-dogfood.ts` as documented in
+`../corpus/bi-captured/README.md`. Exact captures and raw replay reports stay
+local; only a manually reviewed, literal-redacted report may be shared.

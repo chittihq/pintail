@@ -16,6 +16,8 @@ GOAL.md
 /tests/e2e/results-partial.md
 /validate-out/
 REVIEW.md
+/tests/corpus/bi-captured/raw/
+/tests/corpus/bi-captured/*.raw.json
 # Local dashboard-development data directory (docs/development.md).
 .devdata/
 /packages/dashboard/target
