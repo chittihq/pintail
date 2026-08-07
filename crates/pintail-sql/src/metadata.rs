@@ -1522,6 +1522,23 @@ fn metadata_projection_index(
     source: &mut MetadataResult,
     expression: &Expr,
 ) -> Result<usize, MetadataError> {
+    if metadata_is_binary_cast(expression) {
+        let values = source
+            .rows
+            .iter()
+            .map(|row| metadata_expr_value(expression, &source.fields, row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let index = source.fields.len();
+        source.fields.push(MetadataField {
+            name: expression.to_string(),
+            data_type: DataType::Binary,
+            nullable: values.iter().any(|value| matches!(value, Value::Null)),
+        });
+        for (row, value) in source.rows.iter_mut().zip(values) {
+            row.push(value);
+        }
+        return Ok(index);
+    }
     match metadata_expr_column(expression, &source.fields) {
         Ok(index) => Ok(index),
         Err(MetadataError::Unsupported(_)) if matches!(expression, Expr::Function(_)) => {
@@ -1675,6 +1692,16 @@ fn metadata_identifier_parts(expression: &Expr) -> Result<Vec<&str>, MetadataErr
     }
 }
 
+fn metadata_is_binary_cast(expression: &Expr) -> bool {
+    matches!(
+        expression,
+        Expr::Cast {
+            data_type: sqlparser::ast::DataType::Binary(_),
+            ..
+        }
+    )
+}
+
 fn metadata_field_qualifier(name: &str) -> Option<&str> {
     name.rsplit_once('.').map(|(qualifier, _)| qualifier)
 }
@@ -1688,31 +1715,47 @@ fn evaluate_metadata_predicate(
     fields: &[MetadataField],
     row: &[Value],
 ) -> Result<bool, MetadataError> {
+    evaluate_metadata_predicate_with_binary(expression, fields, row, false)
+}
+
+fn evaluate_metadata_predicate_with_binary(
+    expression: &Expr,
+    fields: &[MetadataField],
+    row: &[Value],
+    binary: bool,
+) -> Result<bool, MetadataError> {
     match expression {
         Expr::Cast {
             expr,
             data_type: sqlparser::ast::DataType::Binary(_),
             ..
-        } => evaluate_metadata_predicate(expr, fields, row),
-        Expr::Nested(expression) => evaluate_metadata_predicate(expression, fields, row),
+        } => evaluate_metadata_predicate_with_binary(expr, fields, row, true),
+        Expr::Nested(expression) => {
+            evaluate_metadata_predicate_with_binary(expression, fields, row, binary)
+        }
         Expr::BinaryOp {
             left,
             op: BinaryOperator::And,
             right,
-        } => Ok(evaluate_metadata_predicate(left, fields, row)?
-            && evaluate_metadata_predicate(right, fields, row)?),
+        } => Ok(
+            evaluate_metadata_predicate_with_binary(left, fields, row, binary)?
+                && evaluate_metadata_predicate_with_binary(right, fields, row, binary)?,
+        ),
         Expr::BinaryOp {
             left,
             op: BinaryOperator::Or,
             right,
-        } => Ok(evaluate_metadata_predicate(left, fields, row)?
-            || evaluate_metadata_predicate(right, fields, row)?),
+        } => Ok(
+            evaluate_metadata_predicate_with_binary(left, fields, row, binary)?
+                || evaluate_metadata_predicate_with_binary(right, fields, row, binary)?,
+        ),
         Expr::BinaryOp { left, op, right }
             if matches!(op, BinaryOperator::Eq | BinaryOperator::NotEq) =>
         {
             let equal = metadata_equal(
                 &metadata_expr_value(left, fields, row)?,
                 &metadata_expr_value(right, fields, row)?,
+                binary,
             );
             Ok(equal.is_some_and(|equal| {
                 if *op == BinaryOperator::Eq {
@@ -1742,7 +1785,11 @@ fn evaluate_metadata_predicate(
             let mut found = false;
             let mut contains_null = false;
             for candidate in list {
-                match metadata_equal(&needle, &metadata_expr_value(candidate, fields, row)?) {
+                match metadata_equal(
+                    &needle,
+                    &metadata_expr_value(candidate, fields, row)?,
+                    binary,
+                ) {
                     Some(true) => found = true,
                     Some(false) => {}
                     None => contains_null = true,
@@ -1788,7 +1835,12 @@ fn metadata_expr_value(
             expr,
             data_type: sqlparser::ast::DataType::Binary(_),
             ..
-        } => metadata_expr_value(expr, fields, row),
+        } => match metadata_expr_value(expr, fields, row)? {
+            Value::Null => Ok(Value::Null),
+            Value::Utf8(value) => Ok(Value::Binary(value.into_bytes())),
+            Value::Binary(value) => Ok(Value::Binary(value)),
+            _ => Err(MetadataError::Unsupported(expression.to_string())),
+        },
         Expr::Identifier(_) | Expr::CompoundIdentifier(_) => {
             Ok(row[metadata_expr_column(expression, fields)?].clone())
         }
@@ -1809,10 +1861,14 @@ fn metadata_expr_value(
     }
 }
 
-fn metadata_equal(left: &Value, right: &Value) -> Option<bool> {
+fn metadata_equal(left: &Value, right: &Value, binary: bool) -> Option<bool> {
     match (left, right) {
         (Value::Null, _) | (_, Value::Null) => None,
+        (Value::Utf8(left), Value::Utf8(right)) if binary => Some(left == right),
         (Value::Utf8(left), Value::Utf8(right)) => Some(left.eq_ignore_ascii_case(right)),
+        (Value::Binary(left), Value::Binary(right)) => Some(left == right),
+        (Value::Binary(left), Value::Utf8(right)) => Some(left == right.as_bytes()),
+        (Value::Utf8(left), Value::Binary(right)) => Some(left.as_bytes() == right),
         _ => Some(left == right),
     }
 }
@@ -1880,12 +1936,16 @@ fn order_metadata_result(result: &mut MetadataResult, query: &Query) -> Result<(
         .iter()
         .map(|expression| {
             let index = metadata_expr_column(&expression.expr, &result.fields)?;
-            Ok((index, expression.options.asc.unwrap_or(true)))
+            Ok((
+                index,
+                expression.options.asc.unwrap_or(true),
+                metadata_is_binary_cast(&expression.expr),
+            ))
         })
         .collect::<Result<Vec<_>, MetadataError>>()?;
     result.rows.sort_by(|left, right| {
-        for (index, ascending) in &keys {
-            let ordering = metadata_order(&left[*index], &right[*index]);
+        for (index, ascending, binary) in &keys {
+            let ordering = metadata_order(&left[*index], &right[*index], *binary);
             if ordering != Ordering::Equal {
                 return if *ascending {
                     ordering
@@ -1899,12 +1959,14 @@ fn order_metadata_result(result: &mut MetadataResult, query: &Query) -> Result<(
     Ok(())
 }
 
-fn metadata_order(left: &Value, right: &Value) -> Ordering {
+fn metadata_order(left: &Value, right: &Value, binary: bool) -> Ordering {
     match (left, right) {
         (Value::Null, Value::Null) => Ordering::Equal,
         (Value::Null, _) => Ordering::Less,
         (_, Value::Null) => Ordering::Greater,
-        (Value::Utf8(left), Value::Utf8(right)) => left.to_lowercase().cmp(&right.to_lowercase()),
+        (Value::Utf8(left), Value::Utf8(right)) if !binary => {
+            left.to_lowercase().cmp(&right.to_lowercase())
+        }
         _ => left.cmp(right),
     }
 }
@@ -3123,5 +3185,61 @@ mod tests {
         )
         .expect("metadata query");
         assert_eq!(result.rows, [vec![Value::Utf8("id".to_owned())]]);
+    }
+
+    #[test]
+    fn information_schema_binary_casts_use_bytewise_semantics() {
+        let catalog = catalog();
+        let insensitive = execute_metadata(
+            &parse_statement(
+                "SELECT table_name FROM information_schema.tables \
+                 WHERE table_name = 'events'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("case-insensitive metadata comparison");
+        assert_eq!(insensitive.rows, [vec![Value::Utf8("Events".to_owned())]]);
+
+        let binary = execute_metadata(
+            &parse_statement(
+                "SELECT DISTINCT BINARY table_name FROM information_schema.tables \
+                 WHERE BINARY table_name = 'Events' ORDER BY BINARY table_name",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("binary metadata comparison");
+        assert_eq!(binary.fields[0].data_type, DataType::Binary);
+        assert_eq!(binary.rows, [vec![Value::Binary(b"Events".to_vec())]]);
+
+        let mismatched_statement = parse_statement(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE BINARY table_name = 'events'",
+        )
+        .expect("parse");
+        let mismatched_case = execute_metadata(
+            &mismatched_statement,
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("binary metadata comparison");
+        assert!(mismatched_case.rows.is_empty());
+
+        let upper = Value::Utf8("Z".to_owned());
+        let lower = Value::Utf8("a".to_owned());
+        assert_eq!(
+            super::metadata_order(&upper, &lower, false),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            super::metadata_order(&upper, &lower, true),
+            std::cmp::Ordering::Less
+        );
     }
 }
