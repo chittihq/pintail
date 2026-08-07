@@ -853,6 +853,10 @@ async function phaseRestart() {
 
 async function phaseSpill() {
   const phase = 'spill'
+  const repeatedJoinInput = Array.from(
+    { length: 8 },
+    () => 'SELECT i.order_id, c.id FROM order_items i CROSS JOIN customers c',
+  ).join(' UNION ALL ')
   const checks: Array<[string, string]> = [
     [
       'sort',
@@ -870,9 +874,7 @@ async function phaseSpill() {
     ],
     [
       'join',
-      'SELECT COUNT(*) FROM orders o JOIN (' +
-        'SELECT i.order_id, c.id FROM order_items i CROSS JOIN customers c' +
-        ') d ON o.id = d.order_id',
+      `SELECT COUNT(*) FROM orders o JOIN (${repeatedJoinInput}) d ON o.id = d.order_id`,
     ],
   ]
 
@@ -885,8 +887,10 @@ async function phaseSpill() {
     await pintailProcess!.exited
     // The ordinary E2E process uses the production default. This short-lived
     // restart lowers only the query ceiling so the live binary must take each
-    // external path over the already-replicated workload.
-    await startPintail(256 * 1024)
+    // external path over the already-replicated workload. Keep enough room
+    // for one decoded input batch; spillable state, not scan materialization,
+    // must be the allocation that crosses the ceiling.
+    await startPintail(1024 * 1024)
 
     for (const [operator, sql] of checks) {
       try {
@@ -1226,7 +1230,7 @@ async function phaseControlPlane() {
         const statement = 'SELECT label, amount, COUNT(*) FROM keyless_log GROUP BY label, amount ORDER BY label, amount'
         const expected = await mysqlRows(statement)
         const actual = await pintailQuery(statement)
-        if (JSON.stringify(actual) === JSON.stringify(expected)) break
+        if (diffRows(expected, actual) === undefined) break
       }
       if (Date.now() > multiplicityDeadline) {
         throw new Error(`keyless duplicate multiplicity was not repaired: ${JSON.stringify(table)}`)
