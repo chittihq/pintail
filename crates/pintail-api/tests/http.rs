@@ -297,6 +297,8 @@ async fn metrics_expose_prometheus_runtime_storage_and_control_plane_facts() {
         "pintail_process_resident_memory_bytes",
         "pintail_dead_letters",
         "pintail_backup_runs",
+        "pintail_table_keyless",
+        "pintail_table_needs_resync",
     ] {
         assert!(metrics.contains(required), "missing {required}");
     }

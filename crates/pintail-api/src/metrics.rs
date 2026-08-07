@@ -92,6 +92,10 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
          # TYPE pintail_replication_lag_seconds gauge\n\
          # HELP pintail_table_rows Durable mirrored row counter.\n\
          # TYPE pintail_table_rows gauge\n\
+         # HELP pintail_table_keyless Whether a table lacks a stable source key.\n\
+         # TYPE pintail_table_keyless gauge\n\
+         # HELP pintail_table_needs_resync Whether a table is quarantined pending resnapshot.\n\
+         # TYPE pintail_table_needs_resync gauge\n\
          # HELP pintail_dead_letters Dead-letter records awaiting operator action.\n\
          # TYPE pintail_dead_letters gauge\n\
          # HELP pintail_backup_runs Backup runs by terminal or active status.\n\
@@ -119,11 +123,25 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
             "pintail_replication_lag_seconds{{database=\"{database_id}\"}} {lag}"
         );
         for table in metadata.tables(&database.id)? {
+            let table_name = label(&table.name);
             let _ = writeln!(
                 output,
-                "pintail_table_rows{{database=\"{database_id}\",table=\"{}\"}} {}",
-                label(&table.name),
+                "pintail_table_rows{{database=\"{database_id}\",table=\"{table_name}\"}} {}",
                 table.rows_synced
+            );
+            let keyless = table
+                .primary_key_json
+                .as_deref()
+                .is_none_or(|columns| columns == "[]");
+            let _ = writeln!(
+                output,
+                "pintail_table_keyless{{database=\"{database_id}\",table=\"{table_name}\"}} {}",
+                u8::from(keyless)
+            );
+            let _ = writeln!(
+                output,
+                "pintail_table_needs_resync{{database=\"{database_id}\",table=\"{table_name}\"}} {}",
+                u8::from(table.state == "needs_resync")
             );
         }
         let dlq = metadata.dlq_records(Some(&database.id), 1_000_000)?.len();

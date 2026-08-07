@@ -115,6 +115,11 @@ function describeTable(table: TableSummary) {
                     class="tone-warning ml-1.5"
                     title="A source foreign key cascades into this table. MySQL performs cascades inside InnoDB without writing row events, so they cannot reach the replica through CDC; these rows converge on the reconcile interval rather than in seconds."
                   >cascade</Badge>
+                  <Badge
+                    v-if="table.key_mode === 'append_row_id'"
+                    class="tone-warning ml-1.5"
+                    :title="table.remediation === 'resnapshot' ? 'An ambiguous source mutation was quarantined. Resnapshot to restore exact duplicate multiplicity.' : 'Inserts replicate exactly; an UPDATE or DELETE is quarantined instead of choosing an arbitrary duplicate and requires resnapshot.'"
+                  >keyless · {{ table.mutation_guarantee.replaceAll('_', ' ') }}</Badge>
                 </TableCell>
                 <TableCell><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></TableCell>
                 <TableCell class="font-mono">{{ table.rows.toLocaleString() }}</TableCell>

@@ -2015,8 +2015,8 @@ mod tests {
         new_table_matches, push_mutations, sanitize_binlog_filename,
     };
     use pintail_meta::SnapshotCheckpointRecord;
-    use pintail_probe::SourceFlavor;
-    use pintail_types::{KeyPart, PrimaryKey, StoredRow, Value};
+    use pintail_probe::{SourceColumn, SourceFlavor, SourceKey, SourceTable};
+    use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
 
     #[test]
     fn file_position_versions_are_ordered_and_deterministic() {
@@ -2058,6 +2058,54 @@ mod tests {
         assert!(!new_table_matches("audit", &options));
         options.new_table_excludes.insert("EVENTS".to_owned());
         assert!(!new_table_matches("events", &options));
+    }
+
+    #[test]
+    fn key_promotion_and_demotion_require_a_resnapshot_boundary() {
+        let keyless = source_table(KeyMode::AppendRowId);
+        let primary = source_table(KeyMode::Primary);
+        assert_eq!(
+            super::stabilize_source_table(&keyless, primary.clone()),
+            Err("physical key changed".to_owned())
+        );
+        assert_eq!(
+            super::stabilize_source_table(&primary, keyless),
+            Err("physical key changed".to_owned())
+        );
+    }
+
+    fn source_table(mode: KeyMode) -> SourceTable {
+        SourceTable {
+            name: "events".to_owned(),
+            engine: Some("InnoDB".to_owned()),
+            estimated_rows: Some(2),
+            columns: vec![SourceColumn {
+                id: 1,
+                name: "id".to_owned(),
+                mysql_data_type: "bigint".to_owned(),
+                mysql_column_type: "bigint".to_owned(),
+                pintail_type: DataType::Int64,
+                nullable: false,
+                character_set: None,
+                collation: None,
+                generated_stored: false,
+                auto_increment: false,
+                default_value: None,
+            }],
+            key: SourceKey {
+                mode,
+                index_name: (mode != KeyMode::AppendRowId).then(|| "PRIMARY".to_owned()),
+                columns: if mode == KeyMode::AppendRowId {
+                    Vec::new()
+                } else {
+                    vec!["id".to_owned()]
+                },
+            },
+            unique_keys: Vec::new(),
+            requires_reconciliation: false,
+            foreign_keys: Vec::new(),
+            warnings: Vec::new(),
+        }
     }
 
     #[test]

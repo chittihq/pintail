@@ -1039,7 +1039,7 @@ async function phaseControlPlane() {
       }
     }
   })
-  await check('keyless policy: quarantine flags, auto_resync repairs', async () => {
+  await check('keyless policy: ambiguity quarantines and exact multiplicity repairs', async () => {
     // A table with no primary or unique key replicates inserts, but a CDC
     // UPDATE cannot be targeted and must flag the table needs_resync under
     // the default quarantine policy. Switching the database to auto_resync
@@ -1070,11 +1070,15 @@ async function phaseControlPlane() {
     await sql("UPDATE keyless_log SET amount = amount + 10 WHERE label = 'b'")
     const flagDeadline = Date.now() + 120_000
     for (;;) {
-      const tables = await api<Array<{ name: string; state: string }>>(
+      const tables = await api<Array<{ name: string; state: string; key_mode: string; mutation_guarantee: string }>>(
         `/api/tables?db=${databaseId}`,
       )
       const table = tables.find((candidate) => candidate.name === 'keyless_log')
-      if (table?.state === 'needs_resync') break
+      if (
+        table?.state === 'needs_resync' &&
+        table.key_mode === 'append_row_id' &&
+        table.mutation_guarantee === 'quarantined'
+      ) break
       if (Date.now() > flagDeadline) {
         throw new Error(
           `keyless UPDATE never flagged needs_resync: ${JSON.stringify(table)}`,
@@ -1118,6 +1122,46 @@ async function phaseControlPlane() {
           `auto_resync never repaired keyless_log: ${JSON.stringify(table)}; ` +
             `activity: ${JSON.stringify(activity)}`,
         )
+      }
+      await Bun.sleep(3_000)
+    }
+    // Delete one of two byte-identical rows. Pintail must quarantine rather
+    // than choose an append identity, then restore exact source multiplicity.
+    await api(`/api/databases/${databaseId}`, {
+      method: 'PUT',
+      body: { name: detail.name, mode: detail.mode, keyless_policy: 'quarantine' },
+    })
+    await sql("DELETE FROM keyless_log WHERE label = 'b' LIMIT 1")
+    const deleteFlagDeadline = Date.now() + 120_000
+    for (;;) {
+      const tables = await api<Array<{ name: string; state: string }>>(
+        `/api/tables?db=${databaseId}`,
+      )
+      const table = tables.find((candidate) => candidate.name === 'keyless_log')
+      if (table?.state === 'needs_resync') break
+      if (Date.now() > deleteFlagDeadline) {
+        throw new Error(`ambiguous keyless DELETE was not quarantined: ${JSON.stringify(table)}`)
+      }
+      await Bun.sleep(2_000)
+    }
+    await api(`/api/databases/${databaseId}`, {
+      method: 'PUT',
+      body: { name: detail.name, mode: detail.mode, keyless_policy: 'auto_resync' },
+    })
+    const multiplicityDeadline = Date.now() + 180_000
+    for (;;) {
+      const tables = await api<Array<{ name: string; state: string }>>(
+        `/api/tables?db=${databaseId}`,
+      )
+      const table = tables.find((candidate) => candidate.name === 'keyless_log')
+      if (table && table.state !== 'needs_resync') {
+        const statement = 'SELECT label, amount, COUNT(*) FROM keyless_log GROUP BY label, amount ORDER BY label, amount'
+        const expected = await mysqlRows(statement)
+        const actual = await pintailQuery(statement)
+        if (JSON.stringify(actual) === JSON.stringify(expected)) break
+      }
+      if (Date.now() > multiplicityDeadline) {
+        throw new Error(`keyless duplicate multiplicity was not repaired: ${JSON.stringify(table)}`)
       }
       await Bun.sleep(3_000)
     }

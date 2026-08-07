@@ -78,6 +78,14 @@ pub(crate) struct TableSummary {
     /// Surfaced per row because an operator reading a stale child table needs
     /// to know it is a known mechanism, not a replication fault.
     cascade_reconciled: bool,
+    /// Physical identity selected by the source probe. `append_row_id` means
+    /// source UPDATE/DELETE events cannot identify one replica row safely.
+    key_mode: KeyMode,
+    /// Operator-facing consistency contract for this table in its current
+    /// replication mode.
+    mutation_guarantee: &'static str,
+    /// Required recovery when the normal mutation guarantee cannot apply.
+    remediation: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -139,17 +147,22 @@ pub(crate) async fn list_tables(
     principal.authorize_database(&query.db)?;
     crate::databases::load_database(&state, &principal, &query.db)?;
     let database = load_database(&state, &query.db)?;
-    let cascaded = cascade_reconciled_tables(database.probe_json.as_deref());
+    let table_facts = probed_table_facts(database.probe_json.as_deref());
+    let effective_mode = database.effective_mode.as_deref();
     let tables = state
         .metadata()?
         .tables(&query.db)
         .map_err(ApiError::internal)?
         .into_iter()
         .map(|record| {
-            let cascade_reconciled = cascaded
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(&record.name));
-            TableSummary::new(record, cascade_reconciled)
+            let facts = table_facts.get(&record.name.to_ascii_lowercase());
+            let key_mode = facts.map_or_else(|| durable_key_mode(&record), |facts| facts.key_mode);
+            TableSummary::new(
+                record,
+                key_mode,
+                facts.is_some_and(|facts| facts.cascade_reconciled),
+                effective_mode,
+            )
         })
         .collect();
     Ok(Json(tables))
@@ -377,7 +390,22 @@ const fn default_preview_rows() -> usize {
 }
 
 impl TableSummary {
-    fn new(record: TableRecord, cascade_reconciled: bool) -> Self {
+    fn new(
+        record: TableRecord,
+        key_mode: KeyMode,
+        cascade_reconciled: bool,
+        effective_mode: Option<&str>,
+    ) -> Self {
+        let (mutation_guarantee, remediation) =
+            match (effective_mode, key_mode, record.state.as_str()) {
+                (_, KeyMode::AppendRowId, "needs_resync") => ("quarantined", Some("resnapshot")),
+                (Some("polling"), KeyMode::AppendRowId, _) => ("generation_replacement", None),
+                (_, KeyMode::AppendRowId, _) => {
+                    ("insert_only", Some("resnapshot_after_update_or_delete"))
+                }
+                (Some("polling"), _, _) => ("reconciled_polling", None),
+                _ => ("row_level_cdc", None),
+            };
         Self {
             name: record.name,
             state: record.state,
@@ -385,24 +413,111 @@ impl TableSummary {
             schema_version: record.schema_version,
             last_error: record.last_error,
             cascade_reconciled,
+            key_mode,
+            mutation_guarantee,
+            remediation,
         }
     }
 }
 
-/// Names the probe flagged as reachable by an invisible cascade. An
-/// unreadable or absent report yields none rather than failing the listing:
-/// the flag is advisory, and a table list is not the place to surface a
-/// probe-decoding problem.
-fn cascade_reconciled_tables(probe_json: Option<&str>) -> Vec<String> {
+fn durable_key_mode(record: &TableRecord) -> KeyMode {
+    if record
+        .primary_key_json
+        .as_deref()
+        .is_none_or(|columns| columns == "[]")
+    {
+        KeyMode::AppendRowId
+    } else {
+        KeyMode::Primary
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProbedTableFacts {
+    key_mode: KeyMode,
+    cascade_reconciled: bool,
+}
+
+/// Identity and cascade facts from the last probe. An unreadable or absent
+/// report yields none rather than failing the table list: these fields are
+/// operator guidance, while corrupt probe state is surfaced by replication.
+fn probed_table_facts(probe_json: Option<&str>) -> BTreeMap<String, ProbedTableFacts> {
     probe_json
         .and_then(|json| serde_json::from_str::<pintail_probe::ProbeReport>(json).ok())
         .map(|report| {
             report
                 .tables
                 .into_iter()
-                .filter(|table| table.requires_reconciliation)
-                .map(|table| table.name)
+                .map(|table| {
+                    (
+                        table.name.to_ascii_lowercase(),
+                        ProbedTableFacts {
+                            key_mode: table.key.mode,
+                            cascade_reconciled: table.requires_reconciliation,
+                        },
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TableSummary, durable_key_mode};
+    use pintail_meta::TableRecord;
+    use pintail_types::KeyMode;
+
+    fn table(state: &str, key: Option<&str>) -> TableRecord {
+        TableRecord {
+            database_id: "db".to_owned(),
+            name: "events".to_owned(),
+            state: state.to_owned(),
+            primary_key_json: key.map(str::to_owned),
+            cursor_column: None,
+            sort_key_json: key.map(str::to_owned),
+            rows_synced: 2,
+            last_error: None,
+            last_reconcile_at: None,
+            schema_version: 1,
+            orphaned_at: None,
+            soft_delete_column: None,
+        }
+    }
+
+    #[test]
+    fn keyless_table_summary_states_the_safe_mutation_boundary() {
+        let insert_only = TableSummary::new(
+            table("streaming", Some("[]")),
+            KeyMode::AppendRowId,
+            false,
+            Some("cdc"),
+        );
+        assert_eq!(insert_only.mutation_guarantee, "insert_only");
+        assert_eq!(
+            insert_only.remediation,
+            Some("resnapshot_after_update_or_delete")
+        );
+
+        let quarantined = TableSummary::new(
+            table("needs_resync", Some("[]")),
+            KeyMode::AppendRowId,
+            false,
+            Some("cdc"),
+        );
+        assert_eq!(quarantined.mutation_guarantee, "quarantined");
+        assert_eq!(quarantined.remediation, Some("resnapshot"));
+    }
+
+    #[test]
+    fn durable_identity_fallback_distinguishes_empty_keys() {
+        assert_eq!(
+            durable_key_mode(&table("streaming", Some("[]"))),
+            KeyMode::AppendRowId
+        );
+        assert_eq!(
+            durable_key_mode(&table("streaming", Some("[\"id\"]"))),
+            KeyMode::Primary
+        );
+    }
 }

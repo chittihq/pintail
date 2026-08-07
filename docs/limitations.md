@@ -194,7 +194,18 @@ worth refusing.
   file/position captured alongside its GTID.
 - On tables without a primary or safe UNIQUE key, UPDATE and DELETE have no
   stable source identity, so they enter the DLQ and mark that table
-  `needs_resync`.
+  `needs_resync`. Pintail never applies a before-image to an arbitrary matching
+  duplicate. All mutations for that table in the affected source transaction
+  are discarded; mutations for other, independently keyed tables may commit as
+  the shared source checkpoint advances, so cross-table atomic visibility is
+  not promised while a keyless table is quarantined.
+- Keyless CDC is insert-only between snapshots. Inserts use a deterministic
+  append identity and are idempotent across reconnect/replay. The first UPDATE
+  or DELETE requires a whole-table generation rebuild: `quarantine` waits for
+  an operator resnapshot, `auto_resync` schedules that rebuild, and `reject`
+  refuses the source during probe. Rebuilding from one source snapshot restores
+  exact duplicate multiplicity; Pintail deliberately does not infer candidate
+  identities or use collision-prone row fingerprints.
 - A source charset outside utf8mb4/utf8mb3, ASCII and latin1 (cp1252) is
   quarantined through the DLQ.
 - `binlog_row_metadata` may be MINIMAL or absent (MySQL 5.7, MariaDB): column
@@ -237,6 +248,11 @@ worth refusing.
 - ALTER operations other than pure ADD/DROP COLUMN — rename, type/key changes,
   index-only changes, default-only changes — conservatively mark that table
   `needs_resync`.
+- Adding or removing a stable key is therefore a safe resnapshot boundary, not
+  an in-place identity change. After the replacement generation is published,
+  the refreshed probe promotes the table to row-level primary/unique-key CDC or
+  demotes it to the keyless policy; ambiguous changes are never partially
+  applied.
 - If several schema changes occur while Pintail is offline and the final source
   schema no longer represents an event's intermediate shape, Pintail
   quarantines the incompatible table rather than reconstructing historical

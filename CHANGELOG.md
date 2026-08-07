@@ -64,6 +64,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Keyless-table identity and mutation guarantees are visible in the table API,
+  dashboard, and Prometheus metrics. Ambiguous UPDATE/DELETE behavior is
+  documented and acceptance-covered through quarantine plus exact
+  duplicate-multiplicity repair; key promotion/demotion remains a safe
+  resnapshot boundary rather than an in-place identity guess.
 - Metadata now preserves source MySQL nullability independently from the
   permissive physical normalization carrier and reports it consistently
   through `information_schema`, SHOW/DESCRIBE, SHOW CREATE, and wire results.
