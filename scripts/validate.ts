@@ -61,10 +61,9 @@ interface Stage {
   stallMinutes?: number
   /// Needs the shared Docker host (disk preflight + container capture).
   remote: boolean
-  /// Stages sharing a lane run concurrently. A stage without one runs alone.
-  /// Only correctness stages may share: `bench` and `accept` record timings,
-  /// and a co-tenant on the same host changes the numbers they exist to
-  /// produce.
+  /// Stages sharing a lane run concurrently. Remote stages intentionally have
+  /// no lane: the repository protocol gives oracle, E2E, benchmark, and
+  /// acceptance exclusive use of the shared Docker host.
   lane?: string
   timeoutMinutes: number
   command: string[]
@@ -90,10 +89,6 @@ const STAGES: Stage[] = [
   {
     name: 'oracle',
     remote: true,
-    // Correctness only, and the containers are namespaced apart
-    // (pintail-mysql-oracle-* against pintail-e2e-*), so sharing the host
-    // cannot make either one's result depend on the other.
-    lane: 'correctness',
     timeoutMinutes: 20,
     command: [
       'cargo', 'test', '-p', 'pintail-sqllogic', '--test', 'mysql_oracle', '--', '--ignored', '--nocapture',
@@ -103,10 +98,6 @@ const STAGES: Stage[] = [
   {
     name: 'e2e',
     remote: true,
-    // Correctness only, and the containers are namespaced apart
-    // (pintail-mysql-oracle-* against pintail-e2e-*), so sharing the host
-    // cannot make either one's result depend on the other.
-    lane: 'correctness',
     timeoutMinutes: 60,
     // Builds a container image before it says anything.
     stallMinutes: 25,
@@ -373,9 +364,8 @@ async function main() {
     }
 
     // Consecutive stages sharing a lane run together; everything else keeps
-    // its own group of one. Only correctness stages share a lane — bench and
-    // accept record timings, and a co-tenant on the same host changes the
-    // numbers they exist to produce.
+    // its own group of one. Remote stages have no lane and therefore run in
+    // the declared fmt → unit → oracle → e2e → bench → accept order.
     // A name that matches no stage would otherwise be dropped in silence and
     // the run would still report PASS — a typo in --stages must not look
     // like a green gate.
