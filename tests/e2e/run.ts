@@ -363,7 +363,10 @@ async function tableDiff(table: string): Promise<string | undefined> {
 
 async function metadataDiff(): Promise<string | undefined> {
   const query =
-    `SELECT table_name, column_name, ordinal_position, data_type, is_nullable ` +
+    `SELECT table_name, column_name, ordinal_position, data_type, column_type, ` +
+    `is_nullable, character_maximum_length, character_octet_length, ` +
+    `numeric_precision, numeric_scale, datetime_precision, column_default, ` +
+    `extra, generation_expression ` +
     `FROM information_schema.columns WHERE table_schema = '${DATABASE}' ` +
     `ORDER BY table_name, ordinal_position`
   const expected = await mysqlRows(query)

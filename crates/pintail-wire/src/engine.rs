@@ -511,6 +511,7 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
                 auto_increment: column.auto_increment,
                 generated_stored: column.generated_stored,
                 generation_expression: column.generation_expression.clone(),
+                extra: column.extra.clone(),
                 unique_single: source
                     .unique_keys
                     .iter()

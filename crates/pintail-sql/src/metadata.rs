@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeMap, fmt};
+use std::{cmp::Ordering, fmt};
 
 use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, KeyMode, Value};
@@ -106,6 +106,8 @@ pub struct ColumnFacts {
     pub generated_stored: bool,
     /// Raw stored-generation expression, without the surrounding `AS (...)`.
     pub generation_expression: String,
+    /// Raw `INFORMATION_SCHEMA.COLUMNS.EXTRA` metadata.
+    pub extra: String,
     /// Whether a single-column non-null UNIQUE constraint covers it.
     pub unique_single: bool,
     /// Source character set for textual columns.
@@ -272,9 +274,12 @@ fn execute_information_schema(
     };
     result = project_metadata_result(result, &select.projection)?;
     if matches!(select.distinct, Some(sqlparser::ast::Distinct::Distinct)) {
-        let mut distinct = Vec::with_capacity(result.rows.len());
+        let mut distinct: Vec<Vec<Value>> = Vec::with_capacity(result.rows.len());
         for row in result.rows {
-            if !distinct.contains(&row) {
+            if !distinct
+                .iter()
+                .any(|candidate| metadata_rows_equal(candidate, &row))
+            {
                 distinct.push(row);
             }
         }
@@ -651,6 +656,9 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                 });
                 let key = column_key(table, column.id(), fact);
                 let extra = fact.map_or("", |fact| {
+                    if !fact.extra.is_empty() {
+                        return fact.extra.as_str();
+                    }
                     if fact.auto_increment {
                         "auto_increment"
                     } else if fact.generated_stored {
@@ -1148,6 +1156,10 @@ fn show_create_table(
             if fact.auto_increment {
                 ddl.push_str(" AUTO_INCREMENT");
             }
+            if let Some(position) = fact.extra.to_ascii_lowercase().find("on update ") {
+                ddl.push_str(" ON UPDATE ");
+                ddl.push_str(&fact.extra[position + "on update ".len()..]);
+            }
         }
     }
     let key_names = catalog_key_names(table);
@@ -1303,16 +1315,23 @@ fn aggregate_metadata_result(
         .iter()
         .map(|expression| metadata_expr_column(expression, &source.fields))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut groups = BTreeMap::<Vec<Value>, Vec<Vec<Value>>>::new();
+    let mut groups = Vec::<(Vec<Value>, Vec<Vec<Value>>)>::new();
     for row in source.rows {
-        let key = group_indexes
+        let key = group_expressions
             .iter()
-            .map(|index| row[*index].clone())
-            .collect();
-        groups.entry(key).or_default().push(row);
+            .map(|expression| metadata_expr_value(expression, &source.fields, &row))
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some((_, rows)) = groups
+            .iter_mut()
+            .find(|(candidate, _)| metadata_rows_equal(candidate, &key))
+        {
+            rows.push(row);
+        } else {
+            groups.push((key, vec![row]));
+        }
     }
     if groups.is_empty() && group_indexes.is_empty() {
-        groups.insert(Vec::new(), Vec::new());
+        groups.push((Vec::new(), Vec::new()));
     }
 
     let mut fields = Vec::with_capacity(projection.len());
@@ -1342,8 +1361,8 @@ fn aggregate_metadata_result(
     }
 
     let rows = groups
-        .values()
-        .map(|rows| {
+        .iter()
+        .map(|(_, rows)| {
             projected
                 .iter()
                 .map(|projection| match projection {
@@ -1822,10 +1841,7 @@ fn evaluate_metadata_predicate_with_binary(
             if matches!(value, Value::Null) || matches!(pattern, Value::Null) {
                 return Ok(false);
             }
-            let matched = match (&value, &pattern) {
-                (Value::Utf8(value), Value::Utf8(pattern)) => metadata_like(value, pattern),
-                _ => false,
-            };
+            let matched = metadata_like_values(&value, &pattern, binary);
             Ok(if *negated { !matched } else { matched })
         }
         _ => Err(MetadataError::Unsupported(expression.to_string())),
@@ -1880,7 +1896,32 @@ fn metadata_equal(left: &Value, right: &Value, binary: bool) -> Option<bool> {
     }
 }
 
-fn metadata_like(value: &str, pattern: &str) -> bool {
+fn metadata_rows_equal(left: &[Value], right: &[Value]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            matches!((left, right), (Value::Null, Value::Null))
+                || metadata_equal(left, right, false) == Some(true)
+        })
+}
+
+fn metadata_like_values(value: &Value, pattern: &Value, binary: bool) -> bool {
+    let binary = binary || matches!(value, Value::Binary(_)) || matches!(pattern, Value::Binary(_));
+    let value = match value {
+        Value::Utf8(value) => Some(value.as_str()),
+        Value::Binary(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    let pattern = match pattern {
+        Value::Utf8(pattern) => Some(pattern.as_str()),
+        Value::Binary(pattern) => std::str::from_utf8(pattern).ok(),
+        _ => None,
+    };
+    value
+        .zip(pattern)
+        .is_some_and(|(value, pattern)| metadata_like(value, pattern, binary))
+}
+
+fn metadata_like(value: &str, pattern: &str, binary: bool) -> bool {
     #[derive(Clone, Copy)]
     enum Token {
         AnyMany,
@@ -1888,9 +1929,17 @@ fn metadata_like(value: &str, pattern: &str) -> bool {
         Literal(char),
     }
 
-    let value = value.to_lowercase().chars().collect::<Vec<_>>();
-    let lowercase_pattern = pattern.to_lowercase();
-    let mut pattern = lowercase_pattern.chars().peekable();
+    let value = if binary {
+        value.chars().collect::<Vec<_>>()
+    } else {
+        value.to_lowercase().chars().collect::<Vec<_>>()
+    };
+    let pattern = if binary {
+        pattern.to_owned()
+    } else {
+        pattern.to_lowercase()
+    };
+    let mut pattern = pattern.chars().peekable();
     let mut tokens = Vec::new();
     while let Some(character) = pattern.next() {
         match character {
@@ -2077,7 +2126,7 @@ fn apply_show_filter(
                 let Value::Utf8(value) = &row[0] else {
                     return false;
                 };
-                metadata_like(value, pattern)
+                metadata_like(value, pattern, false)
             })
             .collect(),
         ShowStatementFilter::Where(predicate) => {
@@ -2129,6 +2178,9 @@ fn describe_table(
             let fact = column_fact(database.name(), table.name(), column.name(), facts);
             let key = column_key(table, column.id(), fact);
             let extra = fact.map_or("", |fact| {
+                if !fact.extra.is_empty() {
+                    return fact.extra.as_str();
+                }
                 if fact.auto_increment {
                     "auto_increment"
                 } else if fact.generated_stored {
@@ -2281,12 +2333,32 @@ fn mysql_character_maximum_length(data_type: &str, column_type: &str) -> Option<
             .split_once('(')
             .and_then(|(_, rest)| rest.split_once(')'))
             .and_then(|(length, _)| length.trim().parse().ok()),
+        "enum" => mysql_enum_set_lengths(column_type)
+            .into_iter()
+            .max()
+            .map(|length| length as u64),
+        "set" => {
+            let lengths = mysql_enum_set_lengths(column_type);
+            let separators = lengths.len().saturating_sub(1);
+            (!lengths.is_empty()).then(|| (lengths.into_iter().sum::<usize>() + separators) as u64)
+        }
         "tinytext" | "tinyblob" => Some(255),
         "text" | "blob" => Some(65_535),
         "mediumtext" | "mediumblob" => Some(16_777_215),
         "longtext" | "longblob" => Some(4_294_967_295),
         _ => None,
     }
+}
+
+fn mysql_enum_set_lengths(column_type: &str) -> Vec<usize> {
+    let Some((_, values)) = column_type.split_once('(') else {
+        return Vec::new();
+    };
+    values
+        .trim_end_matches(')')
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').chars().count())
+        .collect()
 }
 
 fn mysql_charset_width(character_set: Option<&str>) -> u64 {
@@ -2318,7 +2390,6 @@ const fn numeric_scale(data_type: DataType) -> Option<u64> {
 const fn datetime_precision(data_type: DataType) -> Option<u64> {
     match data_type {
         DataType::DateTime64 { fsp } | DataType::Time64 { fsp } => Some(fsp as u64),
-        DataType::Date32 => Some(0),
         _ => None,
     }
 }
@@ -2484,6 +2555,7 @@ mod tests {
                     auto_increment: true,
                     generated_stored: false,
                     generation_expression: String::new(),
+                    extra: String::new(),
                     unique_single: false,
                     character_set: None,
                     collation: None,
@@ -2502,6 +2574,7 @@ mod tests {
                     auto_increment: false,
                     generated_stored: false,
                     generation_expression: String::new(),
+                    extra: String::new(),
                     unique_single: true,
                     character_set: Some("utf8mb4".to_owned()),
                     collation: Some("utf8mb4_0900_ai_ci".to_owned()),
@@ -2714,6 +2787,7 @@ mod tests {
         let mut default_facts = facts.clone();
         default_facts.columns[1].default_value = Some("CURRENT_TIMESTAMP".to_owned());
         default_facts.columns[1].default_generated = true;
+        default_facts.columns[1].extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP".to_owned();
         let columns = execute_metadata(
             &parse_statement("SHOW COLUMNS FROM Analytics.Events").expect("parse"),
             &catalog,
@@ -2723,8 +2797,19 @@ mod tests {
         .expect("show generated default");
         assert_eq!(
             columns.rows[1][5],
-            Value::Utf8("DEFAULT_GENERATED".to_owned())
+            Value::Utf8("DEFAULT_GENERATED on update CURRENT_TIMESTAMP".to_owned())
         );
+        let create = execute_metadata(
+            &parse_statement("SHOW CREATE TABLE Analytics.Events").expect("parse"),
+            &catalog,
+            None,
+            &default_facts,
+        )
+        .expect("show generated default DDL");
+        let Value::Utf8(ddl) = &create.rows[0][1] else {
+            panic!("DDL cell must be text");
+        };
+        assert!(ddl.contains("ON UPDATE CURRENT_TIMESTAMP"), "{ddl}");
 
         let mut generated_facts = facts.clone();
         generated_facts.columns[1].generated_stored = true;
@@ -2964,10 +3049,10 @@ mod tests {
 
     #[test]
     fn metadata_like_counts_unicode_characters_and_honors_escapes() {
-        assert!(super::metadata_like("é", "_"));
-        assert!(super::metadata_like("foo_bar", r"foo\_bar"));
-        assert!(super::metadata_like("foo%bar", r"foo\%bar"));
-        assert!(!super::metadata_like("fooxbar", r"foo\_bar"));
+        assert!(super::metadata_like("é", "_", false));
+        assert!(super::metadata_like("foo_bar", r"foo\_bar", false));
+        assert!(super::metadata_like("foo%bar", r"foo\%bar", false));
+        assert!(!super::metadata_like("fooxbar", r"foo\_bar", false));
     }
 
     #[test]
@@ -3312,6 +3397,31 @@ mod tests {
         .expect("binary metadata comparison");
         assert!(mismatched_case.rows.is_empty());
 
+        let binary_like = execute_metadata(
+            &parse_statement(
+                "SELECT table_name FROM information_schema.tables \
+                 WHERE BINARY table_name LIKE 'Events'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("binary metadata LIKE");
+        assert_eq!(binary_like.rows, [vec![Value::Utf8("Events".to_owned())]]);
+        let binary_like_mismatch = execute_metadata(
+            &parse_statement(
+                "SELECT table_name FROM information_schema.tables \
+                 WHERE BINARY table_name LIKE 'events'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &SourceFacts::default(),
+        )
+        .expect("binary metadata LIKE");
+        assert!(binary_like_mismatch.rows.is_empty());
+
         let upper = Value::Utf8("Z".to_owned());
         let lower = Value::Utf8("a".to_owned());
         assert_eq!(
@@ -3322,6 +3432,14 @@ mod tests {
             super::metadata_order(&upper, &lower, true),
             std::cmp::Ordering::Less
         );
+        assert!(super::metadata_rows_equal(
+            &[Value::Utf8("Events".to_owned())],
+            &[Value::Utf8("events".to_owned())]
+        ));
+        assert!(!super::metadata_rows_equal(
+            &[Value::Binary(b"Events".to_vec())],
+            &[Value::Binary(b"events".to_vec())]
+        ));
     }
 
     #[test]
@@ -3338,5 +3456,6 @@ mod tests {
             super::mysql_numeric_precision("mediumint", "mediumint unsigned", DataType::UInt32),
             Some(8)
         );
+        assert_eq!(super::datetime_precision(DataType::Date32), None);
     }
 }

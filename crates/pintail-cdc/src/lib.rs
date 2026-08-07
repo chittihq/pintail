@@ -2090,6 +2090,7 @@ mod tests {
                 collation: None,
                 generated_stored: false,
                 generation_expression: String::new(),
+                extra: String::new(),
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,

@@ -91,6 +91,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   declaration, preserving SMALLINT and MEDIUMINT widths after normalization.
 - The wire compatibility probe reports `lower_case_table_names=2`, matching
   Pintail's source-spelling-preserving, case-insensitive catalog lookup.
+- Metadata retains raw MySQL `EXTRA` text, including `ON UPDATE` clauses;
+  binary LIKE stays bytewise, while ordinary DISTINCT and GROUP BY use the
+  metadata relation's case-insensitive identifier collation.
 
 - Replica temporal policy is explicit and shared by snapshot and CDC: zero or
   invalid DATE/DATETIME values normalize to SQL NULL, `sql_mode` is retained
