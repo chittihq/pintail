@@ -1,7 +1,7 @@
-/// Differential query corpus: every statement runs on MySQL and on Pintail
-/// (`/api/query`) after each workload phase, and the normalized results must
-/// be identical. Queries stay inside the supported SQL surface documented in
-/// `docs/limitations.md`.
+/// Differential query corpus: every statement runs over the MySQL wire
+/// protocol on MySQL and Pintail after each workload phase, and the normalized
+/// results must be identical. Queries stay inside the supported SQL surface
+/// documented in `docs/limitations.md`.
 ///
 /// Every ORDER BY ends with a unique key so ordering is fully determined;
 /// the comparison is order-sensitive.
