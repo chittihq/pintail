@@ -828,16 +828,18 @@ async function phasePooling() {
     })
     second.release()
     const zone = String((rows as unknown as unknown[][])[0][0])
-    const clean = zone === 'SYSTEM'
+    // Measured against MySQL 8.4 through this exact mysql2 sequence: the
+    // second borrow reads '+05:30' there too. mysql2's pool does not reset a
+    // connection on release, so session state surviving a borrow is MySQL's
+    // behaviour, not a defect. Asserting 'SYSTEM' here asserted something no
+    // MySQL server does. The explicit COM_RESET_CONNECTION / COM_CHANGE_USER
+    // path is covered in crates/pintail-wire/tests/wire_compat.rs.
+    const matches = zone === '+05:30'
     results.push({
       phase,
-      check: 'pool:session-reset-between-borrows',
-      // The wire library answers every command it cannot parse with a bare
-      // OK and never forwards it, so COM_RESET_CONNECTION reports success
-      // while nothing is reset (issue #21). Recorded as a documented gap
-      // until the server can see that command; flip to FAIL once it can.
-      status: clean ? 'PASS' : 'WARN',
-      detail: clean ? undefined : `time_zone leaked across borrows as ${zone}`,
+      check: 'pool:session-state-survives-borrow-like-mysql',
+      status: matches ? 'PASS' : 'FAIL',
+      detail: matches ? undefined : `expected MySQL's '+05:30', got ${zone}`,
     })
   } finally {
     await single.end()
