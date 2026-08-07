@@ -69,6 +69,7 @@ const mysqlServerArgs = [
 const benchmarkFingerprint = createHash('sha256')
   .update(
     JSON.stringify({
+      schemaSql: readFileSync(join(benchmarkDir, 'schema.sql'), 'utf8'),
       seedSql: readFileSync(join(benchmarkDir, 'seed.sql'), 'utf8'),
       orderRows,
       engineLimits,
