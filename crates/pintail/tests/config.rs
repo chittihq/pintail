@@ -31,6 +31,8 @@ fn cli_and_environment_override_the_toml_configuration() {
         wire_bind: None,
         query_memory_limit_bytes: Some(268_435_456),
         spill_dir: None,
+        query_spill_limit_bytes: Some(536_870_912),
+        global_spill_limit_bytes: Some(1_073_741_824),
     };
     let environment = [(
         OsString::from("PINTAIL_HTTP_BIND"),
@@ -52,4 +54,6 @@ fn cli_and_environment_override_the_toml_configuration() {
             .expect("wire address")
     );
     assert_eq!(config.query_memory_limit_bytes(), 268_435_456);
+    assert_eq!(config.query_spill_limit_bytes(), 536_870_912);
+    assert_eq!(config.global_spill_limit_bytes(), 1_073_741_824);
 }

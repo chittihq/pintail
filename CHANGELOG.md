@@ -15,6 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Query spill now uses an isolated temporary directory per execution with
+  configurable per-query and process-wide disk ceilings. Prometheus exposes
+  active/written bytes, file count, and quota failures; `EXPLAIN ANALYZE`
+  reports the same counters for its query.
 - An experiment lab (`experiments/`) benchmarks contested engine designs as
   checksum-verified head-to-heads on both reference machines; verdicts and
   three literature results that failed to replicate are recorded in

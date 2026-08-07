@@ -160,8 +160,10 @@ worth refusing.
 - `DISTINCT` state, `GROUP_CONCAT`/`JSON_ARRAYAGG` aggregation, the
   single-column direct-path aggregation, and materialized query outputs do not
   spill and still fail at the memory ceiling. A grace-partitioned join errors
-  when one join key's own rows exceed the ceiling. Spill files carry no disk
-  quota.
+  when one join key's own rows exceed the ceiling. Spill is isolated per query
+  and bounded by `query.spill_limit_bytes` plus the process-wide
+  `global_spill_limit_bytes`; exhausting either limit fails the query before
+  the write crosses the ceiling.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
 - Aggregate pushdown removes only unreferenced predicate-free cross-join inputs

@@ -69,7 +69,14 @@ pub fn explain_analyze_statement(
     let physical = PhysicalPlanner::plan(logical)?;
     let mut execution = Execution::start(physical.clone(), provider, memory_limit)?;
     while execution.next_batch()?.is_some() {}
-    Ok(format_physical_plan_with_stats(&physical, provider))
+    let spill = execution.spill_metrics();
+    let mut output = format_physical_plan_with_stats(&physical, provider);
+    let _ = writeln!(
+        output,
+        "Spill files={} bytes={} active_bytes={} quota_failures={}",
+        spill.files, spill.written_bytes, spill.active_bytes, spill.quota_failures
+    );
+    Ok(output)
 }
 
 /// Produces a stable, indented physical-plan representation.

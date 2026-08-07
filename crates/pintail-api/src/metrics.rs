@@ -31,6 +31,7 @@ pub(crate) async fn metrics(State(state): State<ApiState>) -> Response {
 #[allow(clippy::too_many_lines)]
 fn render(state: &ApiState) -> anyhow::Result<String> {
     let runtime = state.runtime_metrics();
+    let spill = pintail_exec::spill::metrics();
     let metadata = state
         .metadata()
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -53,6 +54,30 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
         "pintail_query_duration_milliseconds_total",
         "Cumulative read-only query latency.",
         runtime.query_duration_ms,
+    );
+    counter(
+        &mut output,
+        "pintail_query_spill_bytes_total",
+        "Bytes written to query spill files.",
+        spill.written_bytes,
+    );
+    counter(
+        &mut output,
+        "pintail_query_spill_files_total",
+        "Query spill files created.",
+        spill.files,
+    );
+    counter(
+        &mut output,
+        "pintail_query_spill_quota_failures_total",
+        "Spill writes rejected by query or process disk quotas.",
+        spill.quota_failures,
+    );
+    gauge(
+        &mut output,
+        "pintail_query_spill_active_bytes",
+        "Bytes retained by live query spill files.",
+        spill.active_bytes,
     );
     counter(
         &mut output,

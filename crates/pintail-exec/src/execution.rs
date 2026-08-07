@@ -746,6 +746,7 @@ pub struct MemoryTracker {
     /// a shared `&MemoryTracker` (experiments/RESULTS.md e02: thread-local
     /// partial state + merge is the adopted parallel-aggregation shape).
     used: std::sync::atomic::AtomicUsize,
+    spill: spill::QuerySpill,
 }
 
 impl Clone for MemoryTracker {
@@ -753,6 +754,7 @@ impl Clone for MemoryTracker {
         Self {
             limit: self.limit,
             used: std::sync::atomic::AtomicUsize::new(self.used()),
+            spill: self.spill.clone(),
         }
     }
 }
@@ -768,10 +770,11 @@ impl Eq for MemoryTracker {}
 impl MemoryTracker {
     /// Constructs a tracker with a hard byte limit.
     #[must_use]
-    pub const fn new(limit: usize) -> Self {
+    pub fn new(limit: usize) -> Self {
         Self {
             limit,
             used: std::sync::atomic::AtomicUsize::new(0),
+            spill: spill::QuerySpill::new(),
         }
     }
 
@@ -791,6 +794,16 @@ impl MemoryTracker {
     #[must_use]
     pub fn remaining(&self) -> usize {
         self.limit.saturating_sub(self.used())
+    }
+
+    fn spill(&self) -> &spill::QuerySpill {
+        &self.spill
+    }
+
+    /// Returns query-local spill counters.
+    #[must_use]
+    pub fn spill_metrics(&self) -> spill::QuerySpillMetrics {
+        self.spill.metrics()
     }
 
     /// Reserves persistent operator memory.
@@ -998,6 +1011,12 @@ impl Execution {
     #[must_use]
     pub const fn memory(&self) -> &MemoryTracker {
         &self.memory
+    }
+
+    /// Returns disk-spill counters accumulated by this execution.
+    #[must_use]
+    pub fn spill_metrics(&self) -> spill::QuerySpillMetrics {
+        self.memory.spill_metrics()
     }
 }
 
@@ -2367,7 +2386,7 @@ fn build_hash_join_state(
         // drain the resident map into partition files and route the rest
         // of the build (and later the probe) through them.
         if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
-            let mut partitions = GraceJoin::create()?;
+            let mut partitions = GraceJoin::create(memory)?;
             for (key, bucket) in build.drain() {
                 let target = grace_partition(&key, 0);
                 for values in bucket {
@@ -2402,17 +2421,19 @@ const GRACE_PARTITIONS: usize = 16;
 struct GraceRun {
     writer: Option<std::io::BufWriter<std::fs::File>>,
     path: tempfile::TempPath,
+    reservation: spill::SpillReservation,
     entries: u64,
 }
 
 impl GraceRun {
-    fn create() -> Result<Self, ExecError> {
-        let file = spill::spill_file("pintail-join-spill-")
+    fn create(memory: &MemoryTracker) -> Result<Self, ExecError> {
+        let file = spill::spill_file("pintail-join-spill-", memory.spill())
             .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?;
-        let (file, path) = file.into_parts();
+        let (file, path, reservation) = file.into_parts();
         Ok(Self {
             writer: Some(std::io::BufWriter::new(file)),
             path,
+            reservation,
             entries: 0,
         })
     }
@@ -2425,7 +2446,7 @@ impl GraceRun {
         let mut encoder = spill::Encoder::with_capacity(64);
         encode_join_key(&mut encoder, key);
         encoder.values(row);
-        spill::write_record(writer, &encoder.finish())
+        spill::write_record_quota(writer, &encoder.finish(), &mut self.reservation)
             .map_err(|error| ExecError::Source(format!("join spill write: {error}")))?;
         self.entries += 1;
         Ok(())
@@ -2558,12 +2579,12 @@ struct GraceJoin {
 }
 
 impl GraceJoin {
-    fn create() -> Result<Self, ExecError> {
+    fn create(memory: &MemoryTracker) -> Result<Self, ExecError> {
         let mut build_files = Vec::with_capacity(GRACE_PARTITIONS);
         let mut probe_files = Vec::with_capacity(GRACE_PARTITIONS);
         for _ in 0..GRACE_PARTITIONS {
-            build_files.push(GraceRun::create()?);
-            probe_files.push(GraceRun::create()?);
+            build_files.push(GraceRun::create(memory)?);
+            probe_files.push(GraceRun::create(memory)?);
         }
         Ok(Self {
             build_files,
@@ -2584,7 +2605,11 @@ impl GraceJoin {
 /// unlucky becomes joinable. Rows sharing a single key follow each other
 /// into the same piece no matter the seed, which is why the depth bound
 /// exists to end the recursion.
-fn split_grace_partition(grace: &mut GraceJoin, index: usize) -> Result<(), ExecError> {
+fn split_grace_partition(
+    grace: &mut GraceJoin,
+    index: usize,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
     let depth = grace.depths[index];
     if depth >= MAX_GRACE_DEPTH {
         return Err(ExecError::Source(
@@ -2595,20 +2620,20 @@ fn split_grace_partition(grace: &mut GraceJoin, index: usize) -> Result<(), Exec
     }
     let first = grace.build_files.len();
     for _ in 0..GRACE_PARTITIONS {
-        grace.build_files.push(GraceRun::create()?);
-        grace.probe_files.push(GraceRun::create()?);
+        grace.build_files.push(GraceRun::create(memory)?);
+        grace.probe_files.push(GraceRun::create(memory)?);
         grace.depths.push(depth + 1);
     }
     let seed = u64::try_from(depth).unwrap_or(0).saturating_add(1);
     // Move each source file out so its replacement can be written to while
     // the original is read; the emptied slot is never served again.
-    let mut build = std::mem::replace(&mut grace.build_files[index], GraceRun::create()?);
+    let mut build = std::mem::replace(&mut grace.build_files[index], GraceRun::create(memory)?);
     let mut entries = build.reader()?;
     while let Some((key, values)) = entries.next_entry()? {
         let target = first + grace_partition(&key, seed);
         grace.build_files[target].append(&key, &values)?;
     }
-    let mut probe = std::mem::replace(&mut grace.probe_files[index], GraceRun::create()?);
+    let mut probe = std::mem::replace(&mut grace.probe_files[index], GraceRun::create(memory)?);
     let mut entries = probe.reader()?;
     while let Some((key, values)) = entries.next_entry()? {
         let target = first + grace_partition(&key, seed);
@@ -2873,7 +2898,7 @@ fn next_grace_join_batch(
                 drop(entries);
                 state.build.clear();
                 memory.release(memory.used().saturating_sub(used_before));
-                split_grace_partition(grace, index)?;
+                split_grace_partition(grace, index, memory)?;
                 continue;
             }
             grace.partition_reserved = memory.used().saturating_sub(used_before);
@@ -5117,7 +5142,7 @@ fn build_buffered_hash_aggregate(
                         {
                             groups_reserved = groups_reserved
                                 .saturating_add(memory.used().saturating_sub(used_before_merge));
-                            spill_runs.push(write_aggregate_spill_run(&mut groups)?);
+                            spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
                             memory.release(groups_reserved);
                             groups_reserved = 0;
                             used_before_merge = memory.used();
@@ -5136,7 +5161,7 @@ fn build_buffered_hash_aggregate(
         // headroom, so a group map that hoards the budget until hard
         // failure starves them.
         if groups_reserved > memory.limit() / 2 && !groups.is_empty() {
-            spill_runs.push(write_aggregate_spill_run(&mut groups)?);
+            spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
             memory.release(groups_reserved);
             groups_reserved = 0;
         }
@@ -5222,7 +5247,7 @@ fn reserve_or_spill_groups(
     match memory.reserve(bytes) {
         Ok(()) => Ok(()),
         Err(ExecError::MemoryLimitExceeded { .. }) if !groups.is_empty() => {
-            spill_runs.push(write_aggregate_spill_run(groups)?);
+            spill_runs.push(write_aggregate_spill_run(groups, memory)?);
             memory.release(*groups_reserved);
             *groups_reserved = 0;
             memory.reserve(bytes)
@@ -5237,6 +5262,7 @@ struct AggregateSpillRun {
     reader: std::io::BufReader<std::fs::File>,
     payload: Vec<u8>,
     _path: tempfile::TempPath,
+    _reservation: spill::SpillReservation,
 }
 
 struct SpilledGroupEntry {
@@ -5416,6 +5442,7 @@ fn revive_aggregate_state(
 /// Drains the live group map into one sorted on-disk run.
 fn write_aggregate_spill_run(
     groups: &mut HashMap<Vec<Value>, AggregateGroup>,
+    memory: &MemoryTracker,
 ) -> Result<AggregateSpillRun, ExecError> {
     let mut entries = groups
         .drain()
@@ -5434,9 +5461,9 @@ fn write_aggregate_spill_run(
         })
         .collect::<Result<Vec<_>, ExecError>>()?;
     entries.sort_unstable_by(|left, right| left.key.cmp(&right.key));
-    let file = spill::spill_file("pintail-aggregate-spill-")
+    let file = spill::spill_file("pintail-aggregate-spill-", memory.spill())
         .map_err(|error| ExecError::Source(format!("aggregate spill create: {error}")))?;
-    let (file, path) = file.into_parts();
+    let (file, path, mut reservation) = file.into_parts();
     let mut writer = std::io::BufWriter::new(file);
     for entry in entries {
         let mut encoder = spill::Encoder::with_capacity(entry.key.len() + 64);
@@ -5446,7 +5473,7 @@ fn write_aggregate_spill_run(
         for state in &entry.states {
             encode_aggregate_state(&mut encoder, state);
         }
-        spill::write_record(&mut writer, &encoder.finish())
+        spill::write_record_quota(&mut writer, &encoder.finish(), &mut reservation)
             .map_err(|error| ExecError::Source(format!("aggregate spill write: {error}")))?;
     }
     let mut file = writer
@@ -5458,6 +5485,7 @@ fn write_aggregate_spill_run(
         reader: std::io::BufReader::new(file),
         payload: Vec::new(),
         _path: path,
+        _reservation: reservation,
     })
 }
 
@@ -5630,7 +5658,7 @@ fn merge_spilled_aggregate_groups(
     memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {
     if !groups.is_empty() {
-        runs.push(write_aggregate_spill_run(&mut groups)?);
+        runs.push(write_aggregate_spill_run(&mut groups, memory)?);
     }
     let mut heads = Vec::with_capacity(runs.len());
     for run in &mut runs {
@@ -9395,7 +9423,7 @@ fn build_sort(
         return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
     }
     let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to)?;
-    merge.push_final_run(&rows)?;
+    merge.push_final_run(&rows, memory)?;
     Ok(SortedRows::Spilled(merge))
 }
 
@@ -9421,7 +9449,7 @@ fn materialize_with_spill(
             Ok(reserved) => vector_reserved = vector_reserved.saturating_add(reserved),
             Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
                 rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
-                runs.push(SpilledRun::write(&rows)?);
+                runs.push(SpilledRun::write(&rows, memory)?);
                 rows = Vec::new();
                 memory.release(retained.saturating_add(vector_reserved));
                 retained = 0;
@@ -9446,7 +9474,7 @@ fn materialize_with_spill(
                     // releasing both the row payloads and the vector's
                     // capacity reservation frees the sort's whole footprint.
                     rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
-                    runs.push(SpilledRun::write(&rows)?);
+                    runs.push(SpilledRun::write(&rows, memory)?);
                     rows = Vec::new();
                     memory.release(retained.saturating_add(vector_reserved));
                     retained = 0;
@@ -9471,7 +9499,7 @@ fn materialize_with_spill(
             // that hoards the budget until hard failure starves the scan.
             if retained.saturating_add(vector_reserved) > memory.limit() / 2 && rows.len() > 1 {
                 rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
-                runs.push(SpilledRun::write(&rows)?);
+                runs.push(SpilledRun::write(&rows, memory)?);
                 rows = Vec::new();
                 memory.release(retained.saturating_add(vector_reserved));
                 retained = 0;
@@ -9488,19 +9516,20 @@ struct SpilledRun {
     reader: std::io::BufReader<std::fs::File>,
     payload: Vec<u8>,
     _path: tempfile::TempPath,
+    _reservation: spill::SpillReservation,
 }
 
 impl SpilledRun {
-    fn write(rows: &[Vec<Value>]) -> Result<Self, ExecError> {
-        let file = spill::spill_file("pintail-sort-spill-")
+    fn write(rows: &[Vec<Value>], memory: &MemoryTracker) -> Result<Self, ExecError> {
+        let file = spill::spill_file("pintail-sort-spill-", memory.spill())
             .map_err(|error| ExecError::Source(format!("sort spill create: {error}")))?;
-        let (file, path) = file.into_parts();
+        let (file, path, mut reservation) = file.into_parts();
         let mut writer = std::io::BufWriter::new(file);
         let mut encoder = spill::Encoder::new();
         for row in rows {
             encoder.values(row);
             let payload = std::mem::replace(&mut encoder, spill::Encoder::new()).finish();
-            spill::write_record(&mut writer, &payload)
+            spill::write_record_quota(&mut writer, &payload, &mut reservation)
                 .map_err(|error| ExecError::Source(format!("sort spill write: {error}")))?;
         }
         let mut file = writer
@@ -9512,6 +9541,7 @@ impl SpilledRun {
             reader: std::io::BufReader::new(file),
             payload: Vec::new(),
             _path: path,
+            _reservation: reservation,
         })
     }
 
@@ -9556,11 +9586,15 @@ impl SpilledMerge {
         Ok(merge)
     }
 
-    fn push_final_run(&mut self, rows: &[Vec<Value>]) -> Result<(), ExecError> {
+    fn push_final_run(
+        &mut self,
+        rows: &[Vec<Value>],
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut run = SpilledRun::write(rows)?;
+        let mut run = SpilledRun::write(rows, memory)?;
         let head = run.next_row()?;
         self.runs.push(run);
         self.heads.push(head);
@@ -10442,8 +10476,11 @@ mod tests {
 
     #[test]
     fn splitting_an_oversized_partition_keeps_every_row_and_spreads_the_keys() {
-        use super::{GRACE_PARTITIONS, GraceJoin, JoinHashKey, split_grace_partition};
-        let mut grace = GraceJoin::create().expect("grace state");
+        use super::{
+            GRACE_PARTITIONS, GraceJoin, JoinHashKey, MemoryTracker, split_grace_partition,
+        };
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut grace = GraceJoin::create(&memory).expect("grace state");
         let ids = (0..500_u64).collect::<Vec<_>>();
         for id in &ids {
             let key = JoinHashKey::NonNegativeInteger(*id);
@@ -10452,7 +10489,7 @@ mod tests {
             grace.probe_files[0].append(&key, &row).expect("probe");
         }
 
-        split_grace_partition(&mut grace, 0).expect("split");
+        split_grace_partition(&mut grace, 0, &memory).expect("split");
         assert_eq!(grace.build_files.len(), GRACE_PARTITIONS * 2);
         assert_eq!(grace.depths[GRACE_PARTITIONS], 1);
 
@@ -10472,10 +10509,11 @@ mod tests {
 
     #[test]
     fn a_single_key_that_never_fits_reports_skew_at_the_depth_bound() {
-        use super::{ExecError, GraceJoin, MAX_GRACE_DEPTH, split_grace_partition};
-        let mut grace = GraceJoin::create().expect("grace state");
+        use super::{ExecError, GraceJoin, MAX_GRACE_DEPTH, MemoryTracker, split_grace_partition};
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut grace = GraceJoin::create(&memory).expect("grace state");
         grace.depths[0] = MAX_GRACE_DEPTH;
-        let error = split_grace_partition(&mut grace, 0).expect_err("depth bound");
+        let error = split_grace_partition(&mut grace, 0, &memory).expect_err("depth bound");
         let ExecError::Source(message) = error else {
             panic!("expected a source error at the depth bound");
         };

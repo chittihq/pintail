@@ -34,17 +34,20 @@ async fn main() -> Result<()> {
     // temp directory the container gives us. Prove the location works now:
     // a query that spills only to discover an unwritable directory has
     // already done all of its work.
-    pintail_exec::spill::set_spill_directory(config.spill_dir().to_path_buf()).with_context(
-        || {
-            format!(
-                "failed to prepare spill directory {}",
-                config.spill_dir().display()
-            )
-        },
-    )?;
+    pintail_exec::spill::configure_spill(
+        config.spill_dir().to_path_buf(),
+        config.query_spill_limit_bytes(),
+        config.global_spill_limit_bytes(),
+    )
+    .with_context(|| {
+        format!(
+            "failed to prepare spill directory {}",
+            config.spill_dir().display()
+        )
+    })?;
     match pintail_exec::spill::reclaim_orphaned_spill(config.spill_dir()) {
         Ok(0) => {}
-        Ok(count) => eprintln!("reclaimed {count} spill files from a previous run"),
+        Ok(count) => eprintln!("reclaimed {count} spill paths from a previous run"),
         Err(error) => eprintln!("could not reclaim old spill files: {error}"),
     }
 

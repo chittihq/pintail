@@ -7,7 +7,14 @@
 //! tagged encoding instead. The format is private to one query's temporary
 //! files: nothing persists it, and no reader outside this process sees it.
 
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use pintail_types::{Float64, Value};
 
@@ -330,7 +337,110 @@ mod tests {
 /// is the root filesystem rather than the volume mounted for data. Every
 /// spill path routes through [`spill_file`] so a deployment that mounts a
 /// data volume gets its spill on that volume without extra configuration.
-static SPILL_DIRECTORY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+const DEFAULT_QUERY_SPILL_LIMIT: u64 = 1024 * 1024 * 1024;
+const DEFAULT_GLOBAL_SPILL_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
+
+#[derive(Clone)]
+struct SpillConfiguration {
+    directory: PathBuf,
+    query_limit: u64,
+    global_limit: u64,
+}
+
+static SPILL_CONFIGURATION: OnceLock<SpillConfiguration> = OnceLock::new();
+static GLOBAL_ACTIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_WRITTEN_BYTES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_FILES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_QUOTA_FAILURES: AtomicU64 = AtomicU64::new(0);
+
+/// Process-wide spill counters suitable for metrics export.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SpillMetrics {
+    /// Bytes currently retained by live spill files.
+    pub active_bytes: u64,
+    /// Bytes written since process start, including files already removed.
+    pub written_bytes: u64,
+    /// Spill files created since process start.
+    pub files: u64,
+    /// Writes rejected by a query or process disk ceiling.
+    pub quota_failures: u64,
+}
+
+/// Returns process-wide spill counters.
+#[must_use]
+pub fn metrics() -> SpillMetrics {
+    SpillMetrics {
+        active_bytes: GLOBAL_ACTIVE_BYTES.load(Ordering::Relaxed),
+        written_bytes: GLOBAL_WRITTEN_BYTES.load(Ordering::Relaxed),
+        files: GLOBAL_FILES.load(Ordering::Relaxed),
+        quota_failures: GLOBAL_QUOTA_FAILURES.load(Ordering::Relaxed),
+    }
+}
+
+/// Query-scoped spill counters included by `EXPLAIN ANALYZE`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct QuerySpillMetrics {
+    /// Bytes currently retained by this query.
+    pub active_bytes: u64,
+    /// Bytes written by this query, including files already removed.
+    pub written_bytes: u64,
+    /// Spill files created by this query.
+    pub files: u64,
+    /// Writes rejected by this query's or the process disk ceiling.
+    pub quota_failures: u64,
+}
+
+struct QuerySpillInner {
+    directory: Mutex<Option<tempfile::TempDir>>,
+    query_limit: u64,
+    active_bytes: AtomicU64,
+    written_bytes: AtomicU64,
+    files: AtomicU64,
+    quota_failures: AtomicU64,
+}
+
+/// One isolated spill scope shared by every operator in a query.
+#[derive(Clone)]
+pub(crate) struct QuerySpill {
+    inner: Arc<QuerySpillInner>,
+}
+
+impl QuerySpill {
+    pub(crate) fn new() -> Self {
+        Self::with_limit(configuration().query_limit)
+    }
+
+    fn with_limit(query_limit: u64) -> Self {
+        Self {
+            inner: Arc::new(QuerySpillInner {
+                directory: Mutex::new(None),
+                query_limit,
+                active_bytes: AtomicU64::new(0),
+                written_bytes: AtomicU64::new(0),
+                files: AtomicU64::new(0),
+                quota_failures: AtomicU64::new(0),
+            }),
+        }
+    }
+
+    pub(crate) fn metrics(&self) -> QuerySpillMetrics {
+        QuerySpillMetrics {
+            active_bytes: self.inner.active_bytes.load(Ordering::Relaxed),
+            written_bytes: self.inner.written_bytes.load(Ordering::Relaxed),
+            files: self.inner.files.load(Ordering::Relaxed),
+            quota_failures: self.inner.quota_failures.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl std::fmt::Debug for QuerySpill {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QuerySpill")
+            .field("metrics", &self.metrics())
+            .finish_non_exhaustive()
+    }
+}
 
 /// Sets the directory spill files are created in. Called once during
 /// startup; later calls are ignored so a running process cannot have spill
@@ -340,14 +450,43 @@ static SPILL_DIRECTORY: std::sync::OnceLock<std::path::PathBuf> = std::sync::Onc
 ///
 /// Returns an error when the directory cannot be created or written to, so
 /// an unusable location fails at startup rather than mid-query.
-pub fn set_spill_directory(directory: std::path::PathBuf) -> std::io::Result<()> {
+pub fn set_spill_directory(directory: PathBuf) -> std::io::Result<()> {
+    configure_spill(
+        directory,
+        DEFAULT_QUERY_SPILL_LIMIT,
+        DEFAULT_GLOBAL_SPILL_LIMIT,
+    )
+}
+
+/// Configures the spill directory and hard per-query and process disk limits.
+/// The first successful call wins for the lifetime of the process.
+///
+/// # Errors
+///
+/// Returns an error when a limit is zero or the directory cannot be created
+/// and written.
+pub fn configure_spill(
+    directory: PathBuf,
+    query_limit: u64,
+    global_limit: u64,
+) -> std::io::Result<()> {
+    if query_limit == 0 || global_limit == 0 || query_limit > global_limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "spill disk limits must be positive and the query limit cannot exceed the global limit",
+        ));
+    }
     std::fs::create_dir_all(&directory)?;
     // Prove writability now: discovering it at spill time means failing a
     // query that had already done all of its work.
     tempfile::Builder::new()
         .prefix("pintail-spill-probe-")
         .tempfile_in(&directory)?;
-    let _ = SPILL_DIRECTORY.set(directory);
+    let _ = SPILL_CONFIGURATION.set(SpillConfiguration {
+        directory,
+        query_limit,
+        global_limit,
+    });
     Ok(())
 }
 
@@ -361,37 +500,168 @@ pub fn set_spill_directory(directory: std::path::PathBuf) -> std::io::Result<()>
 /// Returns an error when the directory cannot be listed. A file that resists
 /// removal is skipped rather than failing the sweep, so one stuck leftover
 /// cannot stop a process from starting.
-pub fn reclaim_orphaned_spill(directory: &std::path::Path) -> std::io::Result<usize> {
+pub fn reclaim_orphaned_spill(directory: &Path) -> std::io::Result<usize> {
     let mut removed = 0;
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
-        if entry
+        let ours = entry
             .file_name()
             .to_str()
-            .is_some_and(|name| name.starts_with("pintail-"))
-            && entry.file_type().is_ok_and(|kind| kind.is_file())
-            && std::fs::remove_file(entry.path()).is_ok()
-        {
+            .is_some_and(|name| name.starts_with("pintail-"));
+        if !ours {
+            continue;
+        }
+        let kind = entry.file_type()?;
+        let result = if kind.is_dir() {
+            std::fs::remove_dir_all(entry.path())
+        } else if kind.is_file() {
+            std::fs::remove_file(entry.path())
+        } else {
+            continue;
+        };
+        if result.is_ok() {
             removed += 1;
         }
     }
     Ok(removed)
 }
 
-/// Creates one spill file in the configured directory, falling back to the
-/// system temp directory when startup never set one (tests, embedded use).
-pub(crate) fn spill_file(prefix: &str) -> std::io::Result<tempfile::NamedTempFile> {
-    let builder = &mut tempfile::Builder::new();
-    let builder = builder.prefix(prefix);
-    match SPILL_DIRECTORY.get() {
-        Some(directory) => builder.tempfile_in(directory),
-        None => builder.tempfile(),
+/// Reservation held for the lifetime of one spill file.
+pub(crate) struct SpillReservation {
+    query: Arc<QuerySpillInner>,
+    bytes: u64,
+}
+
+impl SpillReservation {
+    fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
+        let configuration = configuration();
+        if reserve_counter(&self.query.active_bytes, bytes, self.query.query_limit).is_err() {
+            self.record_quota_failure();
+            return Err(quota_error("query spill disk quota exceeded"));
+        }
+        if reserve_counter(&GLOBAL_ACTIVE_BYTES, bytes, configuration.global_limit).is_err() {
+            self.query.active_bytes.fetch_sub(bytes, Ordering::Relaxed);
+            self.record_quota_failure();
+            return Err(quota_error("global spill disk quota exceeded"));
+        }
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.query.written_bytes.fetch_add(bytes, Ordering::Relaxed);
+        GLOBAL_WRITTEN_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        Ok(())
     }
+
+    fn release(&mut self, bytes: u64) {
+        let bytes = bytes.min(self.bytes);
+        self.bytes -= bytes;
+        self.query.active_bytes.fetch_sub(bytes, Ordering::Relaxed);
+        GLOBAL_ACTIVE_BYTES.fetch_sub(bytes, Ordering::Relaxed);
+    }
+
+    fn record_quota_failure(&self) {
+        self.query.quota_failures.fetch_add(1, Ordering::Relaxed);
+        GLOBAL_QUOTA_FAILURES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl Drop for SpillReservation {
+    fn drop(&mut self) {
+        self.release(self.bytes);
+    }
+}
+
+fn reserve_counter(counter: &AtomicU64, bytes: u64, limit: u64) -> Result<(), ()> {
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            let requested = used.checked_add(bytes)?;
+            (requested <= limit).then_some(requested)
+        })
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
+fn quota_error(message: &'static str) -> std::io::Error {
+    std::io::Error::other(message)
+}
+
+fn configuration() -> SpillConfiguration {
+    SPILL_CONFIGURATION
+        .get()
+        .cloned()
+        .unwrap_or_else(|| SpillConfiguration {
+            directory: std::env::temp_dir(),
+            query_limit: DEFAULT_QUERY_SPILL_LIMIT,
+            global_limit: DEFAULT_GLOBAL_SPILL_LIMIT,
+        })
+}
+
+/// One self-deleting query spill file and its quota reservation.
+pub(crate) struct SpillFile {
+    file: tempfile::NamedTempFile,
+    reservation: SpillReservation,
+}
+
+impl SpillFile {
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> &Path {
+        self.file.path()
+    }
+
+    pub(crate) fn into_parts(self) -> (std::fs::File, tempfile::TempPath, SpillReservation) {
+        let (file, path) = self.file.into_parts();
+        (file, path, self.reservation)
+    }
+}
+
+/// Creates one spill file inside the query's isolated temporary directory.
+pub(crate) fn spill_file(prefix: &str, query: &QuerySpill) -> std::io::Result<SpillFile> {
+    let mut directory = query
+        .inner
+        .directory
+        .lock()
+        .map_err(|_| std::io::Error::other("query spill directory lock poisoned"))?;
+    if directory.is_none() {
+        *directory = Some(
+            tempfile::Builder::new()
+                .prefix("pintail-query-spill-")
+                .tempdir_in(configuration().directory)?,
+        );
+    }
+    let file = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempfile_in(directory.as_ref().expect("initialized above").path())?;
+    query.inner.files.fetch_add(1, Ordering::Relaxed);
+    GLOBAL_FILES.fetch_add(1, Ordering::Relaxed);
+    Ok(SpillFile {
+        file,
+        reservation: SpillReservation {
+            query: Arc::clone(&query.inner),
+            bytes: 0,
+        },
+    })
+}
+
+/// Writes one record after reserving its exact framed size against disk
+/// quotas. A failed write releases the reservation; the partial temporary file
+/// is still self-deleting.
+pub(crate) fn write_record_quota(
+    writer: &mut impl Write,
+    payload: &[u8],
+    reservation: &mut SpillReservation,
+) -> std::io::Result<()> {
+    let bytes = u64::try_from(payload.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(4);
+    reservation.reserve(bytes)?;
+    if let Err(error) = write_record(writer, payload) {
+        reservation.release(bytes);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod directory_tests {
-    use super::{reclaim_orphaned_spill, spill_file};
+    use super::{QuerySpill, reclaim_orphaned_spill, spill_file};
 
     /// The three operators that spill — sort runs, aggregation runs and
     /// grace-join partitions — all reach disk through `spill_file`, so
@@ -408,18 +678,23 @@ mod directory_tests {
         // test, dependent on which test happened to run first.
         let directory = tempfile::tempdir().expect("tempdir").keep();
         super::set_spill_directory(directory.clone()).expect("configure");
+        let query = QuerySpill::new();
+        let mut query_directory = None;
 
         for prefix in [
             "pintail-sort-spill-",
             "pintail-aggregate-spill-",
             "pintail-join-spill-",
         ] {
-            let file = spill_file(prefix).expect("spill file");
+            let file = spill_file(prefix, &query).expect("spill file");
+            let parent = file.path().parent().expect("query directory");
+            query_directory.get_or_insert_with(|| parent.to_path_buf());
             assert_eq!(
-                file.path().parent(),
+                parent.parent(),
                 Some(directory.as_path()),
                 "{prefix} must not fall back to the system temp directory"
             );
+            assert_eq!(Some(parent), query_directory.as_deref());
         }
     }
 
@@ -462,23 +737,86 @@ mod directory_tests {
 
     #[test]
     fn an_unset_directory_still_produces_a_usable_file() {
-        let file = spill_file("pintail-sort-spill-").expect("fallback spill file");
+        let query = QuerySpill::new();
+        let file = spill_file("pintail-sort-spill-", &query).expect("fallback spill file");
         assert!(file.path().exists());
+    }
+
+    #[test]
+    fn query_directories_are_isolated_and_removed_with_the_query() {
+        let first = QuerySpill::new();
+        let second = QuerySpill::new();
+        let first_file = spill_file("pintail-sort-spill-", &first).expect("first spill");
+        let second_file = spill_file("pintail-sort-spill-", &second).expect("second spill");
+        let first_directory = first_file
+            .path()
+            .parent()
+            .expect("first query dir")
+            .to_path_buf();
+        let second_directory = second_file
+            .path()
+            .parent()
+            .expect("second query dir")
+            .to_path_buf();
+        assert_ne!(first_directory, second_directory);
+        drop(first_file);
+        assert!(first_directory.exists(), "query owns its directory");
+        drop(first);
+        assert!(
+            !first_directory.exists(),
+            "query drop removes its directory"
+        );
+        assert!(second_directory.exists(), "other query remains isolated");
     }
 
     #[test]
     fn reclaim_removes_only_our_leftovers() {
         let directory = tempfile::tempdir().expect("tempdir");
         let ours = directory.path().join("pintail-join-spill-abc");
+        let our_query = directory.path().join("pintail-query-spill-abc");
         let theirs = directory.path().join("someone-elses.db");
         std::fs::write(&ours, b"stale").expect("write ours");
+        std::fs::create_dir(&our_query).expect("query directory");
+        std::fs::write(our_query.join("run"), b"stale").expect("write query spill");
         std::fs::write(&theirs, b"keep").expect("write theirs");
 
         assert_eq!(
             reclaim_orphaned_spill(directory.path()).expect("reclaim"),
-            1
+            2
         );
         assert!(!ours.exists(), "a stale spill file must be removed");
+        assert!(
+            !our_query.exists(),
+            "a stale query directory must be removed"
+        );
         assert!(theirs.exists(), "unrelated files must survive");
+    }
+
+    #[test]
+    fn byte_counter_refuses_a_reservation_past_its_limit() {
+        let counter = std::sync::atomic::AtomicU64::new(7);
+        super::reserve_counter(&counter, 3, 10).expect("exact limit");
+        assert!(super::reserve_counter(&counter, 1, 10).is_err());
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 10);
+    }
+
+    #[test]
+    fn framed_writes_fail_before_crossing_the_query_quota() {
+        let query = QuerySpill::with_limit(8);
+        let mut reservation = super::SpillReservation {
+            query: std::sync::Arc::clone(&query.inner),
+            bytes: 0,
+        };
+        let mut output = Vec::new();
+        super::write_record_quota(&mut output, &[1, 2, 3, 4], &mut reservation)
+            .expect("four-byte header plus payload fits exactly");
+        let error = super::write_record_quota(&mut output, &[], &mut reservation)
+            .expect_err("the next frame must exceed the query quota");
+        assert!(error.to_string().contains("query spill disk quota"));
+        assert_eq!(query.metrics().active_bytes, 8);
+        assert_eq!(query.metrics().written_bytes, 8);
+        assert_eq!(query.metrics().quota_failures, 1);
+        drop(reservation);
+        assert_eq!(query.metrics().active_bytes, 0);
     }
 }

@@ -291,6 +291,10 @@ async fn metrics_expose_prometheus_runtime_storage_and_control_plane_facts() {
     let metrics = String::from_utf8(body.to_vec()).expect("UTF-8 metrics");
     for required in [
         "pintail_queries_total 0",
+        "pintail_query_spill_bytes_total 0",
+        "pintail_query_spill_files_total 0",
+        "pintail_query_spill_quota_failures_total 0",
+        "pintail_query_spill_active_bytes 0",
         "pintail_replication_cycles_total 0",
         "pintail_replication_lag_seconds",
         "pintail_compaction_debt_segments",

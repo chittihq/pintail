@@ -2540,6 +2540,7 @@ mod tests {
         .expect("analyze");
         assert!(explanation.contains("actual_segments=1/2"));
         assert!(explanation.contains("actual_blocks=1/2"));
+        assert!(explanation.contains("Spill files=0 bytes=0 active_bytes=0"));
     }
 
     #[test]

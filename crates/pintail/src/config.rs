@@ -20,6 +20,8 @@ const DEFAULT_DATA_DIR: &str = "./data";
 /// directory instead — `tempfile`'s default — silently writes query spill to
 /// the container's root filesystem rather than the provisioned volume.
 const DEFAULT_SPILL_SUBDIRECTORY: &str = "spill";
+const DEFAULT_QUERY_SPILL_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
+const DEFAULT_GLOBAL_SPILL_LIMIT_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const DEFAULT_HTTP_PORT: u16 = 8080;
 const DEFAULT_WIRE_PORT: u16 = 3306;
 
@@ -50,6 +52,14 @@ pub struct Cli {
     /// Directory for query spill files. Defaults to `<data-dir>/spill`.
     #[arg(long)]
     pub spill_dir: Option<PathBuf>,
+
+    /// Hard disk ceiling for spill files retained by one query.
+    #[arg(long)]
+    pub query_spill_limit_bytes: Option<u64>,
+
+    /// Hard disk ceiling shared by all concurrently spilling queries.
+    #[arg(long)]
+    pub global_spill_limit_bytes: Option<u64>,
 }
 
 /// Effective process configuration after all sources have been merged.
@@ -60,6 +70,8 @@ pub struct AppConfig {
     http_bind: SocketAddr,
     wire_bind: SocketAddr,
     query_memory_limit_bytes: usize,
+    query_spill_limit_bytes: u64,
+    global_spill_limit_bytes: u64,
     wire_tls_certificate: Option<PathBuf>,
     wire_tls_key: Option<PathBuf>,
     wire_require_tls: bool,
@@ -181,6 +193,42 @@ impl AppConfig {
         if query_memory_limit_bytes == 0 {
             bail!("query memory limit must be greater than zero");
         }
+        let environment_query_spill_limit = environment
+            .get(&OsString::from("PINTAIL_QUERY_SPILL_LIMIT_BYTES"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_QUERY_SPILL_LIMIT_BYTES must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_QUERY_SPILL_LIMIT_BYTES must be a positive integer")
+            })
+            .transpose()?;
+        let query_spill_limit_bytes = cli
+            .query_spill_limit_bytes
+            .or(environment_query_spill_limit)
+            .or(file.query.spill_limit_bytes)
+            .unwrap_or(DEFAULT_QUERY_SPILL_LIMIT_BYTES);
+        let environment_global_spill_limit = environment
+            .get(&OsString::from("PINTAIL_GLOBAL_SPILL_LIMIT_BYTES"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_GLOBAL_SPILL_LIMIT_BYTES must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_GLOBAL_SPILL_LIMIT_BYTES must be a positive integer")
+            })
+            .transpose()?;
+        let global_spill_limit_bytes = cli
+            .global_spill_limit_bytes
+            .or(environment_global_spill_limit)
+            .or(file.global_spill_limit_bytes)
+            .unwrap_or(DEFAULT_GLOBAL_SPILL_LIMIT_BYTES);
+        if query_spill_limit_bytes == 0 || global_spill_limit_bytes == 0 {
+            bail!("spill disk limits must be greater than zero");
+        }
+        if query_spill_limit_bytes > global_spill_limit_bytes {
+            bail!("query spill disk limit cannot exceed the global spill disk limit");
+        }
 
         let read_env_path = |key: &str| -> Result<Option<PathBuf>> {
             environment
@@ -220,6 +268,8 @@ impl AppConfig {
             http_bind,
             wire_bind,
             query_memory_limit_bytes,
+            query_spill_limit_bytes,
+            global_spill_limit_bytes,
             wire_tls_certificate,
             wire_tls_key,
             wire_require_tls,
@@ -266,6 +316,18 @@ impl AppConfig {
     pub fn spill_dir(&self) -> &Path {
         &self.spill_dir
     }
+
+    /// Hard disk ceiling for spill retained by one query.
+    #[must_use]
+    pub const fn query_spill_limit_bytes(&self) -> u64 {
+        self.query_spill_limit_bytes
+    }
+
+    /// Hard disk ceiling shared by all live query spill.
+    #[must_use]
+    pub const fn global_spill_limit_bytes(&self) -> u64 {
+        self.global_spill_limit_bytes
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -273,6 +335,7 @@ impl AppConfig {
 struct FileConfig {
     data_dir: Option<PathBuf>,
     spill_dir: Option<PathBuf>,
+    global_spill_limit_bytes: Option<u64>,
     http: FileHttpConfig,
     wire: FileWireConfig,
     query: FileQueryConfig,
@@ -297,6 +360,7 @@ struct FileWireConfig {
 #[serde(default, deny_unknown_fields)]
 struct FileQueryConfig {
     memory_limit_bytes: Option<usize>,
+    spill_limit_bytes: Option<u64>,
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -344,6 +408,8 @@ mod tests {
             wire_bind: None,
             query_memory_limit_bytes: None,
             spill_dir: None,
+            query_spill_limit_bytes: None,
+            global_spill_limit_bytes: None,
         }
     }
 
@@ -374,5 +440,36 @@ mod tests {
         )
         .expect_err("zero limit");
         assert!(error.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn spill_limits_default_and_accept_environment_overrides() {
+        let default = AppConfig::load_from(&cli(), []).expect("default config");
+        assert_eq!(default.query_spill_limit_bytes(), 1_073_741_824);
+        assert_eq!(default.global_spill_limit_bytes(), 8_589_934_592);
+
+        let configured = AppConfig::load_from(
+            &cli(),
+            [
+                ("PINTAIL_QUERY_SPILL_LIMIT_BYTES".into(), "2048".into()),
+                ("PINTAIL_GLOBAL_SPILL_LIMIT_BYTES".into(), "4096".into()),
+            ],
+        )
+        .expect("environment config");
+        assert_eq!(configured.query_spill_limit_bytes(), 2048);
+        assert_eq!(configured.global_spill_limit_bytes(), 4096);
+    }
+
+    #[test]
+    fn query_spill_limit_cannot_exceed_the_global_limit() {
+        let error = AppConfig::load_from(
+            &cli(),
+            [
+                ("PINTAIL_QUERY_SPILL_LIMIT_BYTES".into(), "4096".into()),
+                ("PINTAIL_GLOBAL_SPILL_LIMIT_BYTES".into(), "2048".into()),
+            ],
+        )
+        .expect_err("invalid spill limits");
+        assert!(error.to_string().contains("cannot exceed"));
     }
 }

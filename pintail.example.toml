@@ -1,4 +1,6 @@
 data_dir = "./data"
+# Hard disk ceiling shared by all concurrent query spill (8 GiB).
+global_spill_limit_bytes = 8589934592
 
 [http]
 bind = "127.0.0.1:8080"
@@ -9,3 +11,5 @@ bind = "127.0.0.1:3306"
 [query]
 # Hard memory ceiling shared by HTTP and MySQL wire queries (64 MiB).
 memory_limit_bytes = 67108864
+# Hard spill-disk ceiling for one query (1 GiB).
+spill_limit_bytes = 1073741824
