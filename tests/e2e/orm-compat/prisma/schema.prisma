@@ -1,0 +1,46 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum CustomerTier {
+  free
+  pro
+  enterprise
+}
+
+enum OrderStatus {
+  pending
+  processing
+  shipped
+  delivered
+  cancelled
+}
+
+model Customer {
+  id      Int          @id @default(autoincrement()) @db.UnsignedInt
+  name    String       @db.VarChar(64)
+  email   String?      @db.VarChar(96)
+  tier    CustomerTier
+  balance Decimal      @db.Decimal(12, 2)
+  orders  Order[]
+
+  @@map("customers")
+}
+
+model Order {
+  id         BigInt      @id @default(autoincrement()) @db.UnsignedBigInt
+  customerId Int         @map("customer_id") @db.UnsignedInt
+  status     OrderStatus
+  total      Decimal     @db.Decimal(12, 2)
+  placedOn   DateTime    @map("placed_on") @db.Date
+  customer   Customer    @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@map("orders")
+}

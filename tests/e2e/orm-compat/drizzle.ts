@@ -49,21 +49,23 @@ async function withClient<T>(
   endpoint: MysqlEndpoint,
   run: (db: MySql2Database<typeof schema>) => Promise<T>,
 ): Promise<Captured<T>> {
-  const connection = await mysql.createConnection({
+  const pool = mysql.createPool({
     ...endpoint,
     supportBigNumbers: true,
     bigNumberStrings: true,
     dateStrings: true,
+    connectionLimit: 1,
   })
   const statements: string[] = []
-  const db = drizzle(connection, {
+  const db = drizzle(pool, {
     schema,
+    mode: 'default',
     logger: { logQuery: (query) => statements.push(query) },
   })
   try {
     return { value: await run(db), sql: statements }
   } finally {
-    await connection.end()
+    await pool.end()
   }
 }
 

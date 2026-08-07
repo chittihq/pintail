@@ -92,7 +92,12 @@ export async function runSequelizeCompatibility(
       const queryInterface = sequelize.getQueryInterface()
       const tables = (await queryInterface.showAllTables()).map(String).sort()
       const columns = await queryInterface.describeTable('customers')
-      const indexes = await queryInterface.showIndex('customers')
+      const indexes = (await queryInterface.showIndex('customers')) as Array<{
+        name: string
+        primary: boolean
+        unique: boolean
+        fields: Array<{ attribute: string }>
+      }>
       return {
         tables,
         columns: Object.fromEntries(

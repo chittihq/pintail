@@ -72,7 +72,7 @@ the deterministic protocol clients above.
 
 The end-to-end differential gate also runs pinned read-only ORM clients against
 the MySQL source and its converged Pintail replica. Sequelize exercises schema
-discovery, and Drizzle runs `drizzle-kit pull`; both generate point, filtered,
-relation, grouped, ordered, and paginated reads. The gate compares both
-ORM-decoded values and normalized SQL; it never invokes synchronization,
-migration, or mutation APIs.
+discovery, Drizzle runs `drizzle-kit pull`, and Prisma runs `prisma db pull`;
+all three generate point, filtered, relation, grouped, ordered, and paginated
+reads. The gate compares both ORM-decoded values and normalized SQL; it never
+invokes synchronization, migration, or mutation APIs.
