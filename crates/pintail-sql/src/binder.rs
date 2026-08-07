@@ -1056,14 +1056,23 @@ impl<'catalog> Binder<'catalog> {
 
     #[allow(clippy::too_many_lines)] // linear join-constraint dispatch reads best unsplit
     fn bind_from(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundFromScope, BindError> {
-        let mut from = Vec::with_capacity(select.from.len());
+        self.bind_from_items(&select.from, ctes)
+    }
+
+    #[allow(clippy::too_many_lines)] // linear join-constraint dispatch reads best unsplit
+    fn bind_from_items(
+        &self,
+        from_items: &[TableWithJoins],
+        ctes: &[BoundCte],
+    ) -> Result<BoundFromScope, BindError> {
+        let mut from = Vec::with_capacity(from_items.len());
         let mut tables = Vec::new();
         // Column order an unqualified `*` expands to. USING/NATURAL joins
         // reorder it per the standard MySQL follows: join columns first
         // (left occurrence), then the remaining left columns, then the
         // remaining right columns.
         let mut wildcard_order: Vec<BoundColumn> = Vec::new();
-        for table_with_joins in &select.from {
+        for table_with_joins in from_items {
             let flattened = flatten_parenthesized_root_joins(table_with_joins)?;
             let table_with_joins = flattened.as_ref().unwrap_or(table_with_joins);
             // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs; the linear
@@ -1095,22 +1104,27 @@ impl<'catalog> Binder<'catalog> {
                 if join.global {
                     return Err(BindError::UnsupportedQueryClause(join.to_string()));
                 }
-                let table = self.bind_table(&join.relation, ctes)?;
-                reject_duplicate_relation(&tables, &table)?;
-                tables.push(table.clone());
+                let relation = self.bind_join_relation(&join.relation, ctes)?;
+                for visible in &relation.tables {
+                    reject_duplicate_relation(&tables, visible)?;
+                }
+                tables.extend(relation.tables);
+                let table = relation.table;
                 let (kind, constraint) = bind_join_operator(&join.join_operator)?;
                 let condition = match constraint {
                     JoinConstraint::On(condition) => {
-                        item_wildcard.extend(table.columns.iter().cloned());
-                        let resolve_subquery = |query: &Query| self.bind_query(query, ctes);
-                        Some(bind_expr(condition, &tables, Some(&resolve_subquery))?)
+                        item_wildcard.extend(relation.wildcard_order.iter().cloned());
+                        let join_scope = expression_scope(&tables, &self.outer_tables);
+                        let resolve_subquery =
+                            |query: &Query| self.bind_subquery(query, ctes, &join_scope);
+                        Some(bind_expr(condition, &join_scope, Some(&resolve_subquery))?)
                     }
                     JoinConstraint::None if kind == BoundJoinKind::Cross => {
-                        item_wildcard.extend(table.columns.iter().cloned());
+                        item_wildcard.extend(relation.wildcard_order.iter().cloned());
                         None
                     }
                     JoinConstraint::None if kind == BoundJoinKind::Inner => {
-                        item_wildcard.extend(table.columns.iter().cloned());
+                        item_wildcard.extend(relation.wildcard_order.iter().cloned());
                         None
                     }
                     JoinConstraint::Using(names) if kind != BoundJoinKind::Cross => {
@@ -1186,6 +1200,98 @@ impl<'catalog> Binder<'catalog> {
             from,
             tables,
             wildcard_order,
+        })
+    }
+
+    fn bind_join_relation(
+        &self,
+        factor: &TableFactor,
+        ctes: &[BoundCte],
+    ) -> Result<BoundJoinRelation, BindError> {
+        let TableFactor::NestedJoin {
+            table_with_joins,
+            alias,
+        } = factor
+        else {
+            let table = self.bind_table(factor, ctes)?;
+            return Ok(BoundJoinRelation {
+                wildcard_order: table.columns.clone(),
+                tables: vec![table.clone()],
+                table,
+            });
+        };
+        if alias.is_some() {
+            return Err(BindError::UnsupportedTableFactor(factor.to_string()));
+        }
+
+        let scope = self.bind_from_items(std::slice::from_ref(table_with_joins), ctes)?;
+        if scope
+            .from
+            .iter()
+            .flat_map(|source| &source.joins)
+            .any(|join| {
+                !matches!(
+                    join.kind,
+                    BoundJoinKind::Inner | BoundJoinKind::Cross | BoundJoinKind::Left
+                )
+            })
+        {
+            return Err(BindError::UnsupportedTableFactor(factor.to_string()));
+        }
+        let columns = scope
+            .tables
+            .iter()
+            .flat_map(|table| table.columns.iter().cloned())
+            .collect::<Vec<_>>();
+        let projection = columns
+            .iter()
+            .cloned()
+            .map(|column| BoundProjection {
+                name: column.name.clone(),
+                expr: BoundExpr {
+                    data_type: Some(column.data_type),
+                    nullable: column.nullable,
+                    kind: BoundExprKind::Column(column),
+                },
+            })
+            .collect();
+        let input = BoundQuery {
+            from: scope.from,
+            tables: scope.tables.clone(),
+            projection,
+            filter: None,
+            group_by: Vec::new(),
+            aggregates: Vec::new(),
+            windows: Vec::new(),
+            having: None,
+            distinct: false,
+            order_by: Vec::new(),
+            hidden_sort_columns: 0,
+            union_all: Vec::new(),
+            union_distinct: false,
+            set_ops: Vec::new(),
+            limit: None,
+            recursive: None,
+        };
+        let table_id = self.next_derived_id.get();
+        self.next_derived_id.set(table_id.saturating_sub(1));
+        let table = BoundTable {
+            database_id: pintail_catalog::DatabaseId::new(u64::MAX),
+            table_id: pintail_catalog::TableId::new(table_id),
+            database_name: String::new(),
+            table_name: "<join-group>".to_owned(),
+            relation_name: "<join-group>".to_owned(),
+            schema_version: 0,
+            columns,
+            row_count: None,
+            estimated_rows: None,
+            key_column_ids: Vec::new(),
+            input: Some(Box::new(input)),
+        };
+        Ok(BoundJoinRelation {
+            table,
+            tables: scope.tables,
+            wildcard_order: scope.wildcard_order,
         })
     }
 
@@ -5015,6 +5121,14 @@ struct BoundFromScope {
     wildcard_order: Vec<BoundColumn>,
 }
 
+/// One join operand plus the individual relations and wildcard layout that a
+/// parenthesized join group continues to expose to its containing query.
+struct BoundJoinRelation {
+    table: BoundTable,
+    tables: Vec<BoundTable>,
+    wildcard_order: Vec<BoundColumn>,
+}
+
 fn expression_scope(local: &[BoundTable], outer: &[BoundTable]) -> Vec<BoundTable> {
     let mut visible = Vec::with_capacity(local.len().saturating_add(outer.len()));
     visible.extend_from_slice(local);
@@ -5874,6 +5988,15 @@ mod tests {
         assert_eq!(query.from[0].joins.len(), 2);
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
         assert_eq!(query.from[0].joins[1].kind, BoundJoinKind::Inner);
+
+        let query = bind(
+            "SELECT e.Name, u.email, manager.email FROM Events e \
+             LEFT JOIN (users u LEFT JOIN users manager ON manager.id = u.id) \
+             ON u.id = e.id",
+        )
+        .expect("bushy right-side outer join group");
+        assert_eq!(query.tables.len(), 3);
+        assert!(query.from[0].joins[0].table.input.is_some());
     }
 
     #[test]

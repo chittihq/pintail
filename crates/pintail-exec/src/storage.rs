@@ -2947,6 +2947,57 @@ mod tests {
             ]
         );
 
+        assert_eq!(
+            execute_rows(
+                "SELECT e.id, u.name, marker.name FROM events e \
+                 LEFT JOIN (users u LEFT JOIN \
+                   (SELECT 1 AS id, 'flag' AS name) marker ON marker.id = u.id) \
+                 ON u.id = e.id ORDER BY e.id",
+                &catalog,
+                &provider,
+            ),
+            [
+                vec![
+                    Value::UInt64(1),
+                    Value::Utf8("user-a".to_owned()),
+                    Value::Utf8("flag".to_owned()),
+                ],
+                vec![
+                    Value::UInt64(2),
+                    Value::Utf8("user-b".to_owned()),
+                    Value::Null,
+                ],
+            ]
+        );
+        assert_eq!(
+            execute_rows(
+                "SELECT e.id, u.name FROM events e LEFT JOIN users u \
+                 ON u.id = e.id AND EXISTS \
+                    (SELECT 1 FROM users probe WHERE probe.id > u.id) \
+                 ORDER BY e.id",
+                &catalog,
+                &provider,
+            ),
+            [
+                vec![Value::UInt64(1), Value::Utf8("user-a".to_owned())],
+                vec![Value::UInt64(2), Value::Null],
+            ]
+        );
+        assert_eq!(
+            execute_rows(
+                "SELECT e.id, u.name FROM events e JOIN users u \
+                 ON u.id = e.id AND EXISTS \
+                    (SELECT 1 FROM users probe WHERE probe.id = 1) \
+                 ORDER BY e.id",
+                &catalog,
+                &provider,
+            ),
+            [
+                vec![Value::UInt64(1), Value::Utf8("user-a".to_owned())],
+                vec![Value::UInt64(2), Value::Utf8("user-b".to_owned())],
+            ]
+        );
+
         let statement = parse_statement(
             "WITH named_events AS (SELECT id, name AS event_name FROM events) \
              SELECT named_events.event_name, users.name \

@@ -228,6 +228,13 @@ fn write_plan(
             write_plan(left, depth + 1, output, provider)?;
             write_plan(right, depth + 1, output, provider)
         }
+        PhysicalPlan::NestedLoopJoin {
+            left, right, kind, ..
+        } => {
+            writeln!(output, "NestedLoopJoin kind={}", join_name(*kind))?;
+            write_plan(left, depth + 1, output, provider)?;
+            write_plan(right, depth + 1, output, provider)
+        }
         PhysicalPlan::Filter { input, .. } => {
             writeln!(output, "Filter")?;
             write_plan(input, depth + 1, output, provider)

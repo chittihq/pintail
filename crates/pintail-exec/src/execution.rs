@@ -141,6 +141,18 @@ pub enum PhysicalPlan {
         /// Build-side key.
         right_key: BoundExpr,
     },
+    /// Bounded nested-loop join for ON predicates containing a dependent
+    /// subquery that cannot be represented as hash keys alone.
+    NestedLoopJoin {
+        /// Left input.
+        left: Box<Self>,
+        /// Right input.
+        right: Box<Self>,
+        /// Join semantics.
+        kind: BoundJoinKind,
+        /// Complete ON predicate.
+        condition: BoundExpr,
+    },
     /// Applies a row-selection mask.
     Filter {
         /// Input operator.
@@ -254,6 +266,9 @@ impl PhysicalPlan {
                 .first()
                 .map_or_else(Vec::new, PhysicalPlan::output_fields),
             Self::HashJoin {
+                left, right, kind, ..
+            }
+            | Self::NestedLoopJoin {
                 left, right, kind, ..
             } => {
                 let mut fields = left.output_fields();
@@ -428,6 +443,14 @@ impl PhysicalPlanner {
                     });
                 }
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
+                if expression_has_subquery(&condition) {
+                    return Ok(PhysicalPlan::NestedLoopJoin {
+                        left: Box::new(Self::plan(*left)?),
+                        right: Box::new(Self::plan(*right)?),
+                        kind,
+                        condition,
+                    });
+                }
                 let mut pairs = equi_join_key_pairs(&condition, &left, &right)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
@@ -959,6 +982,14 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
                     .saturating_add(bound_regex_memory_upper_bound(left))
                     .saturating_add(bound_regex_memory_upper_bound(right))
             })),
+        PhysicalPlan::NestedLoopJoin {
+            left,
+            right,
+            condition,
+            ..
+        } => nested(left)
+            .saturating_add(nested(right))
+            .saturating_add(bound_regex_memory_upper_bound(condition)),
         PhysicalPlan::Filter { input, predicate } => {
             nested(input).saturating_add(bound_regex_memory_upper_bound(predicate))
         }
@@ -1164,6 +1195,16 @@ fn resolve_plan_subqueries(
                     retained_bytes,
                 )?;
             }
+        }
+        PhysicalPlan::NestedLoopJoin {
+            left,
+            right,
+            condition,
+            ..
+        } => {
+            resolve_plan_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(condition, provider, memory_limit, deadline, retained_bytes)?;
         }
         PhysicalPlan::Filter { input, predicate } => {
             resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
@@ -1424,6 +1465,26 @@ fn expression_has_dependent_subquery(expression: &BoundExpr) -> bool {
             expression_has_dependent_subquery(left) || expression_has_dependent_subquery(right)
         }
         BoundExprKind::Scalar { args, .. } => args.iter().any(expression_has_dependent_subquery),
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => false,
+    }
+}
+
+fn expression_has_subquery(expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. }
+        | BoundExprKind::InSubquery { .. } => true,
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            expression_has_subquery(expr)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            expression_has_subquery(left) || expression_has_subquery(right)
+        }
+        BoundExprKind::Scalar { args, .. } => args.iter().any(expression_has_subquery),
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
@@ -2331,6 +2392,43 @@ fn build_operator(
                     column_types,
                     right_width,
                     state: None,
+                },
+                output_columns,
+            ))
+        }
+        PhysicalPlan::NestedLoopJoin {
+            left,
+            right,
+            kind,
+            condition,
+        } => {
+            let (mut left, left_columns) = build_operator(*left, provider, memory)?;
+            let (mut right, right_columns) = build_operator(*right, provider, memory)?;
+            let left_rows = materialize(&mut left, memory)?;
+            let right_rows = materialize(&mut right, memory)?;
+            let mut output_columns = left_columns.clone();
+            if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
+                output_columns.extend(right_columns.clone());
+            }
+            let column_types = output_columns
+                .iter()
+                .map(|column| column.data_type)
+                .collect::<Vec<_>>();
+            let rows = execute_nested_loop_join(
+                &left_rows,
+                &right_rows,
+                &left_columns,
+                &right_columns,
+                kind,
+                &condition,
+                provider,
+                memory,
+            )?;
+            Ok((
+                PullOperator::Rows {
+                    rows,
+                    cursor: 0,
+                    column_types,
                 },
                 output_columns,
             ))
@@ -9134,6 +9232,103 @@ fn materialize(
         }
     }
     Ok(rows)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_nested_loop_join(
+    left_rows: &[Vec<Value>],
+    right_rows: &[Vec<Value>],
+    left_columns: &[BoundColumn],
+    right_columns: &[BoundColumn],
+    kind: BoundJoinKind,
+    condition: &BoundExpr,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    let mut columns = left_columns.to_vec();
+    columns.extend_from_slice(right_columns);
+    let column_types = columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    let mut output = Vec::new();
+    for left in left_rows {
+        memory.check_deadline()?;
+        let mut matches = 0_usize;
+        for right in right_rows {
+            memory.ensure_transient(
+                estimated_row_payload_bytes(left)
+                    .saturating_add(estimated_row_payload_bytes(right)),
+            )?;
+            let mut candidate = left.clone();
+            candidate.extend(right.iter().cloned());
+            let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
+            let batch = RecordBatch::new(1, vectors)?;
+            let mut predicate = condition.clone();
+            resolve_dependent_expr_subqueries(
+                &mut predicate,
+                &batch,
+                0,
+                &columns,
+                provider,
+                memory,
+            )?;
+            let predicate = CompiledExpr::compile(&predicate, &columns)?;
+            if !predicate_truth(&predicate.evaluate(&batch, 0)?)? {
+                continue;
+            }
+            matches = matches.saturating_add(1);
+            match kind {
+                BoundJoinKind::Inner | BoundJoinKind::Left => {
+                    push_nested_join_row(&mut output, candidate, memory)?;
+                }
+                BoundJoinKind::Scalar => {
+                    if matches > 1 {
+                        return Err(ExecError::ScalarSubqueryRows { rows: matches });
+                    }
+                    push_nested_join_row(&mut output, candidate, memory)?;
+                }
+                BoundJoinKind::Semi => break,
+                BoundJoinKind::Anti => {}
+                BoundJoinKind::Cross => {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "nested-loop ON evaluation cannot represent a cross join",
+                    ));
+                }
+            }
+        }
+        match kind {
+            BoundJoinKind::Left | BoundJoinKind::Scalar if matches == 0 => {
+                let mut row = left.clone();
+                row.extend(std::iter::repeat_n(Value::Null, right_columns.len()));
+                push_nested_join_row(&mut output, row, memory)?;
+            }
+            BoundJoinKind::Semi if matches > 0 => {
+                push_nested_join_row(&mut output, left.clone(), memory)?;
+            }
+            BoundJoinKind::Anti if matches == 0 => {
+                push_nested_join_row(&mut output, left.clone(), memory)?;
+            }
+            BoundJoinKind::Inner
+            | BoundJoinKind::Left
+            | BoundJoinKind::Scalar
+            | BoundJoinKind::Semi
+            | BoundJoinKind::Anti => {}
+            BoundJoinKind::Cross => unreachable!("cross joins return above"),
+        }
+    }
+    Ok(output)
+}
+
+fn push_nested_join_row(
+    output: &mut Vec<Vec<Value>>,
+    row: Vec<Value>,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    reserve_vec_elements(output, 1, 0, memory)?;
+    memory.reserve(estimated_row_payload_bytes(&row))?;
+    output.push(row);
+    Ok(())
 }
 
 /// One window computation compiled against its input's column layout.

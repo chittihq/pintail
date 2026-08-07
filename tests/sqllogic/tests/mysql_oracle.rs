@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
-const EXPECTED_CASES: usize = 813;
+const EXPECTED_CASES: usize = 815;
 
 struct OracleCase {
     family: &'static str,
@@ -1495,6 +1495,20 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "right join",
             "SELECT e.id, u.name FROM users u RIGHT JOIN events e ON e.id = u.id \
              WHERE u.id IS NULL ORDER BY e.id",
+        ),
+        ordered(
+            "bushy outer join",
+            "SELECT e.id, u.name, marker.name FROM events e \
+             LEFT JOIN (users u LEFT JOIN \
+               (SELECT 1 AS id, 'flag' AS name) marker ON marker.id = u.id) \
+             ON u.id = e.id ORDER BY e.id",
+        ),
+        ordered(
+            "join predicate subquery",
+            "SELECT e.id, u.name FROM events e LEFT JOIN users u \
+             ON u.id = e.id AND EXISTS \
+                (SELECT 1 FROM users probe WHERE probe.id > u.id) \
+             ORDER BY e.id",
         ),
         unordered(
             "set operations",

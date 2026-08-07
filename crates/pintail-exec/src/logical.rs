@@ -210,7 +210,7 @@ impl LogicalPlanner {
     pub fn plan(query: BoundQuery) -> LogicalPlan {
         let BoundQuery {
             from,
-            tables,
+            tables: _,
             mut projection,
             filter,
             group_by,
@@ -227,12 +227,6 @@ impl LogicalPlanner {
             recursive,
         } = query;
 
-        debug_assert_eq!(
-            tables.len(),
-            from.iter()
-                .map(|source| 1 + source.joins.len())
-                .sum::<usize>()
-        );
         let mut plan = source_plan(from);
         if let Some(predicate) = filter {
             plan = LogicalPlan::Filter {

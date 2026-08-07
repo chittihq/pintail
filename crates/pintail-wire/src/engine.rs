@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, hash_map::DefaultHasher},
+    collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher},
     hash::{Hash as _, Hasher as _},
     path::{Path, PathBuf},
     time::Instant,
@@ -575,6 +575,42 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
 /// physical carrier must allow normalized invalid temporals to become NULL;
 /// `MySQL` result metadata still describes a direct source column by its source
 /// declaration. Outer-join extension takes precedence over that declaration.
+fn collect_null_extended_columns(
+    query: &BoundQuery,
+    inherited: bool,
+    columns: &mut BTreeSet<(DatabaseId, TableId, u32)>,
+) {
+    for source in &query.from {
+        if inherited {
+            columns.extend(
+                source
+                    .base
+                    .columns
+                    .iter()
+                    .map(|column| (column.database_id, column.table_id, column.column_id)),
+            );
+        }
+        if let Some(input) = &source.base.input {
+            collect_null_extended_columns(input, inherited, columns);
+        }
+        for join in &source.joins {
+            let right_extended =
+                inherited || matches!(join.kind, BoundJoinKind::Left | BoundJoinKind::Scalar);
+            if right_extended {
+                columns.extend(
+                    join.table
+                        .columns
+                        .iter()
+                        .map(|column| (column.database_id, column.table_id, column.column_id)),
+                );
+            }
+            if let Some(input) = &join.table.input {
+                collect_null_extended_columns(input, right_extended, columns);
+            }
+        }
+    }
+}
+
 fn source_result_nullability(
     query: &BoundQuery,
     catalog: &CatalogSnapshot,
@@ -583,13 +619,8 @@ fn source_result_nullability(
     if query.union_distinct || !query.union_all.is_empty() || !query.set_ops.is_empty() {
         return vec![None; query.projection.len()];
     }
-    let null_extended = query
-        .from
-        .iter()
-        .flat_map(|source| &source.joins)
-        .filter(|join| matches!(join.kind, BoundJoinKind::Left | BoundJoinKind::Scalar))
-        .map(|join| (join.table.database_id, join.table.table_id))
-        .collect::<Vec<_>>();
+    let mut null_extended = BTreeSet::new();
+    collect_null_extended_columns(query, false, &mut null_extended);
 
     query
         .projection
@@ -598,7 +629,7 @@ fn source_result_nullability(
             let BoundExprKind::Column(column) = &projection.expr.kind else {
                 return None;
             };
-            if null_extended.contains(&(column.database_id, column.table_id)) {
+            if null_extended.contains(&(column.database_id, column.table_id, column.column_id)) {
                 return Some(true);
             }
             let database = catalog.database_by_id(column.database_id)?;

@@ -32,9 +32,9 @@ stays readable as a list of things to fix.
   `cte_max_recursion_depth` to `1..=1000000`; MySQL's unbounded value `0` is
   rejected so a session cannot disable the recursive resource guard.
 - `RIGHT JOIN` supports only the two-table form.
-- Aliased parenthesized join groups and parenthesized groups used as a later
-  join's right input reject because the current bound plan cannot represent a
-  bushy join tree (#16).
+- Aliased parenthesized join groups reject; the unaliased group keeps its
+  constituent relation names visible instead of inventing one group-wide
+  namespace.
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
@@ -169,9 +169,10 @@ worth refusing.
   respectively. Large `IN (subquery)` membership still materializes in memory
   under the query ceiling rather than using an external membership index.
 - Dependent correlated execution reruns its bounded inner plan for each outer
-  row and does not cache repeated parameter tuples. Correlated subqueries in
-  join `ON` predicates remain unsupported. Nullable correlated `NOT IN` shapes
-  that cannot be proven safe still reject rather than risk a different answer.
+  row and does not cache repeated parameter tuples. A correlated subquery in a
+  join `ON` predicate uses a materialized nested loop under the query ceiling;
+  that fallback does not spill. Nullable correlated `NOT IN` shapes that cannot
+  be proven safe still reject rather than risk a different answer.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
 - Aggregate pushdown removes only unreferenced predicate-free cross-join inputs

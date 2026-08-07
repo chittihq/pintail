@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Unaliased parenthesized join groups can now occupy a later join's right side,
+  preserving bushy INNER/CROSS/LEFT boundaries, constituent qualified names,
+  wildcard order, and nested nullability. Correlated subqueries in `ON`
+  predicates execute through a bounded nested-loop fallback when hash-key
+  extraction alone cannot represent the condition.
 - Correlated scalar, `EXISTS`, and `IN` subqueries that cannot use the canonical
   decorrelation rewrites now have a bounded dependent-execution fallback. It
   supports wider predicates, nested scopes with local alias shadowing, HAVING,
@@ -100,10 +105,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Canonical correlated scalar lookups preserve MySQL cardinality: zero inner
   matches produce NULL, one produces the value, and more than one raises a
   scalar-subquery row error through a bounded spillable join.
-- A complete parenthesized root LEFT JOIN now binds without flattening away
-  its outer semantics, including when a later join extends the root's
-  left-deep chain. Aliased groups and bushy right-side join groups still reject
-  explicitly.
+- A complete parenthesized root LEFT JOIN binds without flattening away its
+  outer semantics, including when a later join extends the root's left-deep
+  chain.
 - Uncorrelated `EXISTS` stops its inner execution after one row, and scalar
   subqueries stop after the second row needed to raise the MySQL cardinality
   error; neither materializes an irrelevant tail before deciding its result.
