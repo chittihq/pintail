@@ -149,6 +149,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Low-cardinality and two-pass string grouping now merge dictionary codes on
+  the shared ICU collation key, including accent and expansion equivalents;
+  `LIKE` also keeps `_` bound to one original character instead of one
+  expanded case-fold code point.
 - Physical scan statistics now include filter-first predicate probes even when
   the selector keeps the full segment, so unselective late-materialization
   attempts no longer disappear from `EXPLAIN ANALYZE` evidence.

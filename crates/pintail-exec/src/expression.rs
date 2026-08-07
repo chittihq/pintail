@@ -1571,9 +1571,9 @@ fn evaluate_eager_scalar_typed(
         }
         ScalarFunction::Like { negated, escape } => {
             let binary = binary_operand(&values[0..2]);
-            let value = fold_unless_binary(&scalar_string(&values[0])?, binary);
-            let pattern = fold_unless_binary(&scalar_string(&values[1])?, binary);
-            let matched = like_matches(&value, &pattern, escape);
+            let value = scalar_string(&values[0])?;
+            let pattern = scalar_string(&values[1])?;
+            let matched = like_matches(&value, &pattern, escape, binary);
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
         ScalarFunction::InList { negated } => evaluate_in_list(
@@ -3664,10 +3664,9 @@ fn binary_operand(values: &[Value]) -> bool {
     values.iter().any(|value| matches!(value, Value::Binary(_)))
 }
 
-/// Applies the character-preserving case/accent fold used by LIKE and locate
-/// functions, unless a binary operand demands exact byte comparison. Ordered
-/// and hash operators use ICU sort keys; pattern matching keeps one code point
-/// per base character so `_` retains `MySQL`'s one-character meaning.
+/// Applies the case/accent fold used by locate functions unless a binary
+/// operand demands exact byte comparison. LIKE compares source characters
+/// directly through the collator so `_` still consumes one source character.
 fn fold_unless_binary(text: &str, binary: bool) -> String {
     if binary {
         text.to_owned()
@@ -4192,11 +4191,7 @@ fn json_search(
     }
     match document {
         serde_json::Value::String(text) => {
-            if like_matches(
-                &fold_unless_binary(text, false),
-                &fold_unless_binary(pattern, false),
-                escape,
-            ) {
+            if like_matches(text, pattern, escape, false) {
                 found.push(here.to_owned());
             }
         }
@@ -4357,7 +4352,7 @@ fn locate(needle: &str, haystack: &str, start: i64) -> u64 {
     u64::try_from(start.saturating_add(character_position).saturating_add(1)).unwrap_or(u64::MAX)
 }
 
-fn like_matches(value: &str, pattern: &str, escape: Option<char>) -> bool {
+fn like_matches(value: &str, pattern: &str, escape: Option<char>, binary: bool) -> bool {
     let value = value.chars().collect::<Vec<_>>();
     let mut tokens = Vec::with_capacity(pattern.chars().count());
     let mut pattern = pattern.chars();
@@ -4382,7 +4377,9 @@ fn like_matches(value: &str, pattern: &str, escape: Option<char>) -> bool {
     let mut wildcard_value = 0;
     while value_index < value.len() {
         match tokens.get(token_index) {
-            Some(LikeToken::Literal(literal)) if value[value_index] == *literal => {
+            Some(LikeToken::Literal(literal))
+                if like_literal_matches(value[value_index], *literal, binary) =>
+            {
                 value_index += 1;
                 token_index += 1;
             }
@@ -4409,6 +4406,18 @@ fn like_matches(value: &str, pattern: &str, escape: Option<char>) -> bool {
         token_index += 1;
     }
     token_index == tokens.len()
+}
+
+fn like_literal_matches(value: char, literal: char, binary: bool) -> bool {
+    if binary {
+        return value == literal;
+    }
+    let mut value_bytes = [0_u8; 4];
+    let mut literal_bytes = [0_u8; 4];
+    compare_utf8_mysql(
+        value.encode_utf8(&mut value_bytes),
+        literal.encode_utf8(&mut literal_bytes),
+    ) == Ordering::Equal
 }
 
 #[derive(Clone, Copy)]
@@ -5034,6 +5043,17 @@ mod tests {
                 vec![Value::Utf8("Chloé".into()), Value::Utf8("CHLO_".into())]
             ),
             Value::Utf8("1".into())
+        );
+        assert_eq!(
+            call(
+                ScalarFunction::Like {
+                    negated: false,
+                    escape: None,
+                },
+                vec![Value::Utf8("straße".into()), Value::Utf8("stra_e".into())]
+            ),
+            Value::Utf8("1".into()),
+            "LIKE underscore consumes one source character before collation expansion"
         );
         // POSIX classes follow ICU's Unicode definitions, not ASCII.
         assert_eq!(

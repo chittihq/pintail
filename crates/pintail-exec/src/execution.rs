@@ -7042,7 +7042,8 @@ fn build_local_dictionary_groups(
 
     // Finalize: original values from each slot's representative row,
     // normalized map keys — the general local builder's exact contract.
-    let mut groups = HashMap::with_capacity(code_count * 2);
+    let mut groups: HashMap<Vec<Value>, AggregateGroup> = HashMap::with_capacity(code_count * 2);
+    let memory = MemoryTracker::new(usize::MAX);
     for (slot, &row) in slot_rows.iter().enumerate() {
         let mut values = Vec::with_capacity(key_columns.len());
         for (vector, _, _) in &key_columns {
@@ -7058,13 +7059,26 @@ fn build_local_dictionary_groups(
             .cloned()
             .map(normalized_collation_value)
             .collect();
-        groups.insert(
-            key,
-            AggregateGroup {
-                values,
-                states: std::mem::take(&mut states[slot]),
-            },
-        );
+        let group = AggregateGroup {
+            values,
+            states: std::mem::take(&mut states[slot]),
+        };
+        match groups.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(group);
+            }
+            Entry::Occupied(mut entry) => {
+                for ((state, other), aggregate) in entry
+                    .get_mut()
+                    .states
+                    .iter_mut()
+                    .zip(group.states)
+                    .zip(aggregates)
+                {
+                    state.merge(aggregate, other, &memory)?;
+                }
+            }
+        }
     }
     Ok(Some(groups))
 }
@@ -8270,21 +8284,12 @@ struct StringIntern {
 
 impl StringIntern {
     fn intern(&mut self, bytes: &[u8], memory: &MemoryTracker) -> Result<u64, ExecError> {
-        // Group keys unify under the same case-insensitive rule the
-        // sequential path applies (compare_utf8_mysql): fold to lowercase
-        // for identity, keep the first-seen spelling for output — exactly
-        // what MySQL's ci collations return for GROUP BY.
+        // Group keys unify through the same ICU primary sort key used by
+        // comparison, hashing, DISTINCT, and joins. Keep the first-seen
+        // spelling separately for MySQL-compatible GROUP BY output.
         let value = std::str::from_utf8(bytes)
             .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?;
-        let folded: Vec<u8> = if value.is_ascii() {
-            bytes.to_ascii_lowercase()
-        } else {
-            value
-                .chars()
-                .flat_map(char::to_lowercase)
-                .collect::<String>()
-                .into_bytes()
-        };
+        let folded = normalized_collation_text(value).into_bytes();
         if let Some(id) = self.index.get(&folded) {
             return Ok(*id);
         }
@@ -8292,7 +8297,7 @@ impl StringIntern {
         memory.reserve(
             bytes
                 .len()
-                .saturating_mul(3)
+                .saturating_add(folded.len())
                 .saturating_add(HASH_ENTRY_OVERHEAD)
                 .saturating_add(size_of::<String>() + size_of::<u64>()),
         )?;
@@ -11712,6 +11717,48 @@ mod tests {
         assert_ne!(
             super::normalized_collation_text("a"),
             super::normalized_collation_text("a ")
+        );
+    }
+
+    #[test]
+    fn dictionary_grouping_merges_collation_equivalent_codes() {
+        let provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    3,
+                    vec![
+                        ColumnVector::new(
+                            DataType::UInt64,
+                            vec![Value::UInt64(1), Value::UInt64(2), Value::UInt64(3)],
+                        )
+                        .expect("ids"),
+                        ColumnVector::new(
+                            DataType::Utf8,
+                            vec![
+                                Value::Utf8("É".to_owned()),
+                                Value::Utf8("e".to_owned()),
+                                Value::Utf8("z".to_owned()),
+                            ],
+                        )
+                        .expect("names"),
+                    ],
+                )
+                .expect("batch"),
+            ]),
+        };
+        let plan =
+            physical("SELECT name, COUNT(id) AS rows FROM events GROUP BY name ORDER BY name");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let batch = execution.next_batch().expect("pull").expect("result batch");
+
+        assert_eq!(batch.visible_row_count(), 2);
+        assert_eq!(
+            batch.column(0).expect("names").values(),
+            [Value::Utf8("É".to_owned()), Value::Utf8("z".to_owned())]
+        );
+        assert_eq!(
+            batch.column(1).expect("counts").values(),
+            [Value::UInt64(2), Value::UInt64(1)]
         );
     }
 
