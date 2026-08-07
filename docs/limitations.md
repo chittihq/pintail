@@ -321,9 +321,10 @@ worth refusing.
 - Authenticated wire connections close after 15 idle minutes by default;
   configure `wire.idle_timeout_seconds`,
   `PINTAIL_WIRE_IDLE_TIMEOUT_SECONDS`, or
-  `--wire-idle-timeout-seconds` to change it. Active query cancellation is not
-  yet cooperative: a client disconnect is observed after the current engine
-  call returns.
+  `--wire-idle-timeout-seconds` to change it. `SET max_execution_time = N`
+  applies a cooperative per-statement deadline in milliseconds and returns
+  MySQL error 1317 when it expires. Client-disconnect cancellation is observed
+  after the current engine call returns; explicit `KILL QUERY` is unsupported.
 - DBeaver and Metabase application-level smokes are not automated in CI.
 ## Operations and backup
 

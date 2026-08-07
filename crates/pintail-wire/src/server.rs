@@ -7,7 +7,7 @@ use std::{
         Mutex,
         atomic::{AtomicU32, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -240,6 +240,7 @@ struct Session {
     group_concat_max_len: usize,
     group_concat_warnings: u64,
     cte_max_recursion_depth: u64,
+    max_execution_time_ms: u64,
 }
 
 impl Default for Session {
@@ -255,6 +256,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             group_concat_max_len: 1024,
             group_concat_warnings: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
+            max_execution_time_ms: 0,
         }
     }
 }
@@ -387,9 +389,18 @@ impl Backend {
                 pintail_exec::set_session_cte_max_recursion_depth(Some(
                     session.cte_max_recursion_depth,
                 ));
-                let result = self
-                    .engine
-                    .execute(&authenticated.database_id, sql, DEFAULT_MAX_ROWS);
+                let deadline = (session.max_execution_time_ms > 0)
+                    .then(|| {
+                        Instant::now()
+                            .checked_add(Duration::from_millis(session.max_execution_time_ms))
+                    })
+                    .flatten();
+                let result = self.engine.execute_with_deadline(
+                    &authenticated.database_id,
+                    sql,
+                    DEFAULT_MAX_ROWS,
+                    deadline,
+                );
                 let warnings = pintail_exec::take_session_group_concat_warnings();
                 pintail_exec::set_session_group_concat_max_len(None);
                 pintail_exec::set_session_cte_max_recursion_depth(None);
@@ -488,6 +499,19 @@ impl Backend {
                     return Err("cte_max_recursion_depth must be between 1 and 1000000".to_owned());
                 }
                 session.cte_max_recursion_depth = limit;
+                Ok(())
+            }
+            "max_execution_time" => {
+                let limit = value.parse::<u64>().map_err(|_| {
+                    "max_execution_time must be an unsigned millisecond count".to_owned()
+                })?;
+                if limit > u64::from(u32::MAX) {
+                    return Err(format!(
+                        "max_execution_time must be between 0 and {}",
+                        u32::MAX
+                    ));
+                }
+                session.max_execution_time_ms = limit;
                 Ok(())
             }
             // Everything else keeps the accepted-no-op compatibility
@@ -1093,6 +1117,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             ErrorKind::ER_NOT_SUPPORTED_YET
         }
         QueryError::Invalid(_) => ErrorKind::ER_PARSE_ERROR,
+        QueryError::Interrupted => ErrorKind::ER_QUERY_INTERRUPTED,
         QueryError::NotReady(_) | QueryError::Internal(_) => ErrorKind::ER_UNKNOWN_ERROR,
     }
 }
@@ -1165,6 +1190,11 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         (
             "@@cte_max_recursion_depth",
             Value::UInt64(session.cte_max_recursion_depth),
+        )
+    } else if normalized.contains("@@max_execution_time") {
+        (
+            "@@max_execution_time",
+            Value::UInt64(session.max_execution_time_ms),
         )
     } else if normalized.contains("@@session.time_zone") || normalized.contains("@@time_zone") {
         (

@@ -4,6 +4,7 @@ use std::{
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     mem::{size_of, size_of_val},
+    time::Instant,
 };
 
 const HASH_ENTRY_OVERHEAD: usize = 3 * size_of::<usize>();
@@ -750,6 +751,7 @@ pub trait ScanProvider {
 #[derive(Debug)]
 pub struct MemoryTracker {
     limit: usize,
+    deadline: Option<Instant>,
     /// Atomic so parallel operators can reserve from worker threads through
     /// a shared `&MemoryTracker` (experiments/RESULTS.md e02: thread-local
     /// partial state + merge is the adopted parallel-aggregation shape).
@@ -761,6 +763,7 @@ impl Clone for MemoryTracker {
     fn clone(&self) -> Self {
         Self {
             limit: self.limit,
+            deadline: self.deadline,
             used: std::sync::atomic::AtomicUsize::new(self.used()),
             spill: self.spill.clone(),
         }
@@ -779,8 +782,16 @@ impl MemoryTracker {
     /// Constructs a tracker with a hard byte limit.
     #[must_use]
     pub fn new(limit: usize) -> Self {
+        Self::with_deadline(limit, None)
+    }
+
+    /// Constructs a tracker with a hard byte limit and optional monotonic
+    /// execution deadline.
+    #[must_use]
+    pub fn with_deadline(limit: usize, deadline: Option<Instant>) -> Self {
         Self {
             limit,
+            deadline,
             used: std::sync::atomic::AtomicUsize::new(0),
             spill: spill::QuerySpill::new(),
         }
@@ -821,6 +832,7 @@ impl MemoryTracker {
     /// Returns [`ExecError::MemoryLimitExceeded`] before exceeding the query
     /// limit.
     pub fn reserve(&self, bytes: usize) -> Result<(), ExecError> {
+        self.check_deadline()?;
         let outcome = self.used.fetch_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
@@ -849,6 +861,7 @@ impl MemoryTracker {
     }
 
     fn ensure_transient(&self, bytes: usize) -> Result<(), ExecError> {
+        self.check_deadline()?;
         let used = self.used();
         if used.saturating_add(bytes) > self.limit {
             return Err(ExecError::MemoryLimitExceeded {
@@ -858,6 +871,17 @@ impl MemoryTracker {
             });
         }
         Ok(())
+    }
+
+    fn check_deadline(&self) -> Result<(), ExecError> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            Err(ExecError::QueryTimedOut)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -983,14 +1007,38 @@ impl Execution {
     /// Returns an error when a scan cannot open or an expression references a
     /// column absent from its physical input.
     pub fn start(
-        mut plan: PhysicalPlan,
+        plan: PhysicalPlan,
         provider: &dyn ScanProvider,
         memory_limit: usize,
     ) -> Result<Self, ExecError> {
+        Self::start_with_deadline(plan, provider, memory_limit, None)
+    }
+
+    /// Opens a physical plan with an optional monotonic execution deadline.
+    /// Stateful operators check it at every pull and memory reservation, so
+    /// timeout enforcement remains cooperative without a timer thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an execution error when setup fails or the deadline has
+    /// already elapsed.
+    pub fn start_with_deadline(
+        mut plan: PhysicalPlan,
+        provider: &dyn ScanProvider,
+        memory_limit: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Self, ExecError> {
         let mut subquery_bytes = 0;
-        resolve_plan_subqueries(&mut plan, provider, memory_limit, &mut subquery_bytes)?;
+        resolve_plan_subqueries(
+            &mut plan,
+            provider,
+            memory_limit,
+            deadline,
+            &mut subquery_bytes,
+        )?;
         let output_fields = plan.output_fields();
-        let memory = MemoryTracker::new(memory_limit);
+        let memory = MemoryTracker::with_deadline(memory_limit, deadline);
+        memory.check_deadline()?;
         memory.reserve(subquery_bytes.saturating_add(plan_regex_memory_upper_bound(&plan)))?;
         let (root, _) = build_operator(plan, provider, &memory)?;
         Ok(Self {
@@ -1033,47 +1081,72 @@ fn resolve_plan_subqueries(
     plan: &mut PhysicalPlan,
     provider: &dyn ScanProvider,
     memory_limit: usize,
+    deadline: Option<Instant>,
     retained_bytes: &mut usize,
 ) -> Result<(), ExecError> {
     match plan {
         PhysicalPlan::Recursive { anchor, member, .. } => {
-            resolve_plan_subqueries(anchor, provider, memory_limit, retained_bytes)?;
-            resolve_plan_subqueries(member, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(anchor, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(member, provider, memory_limit, deadline, retained_bytes)?;
         }
         PhysicalPlan::Scan(scan) => {
             for predicate in &mut scan.predicates {
-                resolve_expr_subqueries(predicate, provider, memory_limit, retained_bytes)?;
+                resolve_expr_subqueries(
+                    predicate,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                )?;
             }
         }
         PhysicalPlan::Derived { input, .. }
         | PhysicalPlan::Distinct { input }
         | PhysicalPlan::Sort { input, .. }
         | PhysicalPlan::Limit { input, .. } => {
-            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
         }
         PhysicalPlan::SetOp { left, right, .. } => {
-            resolve_plan_subqueries(left, provider, memory_limit, retained_bytes)?;
-            resolve_plan_subqueries(right, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
         }
         PhysicalPlan::Window { input, windows, .. } => {
             for window in windows {
                 if let WindowFunction::Aggregate(aggregate) = &mut window.function
                     && let Some(expr) = &mut aggregate.expr
                 {
-                    resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+                    resolve_expr_subqueries(
+                        expr,
+                        provider,
+                        memory_limit,
+                        deadline,
+                        retained_bytes,
+                    )?;
                 }
                 for expr in &mut window.partition_by {
-                    resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+                    resolve_expr_subqueries(
+                        expr,
+                        provider,
+                        memory_limit,
+                        deadline,
+                        retained_bytes,
+                    )?;
                 }
                 for key in &mut window.order_by {
-                    resolve_expr_subqueries(&mut key.expr, provider, memory_limit, retained_bytes)?;
+                    resolve_expr_subqueries(
+                        &mut key.expr,
+                        provider,
+                        memory_limit,
+                        deadline,
+                        retained_bytes,
+                    )?;
                 }
             }
-            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
         }
         PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => {
             for input in inputs {
-                resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+                resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
             }
         }
         PhysicalPlan::HashJoin {
@@ -1084,44 +1157,69 @@ fn resolve_plan_subqueries(
             extra_keys,
             ..
         } => {
-            resolve_plan_subqueries(left, provider, memory_limit, retained_bytes)?;
-            resolve_plan_subqueries(right, provider, memory_limit, retained_bytes)?;
-            resolve_expr_subqueries(left_key, provider, memory_limit, retained_bytes)?;
-            resolve_expr_subqueries(right_key, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(left_key, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(right_key, provider, memory_limit, deadline, retained_bytes)?;
             for (extra_left, extra_right) in extra_keys {
-                resolve_expr_subqueries(extra_left, provider, memory_limit, retained_bytes)?;
-                resolve_expr_subqueries(extra_right, provider, memory_limit, retained_bytes)?;
+                resolve_expr_subqueries(
+                    extra_left,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                )?;
+                resolve_expr_subqueries(
+                    extra_right,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                )?;
             }
         }
         PhysicalPlan::Filter { input, predicate } => {
-            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
-            resolve_expr_subqueries(predicate, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(predicate, provider, memory_limit, deadline, retained_bytes)?;
         }
         PhysicalPlan::HashAggregate {
             input,
             group_by,
             aggregates,
         } => {
-            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
             for expression in group_by {
-                resolve_expr_subqueries(expression, provider, memory_limit, retained_bytes)?;
+                resolve_expr_subqueries(
+                    expression,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                )?;
             }
             for aggregate in aggregates {
                 if let Some(expression) = &mut aggregate.expr {
-                    resolve_expr_subqueries(expression, provider, memory_limit, retained_bytes)?;
+                    resolve_expr_subqueries(
+                        expression,
+                        provider,
+                        memory_limit,
+                        deadline,
+                        retained_bytes,
+                    )?;
                 }
                 for (key, _) in &mut aggregate.order_within {
-                    resolve_expr_subqueries(key, provider, memory_limit, retained_bytes)?;
+                    resolve_expr_subqueries(key, provider, memory_limit, deadline, retained_bytes)?;
                 }
             }
         }
         PhysicalPlan::Project { input, expressions } => {
-            resolve_plan_subqueries(input, provider, memory_limit, retained_bytes)?;
+            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
             for projection in expressions {
                 resolve_expr_subqueries(
                     &mut projection.expr,
                     provider,
                     memory_limit,
+                    deadline,
                     retained_bytes,
                 )?;
             }
@@ -1135,6 +1233,7 @@ fn resolve_expr_subqueries(
     expression: &mut BoundExpr,
     provider: &dyn ScanProvider,
     memory_limit: usize,
+    deadline: Option<Instant>,
     retained_bytes: &mut usize,
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
@@ -1143,6 +1242,7 @@ fn resolve_expr_subqueries(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
+                deadline,
                 Some(2),
             )?;
             let value = match values.as_slice() {
@@ -1160,6 +1260,7 @@ fn resolve_expr_subqueries(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
+                deadline,
                 Some(1),
             )?;
             let exists = !values.is_empty();
@@ -1170,7 +1271,7 @@ fn resolve_expr_subqueries(
             query,
             negated,
         } => {
-            resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(expr, provider, memory_limit, deadline, retained_bytes)?;
             let projection_type = query
                 .projection
                 .first()
@@ -1179,6 +1280,7 @@ fn resolve_expr_subqueries(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
+                deadline,
                 None,
             )?;
             reserve_subquery_values(&values, memory_limit, retained_bytes)?;
@@ -1195,15 +1297,21 @@ fn resolve_expr_subqueries(
             };
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            resolve_expr_subqueries(expr, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(expr, provider, memory_limit, deadline, retained_bytes)?;
         }
         BoundExprKind::Binary { left, right, .. } => {
-            resolve_expr_subqueries(left, provider, memory_limit, retained_bytes)?;
-            resolve_expr_subqueries(right, provider, memory_limit, retained_bytes)?;
+            resolve_expr_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
         }
         BoundExprKind::Scalar { args, .. } => {
             for argument in args {
-                resolve_expr_subqueries(argument, provider, memory_limit, retained_bytes)?;
+                resolve_expr_subqueries(
+                    argument,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                )?;
             }
         }
         BoundExprKind::Column(_)
@@ -1219,6 +1327,7 @@ fn materialize_subquery(
     query: pintail_sql::BoundQuery,
     provider: &dyn ScanProvider,
     memory_limit: usize,
+    deadline: Option<Instant>,
     maximum_rows: Option<usize>,
 ) -> Result<Vec<Value>, ExecError> {
     let logical = Optimizer::optimize(LogicalPlanner::plan(query));
@@ -1228,7 +1337,7 @@ fn materialize_subquery(
             "scalar or IN subquery must produce exactly one column",
         ));
     }
-    let mut execution = Execution::start(physical, provider, memory_limit)?;
+    let mut execution = Execution::start_with_deadline(physical, provider, memory_limit, deadline)?;
     let mut values = Vec::new();
     let mut used = size_of::<Vec<Value>>();
     while let Some(batch) = execution.next_batch()? {
@@ -1394,6 +1503,7 @@ impl PullOperator {
 
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, memory: &MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
+        memory.check_deadline()?;
         match self {
             Self::Empty => Ok(None),
             Self::OneRow { emitted } => {
@@ -10396,6 +10506,8 @@ pub enum ExecError {
         /// Iteration cap (`MySQL`'s `cte_max_recursion_depth` default).
         limit: u64,
     },
+    /// The configured statement execution deadline elapsed.
+    QueryTimedOut,
     /// A source-specific failure.
     Source(String),
     /// The scan provider was configured twice for one stable table.
@@ -10463,6 +10575,8 @@ impl fmt::Display for ExecError {
                 "recursive query aborted after {} iterations (cte_max_recursion_depth = {limit})",
                 limit + 1
             ),
+            Self::QueryTimedOut => formatter
+                .write_str("query execution was interrupted after max_execution_time elapsed"),
             Self::InvalidPhysicalPlan(message) => {
                 write!(formatter, "invalid physical plan: {message}")
             }
@@ -11444,6 +11558,25 @@ mod tests {
             0
         );
         assert_eq!(memory.used(), reserved);
+    }
+
+    #[test]
+    fn elapsed_statement_deadline_interrupts_before_execution() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let deadline = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_millis(1))
+            .expect("monotonic clock supports a one millisecond subtraction");
+        assert!(matches!(
+            Execution::start_with_deadline(
+                physical("SELECT 1"),
+                &provider,
+                64 * 1024,
+                Some(deadline),
+            ),
+            Err(ExecError::QueryTimedOut)
+        ));
     }
 
     #[test]

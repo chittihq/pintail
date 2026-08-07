@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scoped authentication where required, and invalidating stale prepared
   statements without dropping the pooled socket. An idle-connection deadline
   is configurable through TOML, environment, and CLI settings.
+- Wire sessions implement `max_execution_time` as a cooperative millisecond
+  statement deadline. Execution and subquery pulls return MySQL interruption
+  error 1317 when it expires, and pool reset/change-user restore the disabled
+  default.
 - Recursive CTE execution has a session-scoped `cte_max_recursion_depth`
   guard with a safe default and bounded configurable range; attempts to
   disable the guard are rejected.

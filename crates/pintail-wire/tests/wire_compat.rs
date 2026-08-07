@@ -288,6 +288,39 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .is_err(),
         "an unbounded recursive CTE setting must reject"
     );
+    connection
+        .query_drop("SET SESSION max_execution_time = 1")
+        .await
+        .expect("set query deadline");
+    connection
+        .query_drop("SET SESSION cte_max_recursion_depth = 1000000")
+        .await
+        .expect("raise recursion guard above the timeout workload");
+    let execution_time: Option<u64> = connection
+        .query_first("SELECT @@max_execution_time")
+        .await
+        .expect("query deadline probe");
+    assert_eq!(execution_time, Some(1));
+    let timeout = connection
+        .query_drop(
+            "WITH RECURSIVE r (n) AS (\
+             SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 1000000) \
+             SELECT MAX(n) FROM r",
+        )
+        .await
+        .expect_err("one millisecond deadline must interrupt recursive work");
+    assert!(
+        timeout.to_string().contains("1317") || timeout.to_string().contains("max_execution_time"),
+        "unexpected timeout error: {timeout}"
+    );
+    connection
+        .query_drop("SET SESSION max_execution_time = 0")
+        .await
+        .expect("disable query deadline");
+    connection
+        .query_drop("SET SESSION cte_max_recursion_depth = 1000")
+        .await
+        .expect("restore recursive CTE depth");
     let mut short_concat_metadata = connection
         .query_iter("SELECT GROUP_CONCAT('x') FROM events")
         .await
@@ -647,6 +680,10 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET time_zone = '+05:30'")
         .await
         .expect("dirty session before reset");
+    connection
+        .query_drop("SET max_execution_time = 1234")
+        .await
+        .expect("dirty query deadline before reset");
     assert!(connection.reset().await.expect("COM_RESET_CONNECTION"));
     assert_eq!(connection.id(), connection_id);
     let reset_zone: Option<String> = connection
@@ -654,6 +691,11 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("session after reset");
     assert_eq!(reset_zone.as_deref(), Some("SYSTEM"));
+    let reset_execution_time: Option<u64> = connection
+        .query_first("SELECT @@max_execution_time")
+        .await
+        .expect("query deadline after reset");
+    assert_eq!(reset_execution_time, Some(0));
     assert!(
         connection
             .exec_drop(&reset_statement, (1_u64,))

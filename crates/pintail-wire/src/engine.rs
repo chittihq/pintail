@@ -9,8 +9,8 @@ use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
 use pintail_exec::{
-    Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
-    explain_analyze_statement, explain_statement,
+    ExecError, Execution, ExplainError, LogicalPlanner, Optimizer, PhysicalPlanner,
+    SnapshotScanProvider, explain_analyze_statement_with_deadline, explain_statement,
 };
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_probe::{ProbeReport, SourceTable};
@@ -71,6 +71,8 @@ pub enum QueryError {
     Invalid(String),
     #[error("query engine failed: {0}")]
     Internal(String),
+    #[error("query execution was interrupted after max_execution_time elapsed")]
+    Interrupted,
 }
 
 /// Opens reader-pinned table snapshots and runs Pintail's native SQL engine.
@@ -214,6 +216,22 @@ impl ReplicaEngine {
         sql: &str,
         max_rows: usize,
     ) -> Result<QueryOutput, QueryError> {
+        self.execute_with_deadline(database_id, sql, max_rows, None)
+    }
+
+    /// Executes one statement with an optional monotonic deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::execute`], plus
+    /// [`QueryError::Interrupted`] when the deadline elapses.
+    pub fn execute_with_deadline(
+        &self,
+        database_id: &str,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+    ) -> Result<QueryOutput, QueryError> {
         let started = Instant::now();
         let replica = self.load_replica_cached(database_id)?;
         let catalog = build_catalog(&replica)?;
@@ -236,6 +254,7 @@ impl ReplicaEngine {
                 table_count,
                 started,
                 max_rows,
+                deadline,
             ),
             Statement::Explain { .. } => self.execute_explain(
                 &statement,
@@ -244,6 +263,7 @@ impl ReplicaEngine {
                 &replica.database.name,
                 table_count,
                 started,
+                deadline,
             ),
             _ => Err(QueryError::Invalid(
                 "Pintail's query surfaces are read-only".to_owned(),
@@ -261,6 +281,7 @@ impl ReplicaEngine {
         table_count: usize,
         started: Instant,
         max_rows: usize,
+        deadline: Option<Instant>,
     ) -> Result<QueryOutput, QueryError> {
         let bound = Binder::new(catalog, Some(database_name))
             .bind(statement)
@@ -282,8 +303,9 @@ impl ReplicaEngine {
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
         let physical = PhysicalPlanner::plan(logical)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
-        let mut execution = Execution::start(physical, provider, self.memory_limit)
-            .map_err(|error| QueryError::Internal(error.to_string()))?;
+        let mut execution =
+            Execution::start_with_deadline(physical, provider, self.memory_limit, deadline)
+                .map_err(query_execution_error)?;
         let fields = execution
             .output_fields()
             .iter()
@@ -308,6 +330,7 @@ impl ReplicaEngine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_explain(
         &self,
         statement: &Statement,
@@ -316,17 +339,19 @@ impl ReplicaEngine {
         database_name: &str,
         table_count: usize,
         started: Instant,
+        deadline: Option<Instant>,
     ) -> Result<QueryOutput, QueryError> {
         let plan = explain_statement(statement, catalog, Some(database_name)).or_else(|_| {
-            explain_analyze_statement(
+            explain_analyze_statement_with_deadline(
                 statement,
                 catalog,
                 Some(database_name),
                 provider,
                 self.memory_limit,
+                deadline,
             )
         });
-        let plan = plan.map_err(|error| QueryError::Invalid(error.to_string()))?;
+        let plan = plan.map_err(query_explain_error)?;
         let mut stats = provider_stats(provider, table_count);
         stats.duration_ms = elapsed_ms(started);
         stats.rows = 1;
@@ -405,10 +430,7 @@ fn collect_rows(
 ) -> Result<(Vec<Vec<Value>>, usize, bool), QueryError> {
     let mut rows = Vec::new();
     let mut batches = 0;
-    while let Some(batch) = execution
-        .next_batch()
-        .map_err(|error| QueryError::Internal(error.to_string()))?
-    {
+    while let Some(batch) = execution.next_batch().map_err(query_execution_error)? {
         batches += 1;
         for row in batch.selection().selected_rows() {
             if rows.len() == max_rows {
@@ -427,6 +449,20 @@ fn collect_rows(
         }
     }
     Ok((rows, batches, false))
+}
+
+fn query_execution_error(error: ExecError) -> QueryError {
+    match error {
+        ExecError::QueryTimedOut => QueryError::Interrupted,
+        error => QueryError::Internal(error.to_string()),
+    }
+}
+
+fn query_explain_error(error: ExplainError) -> QueryError {
+    match error {
+        ExplainError::Exec(ExecError::QueryTimedOut) => QueryError::Interrupted,
+        error => QueryError::Invalid(error.to_string()),
+    }
 }
 
 fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> QueryOutput {

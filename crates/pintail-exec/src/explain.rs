@@ -1,4 +1,7 @@
-use std::fmt::{self, Write};
+use std::{
+    fmt::{self, Write},
+    time::Instant,
+};
 
 use pintail_catalog::CatalogSnapshot;
 use pintail_sql::{BindError, Binder, BoundJoinKind, Statement};
@@ -51,6 +54,30 @@ pub fn explain_analyze_statement(
     provider: &SnapshotScanProvider<'_>,
     memory_limit: usize,
 ) -> Result<String, ExplainError> {
+    explain_analyze_statement_with_deadline(
+        statement,
+        catalog,
+        current_database,
+        provider,
+        memory_limit,
+        None,
+    )
+}
+
+/// Executes `EXPLAIN ANALYZE` with an optional monotonic statement deadline.
+///
+/// # Errors
+///
+/// Returns the same errors as [`explain_analyze_statement`], including an
+/// interrupted execution when the deadline elapses.
+pub fn explain_analyze_statement_with_deadline(
+    statement: &Statement,
+    catalog: &CatalogSnapshot,
+    current_database: Option<&str>,
+    provider: &SnapshotScanProvider<'_>,
+    memory_limit: usize,
+    deadline: Option<Instant>,
+) -> Result<String, ExplainError> {
     let Statement::Explain {
         analyze: true,
         verbose: false,
@@ -67,7 +94,8 @@ pub fn explain_analyze_statement(
     let bound = Binder::new(catalog, current_database).bind(statement)?;
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
     let physical = PhysicalPlanner::plan(logical)?;
-    let mut execution = Execution::start(physical.clone(), provider, memory_limit)?;
+    let mut execution =
+        Execution::start_with_deadline(physical.clone(), provider, memory_limit, deadline)?;
     while execution.next_batch()?.is_some() {}
     let spill = execution.spill_metrics();
     let mut output = format_physical_plan_with_stats(&physical, provider);

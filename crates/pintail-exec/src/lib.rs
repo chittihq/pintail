@@ -22,8 +22,8 @@ pub use execution::{
     take_session_group_concat_warnings,
 };
 pub use explain::{
-    ExplainError, explain_analyze_statement, explain_statement, format_physical_plan,
-    format_physical_plan_with_stats,
+    ExplainError, explain_analyze_statement, explain_analyze_statement_with_deadline,
+    explain_statement, format_physical_plan, format_physical_plan_with_stats,
 };
 pub use logical::{LogicalPlan, LogicalPlanner, Scan};
 pub use optimizer::{Optimizer, set_session_time_zone};
