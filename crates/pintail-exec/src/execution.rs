@@ -4088,7 +4088,7 @@ impl AggregateState {
             return Ok(());
         }
         if let AggregateValue::JsonArrayAgg { items } = &mut self.value {
-            let fragment = crate::expression::mysql_json_text(
+            let fragment = crate::expression::json_scalar_text(
                 &crate::expression::json_value_of_typed(value, aggregate.input_type)?,
             );
             reserve_vec_elements(items, 1, 64, memory)?;

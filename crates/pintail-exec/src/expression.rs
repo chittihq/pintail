@@ -2429,7 +2429,7 @@ fn evaluate_eager_scalar_typed(
             })))
         }
         ScalarFunction::JsonObject => {
-            let mut members = serde_json::Map::new();
+            let mut members: Vec<(String, JsonScalar)> = Vec::new();
             for (index, pair) in values.chunks_exact(2).enumerate() {
                 // MySQL rejects NULL member names, coerces other key types
                 // to text, and keeps the LAST occurrence of a duplicate key
@@ -2437,27 +2437,28 @@ fn evaluate_eager_scalar_typed(
                 if matches!(pair[0], Value::Null) {
                     return Err(ExecError::InvalidExpressionType);
                 }
-                members.insert(
-                    scalar_string(&pair[0])?,
-                    json_value_of_typed(
-                        &pair[1],
-                        argument_types.get(index * 2 + 1).copied().flatten(),
-                    )?,
-                );
+                let key = scalar_string(&pair[0])?;
+                let entry = json_value_of_typed(
+                    &pair[1],
+                    argument_types.get(index * 2 + 1).copied().flatten(),
+                )?;
+                if let Some(slot) = members.iter_mut().find(|(existing, _)| *existing == key) {
+                    slot.1 = entry;
+                } else {
+                    members.push((key, entry));
+                }
             }
-            Ok(Value::Utf8(mysql_json_text(&serde_json::Value::Object(
-                members,
-            ))))
+            Ok(Value::Utf8(mysql_json_object_text(&members)))
         }
-        ScalarFunction::JsonArray => Ok(Value::Utf8(mysql_json_text(&serde_json::Value::Array(
-            values
+        ScalarFunction::JsonArray => Ok(Value::Utf8(mysql_json_array_text(
+            &values
                 .iter()
                 .enumerate()
                 .map(|(index, value)| {
                     json_value_of_typed(value, argument_types.get(index).copied().flatten())
                 })
                 .collect::<Result<Vec<_>, _>>()?,
-        )))),
+        ))),
         ScalarFunction::JsonUnquote => {
             let text = scalar_string(&values[0])?;
             match serde_json::from_str::<serde_json::Value>(&text) {
@@ -2490,7 +2491,13 @@ fn evaluate_eager_scalar_typed(
             Err(ExecError::InvalidExpressionType)
         }
     }
-    .and_then(|value| cast_scalar(&value, data_type))
+    .and_then(|value| match function {
+        // The JSON constructors already emit canonical MySQL text. Re-casting
+        // would round-trip it through serde_json, whose Number cannot hold a
+        // DECIMAL's scale, so {"d": 10.50} would come back as {"d": 10.5}.
+        ScalarFunction::JsonObject | ScalarFunction::JsonArray => Ok(value),
+        _ => cast_scalar(&value, data_type),
+    })
 }
 
 fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
@@ -3917,18 +3924,84 @@ pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
     }
 }
 
+/// One value inside a constructed JSON document.
+///
+/// `MySQL` renders an exact DECIMAL as a JSON *number* carrying its scale —
+/// `10.50`, not `10.5` and not `"10.50"` (measured against 8.4).
+/// `serde_json::Number` cannot hold that without the `arbitrary_precision`
+/// feature, and that feature makes `Number` equality compare raw text, which
+/// would break `JSON_CONTAINS` (`1` would stop matching `1.0`). Carrying the
+/// exact text through to our own renderer avoids both problems.
+pub(crate) enum JsonScalar {
+    /// An ordinary JSON value.
+    Value(serde_json::Value),
+    /// Numeric text emitted verbatim.
+    Number(String),
+}
+
+/// Renders one constructed member, delegating anything but exact numeric
+/// text to the shared document renderer.
+pub(crate) fn json_scalar_text(scalar: &JsonScalar) -> String {
+    match scalar {
+        JsonScalar::Value(value) => mysql_json_text(value),
+        JsonScalar::Number(text) => text.clone(),
+    }
+}
+
 /// Converts a physical value using its retained logical SQL type. JSON and
 /// equal-looking VARCHAR share the UTF-8 carrier, so only this metadata tells
-/// constructors whether to embed a document or quote ordinary text.
+/// constructors whether to embed a document, emit a bare number, or quote
+/// ordinary text.
 pub(crate) fn json_value_of_typed(
     value: &Value,
     data_type: Option<DataType>,
-) -> Result<serde_json::Value, ExecError> {
-    if data_type == Some(DataType::Json) && !matches!(value, Value::Null) {
+) -> Result<JsonScalar, ExecError> {
+    if matches!(value, Value::Null) {
+        return Ok(JsonScalar::Value(serde_json::Value::Null));
+    }
+    if data_type == Some(DataType::Json) {
         return serde_json::from_str(&scalar_string(value)?)
+            .map(JsonScalar::Value)
             .map_err(|_| ExecError::InvalidExpressionType);
     }
-    Ok(json_value_of(value))
+    if matches!(data_type, Some(DataType::Decimal { .. }))
+        && let Value::Utf8(text) = value
+    {
+        return Ok(JsonScalar::Number(text.clone()));
+    }
+    Ok(JsonScalar::Value(json_value_of(value)))
+}
+
+/// `MySQL` orders object keys by length, then lexicographically.
+fn mysql_json_object_text(members: &[(String, JsonScalar)]) -> String {
+    let mut order: Vec<usize> = (0..members.len()).collect();
+    order.sort_by(|left, right| {
+        let (left, right) = (&members[*left].0, &members[*right].0);
+        left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+    });
+    let mut output = String::from("{");
+    for (position, index) in order.iter().enumerate() {
+        if position > 0 {
+            output.push_str(", ");
+        }
+        output.push_str(&serde_json::Value::String(members[*index].0.clone()).to_string());
+        output.push_str(": ");
+        output.push_str(&json_scalar_text(&members[*index].1));
+    }
+    output.push('}');
+    output
+}
+
+fn mysql_json_array_text(items: &[JsonScalar]) -> String {
+    let mut output = String::from("[");
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            output.push_str(", ");
+        }
+        output.push_str(&json_scalar_text(item));
+    }
+    output.push(']');
+    output
 }
 
 /// Resolves a `MySQL` JSON path of the `$.key.nested[0]` form. Wildcards
@@ -4996,6 +5069,47 @@ mod tests {
             call(ScalarFunction::SecToTime, vec![Value::Int64(1)]),
             Value::Utf8("00:00:01".into())
         );
+    }
+
+    #[test]
+    fn json_constructors_emit_decimals_as_scaled_numbers() {
+        use pintail_types::{DataType, Value};
+
+        // Measured against MySQL 8.4: JSON_OBJECT('d', CAST('10.50' AS
+        // DECIMAL(12,2))) is {"d": 10.50} — a number keeping its scale, not
+        // 10.5 and not the string "10.50".
+        let object = super::evaluate_eager_scalar_typed(
+            ScalarFunction::JsonObject,
+            &[
+                Value::Utf8("d".to_owned()),
+                Value::Utf8("10.50".to_owned()),
+            ],
+            &[
+                Some(DataType::Utf8),
+                Some(DataType::Decimal {
+                    precision: 12,
+                    scale: 2,
+                }),
+            ],
+            None,
+            Some(DataType::Json),
+        )
+        .expect("JSON_OBJECT evaluates");
+        assert_eq!(object, Value::Utf8(r#"{"d": 10.50}"#.to_owned()));
+
+        // Equal-looking VARCHAR must still quote, or JSON identity is lost.
+        let text = super::evaluate_eager_scalar_typed(
+            ScalarFunction::JsonObject,
+            &[
+                Value::Utf8("d".to_owned()),
+                Value::Utf8("10.50".to_owned()),
+            ],
+            &[Some(DataType::Utf8), Some(DataType::Utf8)],
+            None,
+            Some(DataType::Json),
+        )
+        .expect("JSON_OBJECT evaluates");
+        assert_eq!(text, Value::Utf8(r#"{"d": "10.50"}"#.to_owned()));
     }
 
     #[test]

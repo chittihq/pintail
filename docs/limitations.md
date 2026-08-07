@@ -50,9 +50,13 @@ stays readable as a list of things to fix.
   (#8).
 - JSON logical identity now survives scalar and aggregate execution: constructors
   embed JSON columns and quote equal-looking VARCHAR text, and results advertise
-  `MYSQL_TYPE_JSON`. DECIMAL and temporal values still encode as JSON strings
-  where MySQL emits typed JSON scalars because the physical `Value` carrier does
-  not preserve those scalar subtypes.
+  `MYSQL_TYPE_JSON`, and a DECIMAL member encodes as a JSON number keeping its
+  scale (`{"d": 10.50}`), matching MySQL. Temporal members encode as JSON
+  strings, which is what MySQL does too, except that MySQL pads a DATETIME to
+  six fractional digits (`"2024-01-15 10:00:00.000000"`) and Pintail emits the
+  value's own width. Reading a document back still normalizes numbers through
+  the JSON parser, so a DECIMAL extracted out of a document loses trailing
+  zeros; only construction is exact (#8).
 - Direct comparison, ordering, grouping, DISTINCT/set duplicate handling,
   window partition/order keys, `IN`/`BETWEEN`, and `MIN`/`MAX` over JSON reject
   explicitly. Pintail does not substitute text collation or UTF-8 hashing for
