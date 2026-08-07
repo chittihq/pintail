@@ -294,7 +294,7 @@ impl ReplicaEngine {
         let result_collations = bound
             .projection
             .iter()
-            .map(|projection| projection.expr.result_collation())
+            .map(|projection| bound.result_collation(&projection.expr))
             .collect::<Vec<_>>();
         let group_concat = bound
             .projection

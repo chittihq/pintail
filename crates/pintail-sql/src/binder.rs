@@ -213,7 +213,7 @@ impl<'catalog> Binder<'catalog> {
                 ),
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: true,
-                collation: expression_collation_marker(&projection.expr),
+                collation: anchor.result_collation(&projection.expr),
                 outer: false,
                 using_shadowed: false,
             })
@@ -1597,7 +1597,7 @@ impl<'catalog> Binder<'catalog> {
                     .unwrap_or_else(|| projection.name.clone()),
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: projection.expr.nullable,
-                collation: expression_collation_marker(&projection.expr),
+                collation: input.result_collation(&projection.expr),
                 outer: false,
                 using_shadowed: false,
             })
@@ -4324,10 +4324,6 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
     }
 }
 
-fn expression_collation_marker(expr: &BoundExpr) -> Option<String> {
-    expr.result_collation()
-}
-
 fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Result<(), BindError> {
     let mut collations = Vec::new();
     for expression in expressions {
@@ -6528,6 +6524,50 @@ mod tests {
             query.projection[0].expr.kind,
             BoundExprKind::GroupKey(0)
         ));
+    }
+
+    #[test]
+    fn resolves_text_collation_through_query_layout_slots() {
+        const SOURCE_COLLATION: &str = "fixture_source_ci";
+
+        let mut grouped = bind("SELECT Name FROM Events GROUP BY Name").expect("group bind");
+        let BoundExprKind::Column(column) = &mut grouped.group_by[0].kind else {
+            panic!("grouping source column");
+        };
+        column.collation = Some(SOURCE_COLLATION.to_owned());
+        assert_eq!(
+            grouped.result_collation(&grouped.projection[0].expr),
+            Some(SOURCE_COLLATION.to_owned())
+        );
+
+        let mut aggregate = bind("SELECT MIN(Name) FROM Events").expect("aggregate bind");
+        let BoundExprKind::Column(column) = &mut aggregate.aggregates[0]
+            .expr
+            .as_mut()
+            .expect("aggregate input")
+            .kind
+        else {
+            panic!("aggregate source column");
+        };
+        column.collation = Some(SOURCE_COLLATION.to_owned());
+        assert_eq!(
+            aggregate.result_collation(&aggregate.projection[0].expr),
+            Some(SOURCE_COLLATION.to_owned())
+        );
+
+        let mut window =
+            bind("SELECT LAG(Name) OVER (ORDER BY id) FROM Events").expect("window bind");
+        let crate::WindowFunction::Offset { expr, .. } = &mut window.windows[0].function else {
+            panic!("offset window");
+        };
+        let BoundExprKind::Column(column) = &mut expr.kind else {
+            panic!("window source column");
+        };
+        column.collation = Some(SOURCE_COLLATION.to_owned());
+        assert_eq!(
+            window.result_collation(&window.projection[0].expr),
+            Some(SOURCE_COLLATION.to_owned())
+        );
     }
 
     #[test]

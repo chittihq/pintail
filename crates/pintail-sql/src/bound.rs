@@ -852,6 +852,107 @@ pub struct BoundQuery {
     pub recursive: Option<Box<BoundRecursive>>,
 }
 
+impl BoundQuery {
+    /// Returns the text collation of a query-layout expression.
+    ///
+    /// Grouping, aggregation, and window lowering replace result-bearing
+    /// expressions with positional slots. Resolve those slots through the
+    /// owning query so client and derived-table metadata retains the source
+    /// collation instead of silently falling back to the connection default.
+    #[must_use]
+    pub fn result_collation(&self, expr: &BoundExpr) -> Option<String> {
+        if expr.data_type != Some(DataType::Utf8) {
+            return None;
+        }
+        let mut collations = Vec::new();
+        self.collect_result_collations(expr, &mut collations);
+        collations.sort_unstable();
+        collations.dedup();
+        match collations.as_slice() {
+            [] => Some(DEFAULT_TEXT_COLLATION.to_owned()),
+            [collation] => Some(collation.clone()),
+            _ => Some(format!("{MIXED_COLLATION_PREFIX}{}", collations.join(","))),
+        }
+    }
+
+    fn collect_result_collations(&self, expr: &BoundExpr, collations: &mut Vec<String>) {
+        match &expr.kind {
+            BoundExprKind::GroupKey(index) => {
+                if let Some(group) = self.group_by.get(*index) {
+                    self.collect_result_collations(group, collations);
+                }
+            }
+            BoundExprKind::Aggregate(slot) => {
+                let aggregate = slot
+                    .checked_sub(self.group_by.len())
+                    .and_then(|index| self.aggregates.get(index));
+                if let Some(expr) = aggregate.and_then(|aggregate| aggregate.expr.as_ref()) {
+                    self.collect_result_collations(expr, collations);
+                }
+            }
+            BoundExprKind::Window(index) => {
+                let Some(window) = self.windows.get(*index) else {
+                    return;
+                };
+                match &window.function {
+                    WindowFunction::Aggregate(aggregate) => {
+                        if let Some(expr) = &aggregate.expr {
+                            self.collect_result_collations(expr, collations);
+                        }
+                    }
+                    WindowFunction::Offset { expr, default, .. } => {
+                        self.collect_result_collations(expr, collations);
+                        if let Some(default) = default {
+                            self.collect_result_collations(default, collations);
+                        }
+                    }
+                    WindowFunction::Extreme { expr, .. } => {
+                        self.collect_result_collations(expr, collations);
+                    }
+                    WindowFunction::RowNumber
+                    | WindowFunction::Rank
+                    | WindowFunction::DenseRank
+                    | WindowFunction::NTile(_) => {}
+                }
+            }
+            BoundExprKind::Column(column) => {
+                if column.data_type == DataType::Utf8 {
+                    collations.push(
+                        column
+                            .collation
+                            .clone()
+                            .unwrap_or_else(|| DEFAULT_TEXT_COLLATION.to_owned()),
+                    );
+                }
+            }
+            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+                self.collect_result_collations(expr, collations);
+            }
+            BoundExprKind::Binary { left, right, .. } => {
+                self.collect_result_collations(left, collations);
+                self.collect_result_collations(right, collations);
+            }
+            BoundExprKind::Scalar { args, .. } => {
+                for argument in args {
+                    self.collect_result_collations(argument, collations);
+                }
+            }
+            BoundExprKind::ScalarSubquery(query) => {
+                if let Some(projection) = query.projection.first() {
+                    query.collect_result_collations(&projection.expr, collations);
+                }
+            }
+            BoundExprKind::InSubquery { expr, query, .. } => {
+                self.collect_result_collations(expr, collations);
+                if let Some(projection) = query.projection.first() {
+                    query.collect_result_collations(&projection.expr, collations);
+                }
+            }
+            BoundExprKind::ExistsSubquery { .. } | BoundExprKind::Literal(_) => {}
+        }
+    }
+}
+
 /// The recursive half of a `WITH RECURSIVE` common table expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundRecursive {
