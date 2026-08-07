@@ -34,6 +34,8 @@ thread_local! {
         const { std::cell::Cell::new(DEFAULT_GROUP_CONCAT_MAX_LEN) };
     static SESSION_GROUP_CONCAT_WARNINGS: std::cell::Cell<u64> =
         const { std::cell::Cell::new(0) };
+    static SESSION_CTE_MAX_RECURSION_DEPTH: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(DEFAULT_CTE_MAX_RECURSION_DEPTH) };
 }
 
 /// Installs the current connection's `group_concat_max_len` on this
@@ -47,6 +49,12 @@ pub fn set_session_group_concat_max_len(limit: Option<usize>) {
 #[must_use]
 pub fn take_session_group_concat_warnings() -> u64 {
     SESSION_GROUP_CONCAT_WARNINGS.replace(0)
+}
+
+/// Installs the recursive-CTE iteration cap for queries on this thread.
+/// `None` restores `MySQL`'s default of 1000 iterations.
+pub fn set_session_cte_max_recursion_depth(limit: Option<u64>) {
+    SESSION_CTE_MAX_RECURSION_DEPTH.set(limit.unwrap_or(DEFAULT_CTE_MAX_RECURSION_DEPTH));
 }
 
 /// Maximum estimated result rows accepted by the unqualified cross-join
@@ -2026,12 +2034,13 @@ fn build_operator(
             let mut rows: Vec<Vec<Value>> = Vec::new();
             let mut delta =
                 drain_recursive_rows(&mut anchor_op, distinct, &mut seen, &mut rows, memory)?;
+            let recursion_limit = SESSION_CTE_MAX_RECURSION_DEPTH.get();
             let mut iterations: u64 = 0;
             while !delta.is_empty() {
                 iterations += 1;
-                if iterations > CTE_MAX_RECURSION_DEPTH {
+                if iterations > recursion_limit {
                     return Err(ExecError::RecursionDepthExceeded {
-                        limit: CTE_MAX_RECURSION_DEPTH,
+                        limit: recursion_limit,
                     });
                 }
                 let overlay = RecursiveWorkingProvider {
@@ -10042,7 +10051,7 @@ fn estimated_batch_row_bytes(batch: &RecordBatch, row: usize) -> Result<usize, E
 /// One selected row as normalized values (the same key the Distinct
 /// operator uses), for set-membership hashing.
 /// `MySQL`'s default `cte_max_recursion_depth`.
-const CTE_MAX_RECURSION_DEPTH: u64 = 1000;
+pub const DEFAULT_CTE_MAX_RECURSION_DEPTH: u64 = 1000;
 
 /// Drains an operator into the recursive accumulator, returning the fresh
 /// delta. `UNION DISTINCT` recursion dedups on collation-normalized rows

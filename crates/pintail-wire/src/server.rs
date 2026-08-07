@@ -239,6 +239,7 @@ struct Session {
     charset_results: String,
     group_concat_max_len: usize,
     group_concat_warnings: u64,
+    cte_max_recursion_depth: u64,
 }
 
 impl Default for Session {
@@ -253,6 +254,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             charset_results: "utf8mb4".to_owned(),
             group_concat_max_len: 1024,
             group_concat_warnings: 0,
+            cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
         }
     }
 }
@@ -382,11 +384,15 @@ impl Backend {
                 // brackets exactly one statement.
                 let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
                 pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
+                pintail_exec::set_session_cte_max_recursion_depth(Some(
+                    session.cte_max_recursion_depth,
+                ));
                 let result = self
                     .engine
                     .execute(&authenticated.database_id, sql, DEFAULT_MAX_ROWS);
                 let warnings = pintail_exec::take_session_group_concat_warnings();
                 pintail_exec::set_session_group_concat_max_len(None);
+                pintail_exec::set_session_cte_max_recursion_depth(None);
                 let _ = pintail_exec::set_session_time_zone(None);
                 if let Ok(mut current) = self.session.lock() {
                     current.group_concat_warnings = warnings;
@@ -472,6 +478,16 @@ impl Backend {
                     .and_then(|limit| usize::try_from(limit).ok())
                     .ok_or_else(|| "group_concat_max_len must be an unsigned integer".to_owned())?;
                 session.group_concat_max_len = limit.max(4);
+                Ok(())
+            }
+            "cte_max_recursion_depth" => {
+                let limit = value
+                    .parse::<u64>()
+                    .map_err(|_| "cte_max_recursion_depth must be a positive integer".to_owned())?;
+                if !(1..=1_000_000).contains(&limit) {
+                    return Err("cte_max_recursion_depth must be between 1 and 1000000".to_owned());
+                }
+                session.cte_max_recursion_depth = limit;
                 Ok(())
             }
             // Everything else keeps the accepted-no-op compatibility
@@ -1144,6 +1160,11 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         (
             "@@warning_count",
             Value::UInt64(session.group_concat_warnings),
+        )
+    } else if normalized.contains("@@cte_max_recursion_depth") {
+        (
+            "@@cte_max_recursion_depth",
+            Value::UInt64(session.cte_max_recursion_depth),
         )
     } else if normalized.contains("@@session.time_zone") || normalized.contains("@@time_zone") {
         (

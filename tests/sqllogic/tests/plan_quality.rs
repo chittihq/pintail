@@ -1,7 +1,9 @@
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
-use pintail_exec::{SnapshotScanProvider, explain_analyze_statement};
+use pintail_exec::{
+    SnapshotScanProvider, explain_analyze_statement, set_session_cte_max_recursion_depth,
+};
 use pintail_sql::parse_statement;
 use pintail_store::{StoreOptions, TableStore};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
@@ -79,12 +81,13 @@ fn recursive_cte_depth_guard_aborts_non_converging_queries() {
     let provider =
         SnapshotScanProvider::new([(DATABASE_ID, TABLE_ID, &snapshot)]).expect("provider");
     // UNION ALL with a self-copying member never converges; the fixpoint
-    // must abort at MySQL's default cte_max_recursion_depth.
+    // must abort at the session's cte_max_recursion_depth.
     let statement = parse_statement(
         "EXPLAIN ANALYZE WITH RECURSIVE r (n) AS (\
          SELECT 1 UNION ALL SELECT n FROM r) SELECT n FROM r",
     )
     .expect("parse");
+    set_session_cte_max_recursion_depth(Some(3));
     let error = explain_analyze_statement(
         &statement,
         &catalog,
@@ -93,8 +96,9 @@ fn recursive_cte_depth_guard_aborts_non_converging_queries() {
         64 * 1024 * 1024,
     )
     .expect_err("depth guard");
+    set_session_cte_max_recursion_depth(None);
     assert!(
-        error.to_string().contains("recursive query aborted"),
+        error.to_string().contains("cte_max_recursion_depth = 3"),
         "unexpected error: {error}"
     );
 }

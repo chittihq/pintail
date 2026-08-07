@@ -272,6 +272,22 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("group concat limit probe");
     assert_eq!(concat_limit, Some(5));
+    connection
+        .query_drop("SET SESSION cte_max_recursion_depth = 12")
+        .await
+        .expect("set recursive CTE depth");
+    let recursion_depth: Option<u64> = connection
+        .query_first("SELECT @@cte_max_recursion_depth")
+        .await
+        .expect("recursive CTE depth probe");
+    assert_eq!(recursion_depth, Some(12));
+    assert!(
+        connection
+            .query_drop("SET SESSION cte_max_recursion_depth = 0")
+            .await
+            .is_err(),
+        "an unbounded recursive CTE setting must reject"
+    );
     let mut short_concat_metadata = connection
         .query_iter("SELECT GROUP_CONCAT('x') FROM events")
         .await

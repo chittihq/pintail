@@ -28,8 +28,9 @@ stays readable as a list of things to fix.
 - `WITH RECURSIVE` accepts only one recursive member, which must scan the CTE
   exactly once in its `FROM`, with no aggregates, windows, `DISTINCT`,
   `GROUP BY`, `ORDER BY` or `LIMIT` inside the member, and member column
-  storage types matching the anchor's. `cte_max_recursion_depth` is not
-  configurable; a non-converging recursion aborts with an explicit error.
+  storage types matching the anchor's. Pintail bounds
+  `cte_max_recursion_depth` to `1..=1000000`; MySQL's unbounded value `0` is
+  rejected so a session cannot disable the recursive resource guard.
 - `RIGHT JOIN` supports only the two-table form.
 - Parenthesized root INNER/CROSS join groups bind by flattening their left-deep
   chain. Aliased groups, nested right inputs, and parenthesized groups that
