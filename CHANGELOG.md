@@ -97,6 +97,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Filter-first scans stop probing later segments after an entire prefetch
+  proves the predicate cannot skip useful ranges. On the settled-memo-disabled
+  20M-row N4 profile this reduced the steady local median from 581 ms to
+  505 ms while preserving the exact eight-row result.
 - `information_schema` honors MySQL `BINARY` casts with bytewise filtering,
   ordering, and DISTINCT projection semantics for ORM discovery queries.
 - Source generation expressions and generated defaults now flow through

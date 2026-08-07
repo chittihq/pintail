@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use pintail_catalog::{DatabaseId, TableId};
@@ -786,23 +789,40 @@ impl BatchStream for SnapshotStream {
             if self.prefetched.is_empty() {
                 let prefetch_width = if self.types.len() <= 2 { 8 } else { 4 };
                 let chunk_budget = available_memory.saturating_sub(batch_overhead);
-                let chunks = if let Some(spec) = &self.prewhere {
+                let (chunks, abandon_prewhere) = if let Some(spec) = &self.prewhere {
+                    let unproductive = AtomicUsize::new(0);
                     let select = |columns: &[DecodedColumn], row_count: usize| {
-                        prewhere_ranges(spec, columns, row_count)
+                        let ranges = prewhere_ranges(spec, columns, row_count);
+                        if matches!(ranges, Ok(None)) {
+                            unproductive.fetch_add(1, Ordering::Relaxed);
+                        }
+                        ranges
                     };
-                    stream
+                    let chunks = stream
                         .next_column_chunks_filtered(
                             prefetch_width,
                             chunk_budget,
                             &spec.predicate_ids,
                             &select,
                         )
-                        .map_err(|error| ExecError::Source(error.to_string()))?
+                        .map_err(|error| ExecError::Source(error.to_string()))?;
+                    let abandon =
+                        !chunks.is_empty() && unproductive.load(Ordering::Relaxed) == chunks.len();
+                    (chunks, abandon)
                 } else {
-                    stream
-                        .next_column_chunks(prefetch_width, chunk_budget)
-                        .map_err(|error| ExecError::Source(error.to_string()))?
+                    (
+                        stream
+                            .next_column_chunks(prefetch_width, chunk_budget)
+                            .map_err(|error| ExecError::Source(error.to_string()))?,
+                        false,
+                    )
                 };
+                if abandon_prewhere {
+                    // Once a complete prefetch proves the predicate cannot
+                    // skip useful ranges, probing later segments only repeats
+                    // the decode and comparison work before the full scan.
+                    self.prewhere = None;
+                }
                 if chunks.is_empty() {
                     self.stream = None;
                     break;
@@ -3731,6 +3751,56 @@ mod tests {
                 limit,
             ),
             [Value::UInt64(3)]
+        );
+    }
+
+    #[test]
+    fn prewhere_stops_reprobing_after_an_unselective_chunk() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        for start in (1_u64..=16_000).step_by(1000) {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 1000)
+                        .map(|key| row(key, &format!("value-{key}")))
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(16_000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        let values = execute_values_with_limit(
+            "SELECT id, name FROM events WHERE name != 'missing'",
+            &catalog,
+            &provider,
+            64 * 1024 * 1024,
+        );
+        assert_eq!(values.len(), 16_000);
+        assert_eq!(values.first(), Some(&Value::UInt64(1)));
+        assert_eq!(values.last(), Some(&Value::UInt64(16_000)));
+
+        let stats = provider
+            .scan_stats(database_id, table_id)
+            .expect("physical scan stats");
+        assert_eq!(stats.segments_read, 16);
+        assert!(
+            stats.blocks_decoded <= 40,
+            "only the first eight-segment prefetch may pay the predicate probe; got {stats:?}"
         );
     }
 
