@@ -293,6 +293,14 @@ worth refusing.
   the mysql_native_password verifier.
 - The endpoint is read-only. `SET sql_mode` is stored and echoed with no
   semantic effect. Multiple SQL statements in one command are not supported.
+- Connection pools may use `COM_RESET_CONNECTION` or `COM_CHANGE_USER`.
+  Both restore Pintail's session defaults and invalidate every prepared
+  statement while keeping the physical connection open; change-user also
+  repeats API-key authentication and rejects a database outside that key's
+  database scope. `COM_STMT_RESET` clears a statement's pending parameter data
+  without deallocating it. Pools that reset connections on return therefore do
+  not leak `time_zone`, `sql_mode`, charset, warning, or prepared-statement
+  state between borrowers.
 - Variable-width text, binary, and JSON expressions without a retained source
   declaration report a type-derived `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB
