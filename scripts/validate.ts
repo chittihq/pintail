@@ -86,9 +86,10 @@ const STAGES: Stage[] = [
     // discovery cost distinct from a test stall and within the gate budget.
     timeoutMinutes: 40,
     stallMinutes: 30,
-    // nextest schedules tests across the workspace's binaries in
-    // parallel; there are no doctests to lose.
-    command: ['cargo', 'nextest', 'run', '--workspace'],
+    // Serial discovery avoids macOS launching every fresh test binary into
+    // concurrent provenance checks. The tests themselves are fast enough that
+    // this is materially quicker and more reliable than loader fan-out.
+    command: ['cargo', 'nextest', 'run', '--test-threads', '1', '--workspace'],
   },
   {
     name: 'oracle',
