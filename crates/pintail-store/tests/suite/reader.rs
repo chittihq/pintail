@@ -113,6 +113,51 @@ fn non_overlapping_snapshot_segments_stream_with_bounded_memory() {
 }
 
 #[test]
+fn unselective_filter_first_scans_report_the_probe_decode() {
+    let directory = tempfile::tempdir().expect("table directory");
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "label", DataType::Utf8, false),
+        ],
+    )
+    .expect("schema");
+    let mut writer =
+        TableStore::open(directory.path(), schema, StoreOptions::default()).expect("writer");
+    writer
+        .bulk_ingest_snapshot(
+            (1_u64..=100)
+                .map(|id| {
+                    StoredRow::new(
+                        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                        vec![Value::UInt64(id), Value::Utf8(format!("value-{id}"))],
+                        0,
+                        false,
+                    )
+                })
+                .collect(),
+        )
+        .expect("snapshot segment");
+
+    let snapshot = writer.snapshot();
+    let (start, end) = snapshot.key_bounds().expect("stream bounds");
+    let mut stream = snapshot
+        .scan_projected_range_stream(&start, &end, &[1, 2])
+        .expect("open projected stream")
+        .expect("direct stream");
+    let keep_all = |_: &[pintail_store::DecodedColumn], _: usize| Ok(None);
+    let chunk = stream
+        .next_column_chunks_filtered(1, 64 * 1024 * 1024, &[2], &keep_all)
+        .expect("filtered chunk")
+        .pop()
+        .expect("one segment");
+
+    assert_eq!(chunk.row_count(), 100);
+    assert_eq!(chunk.stats().blocks_decoded(), 3);
+}
+
+#[test]
 fn overlapping_segments_and_wal_rows_stream_last_write_wins_in_chunks() {
     let directory = tempfile::tempdir().expect("table directory");
     let schema =

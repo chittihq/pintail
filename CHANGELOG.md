@@ -145,6 +145,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Physical scan statistics now include filter-first predicate probes even when
+  the selector keeps the full segment, so unselective late-materialization
+  attempts no longer disappear from `EXPLAIN ANALYZE` evidence.
 - Nested LEFT JOIN groups now carry null-extension through their bound column
   layouts, so downstream expression nullability and derived metadata agree
   with the rows produced by bushy outer joins.

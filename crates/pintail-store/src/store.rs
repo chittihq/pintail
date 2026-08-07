@@ -1404,7 +1404,9 @@ impl ProjectedScanStream {
                 row_count,
                 &scan_budget,
             )?;
-            let predicate_blocks = fetch.blocks_decoded;
+            let predicate_blocks_read = fetch.blocks_read;
+            let predicate_blocks_pruned = fetch.blocks_pruned;
+            let predicate_blocks_decoded = fetch.blocks_decoded;
             let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
             let predicate_reserved = fetch.reserved_bytes;
             drop(fetch);
@@ -1440,14 +1442,19 @@ impl ProjectedScanStream {
                     row_count: ranges.iter().map(std::iter::ExactSizeIterator::len).sum(),
                     stats: ScanStats {
                         segments_read: 1,
-                        blocks_read: fetch.blocks_read,
-                        blocks_pruned: fetch.blocks_pruned,
-                        blocks_decoded: predicate_blocks + fetch.blocks_decoded,
+                        blocks_read: predicate_blocks_read + fetch.blocks_read,
+                        blocks_pruned: predicate_blocks_pruned + fetch.blocks_pruned,
+                        blocks_decoded: predicate_blocks_decoded + fetch.blocks_decoded,
                         ..ScanStats::default()
                     },
                     retained_bytes,
                 });
             }
+            let mut chunk = self.decode_column_chunk(segment, memory_limit)?;
+            chunk.stats.blocks_read += predicate_blocks_read;
+            chunk.stats.blocks_pruned += predicate_blocks_pruned;
+            chunk.stats.blocks_decoded += predicate_blocks_decoded;
+            return Ok(chunk);
         }
         self.decode_column_chunk(segment, memory_limit)
     }
