@@ -2011,11 +2011,12 @@ fn generated_server_id(database_id: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CdcOptions, PendingMutation, PendingTransaction, StreamPosition, generated_server_id,
-        new_table_matches, push_mutations, sanitize_binlog_filename,
+        CdcOptions, CdcTarget, PendingMutation, PendingTransaction, StreamPosition,
+        generated_server_id, new_table_matches, push_mutations, sanitize_binlog_filename,
     };
-    use pintail_meta::SnapshotCheckpointRecord;
+    use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
     use pintail_probe::{SourceColumn, SourceFlavor, SourceKey, SourceTable};
+    use pintail_store::{StoreOptions, TableStore};
     use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
 
     #[test]
@@ -2071,6 +2072,76 @@ mod tests {
         assert_eq!(
             super::stabilize_source_table(&primary, keyless),
             Err("physical key changed".to_owned())
+        );
+    }
+
+    #[test]
+    fn tracked_reopen_restores_collation_from_schema_history() {
+        let workspace = tempfile::tempdir().expect("CDC workspace");
+        let metadata_path = workspace.path().join("pintail-meta.db");
+        let table_directory = workspace.path().join("events");
+        let mut current = source_table(KeyMode::Primary);
+        current.columns.push(SourceColumn {
+            id: 2,
+            name: "label".to_owned(),
+            mysql_data_type: "varchar".to_owned(),
+            mysql_column_type: "varchar(64)".to_owned(),
+            pintail_type: DataType::Utf8,
+            nullable: true,
+            character_set: Some("utf8mb4".to_owned()),
+            collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+            generated_stored: false,
+            generation_expression: String::new(),
+            extra: String::new(),
+            auto_increment: false,
+            default_value: None,
+            default_generated: false,
+        });
+
+        let store = TableStore::open(
+            &table_directory,
+            current
+                .table_schema_with_version(2)
+                .expect("current table schema"),
+            StoreOptions::default(),
+        )
+        .expect("table store");
+        drop(store);
+
+        let mut metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("source", "app", b"unused", "2026-08-08T00:00:00Z")
+            .expect("database");
+        metadata
+            .upsert_snapshot_table("source", "events", Some("[\"id\"]"), Some("[\"id\"]"))
+            .expect("table");
+        metadata
+            .record_schema_history(
+                "source",
+                "events",
+                2,
+                Some("ALTER TABLE events ADD COLUMN label VARCHAR(64)"),
+                &serde_json::to_string(&current.columns).expect("columns JSON"),
+                "2026-08-08T00:00:01Z",
+            )
+            .expect("schema history");
+        drop(metadata);
+
+        let stale_probe = source_table(KeyMode::Primary);
+        let reopened = CdcTarget::open_tracked(
+            &metadata_path,
+            "source",
+            stale_probe,
+            &table_directory,
+            StoreOptions::default(),
+        )
+        .expect("tracked reopen");
+        let label = &reopened.source().columns[1];
+        assert_eq!(label.character_set.as_deref(), Some("utf8mb4"));
+        assert_eq!(label.collation.as_deref(), Some("utf8mb4_0900_ai_ci"));
+        assert_eq!(
+            reopened.store().schema().columns()[1].collation(),
+            Some("utf8mb4_0900_ai_ci")
         );
     }
 
