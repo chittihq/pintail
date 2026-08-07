@@ -1,8 +1,7 @@
 /// Differential query corpus: every statement runs on MySQL and on Pintail
 /// (`/api/query`) after each workload phase, and the normalized results must
-/// be identical. Queries stay inside the documented M2 SQL surface
-/// (docs/limitations.md): windows without explicit frames, no recursive
-/// CTEs, set operations limited to UNION ALL, subqueries uncorrelated.
+/// be identical. Queries stay inside the supported SQL surface documented in
+/// `docs/limitations.md`.
 ///
 /// Every ORDER BY ends with a unique key so ordering is fully determined;
 /// the comparison is order-sensitive.
@@ -100,6 +99,28 @@ export const differentialQueries: DifferentialQuery[] = [
       'SELECT id, name FROM customers ' +
       "WHERE id IN (SELECT customer_id FROM orders WHERE status = 'delivered') " +
       'ORDER BY id LIMIT 25',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'correlated exists with inner predicate',
+    sql:
+      'SELECT c.id, c.name FROM customers c ' +
+      "WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.status = 'delivered') " +
+      'ORDER BY c.id LIMIT 25',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'correlated scalar aggregate',
+    sql:
+      'SELECT c.id, (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) AS order_count ' +
+      'FROM customers c ORDER BY c.id LIMIT 25',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'correlated scalar unique lookup',
+    sql:
+      'SELECT c.id, (SELECT o.total FROM orders o WHERE o.id = c.id) AS matching_total ' +
+      'FROM customers c ORDER BY c.id LIMIT 25',
     tables: ['customers', 'orders'],
   },
   {
