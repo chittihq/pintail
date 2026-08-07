@@ -1317,7 +1317,8 @@ enum PullOperator {
     },
     Distinct {
         input: Box<Self>,
-        seen: HashSet<Vec<Value>>,
+        column_types: Vec<DataType>,
+        state: Option<DistinctRows>,
     },
     SetOp {
         input: Box<Self>,
@@ -1670,50 +1671,19 @@ impl PullOperator {
                     }
                 }
             }
-            Self::Distinct { input, seen } => loop {
-                let Some(mut batch) = input.next_batch(memory)? else {
-                    return Ok(None);
-                };
-                let batch_bytes = batch.estimated_bytes();
-                reserve_hash_set_entries(
-                    seen,
-                    batch.visible_row_count(),
-                    size_of::<Vec<Value>>().saturating_add(HASH_ENTRY_OVERHEAD),
-                    batch_bytes,
-                    memory,
-                )?;
-                for row in 0..batch.row_count() {
-                    if !batch.selection().is_selected(row) {
-                        continue;
-                    }
-                    let row_upper = estimated_normalized_batch_row_bytes(&batch, row)?;
-                    memory.ensure_transient(batch_bytes.saturating_add(row_upper))?;
-                    let key = batch
-                        .columns()
-                        .iter()
-                        .map(|column| {
-                            column
-                                .value(row)
-                                .cloned()
-                                .map(normalized_collation_value)
-                                .ok_or(ExecError::InvalidBatch(
-                                    "distinct row is outside an input column",
-                                ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if seen.contains(&key) {
-                        batch.selection_mut().set(row, false)?;
-                    } else {
-                        let row_bytes = estimated_row_payload_bytes(&key);
-                        memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
-                        memory.reserve(row_bytes)?;
-                        seen.insert(key);
-                    }
+            Self::Distinct {
+                input,
+                column_types,
+                state,
+            } => {
+                if state.is_none() {
+                    *state = Some(build_distinct(input, column_types, memory)?);
                 }
-                if batch.visible_row_count() > 0 {
-                    return Ok(Some(batch));
-                }
-            },
+                state
+                    .as_mut()
+                    .expect("initialized above")
+                    .next_batch(column_types, memory)
+            }
             Self::Window {
                 input,
                 windows,
@@ -1747,10 +1717,10 @@ impl PullOperator {
                     };
                     *state = Some(build_sort(input, keys, *top_k, trim_to, memory)?);
                 }
-                match state.as_mut().expect("initialized above") {
-                    SortedRows::Memory(rows) => next_materialized_batch(rows, column_types, memory),
-                    SortedRows::Spilled(merge) => merge.next_batch(column_types, memory),
-                }
+                state
+                    .as_mut()
+                    .expect("initialized above")
+                    .next_batch(column_types, memory)
             }
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
@@ -2096,11 +2066,17 @@ fn build_operator(
             ))
         }
         PhysicalPlan::Distinct { input } => {
+            let column_types = input
+                .output_fields()
+                .into_iter()
+                .map(|field| field.data_type.unwrap_or(DataType::Utf8))
+                .collect();
             let (input, columns) = build_operator(*input, provider, memory)?;
             Ok((
                 PullOperator::Distinct {
                     input: Box::new(input),
-                    seen: HashSet::new(),
+                    column_types,
+                    state: None,
                 },
                 columns,
             ))
@@ -9392,6 +9368,94 @@ enum SortedRows {
     Spilled(SpilledMerge),
 }
 
+impl SortedRows {
+    fn next_batch(
+        &mut self,
+        column_types: &[DataType],
+        memory: &MemoryTracker,
+    ) -> Result<Option<RecordBatch>, ExecError> {
+        match self {
+            Self::Memory(rows) => next_materialized_batch(rows, column_types, memory),
+            Self::Spilled(merge) => merge.next_batch(column_types, memory),
+        }
+    }
+}
+
+/// Blocking standalone DISTINCT implemented as an external sort followed by
+/// adjacent-row elimination. The all-column ordering uses the same collation
+/// and exact DECIMAL comparator as ORDER BY, grouping, and set semantics.
+struct DistinctRows {
+    sorted: SortedRows,
+    keys: Vec<BoundOrderKey>,
+    last: Option<Vec<Value>>,
+    last_reserved: usize,
+}
+
+impl DistinctRows {
+    fn next_batch(
+        &mut self,
+        column_types: &[DataType],
+        memory: &MemoryTracker,
+    ) -> Result<Option<RecordBatch>, ExecError> {
+        loop {
+            let Some(mut batch) = self.sorted.next_batch(column_types, memory)? else {
+                memory.release(self.last_reserved);
+                self.last_reserved = 0;
+                self.last = None;
+                return Ok(None);
+            };
+            let batch_bytes = batch.estimated_bytes();
+            for row in batch.selection().selected_rows().collect::<Vec<_>>() {
+                let values = batch_row(&batch, row)?;
+                if self
+                    .last
+                    .as_ref()
+                    .is_some_and(|last| compare_sort_rows(last, &values, &self.keys).is_eq())
+                {
+                    batch.selection_mut().set(row, false)?;
+                    continue;
+                }
+                let bytes = estimated_row_payload_bytes(&values);
+                memory.ensure_transient(batch_bytes.saturating_add(bytes))?;
+                if bytes > self.last_reserved {
+                    memory.reserve(bytes - self.last_reserved)?;
+                } else {
+                    memory.release(self.last_reserved - bytes);
+                }
+                self.last_reserved = bytes;
+                self.last = Some(values);
+            }
+            if batch.visible_row_count() > 0 {
+                return Ok(Some(batch));
+            }
+        }
+    }
+}
+
+fn build_distinct(
+    input: &mut PullOperator,
+    column_types: &[DataType],
+    memory: &MemoryTracker,
+) -> Result<DistinctRows, ExecError> {
+    let keys = column_types
+        .iter()
+        .enumerate()
+        .map(|(index, data_type)| BoundOrderKey {
+            index,
+            ascending: true,
+            nulls_first: true,
+            decimal: matches!(data_type, DataType::Decimal { .. }),
+        })
+        .collect::<Vec<_>>();
+    let sorted = build_sort(input, &keys, None, None, memory)?;
+    Ok(DistinctRows {
+        sorted,
+        keys,
+        last: None,
+        last_reserved: 0,
+    })
+}
+
 fn build_sort(
     input: &mut PullOperator,
     keys: &[BoundOrderKey],
@@ -9412,7 +9476,11 @@ fn build_sort(
         }
         return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
     }
-    let (mut rows, runs) = materialize_with_spill(input, keys, memory)?;
+    let SpillMaterialization {
+        mut rows,
+        runs,
+        reserved: rows_reserved,
+    } = materialize_with_spill(input, keys, memory)?;
     rows.sort_by(compare);
     if runs.is_empty() {
         if let Some(width) = trim_to {
@@ -9424,17 +9492,24 @@ fn build_sort(
     }
     let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to)?;
     merge.push_final_run(&rows, memory)?;
+    memory.release(rows_reserved);
     Ok(SortedRows::Spilled(merge))
 }
 
 /// Materializes the sort input, spilling the accumulated rows as a sorted
 /// on-disk run whenever the memory ceiling would be exceeded. Queries that
 /// fit in memory take exactly the old path and produce no runs.
+struct SpillMaterialization {
+    rows: Vec<Vec<Value>>,
+    runs: Vec<SpilledRun>,
+    reserved: usize,
+}
+
 fn materialize_with_spill(
     input: &mut PullOperator,
     keys: &[BoundOrderKey],
     memory: &MemoryTracker,
-) -> Result<(Vec<Vec<Value>>, Vec<SpilledRun>), ExecError> {
+) -> Result<SpillMaterialization, ExecError> {
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut retained = 0_usize;
     let mut vector_reserved = 0_usize;
@@ -9507,7 +9582,11 @@ fn materialize_with_spill(
             }
         }
     }
-    Ok((rows, runs))
+    Ok(SpillMaterialization {
+        rows,
+        runs,
+        reserved: retained.saturating_add(vector_reserved),
+    })
 }
 
 /// One sorted run on disk: length-framed binary rows in a self-deleting
@@ -10091,30 +10170,6 @@ fn normalized_batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, E
                 ))
         })
         .collect()
-}
-
-fn estimated_normalized_batch_row_bytes(
-    batch: &RecordBatch,
-    row: usize,
-) -> Result<usize, ExecError> {
-    let heap_bytes = batch
-        .columns()
-        .iter()
-        .try_fold(0_usize, |heap_bytes, column| {
-            let value = column
-                .value(row)
-                .ok_or(ExecError::InvalidBatch("row is outside an input column"))?;
-            let value_bytes = match value {
-                Value::Utf8(value) => value.len().saturating_mul(12),
-                value => value.heap_bytes(),
-            };
-            Ok::<_, ExecError>(heap_bytes.saturating_add(value_bytes))
-        })?;
-    Ok(size_of::<Vec<Value>>()
-        .saturating_add(batch.columns().len().saturating_mul(size_of::<Value>()))
-        .saturating_add(heap_bytes)
-        .saturating_add(HASH_ENTRY_OVERHEAD)
-        .saturating_add(2 * size_of::<usize>()))
 }
 
 fn estimated_record_batch_bytes(rows: &[Vec<Value>], column_count: usize) -> usize {
@@ -11384,12 +11439,76 @@ mod tests {
         let plan = physical("SELECT DISTINCT name FROM events");
         let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
+        let names = batch
+            .selection()
+            .selected_rows()
+            .map(|row| {
+                batch
+                    .column(0)
+                    .and_then(|column| column.value(row))
+                    .cloned()
+                    .expect("name")
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            batch.selection().selected_rows().collect::<Vec<_>>(),
-            [0, 2]
+            names,
+            [
+                Value::Utf8("alpha".to_owned()),
+                Value::Utf8("Beta".to_owned()),
+            ]
         );
         assert!(execution.next_batch().expect("end").is_none());
         assert!(execution.memory().used() > 0);
+    }
+
+    #[test]
+    fn forced_standalone_distinct_spill_matches_the_memory_path() {
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..512)
+                    .map(|row| {
+                        let key = (batch * 512 + row) % 5_000;
+                        Value::Utf8(format!("name-{key:05}-with-a-retained-payload"))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |memory_limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical("SELECT DISTINCT name FROM events"),
+                &provider,
+                memory_limit,
+            )
+            .expect("execution");
+            let mut values = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                for row in batch.selection().selected_rows() {
+                    values.push(
+                        batch
+                            .column(0)
+                            .and_then(|column| column.value(row))
+                            .cloned()
+                            .expect("distinct value"),
+                    );
+                }
+            }
+            (values, execution.spill_metrics())
+        };
+        let (memory, memory_spill) = execute(16 * 1024 * 1024);
+        let (spilled, spill) = execute(1024 * 1024);
+        assert_eq!(spilled, memory);
+        assert_eq!(spilled.len(), 5_000);
+        assert_eq!(memory_spill.files, 0);
+        assert!(spill.files > 0, "the tight execution must use spill files");
+        assert!(spill.written_bytes > 0);
     }
 
     #[test]

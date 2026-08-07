@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configurable per-query and process-wide disk ceilings. Prometheus exposes
   active/written bytes, file count, and quota failures; `EXPLAIN ANALYZE`
   reports the same counters for its query.
+- Standalone `DISTINCT` now switches to the external-sort spill path and
+  removes adjacent equal rows with the same collation and exact-DECIMAL
+  comparator used by ordering; forced-spill and in-memory results are pinned
+  byte-for-byte in differential tests.
 - An experiment lab (`experiments/`) benchmarks contested engine designs as
   checksum-verified head-to-heads on both reference machines; verdicts and
   three literature results that failed to replicate are recorded in
