@@ -97,6 +97,7 @@ fn test_source_table() -> SourceTable {
                 generated_stored: false,
                 auto_increment: true,
                 default_value: None,
+                default_generated: false,
             },
             SourceColumn {
                 id: 2,
@@ -110,6 +111,7 @@ fn test_source_table() -> SourceTable {
                 generated_stored: false,
                 auto_increment: false,
                 default_value: None,
+                default_generated: false,
             },
         ],
         key: SourceKey {

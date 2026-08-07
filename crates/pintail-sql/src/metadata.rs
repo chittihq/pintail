@@ -86,6 +86,7 @@ pub struct IndexFacts {
 /// defaults, auto-increment/generated markers, and single-column UNIQUE
 /// membership.
 #[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // independent source metadata facts
 pub struct ColumnFacts {
     /// Source database name.
     pub database: String,
@@ -95,6 +96,8 @@ pub struct ColumnFacts {
     pub column: String,
     /// Raw `COLUMN_DEFAULT`, absent when the column has no default.
     pub default_value: Option<String>,
+    /// Whether the source evaluates the default as an expression.
+    pub default_generated: bool,
     /// Source `IS_NULLABLE`; distinct from the more permissive physical schema.
     pub nullable: Option<bool>,
     /// Whether the source declares `AUTO_INCREMENT`.
@@ -243,7 +246,7 @@ fn execute_information_schema(
             return Err(MetadataError::Unsupported(join.to_string()));
         }
         let right = information_schema_relation(&join.relation, catalog, facts, true)?;
-        result = join_metadata_results(result, right, &join.join_operator)?;
+        result = join_metadata_results(result, &right, &join.join_operator)?;
     }
     if let Some(predicate) = &select.selection {
         let mut filtered = Vec::with_capacity(result.rows.len());
@@ -266,6 +269,15 @@ fn execute_information_schema(
         Err(error) => return Err(error),
     };
     result = project_metadata_result(result, &select.projection)?;
+    if matches!(select.distinct, Some(sqlparser::ast::Distinct::Distinct)) {
+        let mut distinct = Vec::with_capacity(result.rows.len());
+        for row in result.rows {
+            if !distinct.contains(&row) {
+                distinct.push(row);
+            }
+        }
+        result.rows = distinct;
+    }
     if order_after_projection {
         order_metadata_result(&mut result, query)?;
     }
@@ -325,7 +337,7 @@ fn object_name_last(name: &ObjectName) -> Result<&str, MetadataError> {
 
 fn join_metadata_results(
     left: MetadataResult,
-    right: MetadataResult,
+    right: &MetadataResult,
     operator: &JoinOperator,
 ) -> Result<MetadataResult, MetadataError> {
     let (constraint, preserve_left) = match operator {
@@ -334,27 +346,61 @@ fn join_metadata_results(
         JoinOperator::CrossJoin(JoinConstraint::None) => (&JoinConstraint::None, false),
         _ => return Err(MetadataError::Unsupported(format!("{operator:?}"))),
     };
-    if !matches!(constraint, JoinConstraint::On(_) | JoinConstraint::None) {
+    if !matches!(
+        constraint,
+        JoinConstraint::On(_) | JoinConstraint::Using(_) | JoinConstraint::None
+    ) {
         return Err(MetadataError::Unsupported(format!("{constraint:?}")));
     }
+    let using_pairs = match constraint {
+        JoinConstraint::Using(names) => names
+            .iter()
+            .map(|name| {
+                let name = object_name_last(name)?;
+                let left_index = metadata_join_field(&left.fields, name)?;
+                let right_index = metadata_join_field(&right.fields, name)?;
+                Ok((left_index, right_index))
+            })
+            .collect::<Result<Vec<_>, MetadataError>>()?,
+        _ => Vec::new(),
+    };
+    let right_output = (0..right.fields.len())
+        .filter(|index| {
+            !using_pairs
+                .iter()
+                .any(|(_, right_index)| right_index == index)
+        })
+        .collect::<Vec<_>>();
+    let mut predicate_fields = left.fields.clone();
+    predicate_fields.extend(right.fields.iter().cloned());
     let mut fields = left.fields;
-    let right_width = right.fields.len();
-    fields.extend(right.fields);
+    fields.extend(
+        right_output
+            .iter()
+            .map(|index| right.fields[*index].clone()),
+    );
+    let right_width = right_output.len();
     let mut rows = Vec::new();
     for left_row in left.rows {
         let mut matched = false;
         for right_row in &right.rows {
-            let mut joined = left_row.clone();
-            joined.extend(right_row.iter().cloned());
             let include = match constraint {
                 JoinConstraint::On(predicate) => {
-                    evaluate_metadata_predicate(predicate, &fields, &joined)?
+                    let mut predicate_row = left_row.clone();
+                    predicate_row.extend(right_row.iter().cloned());
+                    evaluate_metadata_predicate(predicate, &predicate_fields, &predicate_row)?
                 }
+                JoinConstraint::Using(_) => using_pairs.iter().all(|(left_index, right_index)| {
+                    !matches!(left_row[*left_index], Value::Null)
+                        && left_row[*left_index] == right_row[*right_index]
+                }),
                 JoinConstraint::None => true,
-                _ => unreachable!("validated above"),
+                JoinConstraint::Natural => unreachable!("validated above"),
             };
             if include {
                 matched = true;
+                let mut joined = left_row.clone();
+                joined.extend(right_output.iter().map(|index| right_row[*index].clone()));
                 rows.push(joined);
             }
         }
@@ -365,6 +411,20 @@ fn join_metadata_results(
         }
     }
     Ok(MetadataResult { fields, rows })
+}
+
+fn metadata_join_field(fields: &[MetadataField], name: &str) -> Result<usize, MetadataError> {
+    let matches = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| metadata_field_base_name(&field.name).eq_ignore_ascii_case(name))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(MetadataError::UnknownColumn(name.to_owned())),
+        _ => Err(MetadataError::AmbiguousColumn(name.to_owned())),
+    }
 }
 
 fn query_has_unsupported_clauses(query: &Query) -> bool {
@@ -379,7 +439,7 @@ fn query_has_unsupported_clauses(query: &Query) -> bool {
 
 fn select_has_unsupported_clauses(select: &Select) -> bool {
     !select.optimizer_hints.is_empty()
-        || select.distinct.is_some()
+        || matches!(select.distinct, Some(sqlparser::ast::Distinct::On(_)))
         || select
             .select_modifiers
             .as_ref()
@@ -426,10 +486,44 @@ fn information_schema_table(
         Ok(information_table_constraints(catalog, facts))
     } else if table.eq_ignore_ascii_case("referential_constraints") {
         Ok(information_referential_constraints(catalog, facts))
+    } else if table.eq_ignore_ascii_case("check_constraints") {
+        Ok(information_check_constraints())
+    } else if table.eq_ignore_ascii_case("routines") {
+        Ok(information_routines())
     } else if table.eq_ignore_ascii_case("views") {
         Ok(information_views())
     } else {
         Err(MetadataError::UnknownTable((*table).to_owned()))
+    }
+}
+
+/// Pintail does not replicate stored routines. Keep the standard discovery
+/// relation present so read-only schema inspectors can report an empty set.
+fn information_routines() -> MetadataResult {
+    MetadataResult {
+        fields: metadata_fields(&[
+            ("ROUTINE_CATALOG", DataType::Utf8, false),
+            ("ROUTINE_SCHEMA", DataType::Utf8, false),
+            ("ROUTINE_NAME", DataType::Utf8, false),
+            ("ROUTINE_TYPE", DataType::Utf8, false),
+            ("ROUTINE_DEFINITION", DataType::Utf8, true),
+        ]),
+        rows: Vec::new(),
+    }
+}
+
+/// Pintail does not currently retain source `CHECK` expressions. Expose the
+/// standard relation with no rows so inspectors can complete discovery without
+/// mistaking the absence of captured checks for a missing metadata table.
+fn information_check_constraints() -> MetadataResult {
+    MetadataResult {
+        fields: metadata_fields(&[
+            ("CONSTRAINT_CATALOG", DataType::Utf8, false),
+            ("CONSTRAINT_SCHEMA", DataType::Utf8, false),
+            ("CONSTRAINT_NAME", DataType::Utf8, false),
+            ("CHECK_CLAUSE", DataType::Utf8, false),
+        ]),
+        rows: Vec::new(),
     }
 }
 
@@ -485,6 +579,8 @@ fn information_tables(catalog: &CatalogSnapshot) -> MetadataResult {
         ("TABLE_TYPE", DataType::Utf8, false),
         ("ENGINE", DataType::Utf8, false),
         ("TABLE_ROWS", DataType::UInt64, true),
+        ("CREATE_OPTIONS", DataType::Utf8, false),
+        ("TABLE_COMMENT", DataType::Utf8, false),
     ]);
     let rows = catalog
         .databases()
@@ -500,6 +596,8 @@ fn information_tables(catalog: &CatalogSnapshot) -> MetadataResult {
                         .statistics()
                         .row_count()
                         .map_or(Value::Null, Value::UInt64),
+                    utf8(""),
+                    utf8(""),
                 ]
             })
         })
@@ -543,12 +641,20 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                 let data_type = fact
                     .and_then(|fact| fact.mysql_data_type.as_deref())
                     .unwrap_or_else(|| mysql_data_type(column.data_type()));
+                let character_length = mysql_character_maximum_length(data_type, &column_type);
+                let octet_length = character_length.and_then(|length| {
+                    length.checked_mul(mysql_charset_width(
+                        fact.and_then(|fact| fact.character_set.as_deref()),
+                    ))
+                });
                 let key = column_key(table, column.id(), fact);
                 let extra = fact.map_or("", |fact| {
                     if fact.auto_increment {
                         "auto_increment"
                     } else if fact.generated_stored {
                         "STORED GENERATED"
+                    } else if fact.default_generated {
+                        "DEFAULT_GENERATED"
                     } else {
                         ""
                     }
@@ -567,8 +673,8 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                         "NO"
                     }),
                     utf8(data_type),
-                    Value::Null,
-                    Value::Null,
+                    character_length.map_or(Value::Null, Value::UInt64),
+                    octet_length.map_or(Value::Null, Value::UInt64),
                     numeric_precision(column.data_type()).map_or(Value::Null, Value::UInt64),
                     numeric_scale(column.data_type()).map_or(Value::Null, Value::UInt64),
                     datetime_precision(column.data_type()).map_or(Value::Null, Value::UInt64),
@@ -1026,7 +1132,11 @@ fn show_create_table(
         }
         if let Some(fact) = fact {
             if let Some(default) = &fact.default_value {
-                let _ = write!(ddl, " DEFAULT '{}'", default.replace('\'', "''"));
+                if fact.default_generated {
+                    let _ = write!(ddl, " DEFAULT {default}");
+                } else {
+                    let _ = write!(ddl, " DEFAULT '{}'", default.replace('\'', "''"));
+                }
             }
             if fact.auto_increment {
                 ddl.push_str(" AUTO_INCREMENT");
@@ -1331,7 +1441,7 @@ fn metadata_sum(rows: &[Vec<Value>], index: usize) -> Result<Value, MetadataErro
 }
 
 fn project_metadata_result(
-    source: MetadataResult,
+    mut source: MetadataResult,
     projection: &[SelectItem],
 ) -> Result<MetadataResult, MetadataError> {
     if projection.len() == 1 && projection[0].to_string().eq_ignore_ascii_case("COUNT(*)") {
@@ -1379,14 +1489,14 @@ fn project_metadata_result(
                 );
             }
             SelectItem::UnnamedExpr(expr) => {
-                let index = metadata_expr_column(expr, &source.fields)?;
+                let index = metadata_projection_index(&mut source, expr)?;
                 let mut field = source.fields[index].clone();
                 let name = metadata_field_base_name(&field.name).to_owned();
                 field.name = name;
                 columns.push((index, field));
             }
             SelectItem::ExprWithAlias { expr, alias } => {
-                let index = metadata_expr_column(expr, &source.fields)?;
+                let index = metadata_projection_index(&mut source, expr)?;
                 let mut field = source.fields[index].clone();
                 field.name.clone_from(&alias.value);
                 columns.push((index, field));
@@ -1406,6 +1516,112 @@ fn project_metadata_result(
         })
         .collect();
     Ok(MetadataResult { fields, rows })
+}
+
+fn metadata_projection_index(
+    source: &mut MetadataResult,
+    expression: &Expr,
+) -> Result<usize, MetadataError> {
+    match metadata_expr_column(expression, &source.fields) {
+        Ok(index) => Ok(index),
+        Err(MetadataError::Unsupported(_)) if matches!(expression, Expr::Function(_)) => {
+            let (data_type, nullable) = metadata_scalar_type(expression, &source.fields)?;
+            let values = source
+                .rows
+                .iter()
+                .map(|row| metadata_scalar_value(expression, &source.fields, row))
+                .collect::<Result<Vec<_>, _>>()?;
+            let index = source.fields.len();
+            source.fields.push(MetadataField {
+                name: expression.to_string(),
+                data_type,
+                nullable,
+            });
+            for (row, value) in source.rows.iter_mut().zip(values) {
+                row.push(value);
+            }
+            Ok(index)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn metadata_if_arguments(expression: &Expr) -> Result<[&Expr; 3], MetadataError> {
+    let Expr::Function(function) = expression else {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    };
+    let parts = object_name_parts(&function.name)?;
+    if !matches!(parts.as_slice(), [name] if name.eq_ignore_ascii_case("IF"))
+        || !matches!(function.parameters, FunctionArguments::None)
+    {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    }
+    let FunctionArguments::List(arguments) = &function.args else {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    };
+    if arguments.duplicate_treatment.is_some() || !arguments.clauses.is_empty() {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    }
+    let [
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(condition)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(when_true)),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(when_false)),
+    ] = arguments.args.as_slice()
+    else {
+        return Err(MetadataError::Unsupported(expression.to_string()));
+    };
+    Ok([condition, when_true, when_false])
+}
+
+fn metadata_scalar_value(
+    expression: &Expr,
+    fields: &[MetadataField],
+    row: &[Value],
+) -> Result<Value, MetadataError> {
+    let [condition, when_true, when_false] = metadata_if_arguments(expression)?;
+    let branch = if evaluate_metadata_predicate(condition, fields, row)? {
+        when_true
+    } else {
+        when_false
+    };
+    metadata_expr_value(branch, fields, row)
+}
+
+fn metadata_scalar_type(
+    expression: &Expr,
+    fields: &[MetadataField],
+) -> Result<(DataType, bool), MetadataError> {
+    let [_, when_true, when_false] = metadata_if_arguments(expression)?;
+    let branches = [when_true, when_false];
+    let mut data_type = None;
+    let mut nullable = false;
+    for branch in branches {
+        match branch {
+            Expr::Value(value) if matches!(value.value, SqlValue::Null) => nullable = true,
+            Expr::Value(value)
+                if matches!(
+                    value.value,
+                    SqlValue::SingleQuotedString(_)
+                        | SqlValue::DoubleQuotedString(_)
+                        | SqlValue::NationalStringLiteral(_)
+                ) =>
+            {
+                data_type = Some(DataType::Utf8);
+            }
+            Expr::Value(value) if matches!(value.value, SqlValue::Number(_, _)) => {
+                data_type = Some(DataType::UInt64);
+            }
+            Expr::Value(value) if matches!(value.value, SqlValue::Boolean(_)) => {
+                data_type = Some(DataType::Boolean);
+            }
+            _ => {
+                let field = &fields[metadata_expr_column(branch, fields)?];
+                data_type.get_or_insert(field.data_type);
+                nullable |= field.nullable;
+            }
+        }
+    }
+    Ok((data_type.unwrap_or(DataType::Utf8), nullable))
 }
 
 fn wildcard_is_plain(options: &WildcardAdditionalOptions) -> bool {
@@ -1445,6 +1661,11 @@ fn metadata_expr_column(
 
 fn metadata_identifier_parts(expression: &Expr) -> Result<Vec<&str>, MetadataError> {
     match expression {
+        Expr::Cast {
+            expr,
+            data_type: sqlparser::ast::DataType::Binary(_),
+            ..
+        } => metadata_identifier_parts(expr),
         Expr::Identifier(identifier) => Ok(vec![identifier.value.as_str()]),
         Expr::CompoundIdentifier(identifiers) if !identifiers.is_empty() => Ok(identifiers
             .iter()
@@ -1468,6 +1689,11 @@ fn evaluate_metadata_predicate(
     row: &[Value],
 ) -> Result<bool, MetadataError> {
     match expression {
+        Expr::Cast {
+            expr,
+            data_type: sqlparser::ast::DataType::Binary(_),
+            ..
+        } => evaluate_metadata_predicate(expr, fields, row),
         Expr::Nested(expression) => evaluate_metadata_predicate(expression, fields, row),
         Expr::BinaryOp {
             left,
@@ -1558,6 +1784,11 @@ fn metadata_expr_value(
     row: &[Value],
 ) -> Result<Value, MetadataError> {
     match expression {
+        Expr::Cast {
+            expr,
+            data_type: sqlparser::ast::DataType::Binary(_),
+            ..
+        } => metadata_expr_value(expr, fields, row),
         Expr::Identifier(_) | Expr::CompoundIdentifier(_) => {
             Ok(row[metadata_expr_column(expression, fields)?].clone())
         }
@@ -1951,6 +2182,29 @@ const fn numeric_precision(data_type: DataType) -> Option<u64> {
     }
 }
 
+fn mysql_character_maximum_length(data_type: &str, column_type: &str) -> Option<u64> {
+    match data_type.to_ascii_lowercase().as_str() {
+        "char" | "varchar" | "binary" | "varbinary" => column_type
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .and_then(|(length, _)| length.trim().parse().ok()),
+        "tinytext" | "tinyblob" => Some(255),
+        "text" | "blob" => Some(65_535),
+        "mediumtext" | "mediumblob" => Some(16_777_215),
+        "longtext" | "longblob" => Some(4_294_967_295),
+        _ => None,
+    }
+}
+
+fn mysql_charset_width(character_set: Option<&str>) -> u64 {
+    match character_set.map(str::to_ascii_lowercase).as_deref() {
+        Some("utf8mb4" | "utf16" | "utf16le" | "utf32") => 4,
+        Some("utf8" | "utf8mb3") => 3,
+        Some("ucs2") => 2,
+        _ => 1,
+    }
+}
+
 const fn numeric_scale(data_type: DataType) -> Option<u64> {
     match data_type {
         DataType::Boolean
@@ -2132,6 +2386,7 @@ mod tests {
                     table: "Events".to_owned(),
                     column: "id".to_owned(),
                     default_value: None,
+                    default_generated: false,
                     nullable: Some(false),
                     auto_increment: true,
                     generated_stored: false,
@@ -2146,6 +2401,7 @@ mod tests {
                     table: "Events".to_owned(),
                     column: "name".to_owned(),
                     default_value: None,
+                    default_generated: false,
                     // The physical schema permits NULL for normalization, but the
                     // source declaration remains NOT NULL and must win in metadata.
                     nullable: Some(false),
@@ -2237,6 +2493,84 @@ mod tests {
             constraints.rows[2][5],
             Value::Utf8("FOREIGN KEY".to_owned())
         );
+
+        let drizzle_primary_keys = execute_metadata(
+            &parse_statement(
+                "SELECT table_name, column_name, ordinal_position \
+                 FROM information_schema.table_constraints t \
+                 LEFT JOIN information_schema.key_column_usage k \
+                 USING(constraint_name, table_schema, table_name) \
+                 WHERE t.constraint_type = 'PRIMARY KEY' \
+                   AND t.table_schema = 'Analytics' \
+                 ORDER BY ordinal_position",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("Drizzle primary-key discovery");
+        assert_eq!(
+            drizzle_primary_keys.rows,
+            [vec![
+                Value::Utf8("Events".to_owned()),
+                Value::Utf8("id".to_owned()),
+                Value::UInt64(1),
+            ]]
+        );
+
+        let prisma_tables = execute_metadata(
+            &parse_statement(
+                "SELECT DISTINCT BINARY table_info.table_name AS table_name, \
+                        table_info.create_options, table_info.table_comment \
+                 FROM information_schema.tables AS table_info \
+                 JOIN information_schema.columns AS column_info \
+                   ON BINARY column_info.table_name = BINARY table_info.table_name \
+                 WHERE table_info.table_schema = 'Analytics' \
+                   AND column_info.table_schema = 'Analytics' \
+                   AND table_info.table_type = 'BASE TABLE' \
+                 ORDER BY BINARY table_info.table_name",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("Prisma table discovery");
+        assert_eq!(
+            prisma_tables.rows,
+            [vec![
+                Value::Utf8("Events".to_owned()),
+                Value::Utf8(String::new()),
+                Value::Utf8(String::new()),
+            ]]
+        );
+
+        let prisma_columns = execute_metadata(
+            &parse_statement(
+                "SELECT column_name, character_maximum_length, \
+                        IF(column_comment = '', NULL, column_comment) AS column_comment \
+                 FROM information_schema.columns \
+                 WHERE table_schema = 'Analytics' ORDER BY ordinal_position",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("Prisma column discovery");
+        assert_eq!(prisma_columns.rows[1][1], Value::UInt64(255));
+        assert_eq!(prisma_columns.rows[0][2], Value::Null);
+
+        let checks = execute_metadata(
+            &parse_statement("SELECT * FROM information_schema.check_constraints").expect("parse"),
+            &catalog,
+            None,
+            &facts,
+        )
+        .expect("check_constraints");
+        assert!(checks.rows.is_empty());
+        assert_eq!(checks.fields[3].name, "CHECK_CLAUSE");
 
         let referential = execute_metadata(
             &parse_statement("SELECT * FROM information_schema.referential_constraints")

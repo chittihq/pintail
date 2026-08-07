@@ -1259,6 +1259,7 @@ mod tests {
                 generated_stored: false,
                 auto_increment: false,
                 default_value: None,
+                default_generated: false,
             }],
             key: SourceKey {
                 mode: KeyMode::AppendRowId,

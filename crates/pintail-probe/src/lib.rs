@@ -187,6 +187,7 @@ impl SourceTable {
 
 /// Source column metadata and its lossless Pintail mapping.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
+#[allow(clippy::struct_excessive_bools)] // mirrors independent source metadata flags
 pub struct SourceColumn {
     /// Stable source ordinal, used as the initial Pintail column ID.
     pub id: u32,
@@ -212,6 +213,9 @@ pub struct SourceColumn {
     /// column has no default (older stored probes decode to `None` too).
     #[serde(default)]
     pub default_value: Option<String>,
+    /// Whether `EXTRA` identifies the default as an evaluated expression.
+    #[serde(default)]
+    pub default_generated: bool,
 }
 
 /// Physical key selected from source indexes.
@@ -507,6 +511,7 @@ async fn probe_table(
             warnings.push(format!("column {}: {warning}", raw.name));
         }
         let auto_increment = raw.extra.to_ascii_lowercase().contains("auto_increment");
+        let default_generated = raw.extra.to_ascii_lowercase().contains("default_generated");
         columns.push(SourceColumn {
             id: raw.ordinal,
             name: raw.name,
@@ -519,6 +524,7 @@ async fn probe_table(
             generated_stored,
             auto_increment,
             default_value: raw.default_value,
+            default_generated,
         });
     }
     if columns.is_empty() {
@@ -996,6 +1002,7 @@ mod tests {
                     generated_stored: false,
                     auto_increment: true,
                     default_value: None,
+                    default_generated: false,
                 },
                 SourceColumn {
                     id: 2,
@@ -1009,6 +1016,7 @@ mod tests {
                     generated_stored: false,
                     auto_increment: false,
                     default_value: None,
+                    default_generated: false,
                 },
             ],
             key: SourceKey {

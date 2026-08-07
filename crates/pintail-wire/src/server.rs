@@ -342,7 +342,9 @@ impl Backend {
             return Ok(None);
         };
         if requested_database.is_some_and(|requested| {
-            !requested.is_empty() && !database.name.as_bytes().eq_ignore_ascii_case(requested)
+            !requested.is_empty()
+                && !database.name.as_bytes().eq_ignore_ascii_case(requested)
+                && !requested.eq_ignore_ascii_case(b"information_schema")
         }) {
             return Ok(None);
         }
@@ -733,7 +735,9 @@ where
         writer: InitWriter<'a, W>,
     ) -> io::Result<()> {
         let authenticated = self.authenticated()?;
-        if authenticated.database_name.eq_ignore_ascii_case(database) {
+        if authenticated.database_name.eq_ignore_ascii_case(database)
+            || database.eq_ignore_ascii_case("information_schema")
+        {
             writer.ok().await
         } else {
             writer
@@ -1163,10 +1167,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         });
     }
     let (name, value) = if normalized.starts_with("select version()") {
-        (
-            "VERSION()",
-            Value::Utf8(format!("8.4.0-pintail-{}", env!("CARGO_PKG_VERSION"))),
-        )
+        ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
         ("DATABASE()", Value::Utf8(database.to_owned()))
     } else if normalized.contains("@@version_comment") {
@@ -1178,6 +1179,8 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         ("@@version", Value::Utf8(mysql_compat_version()))
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
+    } else if normalized.contains("@@lower_case_table_names") {
+        ("@@lower_case_table_names", Value::UInt64(0))
     } else if normalized.contains("@@group_concat_max_len") {
         (
             "@@group_concat_max_len",
@@ -1735,5 +1738,12 @@ mod tests {
             &output.rows[0][0],
             pintail_types::Value::Utf8(value) if value.starts_with("8.4.0-pintail-")
         ));
+        let casing = compatibility_query(
+            "SELECT @@lower_case_table_names",
+            "analytics",
+            &Session::default(),
+        )
+        .expect("compatibility response");
+        assert_eq!(casing.rows, vec![vec![pintail_types::Value::UInt64(0)]]);
     }
 }

@@ -506,6 +506,7 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
                 table: source.name.clone(),
                 column: column.name.clone(),
                 default_value: column.default_value.clone(),
+                default_generated: column.default_generated,
                 nullable: Some(column.nullable),
                 auto_increment: column.auto_increment,
                 generated_stored: column.generated_stored,

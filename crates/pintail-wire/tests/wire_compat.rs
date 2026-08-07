@@ -776,6 +776,27 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
     assert!(wrong.get_conn().await.is_err());
     wrong.disconnect().await.expect("disconnect rejected pool");
 
+    let virtual_schema = Pool::new(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/information_schema"
+        ))
+        .expect("information_schema DSN"),
+    );
+    let mut virtual_connection = virtual_schema
+        .get_conn()
+        .await
+        .expect("virtual information_schema connection");
+    let schema_rows: Option<u64> = virtual_connection
+        .query_first("SELECT COUNT(*) FROM information_schema.schemata")
+        .await
+        .expect("query virtual information_schema");
+    assert_eq!(schema_rows, Some(1));
+    drop(virtual_connection);
+    virtual_schema
+        .disconnect()
+        .await
+        .expect("disconnect virtual information_schema pool");
+
     if std::env::var_os("PINTAIL_EXTERNAL_WIRE_CLIENTS").is_some() {
         external_client_gate(address);
     }
@@ -1042,6 +1063,7 @@ fn source_table() -> SourceTable {
                 generated_stored: false,
                 auto_increment: true,
                 default_value: None,
+                default_generated: false,
             },
             SourceColumn {
                 id: 2,
@@ -1055,6 +1077,7 @@ fn source_table() -> SourceTable {
                 generated_stored: false,
                 auto_increment: false,
                 default_value: None,
+                default_generated: false,
             },
         ],
         key: SourceKey {
@@ -1126,6 +1149,7 @@ fn type_table() -> SourceTable {
         generated_stored: false,
         auto_increment: false,
         default_value: None,
+        default_generated: false,
     }];
     columns.extend(definitions.into_iter().enumerate().map(
         |(index, (name, mysql_data_type, mysql_column_type, pintail_type, nullable))| {
@@ -1143,6 +1167,7 @@ fn type_table() -> SourceTable {
                 generated_stored: false,
                 auto_increment: false,
                 default_value: None,
+                default_generated: false,
             }
         },
     ));
