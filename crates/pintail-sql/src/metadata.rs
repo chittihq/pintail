@@ -677,7 +677,8 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                     utf8(data_type),
                     character_length.map_or(Value::Null, Value::UInt64),
                     octet_length.map_or(Value::Null, Value::UInt64),
-                    numeric_precision(column.data_type()).map_or(Value::Null, Value::UInt64),
+                    mysql_numeric_precision(data_type, &column_type, column.data_type())
+                        .map_or(Value::Null, Value::UInt64),
                     numeric_scale(column.data_type()).map_or(Value::Null, Value::UInt64),
                     datetime_precision(column.data_type()).map_or(Value::Null, Value::UInt64),
                     fact.and_then(|fact| fact.character_set.as_deref())
@@ -2252,6 +2253,28 @@ const fn numeric_precision(data_type: DataType) -> Option<u64> {
     }
 }
 
+fn mysql_numeric_precision(
+    mysql_data_type: &str,
+    mysql_column_type: &str,
+    data_type: DataType,
+) -> Option<u64> {
+    let unsigned = mysql_column_type
+        .split_ascii_whitespace()
+        .any(|part| part.eq_ignore_ascii_case("unsigned"));
+    match mysql_data_type.to_ascii_lowercase().as_str() {
+        "tinyint" => Some(3),
+        "smallint" => Some(5),
+        "mediumint" => Some(if unsigned { 8 } else { 7 }),
+        "int" | "integer" => Some(10),
+        "bigint" => Some(if unsigned { 20 } else { 19 }),
+        "float" => Some(12),
+        "double" | "real" => Some(22),
+        "decimal" | "numeric" => numeric_precision(data_type),
+        "year" => Some(4),
+        _ => None,
+    }
+}
+
 fn mysql_character_maximum_length(data_type: &str, column_type: &str) -> Option<u64> {
     match data_type.to_ascii_lowercase().as_str() {
         "char" | "varchar" | "binary" | "varbinary" => column_type
@@ -3298,6 +3321,22 @@ mod tests {
         assert_eq!(
             super::metadata_order(&upper, &lower, true),
             std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn information_schema_uses_source_integer_precision() {
+        assert_eq!(
+            super::mysql_numeric_precision("smallint", "smallint", DataType::Int16),
+            Some(5)
+        );
+        assert_eq!(
+            super::mysql_numeric_precision("mediumint", "mediumint", DataType::Int32),
+            Some(7)
+        );
+        assert_eq!(
+            super::mysql_numeric_precision("mediumint", "mediumint unsigned", DataType::UInt32),
+            Some(8)
         );
     }
 }

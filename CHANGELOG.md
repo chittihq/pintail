@@ -83,6 +83,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Source generation expressions and generated defaults now flow through
   `information_schema`, SHOW COLUMNS/DESCRIBE, and synthesized SHOW CREATE
   output instead of being erased or reported as ordinary columns.
+- `information_schema.columns.numeric_precision` uses the source MySQL integer
+  declaration, preserving SMALLINT and MEDIUMINT widths after normalization.
 
 - Replica temporal policy is explicit and shared by snapshot and CDC: zero or
   invalid DATE/DATETIME values normalize to SQL NULL, `sql_mode` is retained
