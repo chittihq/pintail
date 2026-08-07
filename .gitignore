@@ -1,4 +1,7 @@
-/target/
+# Unanchored: cargo creates target/ wherever it is invoked, so match the
+# directory at any depth. Enumerating known locations one at a time is what
+# let benchmark/target/ into history.
+target/
 /data/
 /output/
 /.playwright-mcp/
@@ -7,8 +10,6 @@
 *.db-wal
 secrets.toml
 GOAL.md
-/experiments/target/
-/benchmark/target/
 /tests/browser/artifacts/
 /tests/browser/node_modules/
 /benchmark/workloads/commerce-production-v1/results/diffs/
@@ -20,4 +21,3 @@ REVIEW.md
 /tests/corpus/bi-captured/*.raw.json
 # Local dashboard-development data directory (docs/development.md).
 .devdata/
-/packages/dashboard/target
