@@ -10649,6 +10649,14 @@ mod tests {
         assert!(
             super::normalized_collation_text("Émile") < super::normalized_collation_text("Ernie")
         );
+
+        // utf8mb4_0900_ai_ci is a NO PAD collation: unlike older PAD SPACE
+        // collations, a trailing space participates in comparison and keys.
+        assert_ne!(super::compare_collated_text("a", "a "), Ordering::Equal);
+        assert_ne!(
+            super::normalized_collation_text("a"),
+            super::normalized_collation_text("a ")
+        );
     }
 
     use pintail_catalog::{

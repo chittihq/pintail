@@ -1228,7 +1228,8 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "hand-written collation",
-            "SELECT MIN(note), MAX(note) FROM events",
+            "SELECT MIN(note), MAX(note), 'a' = 'a ', \
+             'a' COLLATE utf8mb4_0900_ai_ci = 'A' FROM events",
         ),
         ordered(
             "hand-written left join aggregate",

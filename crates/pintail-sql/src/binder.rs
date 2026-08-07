@@ -1909,6 +1909,31 @@ fn bind_expr_inner(
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
         Expr::Value(value) => bind_literal(&value.value),
         Expr::Nested(expr) => bind_expr_inner(expr, tables, aggregates, windows, subqueries),
+        Expr::Collate {
+            expr: inner,
+            collation,
+        } => {
+            let parts = object_name_parts(collation)?;
+            let [name] = parts.as_slice() else {
+                return Err(BindError::UnsupportedExpression(expr.to_string()));
+            };
+            if !name.eq_ignore_ascii_case(DEFAULT_TEXT_COLLATION) {
+                return Err(BindError::UnsupportedExpression(format!(
+                    "COLLATE {name} is unsupported; the initial executable profile is \
+                     {DEFAULT_TEXT_COLLATION}"
+                )));
+            }
+            let bound = bind_expr_inner(inner, tables, aggregates, windows, subqueries)?;
+            if bound.data_type != Some(DataType::Utf8) {
+                return Err(BindError::UnsupportedExpression(expr.to_string()));
+            }
+            // COLLATE changes coercibility in MySQL. Pintail exposes one
+            // executable text profile, so applying that same profile is an
+            // execution no-op after validating that the operand does not
+            // carry an incompatible source collation.
+            ensure_supported_text_collation(&[&bound])?;
+            Ok(bound)
+        }
         // sqlparser gives CEIL/FLOOR dedicated nodes (for the `TO field`
         // form); only the plain numeric spelling is supported.
         Expr::Extract {
@@ -5592,6 +5617,23 @@ mod tests {
                 error.to_string().contains("latin1_swedish_ci"),
                 "{sql}: {error}"
             );
+        }
+    }
+
+    #[test]
+    fn explicit_collate_accepts_only_the_declared_text_profile() {
+        bind("SELECT Name COLLATE utf8mb4_0900_ai_ci FROM Events ORDER BY Name")
+            .expect("declared collation");
+        bind("SELECT 'a' COLLATE utf8mb4_0900_ai_ci = 'A'")
+            .expect("literal with declared collation");
+
+        for sql in [
+            "SELECT Name COLLATE utf8mb4_bin FROM Events",
+            "SELECT name COLLATE utf8mb4_0900_ai_ci FROM legacy",
+            "SELECT 1 COLLATE utf8mb4_0900_ai_ci",
+        ] {
+            let error = bind(sql).expect_err("unsupported collation boundary");
+            assert!(error.to_string().contains("unsupported"), "{sql}: {error}");
         }
     }
 

@@ -102,6 +102,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   layouts. Lossless projection remains available for unsupported collations,
   while collation-sensitive operations reject unsupported or mixed source
   profiles instead of silently applying `utf8mb4_0900_ai_ci` semantics.
+- Explicit `COLLATE utf8mb4_0900_ai_ci` now binds for compatible text operands;
+  other profiles and incompatible source collations fail explicitly. The
+  declared MySQL 8 profile pins its NO PAD trailing-space behavior through the
+  differential oracle and the shared comparison/hash key tests.
 - Keyless-table identity and mutation guarantees are visible in the table API,
   dashboard, and Prometheus metrics. Ambiguous UPDATE/DELETE behavior is
   documented and acceptance-covered through quarantine plus exact

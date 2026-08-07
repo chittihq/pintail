@@ -39,7 +39,7 @@ including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
 | `WEEK(date, mode)` | All literal modes 0–7 via the same MySQL `calc_week` port |
 | `EXTRACT` | `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER`, `WEEK` |
 | Temporal types | `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` distinctions survive binding and wire metadata |
-| Text collation | `utf8mb4_0900_ai_ci` compatibility profile uses one primary-strength Unicode collation key for comparison, grouping, hashing, DISTINCT, joins, IN, MIN/MAX, and ordering; LIKE/locate apply case/accent folding while binary values remain bytewise; unsupported or mixed source collations reject on collation-sensitive operations |
+| Text collation | `utf8mb4_0900_ai_ci` compatibility profile uses one primary-strength Unicode collation key for comparison, grouping, hashing, DISTINCT, joins, IN, MIN/MAX, and ordering; explicit `COLLATE utf8mb4_0900_ai_ci` and its NO PAD trailing-space behavior are supported; LIKE/locate apply case/accent folding while binary values remain bytewise; unsupported or mixed source collations reject on collation-sensitive operations |
 | Generated columns | Stored columns included; virtual skipped |
 | Type fidelity | Exact decimal text, normalized-zero and negative temporals, JSON, Unicode, binary, `BIT`, Boolean, narrow integers — across snapshot, CDC, HTTP and wire |
 | Rejection | Always an explicit error, never a different answer |

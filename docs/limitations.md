@@ -77,6 +77,10 @@ stays readable as a list of things to fix.
   so no program can outlive the row that requested it.
 - Byte-level transcoding among character sets other than UTF-8 and binary is
   unsupported and rejects explicitly.
+- Explicit `COLLATE` accepts only `utf8mb4_0900_ai_ci`, the declared initial
+  executable profile. Other collations and cross-profile coercibility reject
+  instead of borrowing that profile silently. The supported profile follows
+  its MySQL 8 NO PAD behavior, so trailing spaces remain significant.
 - The `information_schema` client-discovery interpreter rejects CTEs, set
   operations, DISTINCT, window functions, derived tables, and metadata tables
   outside the eight served tables.
