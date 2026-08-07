@@ -113,6 +113,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Dependent subquery executions subtract the live outer batch from their child
+  memory allowance, so retained parent state, the current row batch, and inner
+  materialization cannot jointly exceed the query ceiling.
 - Dependent scalar subqueries in unselected `IF`/`CASE` branches and after the
   first non-NULL `COALESCE` argument no longer execute eagerly, preserving
   MySQL short-circuit behavior and avoiding spurious cardinality errors.

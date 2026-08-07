@@ -1644,7 +1644,7 @@ fn resolve_dependent_expr_subqueries(
             let values = materialize_subquery(
                 query,
                 provider,
-                memory.remaining(),
+                dependent_subquery_memory_limit(memory, batch)?,
                 memory.deadline,
                 Some(2),
             )?;
@@ -1662,7 +1662,7 @@ fn resolve_dependent_expr_subqueries(
             let values = materialize_subquery(
                 query,
                 provider,
-                memory.remaining(),
+                dependent_subquery_memory_limit(memory, batch)?,
                 memory.deadline,
                 Some(1),
             )?;
@@ -1681,8 +1681,13 @@ fn resolve_dependent_expr_subqueries(
                 .and_then(|projection| projection.expr.data_type);
             let mut query = (**query).clone();
             substitute_outer_query(&mut query, batch, row, columns)?;
-            let values =
-                materialize_subquery(query, provider, memory.remaining(), memory.deadline, None)?;
+            let values = materialize_subquery(
+                query,
+                provider,
+                dependent_subquery_memory_limit(memory, batch)?,
+                memory.deadline,
+                None,
+            )?;
             let mut args = Vec::with_capacity(values.len().saturating_add(1));
             args.push((**expr).clone());
             args.extend(values.into_iter().map(|value| BoundExpr {
@@ -1779,6 +1784,15 @@ fn evaluate_and_literalize(
     expression.nullable = matches!(value, Value::Null);
     expression.kind = BoundExprKind::Literal(value.clone());
     Ok(value)
+}
+
+fn dependent_subquery_memory_limit(
+    memory: &MemoryTracker,
+    outer_batch: &RecordBatch,
+) -> Result<usize, ExecError> {
+    let outer_bytes = outer_batch.estimated_bytes();
+    memory.ensure_transient(outer_bytes)?;
+    Ok(memory.remaining().saturating_sub(outer_bytes))
 }
 
 fn materialize_subquery(
@@ -11634,7 +11648,7 @@ mod tests {
         PhysicalPlanner, RecordBatch, Scan, ScanProvider,
     };
 
-    use super::{compare_decimal_text, reserve_vec_elements};
+    use super::{compare_decimal_text, dependent_subquery_memory_limit, reserve_vec_elements};
 
     struct StaticProvider {
         batches: Mutex<Vec<RecordBatch>>,
@@ -12443,6 +12457,23 @@ mod tests {
         assert!(matches!(
             Execution::start(plan, &provider, 800),
             Err(ExecError::MemoryLimitExceeded { limit: 800, .. })
+        ));
+    }
+
+    #[test]
+    fn dependent_subquery_limit_keeps_the_outer_batch_live() {
+        let batch = source_batch();
+        let batch_bytes = batch.estimated_bytes();
+        let memory = MemoryTracker::new(batch_bytes + 512);
+        assert_eq!(
+            dependent_subquery_memory_limit(&memory, &batch).expect("outer batch fits"),
+            512
+        );
+
+        memory.reserve(513).expect("persistent state fits alone");
+        assert!(matches!(
+            dependent_subquery_memory_limit(&memory, &batch),
+            Err(ExecError::MemoryLimitExceeded { .. })
         ));
     }
 
