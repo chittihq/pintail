@@ -81,7 +81,11 @@ const STAGES: Stage[] = [
   {
     name: 'unit',
     remote: false,
-    timeoutMinutes: 20,
+    // Fresh macOS test binaries can spend several minutes each in first-launch
+    // provenance checks before nextest has even built its test list. Keep that
+    // discovery cost distinct from a test stall and within the gate budget.
+    timeoutMinutes: 40,
+    stallMinutes: 30,
     // nextest schedules tests across the workspace's binaries in
     // parallel; there are no doctests to lose.
     command: ['cargo', 'nextest', 'run', '--workspace'],
