@@ -5080,10 +5080,7 @@ mod tests {
         // 10.5 and not the string "10.50".
         let object = super::evaluate_eager_scalar_typed(
             ScalarFunction::JsonObject,
-            &[
-                Value::Utf8("d".to_owned()),
-                Value::Utf8("10.50".to_owned()),
-            ],
+            &[Value::Utf8("d".to_owned()), Value::Utf8("10.50".to_owned())],
             &[
                 Some(DataType::Utf8),
                 Some(DataType::Decimal {
@@ -5100,10 +5097,7 @@ mod tests {
         // Equal-looking VARCHAR must still quote, or JSON identity is lost.
         let text = super::evaluate_eager_scalar_typed(
             ScalarFunction::JsonObject,
-            &[
-                Value::Utf8("d".to_owned()),
-                Value::Utf8("10.50".to_owned()),
-            ],
+            &[Value::Utf8("d".to_owned()), Value::Utf8("10.50".to_owned())],
             &[Some(DataType::Utf8), Some(DataType::Utf8)],
             None,
             Some(DataType::Json),
