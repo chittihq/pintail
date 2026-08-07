@@ -3,7 +3,7 @@
 What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
-The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 815
+The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 820
 cases. The repository gate requires every case to pass byte-exactly against
 MySQL 8.4, including the focused JSON, temporal-parsing, DECIMAL-chain, and
 dependent-correlation cases.
@@ -19,7 +19,7 @@ dependent-correlation cases.
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; chained earlier definitions and legal additive inheritance without clause redefinition; forward/cyclic references and parenthesized inheritance from a framed base reject as MySQL requires |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root and bushy right-side INNER/CROSS/LEFT groups; bounded nested-loop evaluation for subqueries in `ON` |
 | Subqueries | Uncorrelated scalar/`IN`; canonical correlated `EXISTS`/`IN`, scalar aggregates, and unique-key lookups decorrelated to joins; bounded dependent execution for wider and nested correlations in projection, filtering, HAVING, join `ON`, CTEs, and derived tables |
-| Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts |
+| Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts, MySQL precedence, parenthesized operands, and branch-local `ORDER BY`/`LIMIT` |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form, with duplicate-eliminating fixpoints, query-memory accounting, and session `cte_max_recursion_depth` |
 | JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, with JSON-vs-VARCHAR identity retained through execution and `MYSQL_TYPE_JSON` results. Read: single- and multi-path `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH`. Unsupported JSON key semantics reject explicitly |
 | Regex | `REGEXP_LIKE` with optional `match_type` (`c`/`i`/`m`/`n`/`u`), `REGEXP_INSTR`, `REGEXP_REPLACE`, `REGEXP_SUBSTR`, and the `REGEXP`/`RLIKE` operators including their `NOT` forms. POSIX bracket classes follow ICU's Unicode definitions; binary operands reject; query-owned literal programs and uncached dynamic programs obey pattern/program/query-memory limits |

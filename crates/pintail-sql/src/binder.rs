@@ -309,16 +309,17 @@ impl<'catalog> Binder<'catalog> {
                     quantifier @ (SetQuantifier::All | SetQuantifier::Distinct | SetQuantifier::None),
                 right,
             } => {
-                let mut left = self.bind_set_expr(left, ctes)?;
-                let mut right = self.bind_set_expr(right, ctes)?;
-                // A distinct union followed by UNION ALL would need a nested
-                // plan the flat chain cannot express; MySQL evaluates
-                // left-associatively, so a later DISTINCT covering the whole
-                // chain is representable and everything else rejects.
-                if matches!(quantifier, SetQuantifier::All)
-                    && (left.union_distinct || right.union_distinct)
+                let mut left = self.bind_set_operand(left, ctes)?;
+                let mut right = self.bind_set_operand(right, ctes)?;
+                // The flat UNION chain applies one final DISTINCT. Preserve a
+                // completed DISTINCT or INTERSECT/EXCEPT left subtree behind
+                // an internal derived boundary before appending a later UNION.
+                if !left.set_ops.is_empty()
+                    || !left.order_by.is_empty()
+                    || left.limit.is_some()
+                    || matches!(quantifier, SetQuantifier::All) && left.union_distinct
                 {
-                    return Err(BindError::UnsupportedQueryBody(expression.to_string()));
+                    left = self.wrap_set_operand(left);
                 }
                 unify_union_layout(&mut left, &mut right)?;
                 if !matches!(quantifier, SetQuantifier::All) {
@@ -335,8 +336,11 @@ impl<'catalog> Binder<'catalog> {
                     quantifier @ (SetQuantifier::All | SetQuantifier::Distinct | SetQuantifier::None),
                 right,
             } => {
-                let mut left = self.bind_set_expr(left, ctes)?;
-                let mut right = self.bind_set_expr(right, ctes)?;
+                let mut left = self.bind_set_operand(left, ctes)?;
+                let mut right = self.bind_set_operand(right, ctes)?;
+                if !left.order_by.is_empty() || left.limit.is_some() {
+                    left = self.wrap_set_operand(left);
+                }
                 unify_union_layout(&mut left, &mut right)?;
                 reject_json_set_keys(&left)?;
                 let all = matches!(quantifier, SetQuantifier::All);
@@ -350,6 +354,62 @@ impl<'catalog> Binder<'catalog> {
                 Ok(left)
             }
             _ => Err(BindError::UnsupportedQueryBody(expression.to_string())),
+        }
+    }
+
+    fn bind_set_operand(
+        &self,
+        expression: &SetExpr,
+        ctes: &[BoundCte],
+    ) -> Result<BoundQuery, BindError> {
+        let bound = self.bind_set_expr(expression, ctes)?;
+        if matches!(expression, SetExpr::Query(_)) {
+            Ok(self.wrap_set_operand(bound))
+        } else {
+            Ok(bound)
+        }
+    }
+
+    fn wrap_set_operand(&self, input: BoundQuery) -> BoundQuery {
+        let relation = self.bind_derived_table(
+            "<set-operand>".to_owned(),
+            "<set-operand>".to_owned(),
+            &[],
+            input,
+        );
+        let projection = relation
+            .columns
+            .iter()
+            .cloned()
+            .map(|column| BoundProjection {
+                name: column.name.clone(),
+                expr: BoundExpr {
+                    data_type: Some(column.data_type),
+                    nullable: column.nullable,
+                    kind: BoundExprKind::Column(column),
+                },
+            })
+            .collect();
+        BoundQuery {
+            from: vec![BoundFrom {
+                base: relation.clone(),
+                joins: Vec::new(),
+            }],
+            tables: vec![relation],
+            projection,
+            filter: None,
+            group_by: Vec::new(),
+            aggregates: Vec::new(),
+            windows: Vec::new(),
+            having: None,
+            distinct: false,
+            order_by: Vec::new(),
+            hidden_sort_columns: 0,
+            union_all: Vec::new(),
+            union_distinct: false,
+            set_ops: Vec::new(),
+            limit: None,
+            recursive: None,
         }
     }
 
@@ -6357,15 +6417,20 @@ mod tests {
         .expect("union distinct");
         assert!(distinct.union_distinct);
         assert_eq!(distinct.union_all.len(), 2);
-        // A distinct union under a later UNION ALL has no flat
-        // representation and rejects explicitly.
-        assert!(matches!(
-            bind(
-                "SELECT email FROM users UNION SELECT email FROM users \
-                 UNION ALL SELECT email FROM users"
-            ),
-            Err(BindError::UnsupportedQueryBody(_))
-        ));
+        let mixed = bind(
+            "SELECT email FROM users UNION SELECT email FROM users \
+             UNION ALL SELECT email FROM users",
+        )
+        .expect("a distinct left branch remains scoped before UNION ALL");
+        assert_eq!(mixed.union_all.len(), 1);
+        assert!(mixed.from[0].base.input.is_some());
+        bind(
+            "(SELECT id FROM Events ORDER BY id DESC LIMIT 1) \
+             UNION ALL SELECT id FROM Events",
+        )
+        .expect("branch-local order and limit remain scoped");
+        bind("SELECT 1 AS n EXCEPT SELECT 1 UNION ALL SELECT 2")
+            .expect("set precedence remains representable");
         assert!(matches!(
             bind("SELECT id FROM Events UNION ALL SELECT email FROM users"),
             Err(BindError::IncompatibleSetOperation(_))

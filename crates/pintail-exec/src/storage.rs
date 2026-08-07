@@ -1675,7 +1675,10 @@ mod tests {
         let mut execution =
             Execution::start(physical, provider, memory_limit).expect("start execution");
         let mut values = Vec::new();
-        while let Some(batch) = execution.next_batch().expect("pull batch") {
+        while let Some(batch) = execution
+            .next_batch()
+            .unwrap_or_else(|error| panic!("pull batch for {sql}: {error}"))
+        {
             values.extend(batch.selection().selected_rows().map(|row| {
                 batch
                     .column(0)
@@ -2996,6 +2999,47 @@ mod tests {
                 vec![Value::UInt64(1), Value::Utf8("user-a".to_owned())],
                 vec![Value::UInt64(2), Value::Utf8("user-b".to_owned())],
             ]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT 1 AS n UNION SELECT 1 UNION ALL SELECT 1 ORDER BY n",
+                &catalog,
+                &provider,
+            ),
+            [Value::Int64(1), Value::Int64(1)]
+        );
+        assert_eq!(
+            execute_values(
+                "(SELECT 2 AS n ORDER BY n DESC LIMIT 1) \
+                 UNION ALL SELECT 9 AS n ORDER BY n",
+                &catalog,
+                &provider,
+            ),
+            [Value::Int64(2), Value::Int64(9)]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT 1 AS n EXCEPT SELECT 1 UNION ALL SELECT 2 ORDER BY n",
+                &catalog,
+                &provider,
+            ),
+            [Value::Int64(2)]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT 1 AS n UNION ALL SELECT 2 INTERSECT SELECT 2 ORDER BY n",
+                &catalog,
+                &provider,
+            ),
+            [Value::Int64(1), Value::Int64(2)]
+        );
+        assert_eq!(
+            execute_values(
+                "SELECT 1 AS n UNION ALL (SELECT 2 UNION SELECT 2) ORDER BY n",
+                &catalog,
+                &provider,
+            ),
+            [Value::Int64(1), Value::Int64(2)]
         );
 
         let statement = parse_statement(

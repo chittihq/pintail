@@ -18,7 +18,7 @@ const DATABASE_ID: DatabaseId = DatabaseId::new(1);
 const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
-const EXPECTED_CASES: usize = 815;
+const EXPECTED_CASES: usize = 820;
 
 struct OracleCase {
     family: &'static str,
@@ -1545,6 +1545,27 @@ fn hand_written_cases() -> Vec<OracleCase> {
         unordered(
             "set operations",
             "SELECT id % 3 FROM events EXCEPT ALL SELECT id % 4 FROM events WHERE id <= 8",
+        ),
+        ordered(
+            "set operation scoping",
+            "SELECT 1 AS n UNION SELECT 1 UNION ALL SELECT 1 ORDER BY n",
+        ),
+        ordered(
+            "set operation scoping",
+            "(SELECT 2 AS n ORDER BY n DESC LIMIT 1) \
+             UNION ALL SELECT 9 AS n ORDER BY n",
+        ),
+        ordered(
+            "set operation precedence",
+            "SELECT 1 AS n EXCEPT SELECT 1 UNION ALL SELECT 2 ORDER BY n",
+        ),
+        ordered(
+            "set operation precedence",
+            "SELECT 1 AS n UNION ALL SELECT 2 INTERSECT SELECT 2 ORDER BY n",
+        ),
+        ordered(
+            "set operation scoping",
+            "SELECT 1 AS n UNION ALL (SELECT 2 UNION SELECT 2) ORDER BY n",
         ),
         unordered(
             "union mixed numeric",

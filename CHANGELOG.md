@@ -49,6 +49,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of retaining the complete right side in memory. Distinct and
   multiset counts share the ordering, collation, exact-DECIMAL, memory, and
   spill-quota rules used by sort and standalone DISTINCT.
+- Set-expression boundaries now preserve MySQL precedence and scoping across
+  mixed `UNION DISTINCT`/`UNION ALL`, `INTERSECT`, and `EXCEPT` chains.
+  Parenthesized operands and branch-local `ORDER BY`/`LIMIT` lower through an
+  internal derived boundary instead of leaking clauses onto the full chain.
 - An experiment lab (`experiments/`) benchmarks contested engine designs as
   checksum-verified head-to-heads on both reference machines; verdicts and
   three literature results that failed to replicate are recorded in

@@ -24,7 +24,6 @@ stays readable as a list of things to fix.
   un-accumulated when a row leaves the window. Cost is proportional to the
   frame width, so a very wide bounded frame is expensive; a frame anchored at
   `UNBOUNDED PRECEDING` accumulates once and is linear.
-- A distinct union under a later `UNION ALL` rejects explicitly.
 - `WITH RECURSIVE` accepts only one recursive member, which must scan the CTE
   exactly once in its `FROM`, with no aggregates, windows, `DISTINCT`,
   `GROUP BY`, `ORDER BY` or `LIMIT` inside the member, and member column

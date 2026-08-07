@@ -2561,6 +2561,30 @@ fn build_operator(
                 .iter()
                 .any(|projection| expression_has_dependent_subquery(&projection.expr));
             let (mut input, columns) = build_operator(*input, provider, memory)?;
+            let output_columns = expressions
+                .iter()
+                .enumerate()
+                .map(|(index, projection)| match &projection.expr.kind {
+                    BoundExprKind::Column(column) => {
+                        let mut column = column.clone();
+                        column.outer = false;
+                        column.nullable = projection.expr.nullable;
+                        column
+                    }
+                    _ => BoundColumn {
+                        database_id: DatabaseId::new(u64::MAX),
+                        table_id: TableId::new(u64::MAX - 2),
+                        column_id: u32::try_from(index).unwrap_or(u32::MAX),
+                        relation_name: "<projection>".to_owned(),
+                        name: projection.name.clone(),
+                        data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
+                        nullable: projection.expr.nullable,
+                        collation: None,
+                        outer: false,
+                        using_shadowed: false,
+                    },
+                })
+                .collect::<Vec<_>>();
             if dependent {
                 let column_types = expressions
                     .iter()
@@ -2596,7 +2620,7 @@ fn build_operator(
                         cursor: 0,
                         column_types,
                     },
-                    Vec::new(),
+                    output_columns,
                 ));
             }
             let expressions = expressions
@@ -2613,7 +2637,7 @@ fn build_operator(
                     input: Box::new(input),
                     expressions,
                 },
-                Vec::new(),
+                output_columns,
             ))
         }
         PhysicalPlan::Recursive {
@@ -2622,8 +2646,8 @@ fn build_operator(
             anchor,
             member,
         } => {
-            // Project operators intentionally return no column metadata, so
-            // the working-table layout comes from the anchor's output fields.
+            // The working-table layout comes from the anchor's client-visible
+            // fields, independent from internal synthetic projection IDs.
             let column_types: Vec<DataType> = anchor
                 .output_fields()
                 .iter()

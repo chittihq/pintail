@@ -50,7 +50,7 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL 8.4 container and compares 815
+The oracle starts a uniquely named MySQL 8.4 container and compares 820
 generated and hand-written queries — including window-function, interval,
 and TIMESTAMPDIFF families — over equivalent nullable MySQL and Pintail
 data. The end-to-end differential gate (`tests/e2e`) boots a real MySQL 8.4
