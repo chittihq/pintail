@@ -15,6 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The analytical benchmark's four ad-hoc query shapes now report medians over
+  five distinct memo-cold predicate variants instead of one noisy cold run;
+  MySQL expectations are cached per variant and JSON results retain the full
+  cold-query evidence separately from the warm release gate.
 - Query result metadata now retains the resolved source/default text collation
   through the shared query engine and HTTP response; non-text fields report no
   collation. CDC restart coverage also proves schema-history charset and

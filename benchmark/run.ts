@@ -560,6 +560,32 @@ async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; ms: nu
   return { value, ms: Math.max(1, Math.round(performance.now() - started)) }
 }
 
+function summarizeTimings(times: number[]): EngineTiming {
+  const sorted = [...times].sort((a, b) => a - b)
+  const at = (index: number) =>
+    Math.max(1, Math.round(sorted[Math.min(sorted.length - 1, index)]))
+  return {
+    medianMs: at(Math.floor(sorted.length / 2)),
+    p95Ms: at(Math.ceil(sorted.length * 0.95) - 1),
+    minMs: at(0),
+    runs: sorted.length,
+  }
+}
+
+async function measuredVariants<T, V>(
+  variants: V[],
+  operation: (variant: V) => Promise<T>,
+): Promise<{ values: T[]; timing: EngineTiming }> {
+  const values: T[] = []
+  const times: number[] = []
+  for (const variant of variants) {
+    const sample = await timed(() => operation(variant))
+    values.push(sample.value)
+    times.push(sample.ms)
+  }
+  return { values, timing: summarizeTimings(times) }
+}
+
 /// Warm multi-iteration measurement: median/p95/min over `runs` after
 /// `warmups` unmeasured executions. MySQL keeps a single cold run (it is the
 /// baseline being escaped, and its full-scale queries run for minutes).
@@ -578,16 +604,9 @@ async function measured<T>(
     value = await operation()
     times.push(performance.now() - started)
   }
-  times.sort((a, b) => a - b)
-  const at = (index: number) => Math.max(1, Math.round(times[Math.min(times.length - 1, index)]))
   return {
     value,
-    timing: {
-      medianMs: at(Math.floor(times.length / 2)),
-      p95Ms: at(Math.ceil(times.length * 0.95) - 1),
-      minMs: at(0),
-      runs,
-    },
+    timing: summarizeTimings(times),
   }
 }
 
@@ -651,69 +670,101 @@ async function runQueries(
   for (const query of benchmarkQueries) {
     log(query.name)
     const resources: Record<string, EngineResources> = {}
-    let mysqlMs: number
-    let mysqlCanonical: string
-    const cached = baseline?.queries[query.name]
-    const cacheValid = cached && (cached.sqlHash === undefined || cached.sqlHash === sqlHash(query.sql))
-    if (cached && cacheValid) {
-      mysqlMs = cached.ms
-      mysqlCanonical = cached.canonical
-      baselineProvenance = baseline?.measuredAt
-      log(`  MySQL baseline reused from ${baseline?.measuredAt} (${cached.ms} ms cold)`)
-    } else {
-      const mysqlSampled = await sampled(mysqlName, () => timed(() => mysqlColdQuery(query.sql)))
+    const variants = query.coldOnly
+      ? (query.coldVariants ?? []).map((variant) => ({
+          sql: variant.sql,
+          clickhouseSql: variant.clickhouseSql ?? variant.sql,
+        }))
+      : [{ sql: query.sql, clickhouseSql: query.clickhouseSql ?? query.sql }]
+    if (variants.length === 0) throw new Error(`${query.name} has no cold variants`)
+    const mysqlTimes: number[] = []
+    const mysqlCanonicals: string[] = []
+    for (const [index, variant] of variants.entries()) {
+      const baselineKey = query.coldOnly ? `${query.name} [variant ${index + 1}]` : query.name
+      const cached = baseline?.queries[baselineKey]
+      const cacheValid =
+        cached && (cached.sqlHash === undefined || cached.sqlHash === sqlHash(variant.sql))
+      if (cached && cacheValid) {
+        mysqlTimes.push(cached.ms)
+        mysqlCanonicals.push(cached.canonical)
+        baselineProvenance = baseline?.measuredAt
+        log(`  MySQL baseline reused from ${baseline?.measuredAt} (${cached.ms} ms cold)`)
+        continue
+      }
+      const mysqlSampled = await sampled(mysqlName, () => timed(() => mysqlColdQuery(variant.sql)))
       const mysqlRun = mysqlSampled.value
       resources.mysql = mysqlSampled.resources
-      mysqlMs = mysqlRun.ms
-      mysqlCanonical = canonicalRows(mysqlRun.value)
-      freshBaseline[query.name] = {
-        ms: mysqlMs,
-        canonical: mysqlCanonical,
-        sqlHash: sqlHash(query.sql),
+      const canonical = canonicalRows(mysqlRun.value)
+      mysqlTimes.push(mysqlRun.ms)
+      mysqlCanonicals.push(canonical)
+      freshBaseline[baselineKey] = {
+        ms: mysqlRun.ms,
+        canonical,
+        sqlHash: sqlHash(variant.sql),
       }
-      // Cold MySQL timings cost minutes each; persist after every query so
+      // Cold MySQL timings cost minutes each; persist after every variant so
       // a crash later in the run never throws measured work away.
       await saveBaseline()
     }
-    // Novel queries run exactly once per engine with no warmup: the
-    // settled aggregate memo cannot have seen them, so these rows measure
-    // raw engine speed rather than memoized replay.
-    const queryWarmups = query.coldOnly ? 0 : warmups
-    const queryRuns = query.coldOnly ? 1 : runs
+    const mysqlTiming = summarizeTimings(mysqlTimes)
+    const mysqlMs = mysqlTiming.medianMs
     const pintailSampled = await sampled(containerizedPintail ? pintailName : undefined, () =>
-      measured(
-        () =>
-          api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
-            method: 'POST',
-            token,
-            body: { db: databaseId, sql: query.sql },
-          }),
-        queryWarmups,
-        queryRuns,
-      ),
+      query.coldOnly
+        ? measuredVariants(variants, (variant) =>
+            api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+              method: 'POST',
+              token,
+              body: { db: databaseId, sql: variant.sql },
+            }),
+          )
+        : measured(
+            () =>
+              api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+                method: 'POST',
+                token,
+                body: { db: databaseId, sql: query.sql },
+              }),
+            warmups,
+            runs,
+          ).then((run) => ({ values: [run.value], timing: run.timing })),
     )
     const pintailRun = pintailSampled.value
     resources.pintail = pintailSampled.resources
-    const clickhouseSql = query.clickhouseSql ?? query.sql
     const clickhouseSampled = await sampled(clickhouseName, () =>
-      measured(() => clickhouseQuery('benchmark', clickhouseSql, ''), queryWarmups, queryRuns),
+      query.coldOnly
+        ? measuredVariants(variants, (variant) =>
+            clickhouseQuery('benchmark', variant.clickhouseSql, ''),
+          )
+        : measured(
+            () => clickhouseQuery('benchmark', variants[0].clickhouseSql, ''),
+            warmups,
+            runs,
+          ).then((run) => ({ values: [run.value], timing: run.timing })),
     )
     const clickhouseRun = clickhouseSampled.value
     resources.clickhouse = clickhouseSampled.resources
     // The fair reference: ReplacingMergeTree doing pintail's merge-on-read
     // duty on every read (`final = 1`), same data, same host, same limits.
     const clickhouseFinalSampled = await sampled(clickhouseName, () =>
-      measured(
-        () => clickhouseQuery('benchmark_rmt', clickhouseSql, ' SETTINGS final = 1'),
-        queryWarmups,
-        queryRuns,
-      ),
+      query.coldOnly
+        ? measuredVariants(variants, (variant) =>
+            clickhouseQuery('benchmark_rmt', variant.clickhouseSql, ' SETTINGS final = 1'),
+          )
+        : measured(
+            () =>
+              clickhouseQuery('benchmark_rmt', variants[0].clickhouseSql, ' SETTINGS final = 1'),
+            warmups,
+            runs,
+          ).then((run) => ({ values: [run.value], timing: run.timing })),
     )
     const clickhouseFinalRun = clickhouseFinalSampled.value
     resources.clickhouseFinal = clickhouseFinalSampled.resources
-    const pintailMatchesMysql = canonicalRows(pintailRun.value.rows) === mysqlCanonical
-    const clickhouseFinalMatchesMysql =
-      canonicalRows(clickhouseFinalRun.value) === mysqlCanonical
+    const pintailMatchesMysql = pintailRun.values.every(
+      (value, index) => canonicalRows(value.rows) === mysqlCanonicals[index],
+    )
+    const clickhouseFinalMatchesMysql = clickhouseFinalRun.values.every(
+      (value, index) => canonicalRows(value) === mysqlCanonicals[index],
+    )
     let pintailExplain: string | undefined
     try {
       const explain = await api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
@@ -740,7 +791,7 @@ async function runQueries(
         pintail: pintailRun.timing,
         clickhouse: clickhouseRun.timing,
         clickhouseFinal: clickhouseFinalRun.timing,
-        mysql: { medianMs: mysqlMs, p95Ms: mysqlMs, minMs: mysqlMs, runs: 1 },
+        mysql: mysqlTiming,
       },
       resources,
       pintailMatchesMysql,
@@ -786,8 +837,8 @@ function publishResults(allResults: QueryResult[]) {
         ? 'container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)'
         : 'LOCAL PROCESS — cross-host numbers, not comparable',
       iterations: baselineProvenance
-        ? `1 warmup + 5 measured (median reported); MySQL cold baseline reused from ${baselineProvenance}`
-        : '1 warmup + 5 measured (median reported); MySQL single cold run',
+        ? `warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from ${baselineProvenance}`
+        : 'warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants',
       references: {
         clickhouse: 'plain MergeTree (raw-speed ceiling)',
         clickhouseFinal: 'ReplacingMergeTree, final=1 (apples-to-apples merge-on-read duty)',
@@ -805,6 +856,7 @@ function publishResults(allResults: QueryResult[]) {
       resultMismatches: mismatches,
     },
     queries: results,
+    novelQueries: novelResults,
     totals: {
       ...totals,
       speedup,
@@ -822,8 +874,8 @@ function publishResults(allResults: QueryResult[]) {
     '',
     'All engines run on the docker host under identical limits (8 CPUs, 8 GB).',
     baselineProvenance
-      ? `Pintail/ClickHouse: median of 5 warm runs. MySQL: cold baseline measured ${baselineProvenance}.`
-      : 'Pintail/ClickHouse: median of 5 warm runs. MySQL: single cold run (baseline).',
+      ? `Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured ${baselineProvenance}.`
+      : 'Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants.',
     'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
     "pintail's always-correct merge-on-read duty; the apples-to-apples reference.",
     '',
@@ -848,11 +900,11 @@ function publishResults(allResults: QueryResult[]) {
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
     '',
-    '## Novel queries (cold, single run — raw engine speed)',
+    '## Novel queries (median of 5 memo-cold variants — raw engine speed)',
     '',
-    'These queries run exactly once per engine with no warmup, so the',
-    'settled aggregate memo cannot serve them: this is what a never-seen',
-    'ad-hoc query pays. Excluded from the release-gate totals.',
+    'Each row is the median of five distinct predicate variants, each run once',
+    'per engine with no warmup. Pintail therefore cannot replay an exact-result',
+    'memo entry. Excluded from the release-gate totals.',
     '',
     '| Query | MySQL | Pintail | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |',
     '|---|---:|---:|---:|---:|---:|---:|:--|',

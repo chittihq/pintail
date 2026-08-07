@@ -23,9 +23,11 @@ carry deterministic tie-break keys so the comparison is well-posed).
   always-correct merge-on-read duty Pintail performs, the apples-to-apples
   target. Note: on static fully-merged data the two converge; the FINAL
   distinction matters under a live update tail.
-- **Timing**: Pintail and both ClickHouse variants report median of 5 warm
-  runs (p95/min recorded in results.json); MySQL is a single cold run — it is
-  the baseline being escaped, and its full-scale queries run for minutes.
+- **Timing**: the canonical eight report medians of 5 warm runs. The four
+  ad-hoc shapes report medians of 5 distinct predicate variants, each executed
+  once so Pintail's exact-result memo cannot serve a repeated query. MySQL
+  timings are cold and cached per variant because full-scale queries run for
+  minutes. P95/min and every cold variant are recorded in `results.json`.
 - **Per-query EXPLAIN ANALYZE snapshots** land in results.json so segment and
   block pruning behavior is inspectable per run.
 - **Host variance caveat**: the host may carry unrelated load; ClickHouse's

@@ -2,11 +2,14 @@ export type BenchmarkQuery = {
   name: string
   sql: string
   clickhouseSql?: string
-  /// Novel-query mode: run exactly once with no warmup on every engine.
-  /// These rows measure raw engine speed — the settled aggregate memo
-  /// cannot serve a query it has never seen — and are excluded from the
+  /// Novel-query mode: run each distinct variant once with no warmup on every
+  /// engine. These rows measure raw engine speed and remain outside the
   /// release-gate totals (which keep their original definition).
   coldOnly?: boolean
+  /// Semantically equivalent workload shapes with different predicates.
+  /// Each variant runs once, keeping every sample outside Pintail's exact
+  /// result memo while still allowing a median instead of one noisy timing.
+  coldVariants?: Array<{ sql: string; clickhouseSql?: string }>
 }
 
 export const benchmarkQueries: BenchmarkQuery[] = [
@@ -50,12 +53,25 @@ export const benchmarkQueries: BenchmarkQuery[] = [
     name: 'N1: Filtered count, novel constant',
     sql: "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'delivered'",
     coldOnly: true,
+    coldVariants: [
+      ['delivered', 1],
+      ['pending', 2],
+      ['cancelled', 3],
+      ['processing', 4],
+      ['shipped', 5],
+    ].map(([status, minimumId]) => ({
+      sql: `SELECT COUNT(*) AS cnt FROM orders WHERE status = '${status}' AND id >= ${minimumId}`,
+    })),
   },
   {
     name: 'N2: Group by region (novel group column)',
     sql: 'SELECT region, COUNT(*) AS cnt, ROUND(AVG(total_amount), 2) AS avg_amt \
 FROM orders GROUP BY region ORDER BY cnt DESC',
     coldOnly: true,
+    coldVariants: [1, 2, 3, 4, 5].map((minimumId) => ({
+      sql: `SELECT region, COUNT(*) AS cnt, ROUND(AVG(total_amount), 2) AS avg_amt \
+FROM orders WHERE id >= ${minimumId} GROUP BY region ORDER BY cnt DESC`,
+    })),
   },
   {
     name: 'N3: Monthly revenue, novel year',
@@ -64,6 +80,18 @@ ROUND(SUM(total_amount), 2) AS revenue FROM orders \
 WHERE order_date >= '2022-01-01' AND order_date < '2023-01-01' \
 GROUP BY yr, mo ORDER BY yr, mo",
     coldOnly: true,
+    coldVariants: [
+      ['2020-01-01', '2021-01-01'],
+      ['2021-01-01', '2022-01-01'],
+      ['2022-01-01', '2023-01-01'],
+      ['2024-01-01', '2025-01-01'],
+      ['2020-07-01', '2021-07-01'],
+    ].map(([start, end]) => ({
+      sql: `SELECT YEAR(order_date) AS yr, MONTH(order_date) AS mo, COUNT(*) AS cnt, \
+ROUND(SUM(total_amount), 2) AS revenue FROM orders \
+WHERE order_date >= '${start}' AND order_date < '${end}' \
+GROUP BY yr, mo ORDER BY yr, mo`,
+    })),
   },
   {
     name: 'N4: Regional analytics, novel range',
@@ -73,5 +101,18 @@ ROUND(MAX(total_amount), 2) AS max_amt, COUNT(DISTINCT user_id) AS unique_users 
 FROM orders WHERE order_date BETWEEN '2021-01-01' AND '2022-12-31' \
 GROUP BY region ORDER BY total DESC",
     coldOnly: true,
+    coldVariants: [
+      ['2020-01-01', '2021-12-31'],
+      ['2021-01-01', '2022-12-31'],
+      ['2020-01-01', '2022-12-31'],
+      ['2021-01-01', '2023-12-31'],
+      ['2023-01-01', '2024-12-31'],
+    ].map(([start, end]) => ({
+      sql: `SELECT region, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS total, \
+ROUND(AVG(total_amount), 2) AS avg_amt, ROUND(MIN(total_amount), 2) AS min_amt, \
+ROUND(MAX(total_amount), 2) AS max_amt, COUNT(DISTINCT user_id) AS unique_users \
+FROM orders WHERE order_date BETWEEN '${start}' AND '${end}' \
+GROUP BY region ORDER BY total DESC`,
+    })),
   },
 ]
