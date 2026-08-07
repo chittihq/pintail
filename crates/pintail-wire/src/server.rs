@@ -572,7 +572,7 @@ where
         info: StatementMetaWriter<'a, W>,
     ) -> io::Result<()> {
         let parameters = placeholder_count(query);
-        let preview = substitute_parameters(query, &vec!["NULL".to_owned(); parameters])
+        let preview = substitute_parameters(query, &placeholder_preview_literals(query))
             .map_err(io_invalid)?;
         let output = match self.execute(&preview) {
             Ok(output) => output,
@@ -1174,6 +1174,8 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
             "@@version_comment",
             Value::Utf8("Pintail analytical mirror".to_owned()),
         )
+    } else if normalized.contains("@@version") {
+        ("@@version", Value::Utf8(mysql_compat_version()))
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
     } else if normalized.contains("@@group_concat_max_len") {
@@ -1222,6 +1224,10 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
     })
 }
 
+fn mysql_compat_version() -> String {
+    format!("8.4.0-pintail-{}", env!("CARGO_PKG_VERSION"))
+}
+
 fn compatibility_charset_query(
     normalized: &str,
     session: &Session,
@@ -1257,6 +1263,90 @@ fn is_session_command(sql: &str) -> bool {
 
 fn placeholder_count(sql: &str) -> usize {
     placeholder_offsets(sql).len()
+}
+
+/// Prepared-statement metadata is derived before parameter types or values are
+/// available. `NULL` is the least opinionated preview literal for ordinary
+/// expressions, but `MySQL` requires `LIMIT`/`OFFSET` to be integer-valued even at
+/// prepare time. Track clause context at each nesting depth so only pagination
+/// placeholders receive a zero preview.
+fn placeholder_preview_literals(sql: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut previews = Vec::new();
+    let mut limit_context = vec![false];
+    let mut quote = None;
+    let mut word_start = None;
+    let mut index = 0;
+    while index <= bytes.len() {
+        let byte = bytes.get(index).copied();
+        if let Some(delimiter) = quote {
+            match byte {
+                Some(b'\\') => {
+                    index = index.saturating_add(2);
+                    continue;
+                }
+                Some(value) if value == delimiter => {
+                    if bytes.get(index + 1) == Some(&delimiter) {
+                        index += 2;
+                        continue;
+                    }
+                    quote = None;
+                }
+                None => break,
+                _ => {}
+            }
+            index += 1;
+            continue;
+        }
+
+        if byte.is_some_and(|value| value.is_ascii_alphanumeric() || value == b'_') {
+            word_start.get_or_insert(index);
+            index += 1;
+            continue;
+        }
+        if let Some(start) = word_start.take() {
+            let word = sql[start..index].to_ascii_lowercase();
+            let context = limit_context.last_mut().expect("root preview context");
+            if matches!(word.as_str(), "limit" | "offset") {
+                *context = true;
+            } else if matches!(
+                word.as_str(),
+                "select"
+                    | "from"
+                    | "where"
+                    | "group"
+                    | "having"
+                    | "order"
+                    | "union"
+                    | "intersect"
+                    | "except"
+                    | "on"
+                    | "window"
+                    | "qualify"
+            ) {
+                *context = false;
+            }
+        }
+        match byte {
+            Some(value @ (b'\'' | b'"' | b'`')) => quote = Some(value),
+            Some(b'(') => limit_context.push(false),
+            Some(b')') if limit_context.len() > 1 => {
+                limit_context.pop();
+            }
+            Some(b'?') => previews.push(
+                if *limit_context.last().expect("root preview context") {
+                    "0"
+                } else {
+                    "NULL"
+                }
+                .to_owned(),
+            ),
+            None => break,
+            _ => {}
+        }
+        index += 1;
+    }
+    previews
 }
 
 fn substitute_parameters(sql: &str, parameters: &[String]) -> Result<String, String> {
@@ -1410,7 +1500,8 @@ mod tests {
     use sha2::Digest as _;
 
     use super::{
-        Sha256, mysql_column, placeholder_offsets, substitute_parameters, verify_caching_sha2,
+        Session, Sha256, compatibility_query, mysql_column, placeholder_offsets,
+        placeholder_preview_literals, substitute_parameters, verify_caching_sha2,
         verify_native_password,
     };
     use crate::QueryField;
@@ -1615,5 +1706,34 @@ mod tests {
             substitute_parameters(sql, &["7".to_owned(), "'launch'".to_owned()]).unwrap(),
             "SELECT '?', `?`, value FROM events WHERE id = 7 AND name = 'launch'"
         );
+    }
+
+    #[test]
+    fn prepared_preview_uses_integers_only_for_limit_and_offset() {
+        assert_eq!(
+            placeholder_preview_literals("SELECT * FROM events WHERE name = ? LIMIT ? OFFSET ?"),
+            vec!["NULL", "0", "0"]
+        );
+        assert_eq!(
+            placeholder_preview_literals(
+                "SELECT (SELECT id FROM events LIMIT ?) AS picked, ? AS label LIMIT ?, ?"
+            ),
+            vec!["0", "NULL", "0", "0"]
+        );
+        assert_eq!(
+            placeholder_preview_literals("SELECT '?' AS literal LIMIT ?"),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn version_system_variable_matches_mysql_client_probes() {
+        let output = compatibility_query("SELECT @@version", "analytics", &Session::default())
+            .expect("compatibility response");
+        assert_eq!(output.fields[0].name, "@@version");
+        assert!(matches!(
+            &output.rows[0][0],
+            pintail_types::Value::Utf8(value) if value.starts_with("8.4.0-pintail-")
+        ));
     }
 }
