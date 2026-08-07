@@ -62,6 +62,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   semantics preserved as the fallback (text comparisons keep their
   collation-aware path).
 
+### Fixed
+
+- Metadata now preserves source MySQL nullability independently from the
+  permissive physical normalization carrier and reports it consistently
+  through `information_schema`, SHOW/DESCRIBE, SHOW CREATE, and wire results.
+- Production image builds include the vendored `opensrv-mysql` path dependency
+  in both cargo-chef stages; benchmark baselines retain an opaque host
+  fingerprint instead of a private infrastructure name.
+
+### Verification
+
+- The clean repository gate passes formatting and strict workspace Clippy, 371
+  nextest cases, all 806 byte-exact MySQL 8.4 differential cases, and E2E with
+  323 passes, zero failures, and three documented-gap warnings.
+- The deterministic 20-million-order benchmark matches MySQL results and
+  passes the required 50x aggregate-speedup gate. The ci-profile production
+  snapshot and cold-query acceptance workload also passes with its declared
+  unsupported-query boundaries unchanged.
+
 ## [M9] - 2026-07-30
 
 ### Added

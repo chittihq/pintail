@@ -3,10 +3,9 @@
 What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
-The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 802
-cases. The established 794-case gate was byte-exact; eight focused JSON,
-temporal-parsing, and DECIMAL-chain cases were added afterward and require the
-Docker-backed MySQL gate.
+The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 806
+cases. All 806 pass byte-exactly against MySQL 8.4 in the full repository gate,
+including the focused JSON, temporal-parsing, and DECIMAL-chain cases.
 
 ## Surface
 

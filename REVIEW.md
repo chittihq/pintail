@@ -2,11 +2,11 @@
 
 ## Executive summary
 
-Pintail currently exposes **134 callable function names** and carries **802
+Pintail currently exposes **134 callable function names** and carries **806
 MySQL 8.4 differential-oracle cases**. The name count and oracle inventory are
-enforced by tests. The last Docker-backed run covered 794 byte-exact cases; the
-eight newer JSON, temporal-parsing, and DECIMAL-chain cases remain inventoried
-but unexecuted against Docker in this workstation session.
+enforced by tests. The clean repository gate runs all 806 cases byte-exactly
+against MySQL 8.4, followed by 323 passing E2E checks, the 20-million-row
+benchmark, and the production acceptance workload.
 
 The delivered work covers substantial read-only portions of issues #8, #9,
 #13, #17 and #25: metadata discovery, everyday scalar/aggregate behavior,
@@ -36,10 +36,10 @@ The review covered:
 - all open GitHub issues, with special attention to #8, #9, #10, #11, #13,
   #14, #16, #17, and #25.
 
-The full workspace test suite and strict workspace clippy gate are green after
-the final review corrections. Docker-backed oracle/E2E tests and the benchmark
-gate were not run during this series; their performance and external-MySQL
-results remain unmeasured here.
+The clean repository gate is green after the final review corrections:
+formatting and strict workspace Clippy, 371 nextest cases, all 806 MySQL 8.4
+oracle cases, E2E with 323 passes and three documented-gap warnings, the
+20-million-row benchmark, and production acceptance.
 
 ## Eight completed tasks
 
@@ -174,7 +174,7 @@ The specification-oriented review identified documentation drift rather than
 new engine defects:
 
 1. The old review still described uncommitted JSON work and reported 133/786.
-   The current measured surface is 134 callable names and 802 oracle cases.
+   The current measured surface is 134 callable names and 806 oracle cases.
 2. It still called `MD5` missing, although `e9703ede` implemented it.
 3. `docs/limitations.md` called `ANY_VALUE`, variance/stddev, and bit folds
    missing even though `parity.md` advertised them as supported.
@@ -188,13 +188,13 @@ available in Git history; this file describes the present branch only.
 ## GitHub issue assessment and the next basic read-only SQL work
 
 The issue bodies were epics rather than synchronized completion ledgers. Their
-implemented read-only portions are summarized here, but #9, #13, #17, and #25
-remain open until their differential and policy acceptance gates are complete.
+implemented read-only portions are summarized here. The DECIMAL epic (#9) has
+completed its differential and full-gate acceptance; #13 and #17 retain policy
+or overload-verification tails.
 The larger implementation work still includes:
 
-1. **Differential gates (#9, #13, #17):** run the eight newer oracle cases
-   against MySQL 8.4, extend overload coverage, and add the remaining wire/E2E
-   cases before closing their epics.
+1. **Verification tails (#13, #17):** extend overload and policy coverage and
+   keep wire/E2E evidence synchronized with the advertised surface.
 2. **Wire type provenance (#17):** retain declared variable-width lengths and
    aggregate provenance through wrappers/derived projections; the current 1024
    fallback and direct-only `GROUP_CONCAT` marker are explicit limitations.
@@ -229,7 +229,7 @@ Every future read-only SQL increment should continue the same gate:
 ## Conclusion
 
 The read-only parity pass is landed in bounded commits. The current state has
-134 callable names, an 802-case oracle inventory, richer typed wire metadata,
-exact implemented DECIMAL paths, and explicit rejection for deliberate
-boundaries. Differential execution and remaining policy work are still gates
-for the open epics.
+134 callable names, an 806-case byte-exact MySQL oracle, richer typed wire
+metadata, exact implemented DECIMAL paths, and explicit rejection for
+deliberate boundaries. The full repository gate is green; remaining open epics
+are policy or deliberately narrower compatibility work.
