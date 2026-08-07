@@ -320,8 +320,7 @@ worth refusing.
   `--wire-idle-timeout-seconds` to change it. Active query cancellation is not
   yet cooperative: a client disconnect is observed after the current engine
   call returns.
-- DBeaver and Metabase application-level smokes are not automated on this
-  workstation.
+- DBeaver and Metabase application-level smokes are not automated in CI.
 ## Operations and backup
 
 - The supervisor is finite-cycle rather than a permanently attached stream, so

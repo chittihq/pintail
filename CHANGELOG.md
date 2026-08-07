@@ -15,6 +15,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- MySQL wire sessions now implement `COM_RESET_CONNECTION`,
+  `COM_CHANGE_USER`, and `COM_STMT_RESET`, restoring defaults, repeating
+  scoped authentication where required, and invalidating stale prepared
+  statements without dropping the pooled socket. An idle-connection deadline
+  is configurable through TOML, environment, and CLI settings.
+- Recursive CTE execution has a session-scoped `cte_max_recursion_depth`
+  guard with a safe default and bounded configurable range; attempts to
+  disable the guard are rejected.
 - Query spill now uses an isolated temporary directory per execution with
   configurable per-query and process-wide disk ceilings. Prometheus exposes
   active/written bytes, file count, and quota failures; `EXPLAIN ANALYZE`
@@ -41,6 +49,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Replica temporal policy is explicit and shared by snapshot and CDC: zero or
+  invalid DATE/DATETIME values normalize to SQL NULL, `sql_mode` is retained
+  but does not reinterpret stored source values, and named timezone DST folds
+  choose the earlier instant while gaps return NULL.
 - Merge clusters refine to granule level: a base-plus-tail cluster splits into
   direct row-ranges of the dominant unique-key segment plus one merge bounded
   to the actual overlap, located through the segment footer's sparse index
@@ -72,6 +84,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Canonical correlated scalar lookups preserve MySQL cardinality: zero inner
+  matches produce NULL, one produces the value, and more than one raises a
+  scalar-subquery row error through a bounded spillable join.
+- A complete parenthesized root LEFT JOIN now binds without flattening away
+  its outer semantics; unsupported nested or followed outer-join trees still
+  reject explicitly.
 - Uncorrelated `EXISTS` stops its inner execution after one row, and scalar
   subqueries stop after the second row needed to raise the MySQL cardinality
   error; neither materializes an irrelevant tail before deciding its result.
@@ -148,7 +166,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without weakening atomic publication or checkpoint-before-replay safety.
 - The CDC restart gate uses a source-side named-lock barrier after the tenth
   commit, proving the worker is SIGKILLed with 190 writes still pending instead
-  of relying on workstation/process-start timing.
+  of relying on process-start timing.
 - The production builder copies the SQL-oracle workspace member required by
   the root Cargo manifest, so a clean multi-stage image build can resolve the
   complete workspace before compiling the Pintail binary.
