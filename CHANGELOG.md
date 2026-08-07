@@ -184,6 +184,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Verification
 
+- Drizzle compatibility requires a successful `drizzle-kit pull`; matching
+  partial artifacts from failed introspection processes can no longer pass.
 - The nightly external wire matrix now includes Go `database/sql` with
   go-sql-driver/mysql parameter interpolation, covering authentication, a bound parameter,
   and information-schema discovery alongside mysql_async, mysql2, PyMySQL,

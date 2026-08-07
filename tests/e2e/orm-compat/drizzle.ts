@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { and, asc, count, eq, gte, isNotNull, lte, sum } from 'drizzle-orm'
@@ -139,7 +139,7 @@ async function introspect(endpoint: MysqlEndpoint): Promise<Captured<Record<stri
       new Response(child.stderr).text(),
       child.exited,
     ])
-    if (exitCode !== 0 && !existsSync(join(output, 'schema.ts'))) {
+    if (exitCode !== 0) {
       const output = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
       const safeOutput = output.replaceAll(endpoint.password, '<redacted>')
       throw new Error(`drizzle-kit pull failed (${exitCode}): ${safeOutput}`)
