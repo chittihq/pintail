@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-06T23:50:22.159Z.
+Measured 2026-08-07T04:41:27.884Z.
 
-**323 passed, 0 failed, 3 documented-gap warnings.**
+**441 passed, 0 failed, 3 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -16,16 +16,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | snapshot | query:range scan with compound predicate | PASS |  |
 | snapshot | query:inner join with aggregation | PASS |  |
 | snapshot | query:left join preserves unmatched rows | PASS |  |
+| snapshot | query:right join preserves unmatched rows | PASS |  |
 | snapshot | query:three-way join through items | PASS |  |
 | snapshot | query:union all across sources | PASS |  |
+| snapshot | query:intersect customer identifiers | PASS |  |
+| snapshot | query:except customer identifiers | PASS |  |
 | snapshot | query:group by with having | PASS |  |
 | snapshot | query:conditional decimal sum keeps the fraction | PASS |  |
 | snapshot | query:distinct count and min max | PASS |  |
 | snapshot | query:uncorrelated in-subquery | PASS |  |
+| snapshot | query:correlated exists with inner predicate | PASS |  |
+| snapshot | query:correlated scalar aggregate | PASS |  |
+| snapshot | query:correlated scalar unique lookup | PASS |  |
 | snapshot | query:scalar subquery threshold | PASS |  |
 | snapshot | query:non-recursive cte | PASS |  |
+| snapshot | query:bounded recursive cte | PASS |  |
 | snapshot | query:date bucketing | PASS |  |
 | snapshot | query:string functions and like | PASS |  |
+| snapshot | query:looker symmetric key helpers | PASS |  |
 | snapshot | query:json constructor preserves json versus text | PASS |  |
 | snapshot | query:json aggregate embeds documents | PASS |  |
 | snapshot | query:regular expression read transforms | PASS |  |
@@ -49,16 +57,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | crud | query:range scan with compound predicate | PASS |  |
 | crud | query:inner join with aggregation | PASS |  |
 | crud | query:left join preserves unmatched rows | PASS |  |
+| crud | query:right join preserves unmatched rows | PASS |  |
 | crud | query:three-way join through items | PASS |  |
 | crud | query:union all across sources | PASS |  |
+| crud | query:intersect customer identifiers | PASS |  |
+| crud | query:except customer identifiers | PASS |  |
 | crud | query:group by with having | PASS |  |
 | crud | query:conditional decimal sum keeps the fraction | PASS |  |
 | crud | query:distinct count and min max | PASS |  |
 | crud | query:uncorrelated in-subquery | PASS |  |
+| crud | query:correlated exists with inner predicate | PASS |  |
+| crud | query:correlated scalar aggregate | PASS |  |
+| crud | query:correlated scalar unique lookup | PASS |  |
 | crud | query:scalar subquery threshold | PASS |  |
 | crud | query:non-recursive cte | PASS |  |
+| crud | query:bounded recursive cte | PASS |  |
 | crud | query:date bucketing | PASS |  |
 | crud | query:string functions and like | PASS |  |
+| crud | query:looker symmetric key helpers | PASS |  |
 | crud | query:json constructor preserves json versus text | PASS |  |
 | crud | query:json aggregate embeds documents | PASS |  |
 | crud | query:regular expression read transforms | PASS |  |
@@ -82,16 +98,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | type-edges | query:range scan with compound predicate | PASS |  |
 | type-edges | query:inner join with aggregation | PASS |  |
 | type-edges | query:left join preserves unmatched rows | PASS |  |
+| type-edges | query:right join preserves unmatched rows | PASS |  |
 | type-edges | query:three-way join through items | PASS |  |
 | type-edges | query:union all across sources | PASS |  |
+| type-edges | query:intersect customer identifiers | PASS |  |
+| type-edges | query:except customer identifiers | PASS |  |
 | type-edges | query:group by with having | PASS |  |
 | type-edges | query:conditional decimal sum keeps the fraction | PASS |  |
 | type-edges | query:distinct count and min max | PASS |  |
 | type-edges | query:uncorrelated in-subquery | PASS |  |
+| type-edges | query:correlated exists with inner predicate | PASS |  |
+| type-edges | query:correlated scalar aggregate | PASS |  |
+| type-edges | query:correlated scalar unique lookup | PASS |  |
 | type-edges | query:scalar subquery threshold | PASS |  |
 | type-edges | query:non-recursive cte | PASS |  |
+| type-edges | query:bounded recursive cte | PASS |  |
 | type-edges | query:date bucketing | PASS |  |
 | type-edges | query:string functions and like | PASS |  |
+| type-edges | query:looker symmetric key helpers | PASS |  |
 | type-edges | query:json constructor preserves json versus text | PASS |  |
 | type-edges | query:json aggregate embeds documents | PASS |  |
 | type-edges | query:regular expression read transforms | PASS |  |
@@ -116,16 +140,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | ddl | query:range scan with compound predicate | PASS |  |
 | ddl | query:inner join with aggregation | PASS |  |
 | ddl | query:left join preserves unmatched rows | PASS |  |
+| ddl | query:right join preserves unmatched rows | PASS |  |
 | ddl | query:three-way join through items | PASS |  |
 | ddl | query:union all across sources | PASS |  |
+| ddl | query:intersect customer identifiers | PASS |  |
+| ddl | query:except customer identifiers | PASS |  |
 | ddl | query:group by with having | PASS |  |
 | ddl | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl | query:distinct count and min max | PASS |  |
 | ddl | query:uncorrelated in-subquery | PASS |  |
+| ddl | query:correlated exists with inner predicate | PASS |  |
+| ddl | query:correlated scalar aggregate | PASS |  |
+| ddl | query:correlated scalar unique lookup | PASS |  |
 | ddl | query:scalar subquery threshold | PASS |  |
 | ddl | query:non-recursive cte | PASS |  |
+| ddl | query:bounded recursive cte | PASS |  |
 | ddl | query:date bucketing | PASS |  |
 | ddl | query:string functions and like | PASS |  |
+| ddl | query:looker symmetric key helpers | PASS |  |
 | ddl | query:json constructor preserves json versus text | PASS |  |
 | ddl | query:json aggregate embeds documents | PASS |  |
 | ddl | query:regular expression read transforms | PASS |  |
@@ -143,8 +175,8 @@ Measured 2026-08-06T23:50:22.159Z.
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
 | churn-live | live:left join preserves unmatched rows | PASS |  |
+| churn-live | live:right join preserves unmatched rows | PASS |  |
 | churn-live | live:three-way join through items | PASS |  |
-| churn-live | live:union all across sources | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
@@ -156,16 +188,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | churn | query:range scan with compound predicate | PASS |  |
 | churn | query:inner join with aggregation | PASS |  |
 | churn | query:left join preserves unmatched rows | PASS |  |
+| churn | query:right join preserves unmatched rows | PASS |  |
 | churn | query:three-way join through items | PASS |  |
 | churn | query:union all across sources | PASS |  |
+| churn | query:intersect customer identifiers | PASS |  |
+| churn | query:except customer identifiers | PASS |  |
 | churn | query:group by with having | PASS |  |
 | churn | query:conditional decimal sum keeps the fraction | PASS |  |
 | churn | query:distinct count and min max | PASS |  |
 | churn | query:uncorrelated in-subquery | PASS |  |
+| churn | query:correlated exists with inner predicate | PASS |  |
+| churn | query:correlated scalar aggregate | PASS |  |
+| churn | query:correlated scalar unique lookup | PASS |  |
 | churn | query:scalar subquery threshold | PASS |  |
 | churn | query:non-recursive cte | PASS |  |
+| churn | query:bounded recursive cte | PASS |  |
 | churn | query:date bucketing | PASS |  |
 | churn | query:string functions and like | PASS |  |
+| churn | query:looker symmetric key helpers | PASS |  |
 | churn | query:json constructor preserves json versus text | PASS |  |
 | churn | query:json aggregate embeds documents | PASS |  |
 | churn | query:regular expression read transforms | PASS |  |
@@ -179,6 +219,52 @@ Measured 2026-08-06T23:50:22.159Z.
 | churn | query:window ranking per group | PASS |  |
 | churn | query:window share of total over grouped output | PASS |  |
 | churn | query:window running total | PASS |  |
+| spill | forced-spill:sort | PASS |  |
+| spill | forced-spill:aggregate | PASS |  |
+| spill | forced-spill:distinct | PASS |  |
+| spill | forced-spill:join | PASS |  |
+| spill | converge:audit_log | PASS |  |
+| spill | converge:counters | PASS |  |
+| spill | converge:customers | PASS |  |
+| spill | converge:order_items | PASS |  |
+| spill | converge:orders | PASS |  |
+| spill | converge:shipments | PASS |  |
+| spill | converge:information_schema.columns | PASS |  |
+| spill | query:point lookup by key | PASS |  |
+| spill | query:range scan with compound predicate | PASS |  |
+| spill | query:inner join with aggregation | PASS |  |
+| spill | query:left join preserves unmatched rows | PASS |  |
+| spill | query:right join preserves unmatched rows | PASS |  |
+| spill | query:three-way join through items | PASS |  |
+| spill | query:union all across sources | PASS |  |
+| spill | query:intersect customer identifiers | PASS |  |
+| spill | query:except customer identifiers | PASS |  |
+| spill | query:group by with having | PASS |  |
+| spill | query:conditional decimal sum keeps the fraction | PASS |  |
+| spill | query:distinct count and min max | PASS |  |
+| spill | query:uncorrelated in-subquery | PASS |  |
+| spill | query:correlated exists with inner predicate | PASS |  |
+| spill | query:correlated scalar aggregate | PASS |  |
+| spill | query:correlated scalar unique lookup | PASS |  |
+| spill | query:scalar subquery threshold | PASS |  |
+| spill | query:non-recursive cte | PASS |  |
+| spill | query:bounded recursive cte | PASS |  |
+| spill | query:date bucketing | PASS |  |
+| spill | query:string functions and like | PASS |  |
+| spill | query:looker symmetric key helpers | PASS |  |
+| spill | query:json constructor preserves json versus text | PASS |  |
+| spill | query:json aggregate embeds documents | PASS |  |
+| spill | query:regular expression read transforms | PASS |  |
+| spill | query:case expression buckets | PASS |  |
+| spill | query:null handling | PASS |  |
+| spill | query:coalesce and ifnull | PASS |  |
+| spill | query:enum and set filters | PASS |  |
+| spill | query:unsigned boundary readback | PASS |  |
+| spill | query:derived table | PASS |  |
+| spill | query:group_concat single expression | PASS |  |
+| spill | query:window ranking per group | PASS |  |
+| spill | query:window share of total over grouped output | PASS |  |
+| spill | query:window running total | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-reset-between-borrows | WARN | time_zone leaked across borrows as +05:30 |
@@ -193,16 +279,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | pooling | query:range scan with compound predicate | PASS |  |
 | pooling | query:inner join with aggregation | PASS |  |
 | pooling | query:left join preserves unmatched rows | PASS |  |
+| pooling | query:right join preserves unmatched rows | PASS |  |
 | pooling | query:three-way join through items | PASS |  |
 | pooling | query:union all across sources | PASS |  |
+| pooling | query:intersect customer identifiers | PASS |  |
+| pooling | query:except customer identifiers | PASS |  |
 | pooling | query:group by with having | PASS |  |
 | pooling | query:conditional decimal sum keeps the fraction | PASS |  |
 | pooling | query:distinct count and min max | PASS |  |
 | pooling | query:uncorrelated in-subquery | PASS |  |
+| pooling | query:correlated exists with inner predicate | PASS |  |
+| pooling | query:correlated scalar aggregate | PASS |  |
+| pooling | query:correlated scalar unique lookup | PASS |  |
 | pooling | query:scalar subquery threshold | PASS |  |
 | pooling | query:non-recursive cte | PASS |  |
+| pooling | query:bounded recursive cte | PASS |  |
 | pooling | query:date bucketing | PASS |  |
 | pooling | query:string functions and like | PASS |  |
+| pooling | query:looker symmetric key helpers | PASS |  |
 | pooling | query:json constructor preserves json versus text | PASS |  |
 | pooling | query:json aggregate embeds documents | PASS |  |
 | pooling | query:regular expression read transforms | PASS |  |
@@ -227,16 +321,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | restart | query:range scan with compound predicate | PASS |  |
 | restart | query:inner join with aggregation | PASS |  |
 | restart | query:left join preserves unmatched rows | PASS |  |
+| restart | query:right join preserves unmatched rows | PASS |  |
 | restart | query:three-way join through items | PASS |  |
 | restart | query:union all across sources | PASS |  |
+| restart | query:intersect customer identifiers | PASS |  |
+| restart | query:except customer identifiers | PASS |  |
 | restart | query:group by with having | PASS |  |
 | restart | query:conditional decimal sum keeps the fraction | PASS |  |
 | restart | query:distinct count and min max | PASS |  |
 | restart | query:uncorrelated in-subquery | PASS |  |
+| restart | query:correlated exists with inner predicate | PASS |  |
+| restart | query:correlated scalar aggregate | PASS |  |
+| restart | query:correlated scalar unique lookup | PASS |  |
 | restart | query:scalar subquery threshold | PASS |  |
 | restart | query:non-recursive cte | PASS |  |
+| restart | query:bounded recursive cte | PASS |  |
 | restart | query:date bucketing | PASS |  |
 | restart | query:string functions and like | PASS |  |
+| restart | query:looker symmetric key helpers | PASS |  |
 | restart | query:json constructor preserves json versus text | PASS |  |
 | restart | query:json aggregate embeds documents | PASS |  |
 | restart | query:regular expression read transforms | PASS |  |
@@ -261,7 +363,7 @@ Measured 2026-08-06T23:50:22.159Z.
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
-| control-plane | api:keyless policy: quarantine flags, auto_resync repairs | PASS |  |
+| control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
@@ -275,16 +377,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | control-plane | query:range scan with compound predicate | PASS |  |
 | control-plane | query:inner join with aggregation | PASS |  |
 | control-plane | query:left join preserves unmatched rows | PASS |  |
+| control-plane | query:right join preserves unmatched rows | PASS |  |
 | control-plane | query:three-way join through items | PASS |  |
 | control-plane | query:union all across sources | PASS |  |
+| control-plane | query:intersect customer identifiers | PASS |  |
+| control-plane | query:except customer identifiers | PASS |  |
 | control-plane | query:group by with having | PASS |  |
 | control-plane | query:conditional decimal sum keeps the fraction | PASS |  |
 | control-plane | query:distinct count and min max | PASS |  |
 | control-plane | query:uncorrelated in-subquery | PASS |  |
+| control-plane | query:correlated exists with inner predicate | PASS |  |
+| control-plane | query:correlated scalar aggregate | PASS |  |
+| control-plane | query:correlated scalar unique lookup | PASS |  |
 | control-plane | query:scalar subquery threshold | PASS |  |
 | control-plane | query:non-recursive cte | PASS |  |
+| control-plane | query:bounded recursive cte | PASS |  |
 | control-plane | query:date bucketing | PASS |  |
 | control-plane | query:string functions and like | PASS |  |
+| control-plane | query:looker symmetric key helpers | PASS |  |
 | control-plane | query:json constructor preserves json versus text | PASS |  |
 | control-plane | query:json aggregate embeds documents | PASS |  |
 | control-plane | query:regular expression read transforms | PASS |  |
@@ -310,16 +420,24 @@ Measured 2026-08-06T23:50:22.159Z.
 | ddl-documented-gaps | query:range scan with compound predicate | PASS |  |
 | ddl-documented-gaps | query:inner join with aggregation | PASS |  |
 | ddl-documented-gaps | query:left join preserves unmatched rows | PASS |  |
+| ddl-documented-gaps | query:right join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:three-way join through items | SKIP |  |
 | ddl-documented-gaps | query:union all across sources | PASS |  |
+| ddl-documented-gaps | query:intersect customer identifiers | PASS |  |
+| ddl-documented-gaps | query:except customer identifiers | PASS |  |
 | ddl-documented-gaps | query:group by with having | PASS |  |
 | ddl-documented-gaps | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl-documented-gaps | query:distinct count and min max | PASS |  |
 | ddl-documented-gaps | query:uncorrelated in-subquery | PASS |  |
+| ddl-documented-gaps | query:correlated exists with inner predicate | PASS |  |
+| ddl-documented-gaps | query:correlated scalar aggregate | PASS |  |
+| ddl-documented-gaps | query:correlated scalar unique lookup | PASS |  |
 | ddl-documented-gaps | query:scalar subquery threshold | PASS |  |
 | ddl-documented-gaps | query:non-recursive cte | PASS |  |
+| ddl-documented-gaps | query:bounded recursive cte | PASS |  |
 | ddl-documented-gaps | query:date bucketing | PASS |  |
 | ddl-documented-gaps | query:string functions and like | PASS |  |
+| ddl-documented-gaps | query:looker symmetric key helpers | PASS |  |
 | ddl-documented-gaps | query:json constructor preserves json versus text | PASS |  |
 | ddl-documented-gaps | query:json aggregate embeds documents | PASS |  |
 | ddl-documented-gaps | query:regular expression read transforms | PASS |  |

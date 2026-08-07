@@ -51,12 +51,27 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "snapshot",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -81,6 +96,21 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -91,12 +121,22 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "snapshot",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -216,12 +256,27 @@
   },
   {
     "phase": "crud",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "crud",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -246,6 +301,21 @@
   },
   {
     "phase": "crud",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -256,12 +326,22 @@
   },
   {
     "phase": "crud",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "crud",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -381,12 +461,27 @@
   },
   {
     "phase": "type-edges",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "type-edges",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -411,6 +506,21 @@
   },
   {
     "phase": "type-edges",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -421,12 +531,22 @@
   },
   {
     "phase": "type-edges",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "type-edges",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -551,12 +671,27 @@
   },
   {
     "phase": "ddl",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -581,6 +716,21 @@
   },
   {
     "phase": "ddl",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -591,12 +741,22 @@
   },
   {
     "phase": "ddl",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -686,12 +846,12 @@
   },
   {
     "phase": "churn-live",
-    "check": "live:three-way join through items",
+    "check": "live:right join preserves unmatched rows",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:union all across sources",
+    "check": "live:three-way join through items",
     "status": "PASS"
   },
   {
@@ -751,12 +911,27 @@
   },
   {
     "phase": "churn",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -781,6 +956,21 @@
   },
   {
     "phase": "churn",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -791,12 +981,22 @@
   },
   {
     "phase": "churn",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -861,6 +1061,236 @@
   },
   {
     "phase": "churn",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "forced-spill:sort",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "forced-spill:aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "forced-spill:distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "forced-spill:join",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "query:window running total",
     "status": "PASS"
   },
@@ -937,12 +1367,27 @@
   },
   {
     "phase": "pooling",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "pooling",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -967,6 +1412,21 @@
   },
   {
     "phase": "pooling",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -977,12 +1437,22 @@
   },
   {
     "phase": "pooling",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "pooling",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -1107,12 +1577,27 @@
   },
   {
     "phase": "restart",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -1137,6 +1622,21 @@
   },
   {
     "phase": "restart",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -1147,12 +1647,22 @@
   },
   {
     "phase": "restart",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -1277,7 +1787,7 @@
   },
   {
     "phase": "control-plane",
-    "check": "api:keyless policy: quarantine flags, auto_resync repairs",
+    "check": "api:keyless policy: ambiguity quarantines and exact multiplicity repairs",
     "status": "PASS"
   },
   {
@@ -1347,12 +1857,27 @@
   },
   {
     "phase": "control-plane",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:three-way join through items",
     "status": "PASS"
   },
   {
     "phase": "control-plane",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -1377,6 +1902,21 @@
   },
   {
     "phase": "control-plane",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -1387,12 +1927,22 @@
   },
   {
     "phase": "control-plane",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "control-plane",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
@@ -1524,12 +2074,27 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "query:three-way join through items",
     "status": "SKIP"
   },
   {
     "phase": "ddl-documented-gaps",
     "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:except customer identifiers",
     "status": "PASS"
   },
   {
@@ -1554,6 +2119,21 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "query:scalar subquery threshold",
     "status": "PASS"
   },
@@ -1564,12 +2144,22 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "query:date bucketing",
     "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
     "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:looker symmetric key helpers",
     "status": "PASS"
   },
   {
