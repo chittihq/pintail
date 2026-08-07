@@ -130,6 +130,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Verification
 
+- The production E2E binary is restarted briefly with a 256 KiB query ceiling
+  and must report nonzero spill files and bytes for live sort, grouped
+  aggregation, standalone DISTINCT, and hash-join workloads before the gate
+  restores the normal process configuration.
 - The clean repository gate passes formatting and strict workspace Clippy, 371
   nextest cases, all 806 byte-exact MySQL 8.4 differential cases, and E2E with
   323 passes, zero failures, and three documented-gap warnings.

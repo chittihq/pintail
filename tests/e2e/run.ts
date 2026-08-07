@@ -851,6 +851,74 @@ async function phaseRestart() {
   await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (10, 'shipped', 67.89, '2025-08-02')`)
 }
 
+async function phaseSpill() {
+  const phase = 'spill'
+  const checks: Array<[string, string]> = [
+    [
+      'sort',
+      'SELECT o.id, c.id FROM orders o CROSS JOIN customers c ' +
+        'ORDER BY c.id DESC, o.id',
+    ],
+    [
+      'aggregate',
+      'SELECT o.id, c.id, COUNT(*) FROM orders o CROSS JOIN customers c ' +
+        'GROUP BY o.id, c.id',
+    ],
+    [
+      'distinct',
+      'SELECT DISTINCT o.id, c.id FROM orders o CROSS JOIN customers c',
+    ],
+    [
+      'join',
+      'SELECT COUNT(*) FROM orders o JOIN (' +
+        'SELECT i.order_id, c.id FROM order_items i CROSS JOIN customers c' +
+        ') d ON o.id = d.order_id',
+    ],
+  ]
+
+  try {
+    try {
+      await pintailWire?.end()
+    } catch {}
+    pintailWire = undefined
+    pintailProcess!.kill()
+    await pintailProcess!.exited
+    // The ordinary E2E process uses the production default. This short-lived
+    // restart lowers only the query ceiling so the live binary must take each
+    // external path over the already-replicated workload.
+    await startPintail(256 * 1024)
+
+    for (const [operator, sql] of checks) {
+      try {
+        const rows = await pintailQuery(`EXPLAIN ANALYZE ${sql}`)
+        const plan = rows.flat().map(String).join('\n')
+        const spilled = /Spill files=[1-9][0-9]* bytes=[1-9][0-9]*/.test(plan)
+        results.push({
+          phase,
+          check: `forced-spill:${operator}`,
+          status: spilled ? 'PASS' : 'FAIL',
+          detail: spilled ? undefined : `no spill reported:\n${plan}`,
+        })
+      } catch (error) {
+        results.push({
+          phase,
+          check: `forced-spill:${operator}`,
+          status: 'FAIL',
+          detail: String(error),
+        })
+      }
+    }
+  } finally {
+    try {
+      await pintailWire?.end()
+    } catch {}
+    pintailWire = undefined
+    pintailProcess?.kill()
+    await pintailProcess?.exited
+    await startPintail()
+  }
+}
+
 /// Exercises the control-plane routes against the deployed binary: auth,
 /// database lifecycle on a throwaway registration, table metadata, API-key
 /// enable/disable round trip, mode switching, resync/reconcile, and the
@@ -1208,7 +1276,7 @@ async function buildPintail(): Promise<string> {
   return join(JSON.parse(metadata.stdout).target_directory, 'release', 'pintail')
 }
 
-async function startPintail() {
+async function startPintail(queryMemoryLimit?: number) {
   pintailWire = undefined
   pintailProcess = Bun.spawn(
     [
@@ -1220,7 +1288,17 @@ async function startPintail() {
       '--wire-bind',
       `127.0.0.1:${pintailWirePort}`,
     ],
-    { cwd: repository, stdout: 'inherit', stderr: 'inherit' },
+    {
+      cwd: repository,
+      stdout: 'inherit',
+      stderr: 'inherit',
+      env: {
+        ...process.env,
+        ...(queryMemoryLimit === undefined
+          ? {}
+          : { PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(queryMemoryLimit) }),
+      },
+    },
   )
   for (let attempt = 0; attempt < 240; attempt += 1) {
     try {
@@ -1320,6 +1398,7 @@ async function main() {
     ['type-edges', phaseTypeEdges],
     ['ddl', phaseDdl],
     ['churn', phaseChurn],
+    ['spill', phaseSpill],
     ['pooling', phasePooling],
     ['restart', phaseRestart],
     ['control-plane', phaseControlPlane],
