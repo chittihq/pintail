@@ -24,7 +24,7 @@ dependent-correlation, bushy-join, and set-scoping cases.
 | JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, with JSON-vs-VARCHAR identity retained through execution and `MYSQL_TYPE_JSON` results. Read: single- and multi-path `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH`. Unsupported JSON key semantics reject explicitly |
 | Regex | `REGEXP_LIKE` with optional `match_type` (`c`/`i`/`m`/`n`/`u`), `REGEXP_INSTR`, `REGEXP_REPLACE`, `REGEXP_SUBSTR`, and the `REGEXP`/`RLIKE` operators including their `NOT` forms. POSIX bracket classes follow ICU's Unicode definitions; binary operands reject; query-owned literal programs and uncached dynamic programs obey pattern/program/query-memory limits |
 | Conversion | `CAST`, `CONVERT(value, type)`, `CONVERT(value USING charset)` |
-| `information_schema` | 8 tables, aliases, narrow INNER/LEFT/CROSS client-discovery joins, projection/filter/order/limit, grouping, and `COUNT`/`MIN`/`MAX`/`SUM` |
+| `information_schema` | 10 relations (`SCHEMATA`, `TABLES`, `COLUMNS`, `STATISTICS`, `KEY_COLUMN_USAGE`, `TABLE_CONSTRAINTS`, `REFERENTIAL_CONSTRAINTS`, `CHECK_CONSTRAINTS`, `ROUTINES`, `VIEWS`), aliases, narrow INNER/LEFT/CROSS client-discovery joins, projection/filter/order/limit/DISTINCT, grouping, and `COUNT`/`MIN`/`MAX`/`SUM` |
 
 ## Semantics
 

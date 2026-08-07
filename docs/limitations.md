@@ -78,8 +78,10 @@ stays readable as a list of things to fix.
   coercibility is not implemented, so mixed source profiles reject on every
   collation-sensitive operation (#10).
 - The `information_schema` client-discovery interpreter rejects CTEs, set
-  operations, DISTINCT, window functions, derived tables, and metadata tables
-  outside the eight served tables.
+  operations, window functions, derived tables, and metadata relations outside
+  the ten served relations. `VIEWS`, `ROUTINES`, and `CHECK_CONSTRAINTS` are
+  deliberately empty: the compact replica does not retain source view/routine
+  definitions or CHECK expressions.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
   `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
   the BI corpus (#17).

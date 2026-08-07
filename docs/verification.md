@@ -63,7 +63,9 @@ operator API routes — status, metrics, activity, mode switching, resync,
 API-key lifecycle, and database create/update/delete — and documented-gap
 DDL). After every phase it re-verifies each base table over the wire protocol
 plus 35 differential query shapes covering joins, windows, aggregates,
-subqueries, CTEs, and set operations. The complete gate currently records 441
+subqueries, CTEs, and set operations. A pinned Sequelize, Prisma, and Drizzle
+matrix additionally compares generated read queries, decoded results, and
+schema-introspection artifacts against MySQL. The complete gate records 506
 passing checks; that headline is checks across phases, not independent
 behaviors. Documented gaps report WARN. `E2E_PHASES` selects a subset while
 iterating, and `PINTAIL_E2E_BINARY` skips the release build. The M3 and M4 gates

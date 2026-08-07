@@ -15,6 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A pinned read-only ORM differential matrix exercises Sequelize, Prisma, and
+  Drizzle against MySQL and Pintail, comparing decoded reads, generated query
+  shapes, and schema-introspection artifacts. ORM writes and migration
+  execution remain outside the compact compatibility scope.
 - A BI dogfooding harness ingests JSONL, MySQL general-log exports, or plain
   SQL; keeps exact captures and replay evidence local; frequency-deduplicates
   redacted query shapes; excludes data-changing statements; and can compare
@@ -198,9 +202,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ceiling sized above one input batch and below accumulated operator state;
   live sort, grouped aggregation, standalone DISTINCT, and hash join must each
   report nonzero spill files and bytes before normal configuration is restored.
-- The clean repository gate passes formatting and strict workspace Clippy, 397
+- The clean repository gate passes formatting and strict workspace Clippy, 399
   nextest cases, all 822 byte-exact MySQL 8.4 differential cases, and E2E with
-  441 passes, zero failures, and three documented-gap warnings.
+  506 passes, zero failures, and three documented-gap warnings.
 - The deterministic 20-million-order benchmark matches MySQL results and
   passes the required 50x aggregate-speedup gate. The ci-profile production
   snapshot and cold-query acceptance workload also passes with its declared
