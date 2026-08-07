@@ -31,9 +31,8 @@ stays readable as a list of things to fix.
   `cte_max_recursion_depth` to `1..=1000000`; MySQL's unbounded value `0` is
   rejected so a session cannot disable the recursive resource guard.
 - `RIGHT JOIN` supports only the two-table form.
-- Aliased parenthesized join groups reject; the unaliased group keeps its
-  constituent relation names visible instead of inventing one group-wide
-  namespace.
+- Aliased parenthesized join groups reject because a group-wide namespace is
+  not implemented.
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
 - The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
