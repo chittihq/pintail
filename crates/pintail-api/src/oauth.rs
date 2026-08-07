@@ -12,7 +12,7 @@
 use axum::{
     Extension, Json,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
 use chrono::Utc;
@@ -33,6 +33,8 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const STATE_ISSUER: &str = "pintail-google-oauth-state";
 const STATE_LIFETIME_SECS: u64 = 600;
+const STATE_COOKIE: &str = "pintail_oauth_state";
+const STATE_COOKIE_PATH: &str = "/api/auth/google";
 const INVITE_LIFETIME_DAYS: i64 = 14;
 
 #[derive(Debug, Clone, Default)]
@@ -167,33 +169,60 @@ struct StateClaims {
     exp: u64,
 }
 
-fn sign_state(state: &ApiState) -> Result<String, ApiError> {
+fn sign_state(state: &ApiState) -> Result<(String, String), ApiError> {
     let issued_at = u64::try_from(Utc::now().timestamp()).map_err(ApiError::internal)?;
+    let nonce = random_identifier("", 12);
     let claims = StateClaims {
-        nonce: random_identifier("", 12),
+        nonce: nonce.clone(),
         iss: STATE_ISSUER.to_owned(),
         iat: issued_at,
         exp: issued_at + STATE_LIFETIME_SECS,
     };
-    encode(
+    let token = encode(
         &Header::new(JwtAlgorithm::HS256),
         &claims,
         &EncodingKey::from_secret(state.jwt_secret()?),
     )
-    .map_err(ApiError::internal)
+    .map_err(ApiError::internal)?;
+    Ok((token, nonce))
 }
 
-fn verify_state(state: &ApiState, token: &str) -> Result<(), ApiError> {
+fn verify_state(state: &ApiState, token: &str, browser_nonce: &str) -> Result<(), ApiError> {
     let mut validation = Validation::new(JwtAlgorithm::HS256);
     validation.set_issuer(&[STATE_ISSUER]);
     validation.set_required_spec_claims(&["exp", "iat", "iss"]);
-    decode::<StateClaims>(
+    let token = decode::<StateClaims>(
         token,
         &DecodingKey::from_secret(state.jwt_secret()?),
         &validation,
     )
-    .map(|_| ())
-    .map_err(|_| ApiError::bad_request("the sign-in attempt expired; try again"))
+    .map_err(|_| ApiError::bad_request("the sign-in attempt expired; try again"))?;
+    if token.claims.nonce != browser_nonce {
+        return Err(ApiError::bad_request(
+            "the sign-in attempt did not originate in this browser",
+        ));
+    }
+    Ok(())
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|part| part.trim().split_once('='))
+        .find_map(|(key, value)| (key == name).then(|| value.to_owned()))
+}
+
+fn state_cookie(value: &str, max_age: u64, secure: bool) -> Result<HeaderValue, ApiError> {
+    let mut cookie = format!(
+        "{STATE_COOKIE}={value}; Path={STATE_COOKIE_PATH}; Max-Age={max_age}; HttpOnly; SameSite=Lax"
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie).map_err(ApiError::internal)
 }
 
 /// The exact URL Google redirects back to. Must match one of the
@@ -229,17 +258,27 @@ pub(crate) async fn start(
     if !config.is_active() {
         return Err(ApiError::conflict("Google sign-in is not configured"));
     }
-    let state_token = sign_state(&state)?;
+    let callback_uri = redirect_uri(&headers);
+    let (state_token, browser_nonce) = sign_state(&state)?;
     let mut url = reqwest::Url::parse(AUTH_URL).map_err(ApiError::internal)?;
     url.query_pairs_mut()
         .append_pair("client_id", &config.client_id)
-        .append_pair("redirect_uri", &redirect_uri(&headers))
+        .append_pair("redirect_uri", &callback_uri)
         .append_pair("response_type", "code")
         .append_pair("scope", "openid email profile")
         .append_pair("state", &state_token)
         .append_pair("access_type", "online")
         .append_pair("prompt", "select_account");
-    Ok(Redirect::to(url.as_str()).into_response())
+    let mut response = Redirect::to(url.as_str()).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        state_cookie(
+            &browser_nonce,
+            STATE_LIFETIME_SECS,
+            callback_uri.starts_with("https://"),
+        )?,
+    );
+    Ok(response)
 }
 
 #[derive(Deserialize)]
@@ -263,13 +302,42 @@ struct GoogleUser {
     sub: String,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct ExchangeRequest {
+    code: String,
+}
+
+#[derive(Serialize)]
+struct ExchangeResponse {
+    token: String,
+}
+
+pub(crate) async fn exchange(
+    State(state): State<ApiState>,
+    Json(request): Json<ExchangeRequest>,
+) -> Result<Response, ApiError> {
+    if request.code.is_empty() {
+        return Err(ApiError::bad_request("sign-in exchange code is required"));
+    }
+    let token = state.consume_oauth_exchange(&request.code)?;
+    let mut response = Json(ExchangeResponse { token }).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
 pub(crate) async fn callback(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
-    match callback_inner(&state, &headers, &query).await {
-        Ok(token) => Redirect::to(&format!("/?auth_token={token}")).into_response(),
+    let secure_cookie = redirect_uri(&headers).starts_with("https://");
+    let mut response = match callback_inner(&state, &headers, &query).await {
+        Ok(token) => match state.create_oauth_exchange(token) {
+            Ok(code) => Redirect::to(&format!("/?auth_code={code}")).into_response(),
+            Err(_) => Redirect::to("/?auth_error=sign_in_failed").into_response(),
+        },
         Err(error) => {
             let code = match error.status() {
                 StatusCode::FORBIDDEN => "not_invited",
@@ -278,7 +346,11 @@ pub(crate) async fn callback(
             };
             Redirect::to(&format!("/?auth_error={code}")).into_response()
         }
+    };
+    if let Ok(cookie) = state_cookie("", 0, secure_cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, cookie);
     }
+    response
 }
 
 async fn callback_inner(
@@ -299,7 +371,9 @@ async fn callback_inner(
         .state
         .as_deref()
         .ok_or_else(|| ApiError::bad_request("missing state"))?;
-    verify_state(state, state_token)?;
+    let browser_nonce = cookie_value(headers, STATE_COOKIE)
+        .ok_or_else(|| ApiError::bad_request("the sign-in browser state is missing"))?;
+    verify_state(state, state_token, &browser_nonce)?;
 
     let config = load_config(state)?;
     if !config.is_active() {
@@ -449,4 +523,38 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
             u8::from_str_radix(&text[index..index + 2], 16).map_err(|error| error.to_string())
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{STATE_COOKIE_PATH, sign_state, state_cookie, verify_state};
+    use crate::ApiState;
+
+    #[test]
+    fn oauth_state_is_bound_to_the_browser_nonce() {
+        let data = tempfile::tempdir().expect("temporary API state");
+        let state = ApiState::new(
+            data.path(),
+            data.path().join("meta.db"),
+            b"test-jwt-secret-with-enough-entropy",
+            &"11".repeat(32),
+        )
+        .expect("API state");
+        let (token, nonce) = sign_state(&state).expect("signed state");
+        verify_state(&state, &token, &nonce).expect("matching browser nonce");
+        assert!(verify_state(&state, &token, "another-browser").is_err());
+    }
+
+    #[test]
+    fn oauth_state_cookie_is_http_only_and_lax() {
+        let cookie = state_cookie("nonce", 600, true)
+            .expect("state cookie")
+            .to_str()
+            .expect("ASCII cookie")
+            .to_owned();
+        assert!(cookie.contains(&format!("Path={STATE_COOKIE_PATH}")));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Secure"));
+    }
 }

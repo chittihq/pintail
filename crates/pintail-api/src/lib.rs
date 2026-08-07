@@ -73,7 +73,7 @@ use crate::keys::{
 };
 use crate::metrics::metrics;
 use crate::oauth::{
-    callback as google_callback, get_settings as get_google_settings,
+    callback as google_callback, exchange as google_exchange, get_settings as get_google_settings,
     put_settings as put_google_settings, start as google_start, status as google_status,
 };
 use crate::query::{list_tables, query, table_count, table_data, table_schema};
@@ -164,6 +164,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/auth/login", post(login))
         .route("/auth/google/start", get(google_start))
         .route("/auth/google/callback", get(google_callback))
+        .route("/auth/google/exchange", post(google_exchange))
         .route("/auth/google/status", get(google_status))
         .route("/invites/status", get(invite_status))
         .merge(protected);

@@ -70,6 +70,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Production image builds include the vendored `opensrv-mysql` path dependency
   in both cargo-chef stages; benchmark baselines retain an opaque host
   fingerprint instead of a private infrastructure name.
+- Google OAuth callbacks keep session JWTs out of browser URLs by issuing a
+  short-lived one-time exchange code, and signed OAuth state is bound to an
+  HttpOnly SameSite cookie from the browser that initiated sign-in.
 
 ### Verification
 

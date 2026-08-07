@@ -57,19 +57,32 @@ function signInWithGoogle() {
 
 onMounted(async () => {
   restoreToken()
+  const authCode = typeof route.query.auth_code === 'string' ? route.query.auth_code : null
+  const authError = typeof route.query.auth_error === 'string' ? route.query.auth_error : null
+  if (authCode || authError) {
+    const { auth_code: _authCode, auth_error: _authError, ...rest } = route.query
+    await router.replace({ path: route.path, query: rest })
+  }
+  let googleSignedIn = false
+  if (authCode) {
+    setToken(null)
+    try {
+      const response = await request<{ token: string }>('/auth/google/exchange', {
+        method: 'POST',
+        body: JSON.stringify({ code: authCode }),
+      })
+      setToken(response.token)
+      googleSignedIn = true
+    } catch (failure) {
+      error.value = messageOf(failure)
+    }
+  }
+  if (authError) error.value = AUTH_ERROR_MESSAGES[authError] || 'Google sign-in failed. Try again.'
+
   dark.value = window.localStorage.getItem('pintail.theme') === 'dark'
   applyTheme()
   await loadNodeStatus()
   void loadGoogleStatus()
-
-  const authToken = typeof route.query.auth_token === 'string' ? route.query.auth_token : null
-  const authError = typeof route.query.auth_error === 'string' ? route.query.auth_error : null
-  if (authToken) setToken(authToken)
-  if (authToken || authError) {
-    const { auth_token: _authToken, auth_error: _authError, ...rest } = route.query
-    await router.replace({ path: route.path, query: rest })
-  }
-  if (authError) error.value = AUTH_ERROR_MESSAGES[authError] || 'Google sign-in failed. Try again.'
 
   try {
     const setup = await request<{ required: boolean }>('/auth/setup/status')
@@ -79,7 +92,7 @@ onMounted(async () => {
       await loadWorkspaces()
       await loadControlPlane()
       startEventStream()
-      if (authToken) toast('Signed in with Google')
+      if (googleSignedIn) toast('Signed in with Google')
     }
   } catch {
     setToken(null)

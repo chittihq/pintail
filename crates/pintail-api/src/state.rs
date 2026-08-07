@@ -1,11 +1,12 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -21,6 +22,8 @@ use tokio::sync::broadcast;
 use crate::{error::ApiError, events::ApiEvent};
 
 const NONCE_BYTES: usize = 12;
+const OAUTH_EXCHANGE_LIFETIME: Duration = Duration::from_secs(60);
+const MAX_PENDING_OAUTH_EXCHANGES: usize = 256;
 
 /// Shared configuration for Pintail's authenticated HTTP surface.
 #[derive(Clone)]
@@ -37,7 +40,13 @@ struct ApiStateInner {
     dsn_key: [u8; 32],
     events: broadcast::Sender<ApiEvent>,
     active_jobs: Mutex<BTreeSet<String>>,
+    oauth_exchanges: Mutex<HashMap<String, PendingOauthExchange>>,
     metrics: RuntimeMetrics,
+}
+
+struct PendingOauthExchange {
+    token: String,
+    expires_at: Instant,
 }
 
 #[derive(Default)]
@@ -85,6 +94,7 @@ impl ApiState {
                 dsn_key,
                 events,
                 active_jobs: Mutex::new(BTreeSet::new()),
+                oauth_exchanges: Mutex::new(HashMap::new()),
                 metrics: RuntimeMetrics::default(),
             })),
             wire_bind: None,
@@ -231,6 +241,47 @@ impl ApiState {
         }
     }
 
+    /// Stores a session token behind a short-lived, one-time browser exchange
+    /// code. The callback URL carries only the opaque code, never the JWT.
+    pub(crate) fn create_oauth_exchange(&self, token: String) -> Result<String, ApiError> {
+        let inner = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
+        let now = Instant::now();
+        let mut exchanges = inner.oauth_exchanges.lock().map_err(ApiError::internal)?;
+        exchanges.retain(|_, exchange| exchange.expires_at > now);
+        if exchanges.len() >= MAX_PENDING_OAUTH_EXCHANGES {
+            return Err(ApiError::unavailable(
+                "too many sign-in exchanges are pending; try again shortly",
+            ));
+        }
+        let code = random_identifier("oauth_", 24);
+        exchanges.insert(
+            code.clone(),
+            PendingOauthExchange {
+                token,
+                expires_at: now + OAUTH_EXCHANGE_LIFETIME,
+            },
+        );
+        Ok(code)
+    }
+
+    /// Consumes a browser exchange exactly once.
+    pub(crate) fn consume_oauth_exchange(&self, code: &str) -> Result<String, ApiError> {
+        let inner = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
+        let now = Instant::now();
+        let mut exchanges = inner.oauth_exchanges.lock().map_err(ApiError::internal)?;
+        exchanges.retain(|_, exchange| exchange.expires_at > now);
+        exchanges
+            .remove(code)
+            .map(|exchange| exchange.token)
+            .ok_or_else(|| ApiError::bad_request("sign-in exchange code is invalid or expired"))
+    }
+
     pub(crate) fn record_query(&self, duration_ms: u64, rows: u64) {
         if let Some(inner) = &self.inner {
             inner.metrics.queries.fetch_add(1, Ordering::Relaxed);
@@ -324,5 +375,27 @@ mod tests {
         let mut corrupt = first;
         *corrupt.last_mut().expect("ciphertext") ^= 1;
         assert!(state.decrypt_dsn(&corrupt).is_err());
+    }
+
+    #[test]
+    fn oauth_exchange_codes_are_one_time() {
+        let data = tempfile::tempdir().expect("temporary API state");
+        let state = ApiState::new(
+            data.path(),
+            data.path().join("meta.db"),
+            b"jwt-secret",
+            &"11".repeat(32),
+        )
+        .expect("API state");
+        let code = state
+            .create_oauth_exchange("session-token".to_owned())
+            .expect("create exchange");
+        assert_eq!(
+            state
+                .consume_oauth_exchange(&code)
+                .expect("consume exchange"),
+            "session-token"
+        );
+        assert!(state.consume_oauth_exchange(&code).is_err());
     }
 }
