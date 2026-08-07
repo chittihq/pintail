@@ -1135,6 +1135,7 @@ fn resolve_expr_subqueries(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
+                Some(2),
             )?;
             let value = match values.as_slice() {
                 [] => Value::Null,
@@ -1151,6 +1152,7 @@ fn resolve_expr_subqueries(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
+                Some(1),
             )?;
             let exists = !values.is_empty();
             expression.kind = BoundExprKind::Literal(Value::Boolean(exists != *negated));
@@ -1169,6 +1171,7 @@ fn resolve_expr_subqueries(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
+                None,
             )?;
             reserve_subquery_values(&values, memory_limit, retained_bytes)?;
             let mut args = Vec::with_capacity(values.len() + 1);
@@ -1208,6 +1211,7 @@ fn materialize_subquery(
     query: pintail_sql::BoundQuery,
     provider: &dyn ScanProvider,
     memory_limit: usize,
+    maximum_rows: Option<usize>,
 ) -> Result<Vec<Value>, ExecError> {
     let logical = Optimizer::optimize(LogicalPlanner::plan(query));
     let physical = PhysicalPlanner::plan(logical)?;
@@ -1244,6 +1248,9 @@ fn materialize_subquery(
             }
             used += bytes;
             values.push(value);
+            if maximum_rows.is_some_and(|maximum| values.len() >= maximum) {
+                return Ok(values);
+            }
         }
     }
     Ok(values)
@@ -11404,6 +11411,63 @@ mod tests {
         assert!(matches!(
             Execution::start(plan, &provider, 800),
             Err(ExecError::MemoryLimitExceeded { limit: 800, .. })
+        ));
+    }
+
+    #[test]
+    fn scalar_and_exists_subqueries_stop_at_their_semantic_row_bounds() {
+        let malformed_tail = RecordBatch::new(1, Vec::new()).expect("malformed tail");
+        let exists_provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    1,
+                    vec![
+                        ColumnVector::new(DataType::Utf8, vec![Value::Utf8("present".to_owned())])
+                            .expect("name"),
+                    ],
+                )
+                .expect("first batch"),
+                malformed_tail.clone(),
+            ]),
+        };
+        let mut exists = Execution::start(
+            physical("SELECT EXISTS (SELECT name FROM events)"),
+            &exists_provider,
+            8 * 1024,
+        )
+        .expect("EXISTS stops after one row");
+        let batch = exists.next_batch().expect("pull").expect("batch");
+        assert_eq!(
+            batch.column(0).and_then(|column| column.value(0)),
+            Some(&Value::Boolean(true))
+        );
+
+        let scalar_provider = StaticProvider {
+            batches: Mutex::new(vec![
+                RecordBatch::new(
+                    2,
+                    vec![
+                        ColumnVector::new(
+                            DataType::Utf8,
+                            vec![
+                                Value::Utf8("first".to_owned()),
+                                Value::Utf8("second".to_owned()),
+                            ],
+                        )
+                        .expect("names"),
+                    ],
+                )
+                .expect("first batch"),
+                malformed_tail,
+            ]),
+        };
+        assert!(matches!(
+            Execution::start(
+                physical("SELECT (SELECT name FROM events)"),
+                &scalar_provider,
+                8 * 1024,
+            ),
+            Err(ExecError::ScalarSubqueryRows { rows: 2 })
         ));
     }
 

@@ -72,6 +72,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Uncorrelated `EXISTS` stops its inner execution after one row, and scalar
+  subqueries stop after the second row needed to raise the MySQL cardinality
+  error; neither materializes an irrelevant tail before deciding its result.
 - Text equality, ordering, grouping, hashing, DISTINCT, joins, IN, and
   aggregate extrema now share a primary-strength Unicode collation key for the
   initial `utf8mb4_0900_ai_ci` profile. Accent/case folding is no longer an

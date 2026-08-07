@@ -164,6 +164,9 @@ worth refusing.
   `query.spill_limit_bytes` plus the process-wide `global_spill_limit_bytes`;
   exhausting either limit fails the query before the write crosses the
   ceiling.
+- Uncorrelated scalar and `EXISTS` subqueries stop after two and one rows,
+  respectively. Large `IN (subquery)` membership still materializes in memory
+  under the query ceiling rather than using an external membership index.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
 - Aggregate pushdown removes only unreferenced predicate-free cross-join inputs
