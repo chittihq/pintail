@@ -2089,6 +2089,7 @@ mod tests {
                 character_set: None,
                 collation: None,
                 generated_stored: false,
+                generation_expression: String::new(),
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,

@@ -207,6 +207,9 @@ pub struct SourceColumn {
     pub collation: Option<String>,
     /// Whether this is a generated stored column.
     pub generated_stored: bool,
+    /// Raw stored-generation expression, without the surrounding `AS (...)`.
+    #[serde(default)]
+    pub generation_expression: String,
     /// Whether the source declares this column `AUTO_INCREMENT`.
     pub auto_increment: bool,
     /// Raw `INFORMATION_SCHEMA.COLUMNS.COLUMN_DEFAULT`, absent when the
@@ -522,6 +525,7 @@ async fn probe_table(
             character_set: raw.character_set,
             collation: raw.collation,
             generated_stored,
+            generation_expression: raw.generation_expression,
             auto_increment,
             default_value: raw.default_value,
             default_generated,
@@ -1000,6 +1004,7 @@ mod tests {
                     character_set: None,
                     collation: None,
                     generated_stored: false,
+                    generation_expression: String::new(),
                     auto_increment: true,
                     default_value: None,
                     default_generated: false,
@@ -1014,6 +1019,7 @@ mod tests {
                     character_set: None,
                     collation: None,
                     generated_stored: false,
+                    generation_expression: String::new(),
                     auto_increment: false,
                     default_value: None,
                     default_generated: false,

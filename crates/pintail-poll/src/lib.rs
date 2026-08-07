@@ -1257,6 +1257,7 @@ mod tests {
                 character_set: Some("utf8mb4".to_owned()),
                 collation: Some("utf8mb4_0900_ai_ci".to_owned()),
                 generated_stored: false,
+                generation_expression: String::new(),
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,

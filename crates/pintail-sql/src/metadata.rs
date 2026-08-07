@@ -104,6 +104,8 @@ pub struct ColumnFacts {
     pub auto_increment: bool,
     /// Whether the column is a stored generated column.
     pub generated_stored: bool,
+    /// Raw stored-generation expression, without the surrounding `AS (...)`.
+    pub generation_expression: String,
     /// Whether a single-column non-null UNIQUE constraint covers it.
     pub unique_single: bool,
     /// Source character set for textual columns.
@@ -687,7 +689,7 @@ fn information_columns(catalog: &CatalogSnapshot, facts: &SourceFacts) -> Metada
                     utf8(extra),
                     utf8("select"),
                     utf8(""),
-                    utf8(""),
+                    fact.map_or_else(|| utf8(""), |fact| utf8(&fact.generation_expression)),
                     Value::Null,
                 ]);
             }
@@ -1120,18 +1122,22 @@ fn show_create_table(
         if index > 0 {
             ddl.push(',');
         }
-        let _ = write!(
-            ddl,
-            "\n  `{}` {}",
-            column.name(),
-            mysql_type(column.data_type())
-        );
         let fact = column_fact(database.name(), table.name(), column.name(), facts);
+        let column_type = fact
+            .and_then(|fact| fact.mysql_column_type.as_deref())
+            .map_or_else(|| mysql_type(column.data_type()), ToOwned::to_owned);
+        let _ = write!(ddl, "\n  `{}` {column_type}", column.name());
         if !source_nullable(column, fact) {
             ddl.push_str(" NOT NULL");
         }
         if let Some(fact) = fact {
-            if let Some(default) = &fact.default_value {
+            if fact.generated_stored && !fact.generation_expression.is_empty() {
+                let _ = write!(
+                    ddl,
+                    " GENERATED ALWAYS AS ({}) STORED",
+                    fact.generation_expression
+                );
+            } else if let Some(default) = &fact.default_value {
                 if fact.default_generated {
                     let _ = write!(ddl, " DEFAULT {default}");
                 } else {
@@ -2126,6 +2132,8 @@ fn describe_table(
                     "auto_increment"
                 } else if fact.generated_stored {
                     "STORED GENERATED"
+                } else if fact.default_generated {
+                    "DEFAULT_GENERATED"
                 } else {
                     ""
                 }
@@ -2452,6 +2460,7 @@ mod tests {
                     nullable: Some(false),
                     auto_increment: true,
                     generated_stored: false,
+                    generation_expression: String::new(),
                     unique_single: false,
                     character_set: None,
                     collation: None,
@@ -2469,6 +2478,7 @@ mod tests {
                     nullable: Some(false),
                     auto_increment: false,
                     generated_stored: false,
+                    generation_expression: String::new(),
                     unique_single: true,
                     character_set: Some("utf8mb4".to_owned()),
                     collation: Some("utf8mb4_0900_ai_ci".to_owned()),
@@ -2602,7 +2612,7 @@ mod tests {
         assert_eq!(
             prisma_tables.rows,
             [vec![
-                Value::Utf8("Events".to_owned()),
+                Value::Binary(b"Events".to_vec()),
                 Value::Utf8(String::new()),
                 Value::Utf8(String::new()),
             ]]
@@ -2663,7 +2673,7 @@ mod tests {
         assert!(ddl.contains("PRIMARY KEY (`id`)"), "{ddl}");
         assert!(ddl.contains("UNIQUE KEY `unique_name` (`name`)"), "{ddl}");
         assert!(ddl.contains("AUTO_INCREMENT"), "{ddl}");
-        assert!(ddl.contains("`name` text NOT NULL"), "{ddl}");
+        assert!(ddl.contains("`name` varchar(255) NOT NULL"), "{ddl}");
 
         let columns = execute_metadata(
             &parse_statement("SHOW COLUMNS FROM Analytics.Events").expect("parse"),
@@ -2677,6 +2687,54 @@ mod tests {
         assert_eq!(columns.rows[0][5], Value::Utf8("auto_increment".to_owned()));
         assert_eq!(columns.rows[1][2], Value::Utf8("NO".to_owned()));
         assert_eq!(columns.rows[1][3], Value::Utf8("UNI".to_owned()));
+
+        let mut default_facts = facts.clone();
+        default_facts.columns[1].default_value = Some("CURRENT_TIMESTAMP".to_owned());
+        default_facts.columns[1].default_generated = true;
+        let columns = execute_metadata(
+            &parse_statement("SHOW COLUMNS FROM Analytics.Events").expect("parse"),
+            &catalog,
+            None,
+            &default_facts,
+        )
+        .expect("show generated default");
+        assert_eq!(
+            columns.rows[1][5],
+            Value::Utf8("DEFAULT_GENERATED".to_owned())
+        );
+
+        let mut generated_facts = facts.clone();
+        generated_facts.columns[1].generated_stored = true;
+        generated_facts.columns[1].generation_expression = "lower(`name`)".to_owned();
+        let create = execute_metadata(
+            &parse_statement("SHOW CREATE TABLE Analytics.Events").expect("parse"),
+            &catalog,
+            None,
+            &generated_facts,
+        )
+        .expect("show generated column");
+        let Value::Utf8(ddl) = &create.rows[0][1] else {
+            panic!("DDL cell must be text");
+        };
+        assert!(
+            ddl.contains("GENERATED ALWAYS AS (lower(`name`)) STORED"),
+            "{ddl}"
+        );
+        let generated = execute_metadata(
+            &parse_statement(
+                "SELECT generation_expression FROM information_schema.columns \
+                 WHERE column_name = 'name'",
+            )
+            .expect("parse"),
+            &catalog,
+            None,
+            &generated_facts,
+        )
+        .expect("generated expression");
+        assert_eq!(
+            generated.rows,
+            [vec![Value::Utf8("lower(`name`)".to_owned())]]
+        );
     }
 
     #[test]
