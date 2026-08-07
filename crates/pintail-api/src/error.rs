@@ -42,6 +42,10 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
     }
 
+    pub(crate) fn request_timeout(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::REQUEST_TIMEOUT, message)
+    }
+
     pub(crate) fn internal(error: impl std::fmt::Display) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
     }

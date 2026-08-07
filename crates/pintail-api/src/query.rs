@@ -294,6 +294,7 @@ fn query_error(error: QueryError) -> ApiError {
             };
             ApiError::bad_request(message)
         }
+        QueryError::Interrupted => ApiError::request_timeout(error.to_string()),
         QueryError::Internal(_) => ApiError::internal(error),
     }
 }
@@ -464,9 +465,11 @@ fn probed_table_facts(probe_json: Option<&str>) -> BTreeMap<String, ProbedTableF
 
 #[cfg(test)]
 mod tests {
-    use super::{TableSummary, durable_key_mode};
+    use super::{TableSummary, durable_key_mode, query_error};
+    use axum::http::StatusCode;
     use pintail_meta::TableRecord;
     use pintail_types::KeyMode;
+    use pintail_wire::QueryError;
 
     fn table(state: &str, key: Option<&str>) -> TableRecord {
         TableRecord {
@@ -518,6 +521,14 @@ mod tests {
         assert_eq!(
             durable_key_mode(&table("streaming", Some("[\"id\"]"))),
             KeyMode::Primary
+        );
+    }
+
+    #[test]
+    fn interrupted_query_maps_to_request_timeout() {
+        assert_eq!(
+            query_error(QueryError::Interrupted).status(),
+            StatusCode::REQUEST_TIMEOUT
         );
     }
 }
