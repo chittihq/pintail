@@ -857,42 +857,51 @@ async function phaseSpill() {
     { length: 8 },
     () => 'SELECT i.order_id, c.id FROM order_items i CROSS JOIN customers c',
   ).join(' UNION ALL ')
-  const checks: Array<[string, string]> = [
+  const checks: Array<[string, string, number]> = [
     [
       'sort',
       'SELECT o.id, c.id FROM orders o CROSS JOIN customers c ' +
         'ORDER BY c.id DESC, o.id',
+      2 * 1024 * 1024,
     ],
     [
       'aggregate',
       'SELECT o.id, c.id, COUNT(*) FROM orders o CROSS JOIN customers c ' +
         'GROUP BY o.id, c.id',
+      4 * 1024 * 1024,
     ],
     [
       'distinct',
       'SELECT DISTINCT o.id, c.id FROM orders o CROSS JOIN customers c',
+      2 * 1024 * 1024,
     ],
     [
       'join',
       `SELECT COUNT(*) FROM orders o JOIN (${repeatedJoinInput}) d ON o.id = d.order_id`,
+      2 * 1024 * 1024,
     ],
   ]
 
-  try {
+  const stopPintail = async () => {
     try {
       await pintailWire?.end()
     } catch {}
     pintailWire = undefined
-    pintailProcess!.kill()
-    await pintailProcess!.exited
-    // The ordinary E2E process uses the production default. This short-lived
-    // restart lowers only the query ceiling so the live binary must take each
-    // external path over the already-replicated workload. Keep enough room
-    // for one decoded input batch; spillable state, not scan materialization,
-    // must be the allocation that crosses the ceiling.
-    await startPintail(1024 * 1024)
+    if (pintailProcess) {
+      if (pintailProcess.exitCode === null) pintailProcess.kill()
+      await pintailProcess.exited
+      pintailProcess = undefined
+    }
+  }
 
-    for (const [operator, sql] of checks) {
+  try {
+    await stopPintail()
+    for (const [operator, sql, memoryLimit] of checks) {
+      // The ordinary E2E process uses the production default. Each short-lived
+      // restart admits one decoded input batch but keeps the ceiling below the
+      // operator's accumulated state, so the spillable allocation is what
+      // crosses the boundary. Aggregate batches have a larger working bound.
+      await startPintail(memoryLimit)
       try {
         const rows = await pintailQuery(`EXPLAIN ANALYZE ${sql}`)
         const plan = rows.flat().map(String).join('\n')
@@ -910,15 +919,12 @@ async function phaseSpill() {
           status: 'FAIL',
           detail: String(error),
         })
+      } finally {
+        await stopPintail()
       }
     }
   } finally {
-    try {
-      await pintailWire?.end()
-    } catch {}
-    pintailWire = undefined
-    pintailProcess?.kill()
-    await pintailProcess?.exited
+    await stopPintail()
     await startPintail()
   }
 }
