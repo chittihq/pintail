@@ -73,6 +73,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Google OAuth callbacks keep session JWTs out of browser URLs by issuing a
   short-lived one-time exchange code, and signed OAuth state is bound to an
   HttpOnly SameSite cookie from the browser that initiated sign-in.
+- Google OAuth redirect URIs come from a validated administrator-configured
+  public origin rather than forwarded request headers. Incomplete identities,
+  disabled users, and silent email-based account linking now fail closed.
 
 ### Verification
 

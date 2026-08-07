@@ -10,7 +10,7 @@ const { request } = usePintailApi()
 const isAdmin = computed(() => session.value?.role === 'admin')
 const googleLoaded = ref(false)
 const googleSaving = ref(false)
-const googleForm = reactive({ enabled: false, clientId: '', clientSecret: '' })
+const googleForm = reactive({ enabled: false, clientId: '', clientSecret: '', publicUrl: '' })
 const googleConfigured = ref(false)
 
 async function loadGoogleSettings() {
@@ -19,6 +19,7 @@ async function loadGoogleSettings() {
     const settings = await request<GoogleOAuthSettings>('/settings/oauth/google')
     googleForm.enabled = settings.enabled
     googleForm.clientId = settings.client_id
+    googleForm.publicUrl = settings.public_url
     googleForm.clientSecret = ''
     googleConfigured.value = settings.configured
     googleLoaded.value = true
@@ -38,6 +39,7 @@ async function saveGoogleSettings() {
         enabled: googleForm.enabled,
         client_id: googleForm.clientId.trim(),
         client_secret: googleForm.clientSecret || undefined,
+        public_url: googleForm.publicUrl.trim(),
       }),
     })
     googleForm.clientSecret = ''
@@ -87,6 +89,7 @@ async function saveGoogleSettings() {
       <Card v-if="isAdmin" class="grid gap-4 p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Node-wide, one OAuth client covers every workspace</p><h2 class="text-base font-semibold">Google sign-in</h2></div><Badge :class="googleConfigured ? 'tone-positive' : 'tone-neutral'">{{ googleConfigured ? 'Configured' : 'Not configured' }}</Badge></div>
         <div class="grid gap-3">
+          <div class="grid content-start gap-1.5"><Label for="google-public-url">Public URL</Label><Input id="google-public-url" v-model="googleForm.publicUrl" inputmode="url" autocomplete="url" placeholder="https://pintail.example.com" /><small class="text-muted-foreground text-xs">The fixed origin registered for the Google callback; forwarded host headers are ignored.</small></div>
           <div class="grid content-start gap-1.5"><Label for="google-client-id">Client ID</Label><Input id="google-client-id" v-model="googleForm.clientId" autocomplete="off" placeholder="123456789-abc.apps.googleusercontent.com" /></div>
           <div class="grid content-start gap-1.5"><Label for="google-client-secret">Client secret</Label><Input id="google-client-secret" v-model="googleForm.clientSecret" type="password" autocomplete="new-password" placeholder="Leave blank to preserve" /></div>
         </div>

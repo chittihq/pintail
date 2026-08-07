@@ -42,11 +42,15 @@ struct GoogleConfig {
     enabled: bool,
     client_id: String,
     client_secret: String,
+    public_origin: String,
 }
 
 impl GoogleConfig {
     fn is_active(&self) -> bool {
-        self.enabled && !self.client_id.is_empty() && !self.client_secret.is_empty()
+        self.enabled
+            && !self.client_id.is_empty()
+            && !self.client_secret.is_empty()
+            && !self.public_origin.is_empty()
     }
 }
 
@@ -59,6 +63,10 @@ fn load_config(state: &ApiState) -> Result<GoogleConfig, ApiError> {
         == Some("true");
     let client_id = metadata
         .setting("oauth_google_client_id")
+        .map_err(ApiError::internal)?
+        .unwrap_or_default();
+    let public_origin = metadata
+        .setting("oauth_google_public_origin")
         .map_err(ApiError::internal)?
         .unwrap_or_default();
     let client_secret = match metadata
@@ -75,6 +83,7 @@ fn load_config(state: &ApiState) -> Result<GoogleConfig, ApiError> {
         enabled,
         client_id,
         client_secret,
+        public_origin,
     })
 }
 
@@ -82,6 +91,7 @@ fn load_config(state: &ApiState) -> Result<GoogleConfig, ApiError> {
 pub(crate) struct GoogleSettingsResponse {
     enabled: bool,
     client_id: String,
+    public_url: String,
     configured: bool,
 }
 
@@ -89,6 +99,8 @@ pub(crate) struct GoogleSettingsResponse {
 pub(crate) struct PutGoogleSettingsRequest {
     enabled: bool,
     client_id: String,
+    #[serde(default)]
+    public_url: String,
     /// Blank preserves the existing secret, matching the backup-credentials
     /// save form.
     #[serde(default)]
@@ -104,6 +116,7 @@ pub(crate) async fn get_settings(
     Ok(Json(GoogleSettingsResponse {
         enabled: config.enabled,
         client_id: config.client_id,
+        public_url: config.public_origin,
         configured: !config.client_secret.is_empty(),
     }))
 }
@@ -114,6 +127,16 @@ pub(crate) async fn put_settings(
     Json(request): Json<PutGoogleSettingsRequest>,
 ) -> Result<Json<GoogleSettingsResponse>, ApiError> {
     principal.require_admin()?;
+    let public_origin = if request.public_url.trim().is_empty() {
+        if request.enabled {
+            return Err(ApiError::bad_request(
+                "a public URL is required when Google sign-in is enabled",
+            ));
+        }
+        String::new()
+    } else {
+        normalize_public_origin(&request.public_url)?
+    };
     let metadata = state.metadata()?;
     metadata
         .set_setting(
@@ -123,6 +146,9 @@ pub(crate) async fn put_settings(
         .map_err(ApiError::internal)?;
     metadata
         .set_setting("oauth_google_client_id", request.client_id.trim())
+        .map_err(ApiError::internal)?;
+    metadata
+        .set_setting("oauth_google_public_origin", &public_origin)
         .map_err(ApiError::internal)?;
     if !request.client_secret.trim().is_empty() {
         let encrypted = state.encrypt_secret(request.client_secret.trim())?;
@@ -141,6 +167,7 @@ pub(crate) async fn put_settings(
     Ok(Json(GoogleSettingsResponse {
         enabled: config.enabled,
         client_id: config.client_id,
+        public_url: config.public_origin,
         configured: !config.client_secret.is_empty(),
     }))
 }
@@ -225,40 +252,40 @@ fn state_cookie(value: &str, max_age: u64, secure: bool) -> Result<HeaderValue, 
     HeaderValue::from_str(&cookie).map_err(ApiError::internal)
 }
 
-/// The exact URL Google redirects back to. Must match one of the
-/// "Authorized redirect URIs" the admin registered in Google Cloud Console
-/// for this OAuth client.
-fn redirect_uri(headers: &HeaderMap) -> String {
-    let host = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get(header::HOST))
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("localhost");
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .map_or_else(
-            || {
-                if host.starts_with("localhost") || host.starts_with("127.0.0.1") {
-                    "http".to_owned()
-                } else {
-                    "https".to_owned()
-                }
-            },
-            str::to_owned,
-        );
-    format!("{scheme}://{host}/api/auth/google/callback")
+fn normalize_public_origin(value: &str) -> Result<String, ApiError> {
+    let url = reqwest::Url::parse(value.trim())
+        .map_err(|_| ApiError::bad_request("public URL must be an absolute http(s) URL"))?;
+    let is_loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    if url.scheme() != "https" && !(url.scheme() == "http" && is_loopback) {
+        return Err(ApiError::bad_request(
+            "public URL must use HTTPS except on localhost",
+        ));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ApiError::bad_request(
+            "public URL must contain only scheme, host, and optional port",
+        ));
+    }
+    Ok(url.origin().ascii_serialization())
 }
 
-pub(crate) async fn start(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
+/// The exact URL Google redirects back to. The origin is an administrator
+/// setting, never a forwarded header supplied by the callback request.
+fn redirect_uri(config: &GoogleConfig) -> String {
+    format!("{}/api/auth/google/callback", config.public_origin)
+}
+
+pub(crate) async fn start(State(state): State<ApiState>) -> Result<Response, ApiError> {
     let config = load_config(&state)?;
     if !config.is_active() {
         return Err(ApiError::conflict("Google sign-in is not configured"));
     }
-    let callback_uri = redirect_uri(&headers);
+    let callback_uri = redirect_uri(&config);
     let (state_token, browser_nonce) = sign_state(&state)?;
     let mut url = reqwest::Url::parse(AUTH_URL).map_err(ApiError::internal)?;
     url.query_pairs_mut()
@@ -296,9 +323,7 @@ struct TokenResponse {
 #[derive(Deserialize)]
 struct GoogleUser {
     email: String,
-    #[serde(default)]
     email_verified: bool,
-    #[serde(default)]
     sub: String,
 }
 
@@ -332,7 +357,8 @@ pub(crate) async fn callback(
     headers: HeaderMap,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
-    let secure_cookie = redirect_uri(&headers).starts_with("https://");
+    let secure_cookie =
+        load_config(&state).is_ok_and(|config| config.public_origin.starts_with("https://"));
     let mut response = match callback_inner(&state, &headers, &query).await {
         Ok(token) => match state.create_oauth_exchange(token) {
             Ok(code) => Redirect::to(&format!("/?auth_code={code}")).into_response(),
@@ -342,6 +368,8 @@ pub(crate) async fn callback(
             let code = match error.status() {
                 StatusCode::FORBIDDEN => "not_invited",
                 StatusCode::BAD_REQUEST => "invalid_request",
+                StatusCode::UNAUTHORIZED => "account_disabled",
+                StatusCode::CONFLICT => "link_required",
                 _ => "sign_in_failed",
             };
             Redirect::to(&format!("/?auth_error={code}")).into_response()
@@ -379,21 +407,30 @@ async fn callback_inner(
     if !config.is_active() {
         return Err(ApiError::conflict("Google sign-in is not configured"));
     }
-    let google_user = exchange_code(&config, &redirect_uri(headers), code).await?;
+    let google_user = exchange_code(&config, &redirect_uri(&config), code).await?;
     if !google_user.email_verified {
         return Err(ApiError::bad_request(
             "Google account email is not verified",
         ));
     }
     let email = google_user.email.trim().to_ascii_lowercase();
+    let google_subject = google_user.sub.trim();
+    if email.is_empty() || google_subject.is_empty() {
+        return Err(ApiError::bad_request(
+            "Google returned an incomplete account identity",
+        ));
+    }
 
     let metadata = state.metadata()?;
     let now = Utc::now().to_rfc3339();
 
     if let Some(user) = metadata
-        .user_by_google_subject(&google_user.sub)
+        .user_by_google_subject(google_subject)
         .map_err(ApiError::internal)?
     {
+        if !user.enabled {
+            return Err(ApiError::unauthorized("this account is disabled"));
+        }
         let (workspace_id, role) = default_workspace_for_user(&metadata, &user.id)?;
         metadata
             .touch_user_login(&user.id, &now)
@@ -401,15 +438,14 @@ async fn callback_inner(
         return issue_token(state, &user.id, &role, &workspace_id);
     }
 
-    if let Some(user) = metadata.user_by_email(&email).map_err(ApiError::internal)? {
-        metadata
-            .set_user_google_subject(&user.id, &google_user.sub)
-            .map_err(ApiError::internal)?;
-        let (workspace_id, role) = default_workspace_for_user(&metadata, &user.id)?;
-        metadata
-            .touch_user_login(&user.id, &now)
-            .map_err(ApiError::internal)?;
-        return issue_token(state, &user.id, &role, &workspace_id);
+    if metadata
+        .user_by_email(&email)
+        .map_err(ApiError::internal)?
+        .is_some()
+    {
+        return Err(ApiError::conflict(
+            "an account with this email already exists; sign in with its existing method and link Google explicitly",
+        ));
     }
 
     // Brand new identity: only admissible through a pending, unexpired
@@ -429,7 +465,7 @@ async fn callback_inner(
 
     let user_id = random_identifier("usr_", 16);
     metadata
-        .create_user_via_google(&user_id, &email, &google_user.sub, &invite.role, &now)
+        .create_user_via_google(&user_id, &email, google_subject, &invite.role, &now)
         .map_err(ApiError::internal)?;
     metadata
         .add_workspace_member(&invite.workspace_id, &user_id, &invite.role, &now)
@@ -527,7 +563,9 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{STATE_COOKIE_PATH, sign_state, state_cookie, verify_state};
+    use super::{
+        STATE_COOKIE_PATH, normalize_public_origin, sign_state, state_cookie, verify_state,
+    };
     use crate::ApiState;
 
     #[test]
@@ -556,5 +594,20 @@ mod tests {
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains("SameSite=Lax"));
         assert!(cookie.contains("Secure"));
+    }
+
+    #[test]
+    fn oauth_public_origin_is_explicit_and_https() {
+        assert_eq!(
+            normalize_public_origin("https://pintail.example:8443/").expect("public URL"),
+            "https://pintail.example:8443"
+        );
+        assert_eq!(
+            normalize_public_origin("http://localhost:8080").expect("local URL"),
+            "http://localhost:8080"
+        );
+        assert!(normalize_public_origin("http://pintail.example").is_err());
+        assert!(normalize_public_origin("https://pintail.example/oauth").is_err());
+        assert!(normalize_public_origin("https://user@pintail.example").is_err());
     }
 }

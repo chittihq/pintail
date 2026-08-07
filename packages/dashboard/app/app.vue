@@ -32,6 +32,8 @@ const googleEnabled = ref(false)
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   not_invited: 'That Google account has not been invited to a workspace.',
   invalid_request: 'The sign-in attempt was invalid or expired. Try again.',
+  account_disabled: 'This account is disabled.',
+  link_required: 'Sign in with your existing method, then link Google from Settings.',
   sign_in_failed: 'Google sign-in failed. Try again.',
 }
 

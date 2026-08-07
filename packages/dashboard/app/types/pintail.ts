@@ -44,6 +44,7 @@ export interface InviteStatus {
 export interface GoogleOAuthSettings {
   enabled: boolean
   client_id: string
+  public_url: string
   configured: boolean
 }
 
