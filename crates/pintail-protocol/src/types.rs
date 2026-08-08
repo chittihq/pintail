@@ -207,6 +207,15 @@ pub enum ErrorKind {
     ErUnknownComError = 1047,
     /// 1290: the server is running read-only.
     ErOptionPreventsStatement = 1290,
+    /// 1044: the authenticated key is scoped to a different database.
+    ErDbaccessDeniedError = 1044,
+    /// 1210: a prepared statement was executed with the wrong parameter
+    /// count or an unusable value.
+    ErWrongArguments = 1210,
+    /// 1243: the statement handle in `COM_STMT_EXECUTE` is unknown, most
+    /// often a client executing after `COM_STMT_CLOSE` or against the wrong
+    /// connection.
+    ErUnknownStmtHandler = 1243,
     /// 1105: anything without a more specific code.
     ErUnknownError = 1105,
 }
@@ -223,7 +232,7 @@ impl ErrorKind {
     #[must_use]
     pub const fn sql_state(self) -> &'static [u8; 5] {
         match self {
-            Self::ErAccessDeniedError => b"28000",
+            Self::ErAccessDeniedError | Self::ErDbaccessDeniedError => b"28000",
             Self::ErBadDbError
             | Self::ErParseError
             | Self::ErSyntaxError
@@ -231,7 +240,7 @@ impl ErrorKind {
             Self::ErNoSuchTable => b"42S02",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErQueryInterrupted => b"70100",
-            Self::ErUnknownError => b"HY000",
+            Self::ErWrongArguments | Self::ErUnknownStmtHandler | Self::ErUnknownError => b"HY000",
         }
     }
 }
@@ -266,5 +275,8 @@ mod tests {
         assert_eq!(ErrorKind::ErQueryInterrupted.sql_state(), b"70100");
         assert_eq!(ErrorKind::ErAccessDeniedError.sql_state(), b"28000");
         assert_eq!(ErrorKind::ErNoSuchTable.sql_state(), b"42S02");
+        assert_eq!(ErrorKind::ErDbaccessDeniedError.code(), 1044);
+        assert_eq!(ErrorKind::ErWrongArguments.code(), 1210);
+        assert_eq!(ErrorKind::ErUnknownStmtHandler.code(), 1243);
     }
 }
