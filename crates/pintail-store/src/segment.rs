@@ -509,9 +509,12 @@ pub(crate) enum Compression {
 }
 
 impl Compression {
-    fn decode(tag: u8) -> Result<Self, String> {
+    fn decode(tag: u8, format_version: u8) -> Result<Self, String> {
         match tag {
-            0 => Ok(Self::None),
+            0 if format_version >= 3 => Ok(Self::None),
+            0 => Err(format!(
+                "raw block compression requires format version 3, found {format_version}"
+            )),
             1 => Ok(Self::Lz4),
             2 => Ok(Self::Zstd),
             _ => Err(format!("unknown block compression {tag}")),
@@ -916,13 +919,7 @@ pub(crate) fn read(
     if magic.as_slice() != MAGIC {
         return Err(corrupt(&path, 0, "invalid segment magic"));
     }
-    if !format_version_supported(
-        decoder
-            .u8()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
-    ) {
-        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
-    }
+    read_format_version(&path, &mut decoder)?;
     let schema_version = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
@@ -1041,13 +1038,7 @@ impl SegmentRowStream {
         if magic.as_slice() != MAGIC {
             return Err(corrupt(&path, 0, "invalid segment magic"));
         }
-        if !format_version_supported(
-            layout
-                .u8()
-                .map_err(|reason| corrupt_here(&path, &layout, reason))?,
-        ) {
-            return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
-        }
+        let format_version = read_format_version(&path, &mut layout)?;
         let schema_version = layout
             .u32()
             .map_err(|reason| corrupt_here(&path, &layout, reason))?;
@@ -1182,6 +1173,7 @@ impl SegmentRowStream {
 
             if let Some(target) = target {
                 let mut decoder = FileDecoder::open(&path)?;
+                decoder.format_version = Some(format_version);
                 decoder
                     .seek_to(column_offset)
                     .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
@@ -1747,13 +1739,7 @@ pub(crate) fn read_row_headers_range(
     if magic.as_slice() != MAGIC {
         return Err(corrupt(&path, 0, "invalid segment magic"));
     }
-    if !format_version_supported(
-        decoder
-            .u8()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
-    ) {
-        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
-    }
+    read_format_version(&path, &mut decoder)?;
     let segment_schema_version = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
@@ -2155,13 +2141,7 @@ fn read_segment_columns_header(
     {
         return Err(corrupt(path, 0, "invalid segment magic"));
     }
-    if !format_version_supported(
-        decoder
-            .u8()
-            .map_err(|reason| corrupt_here(path, decoder, reason))?,
-    ) {
-        return Err(corrupt(path, MAGIC.len(), "unsupported format version"));
-    }
+    read_format_version(path, decoder)?;
     let segment_schema_version = decoder
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
@@ -3104,8 +3084,9 @@ fn read_block(
     path: &Path,
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
+    format_version: u8,
 ) -> Result<Vec<Cell>, StoreError> {
-    read_block_if(path, decoder, logical_type, |_, _| Ok(true))?
+    read_block_if(path, decoder, logical_type, format_version, |_, _| Ok(true))?
         .cells
         .ok_or_else(|| corrupt_here(path, decoder, "selected block was not decoded"))
 }
@@ -3115,6 +3096,9 @@ fn read_file_block(
     decoder: &mut FileDecoder,
     logical_type: LogicalType,
 ) -> Result<Vec<Cell>, StoreError> {
+    let format_version = decoder
+        .format_version()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let block_offset = decoder.decode_position();
     let payload_length = decoder
         .u32()
@@ -3137,7 +3121,7 @@ fn read_file_block(
             .to_le_bytes(),
     );
     let mut block_decoder = Decoder::with_base_offset(&encoded, block_offset);
-    read_block(path, &mut block_decoder, logical_type)
+    read_block(path, &mut block_decoder, logical_type, format_version)
 }
 
 struct BlockRead {
@@ -3244,18 +3228,29 @@ fn read_block_if<F>(
     path: &Path,
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
+    format_version: u8,
     should_decode: F,
 ) -> Result<BlockRead, StoreError>
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
 {
-    read_block_if_with_budget(path, decoder, logical_type, None, should_decode, None, None)
+    read_block_if_with_budget(
+        path,
+        decoder,
+        logical_type,
+        format_version,
+        None,
+        should_decode,
+        None,
+        None,
+    )
 }
 
 fn read_block_if_bounded<F>(
     path: &Path,
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
+    format_version: u8,
     memory: &ScanMemoryBudget<'_>,
     should_decode: F,
 ) -> Result<BlockRead, StoreError>
@@ -3266,6 +3261,7 @@ where
         path,
         decoder,
         logical_type,
+        format_version,
         Some(memory),
         should_decode,
         None,
@@ -3283,6 +3279,9 @@ fn read_file_block_if_bounded<F>(
 where
     F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
 {
+    let format_version = decoder
+        .format_version()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let block_offset = decoder.decode_position();
     let payload_length = decoder
         .u32()
@@ -3310,6 +3309,7 @@ where
         path,
         &mut block_decoder,
         logical_type,
+        format_version,
         memory,
         should_decode,
     )
@@ -3323,6 +3323,9 @@ fn read_file_block_utf8_into(
     memory: &ScanMemoryBudget<'_>,
     sink: Utf8Sink<'_>,
 ) -> Result<BlockRead, StoreError> {
+    let format_version = decoder
+        .format_version()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let block_offset = decoder.decode_position();
     let payload_length = decoder
         .u32()
@@ -3350,6 +3353,7 @@ fn read_file_block_utf8_into(
         path,
         &mut block_decoder,
         LogicalType::Utf8,
+        format_version,
         Some(memory),
         |_, _| Ok(true),
         Some(sink),
@@ -3367,6 +3371,9 @@ fn read_file_block_int_into(
     memory: &ScanMemoryBudget<'_>,
     sink: IntSink<'_>,
 ) -> Result<BlockRead, StoreError> {
+    let format_version = decoder
+        .format_version()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
     let block_offset = decoder.decode_position();
     let payload_length = decoder
         .u32()
@@ -3394,6 +3401,7 @@ fn read_file_block_int_into(
         path,
         &mut block_decoder,
         logical_type,
+        format_version,
         Some(memory),
         |_, _| Ok(true),
         None,
@@ -3401,11 +3409,12 @@ fn read_file_block_int_into(
     )
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn read_block_if_with_budget<F>(
     path: &Path,
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
+    format_version: u8,
     memory: Option<&ScanMemoryBudget<'_>>,
     should_decode: F,
     utf8_sink: Option<Utf8Sink<'_>>,
@@ -3449,6 +3458,7 @@ where
         block
             .u8()
             .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?,
+        format_version,
     )
     .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
     let uncompressed_length = block
@@ -3459,6 +3469,16 @@ where
     let compressed = block
         .bytes()
         .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    if compression == Compression::None && compressed.len() != uncompressed_length {
+        return Err(corrupt(
+            path,
+            compressed_offset,
+            format!(
+                "raw block length is {}, expected {uncompressed_length}",
+                compressed.len()
+            ),
+        ));
+    }
 
     let declared_nulls = block
         .u32()
@@ -4582,7 +4602,16 @@ fn corrupt_here(
 
 #[cfg(test)]
 mod compression_tests {
-    use super::{Compression, compress_block_for_storage, decompress_block, materially_smaller};
+    use std::path::Path;
+
+    use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
+
+    use crate::{StoreOptions, TableStore};
+
+    use super::{
+        Compression, Decoder, Encoder, Encoding, LogicalType, compress_block_for_storage,
+        decompress_block, materially_smaller, read, read_block_if, write, xxh3_64,
+    };
 
     #[test]
     fn five_percent_threshold_is_inclusive_and_overflow_safe() {
@@ -4628,6 +4657,59 @@ mod compression_tests {
     }
 
     #[test]
+    fn raw_block_tags_require_v3() {
+        for version in [1, 2] {
+            let error = Compression::decode(Compression::None as u8, version)
+                .expect_err("legacy format must reject raw blocks");
+            assert!(error.contains("requires format version 3"), "{error}");
+        }
+        assert_eq!(
+            Compression::decode(Compression::None as u8, 3).expect("v3 raw block"),
+            Compression::None
+        );
+    }
+
+    #[test]
+    fn pruned_checksum_valid_raw_block_rejects_length_mismatch() {
+        let mut block = Encoder::new();
+        block.u32(1);
+        block.bytes(&[0], "null bitmap").expect("null bitmap");
+        block.u8(Encoding::Plain as u8);
+        block.u8(Compression::None as u8);
+        block.u32(4);
+        block.bytes(b"raw", "raw payload").expect("raw payload");
+        block.u32(0);
+        block.bytes(&[], "minimum").expect("minimum");
+        block.bytes(&[], "maximum").expect("maximum");
+        block.bytes(&[0; 64], "HLL sketch").expect("HLL sketch");
+        let payload = block.finish();
+
+        let mut encoded = Encoder::new();
+        encoded.bytes(&payload, "block").expect("block");
+        encoded.u64(xxh3_64(&payload));
+        let encoded = encoded.finish();
+        let mut decoder = Decoder::new(&encoded);
+        let result = read_block_if(
+            Path::new("pruned.ptseg"),
+            &mut decoder,
+            LogicalType::UInt64,
+            3,
+            |_, _| Ok(false),
+        );
+        let Err(error) = result else {
+            panic!("invalid raw length must be checked before pruning");
+        };
+        let reason = match error {
+            crate::StoreError::CorruptSegment { reason, .. } => reason,
+            other => panic!("expected corrupt segment, got {other}"),
+        };
+        assert!(
+            reason.contains("raw block length is 3, expected 4"),
+            "{reason}"
+        );
+    }
+
+    #[test]
     fn legacy_lz4_and_zstd_blocks_still_decode() {
         let bytes = vec![42_u8; 32 * 1024];
         for compression in [Compression::Lz4, Compression::Zstd] {
@@ -4640,6 +4722,142 @@ mod compression_tests {
                 bytes
             );
         }
+    }
+
+    #[test]
+    fn genuine_v1_lz4_segment_remains_readable() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "label", DataType::Utf8, false),
+            ],
+        )
+        .expect("schema");
+        let rows = ["alpha", "beta"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let id = index as u64 + 1;
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                    vec![Value::UInt64(id), Value::Utf8(label.to_owned())],
+                    id,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let meta = write(
+            directory.path(),
+            1,
+            &schema,
+            &rows,
+            16,
+            Compression::Lz4,
+            true,
+        )
+        .expect("write LZ4-only segment");
+        let path = directory.path().join(&meta.file_name);
+        let mut bytes = std::fs::read(&path).expect("segment bytes");
+        assert_eq!(bytes[5], 3);
+        bytes[5] = 1;
+        std::fs::write(&path, bytes).expect("rewrite version byte");
+
+        assert_eq!(
+            read(directory.path(), &meta, &schema).expect("read genuine v1 segment"),
+            rows
+        );
+    }
+
+    #[test]
+    fn compaction_rewrites_genuine_v1_lz4_segments_as_v3() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "label", DataType::Utf8, false),
+            ],
+        )
+        .expect("schema");
+        let make_rows = |range: std::ops::Range<u64>, version: u64| {
+            range
+                .map(|id| {
+                    StoredRow::new(
+                        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                        vec![Value::UInt64(id), Value::Utf8(format!("v{version}-{id}"))],
+                        version,
+                        false,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let first_rows = make_rows(0..64, 1);
+        let second_rows = make_rows(32..96, 2);
+        let options = StoreOptions {
+            compaction_fan_in: 2,
+            ..StoreOptions::default()
+        };
+        let mut table =
+            TableStore::open(directory.path(), schema.clone(), options).expect("open table");
+        table.ingest(first_rows.clone()).expect("first ingest");
+        let first_path = table
+            .flush()
+            .expect("first flush")
+            .segment_path()
+            .expect("first segment")
+            .to_path_buf();
+        table.ingest(second_rows.clone()).expect("second ingest");
+        let second_path = table
+            .flush()
+            .expect("second flush")
+            .segment_path()
+            .expect("second segment")
+            .to_path_buf();
+        drop(table);
+
+        for (path, rows) in [(&first_path, &first_rows), (&second_path, &second_rows)] {
+            let id = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.strip_prefix("segment-"))
+                .and_then(|id| id.parse::<u64>().ok())
+                .expect("segment id");
+            let replacement = write(
+                directory.path(),
+                id,
+                &schema,
+                rows,
+                16,
+                Compression::Lz4,
+                true,
+            )
+            .expect("replace with LZ4-only segment");
+            assert_eq!(
+                Some(replacement.file_name.as_str()),
+                path.file_name().and_then(|name| name.to_str())
+            );
+            let mut bytes = std::fs::read(path).expect("segment bytes");
+            assert_eq!(bytes[5], 3);
+            bytes[5] = 1;
+            std::fs::write(path, bytes).expect("rewrite version byte");
+        }
+
+        let mut table =
+            TableStore::open(directory.path(), schema, options).expect("reopen v1 segments");
+        let outcome = table.compact().expect("compact v1 segments");
+        assert_eq!(outcome.input_segments(), 2);
+        let output = outcome.output_path().expect("compacted output");
+        let output_bytes = std::fs::read(output).expect("compacted segment bytes");
+        assert_eq!(output_bytes[5], 3, "compaction must publish PTSEG v3");
+
+        let mut expected = first_rows[..32].to_vec();
+        expected.extend(second_rows);
+        assert_eq!(
+            table.snapshot().scan().expect("scan compacted rows"),
+            expected
+        );
     }
 }
 
