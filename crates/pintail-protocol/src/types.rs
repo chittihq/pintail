@@ -86,6 +86,15 @@ impl ColumnFlags {
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
+
+    /// Sets or clears every bit in `flag` depending on `value`.
+    pub const fn set(&mut self, flag: Self, value: bool) {
+        if value {
+            self.0 |= flag.0;
+        } else {
+            self.0 &= !flag.0;
+        }
+    }
 }
 
 impl std::ops::BitOr for ColumnFlags {
@@ -256,6 +265,17 @@ mod tests {
         assert!(flags.contains(ColumnFlags::UNSIGNED_FLAG));
         assert!(!flags.contains(ColumnFlags::PRI_KEY_FLAG));
         assert_eq!(flags.bits(), 0x0021);
+    }
+
+    #[test]
+    fn column_flags_set_toggles_a_single_bit_without_disturbing_others() {
+        let mut flags = ColumnFlags::NOT_NULL_FLAG;
+        flags.set(ColumnFlags::UNSIGNED_FLAG, true);
+        assert!(flags.contains(ColumnFlags::NOT_NULL_FLAG));
+        assert!(flags.contains(ColumnFlags::UNSIGNED_FLAG));
+        flags.set(ColumnFlags::UNSIGNED_FLAG, false);
+        assert!(flags.contains(ColumnFlags::NOT_NULL_FLAG));
+        assert!(!flags.contains(ColumnFlags::UNSIGNED_FLAG));
     }
 
     #[test]

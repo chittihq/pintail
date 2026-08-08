@@ -11,7 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_protocol::{
     BinaryValue, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch, ErrorKind, Handler,
@@ -583,6 +583,15 @@ impl Backend {
         execution.0
     }
 
+    /// The two session fields every result path needs to render a
+    /// `Column`. `None` only on a poisoned lock, meaning a prior panic while
+    /// holding it — vanishingly rare, and safer surfaced as an explicit
+    /// error to the client than propagated as a connection-ending one.
+    fn session_snapshot(&self) -> Option<(usize, String)> {
+        let session = self.session.lock().ok()?;
+        Some((session.group_concat_max_len, session.charset_results.clone()))
+    }
+
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
     /// cannot be honored.
     fn apply_session_command(&self, sql: &str) -> Result<(), String> {
@@ -874,91 +883,154 @@ impl Handler for Backend {
             ))
         }
     }
+
+    async fn change_user(&mut self, username: &[u8], auth_response: &[u8], database: &[u8]) -> bool {
+        let salt = self.salt;
+        let Ok(Some(authenticated)) =
+            self.verify_wire_key(username, &salt, auth_response, Some(database))
+        else {
+            return false;
+        };
+        if self.reset_session_state().is_err() {
+            return false;
+        }
+        let Ok(mut current) = self.authentication.lock() else {
+            return false;
+        };
+        *current = Some(authenticated);
+        true
+    }
 }
 
-async fn write_query_result<W>(
+/// Builds the response for one completed query, in whichever protocol the
+/// command that asked for it uses: text for `COM_QUERY`, binary for
+/// `COM_STMT_EXECUTE`.
+fn query_output_to_response(
     result: Result<QueryOutput, QueryError>,
-    writer: QueryResultWriter<'_, W>,
     group_concat_max_len: usize,
     charset: &str,
-) -> io::Result<()>
-where
-    W: AsyncWrite + Send + Unpin,
-{
+    binary: bool,
+) -> Response {
     let output = match result {
         Ok(output) => output,
-        Err(error) => {
-            return writer
-                .error(error_kind(&error), error.to_string().as_bytes())
-                .await;
-        }
+        Err(error) => return Response::Error(error_kind(&error), error.to_string()),
     };
     let columns = output
         .fields
         .iter()
         .map(|field| mysql_column(field, group_concat_max_len, charset))
         .collect::<Vec<_>>();
-    let mut rows = writer.start(&columns).await?;
+    let mut rows = Vec::with_capacity(output.rows.len());
     for row in &output.rows {
+        let mut encoded = Vec::with_capacity(row.len());
         for (field, value) in output.fields.iter().zip(row) {
-            write_value(&mut rows, field, value)?;
+            let cell = if binary {
+                match binary_column_value(field, value) {
+                    Ok(cell) => cell,
+                    Err(error) => return Response::Error(ErrorKind::ErUnknownError, error.to_string()),
+                }
+            } else {
+                text_column_value(value)
+            };
+            encoded.push(cell);
         }
-        rows.end_row().await?;
+        rows.push(encoded);
     }
-    rows.finish().await
+    Response::Rows(Box::new(ResultSet {
+        columns,
+        rows,
+        binary,
+    }))
 }
 
-fn write_value<W>(
-    rows: &mut opensrv_mysql::RowWriter<'_, W>,
-    field: &QueryField,
-    value: &Value,
-) -> io::Result<()>
-where
-    W: AsyncWrite + Send + Unpin,
-{
-    match (field.data_type, value) {
-        (_, Value::Null) => rows.write_col(None::<u8>),
-        (_, Value::Boolean(value)) => rows.write_col(i8::from(*value)),
-        (Some(DataType::Int8), Value::Int64(value)) => {
-            rows.write_col(i8::try_from(*value).map_err(io_invalid)?)
-        }
-        (Some(DataType::Int16), Value::Int64(value)) => {
-            rows.write_col(i16::try_from(*value).map_err(io_invalid)?)
-        }
-        (Some(DataType::Int32), Value::Int64(value)) => {
-            rows.write_col(i32::try_from(*value).map_err(io_invalid)?)
-        }
-        (_, Value::Int64(value)) => rows.write_col(*value),
+/// Renders one value in the text protocol: every `MySQL` client reads
+/// `COM_QUERY` results as ASCII text regardless of the column's real type,
+/// and Pintail's temporal/DECIMAL values already carry their canonical
+/// `MySQL` text, so this is just picking the right `Display`.
+fn text_column_value(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::Null => None,
+        Value::Boolean(value) => Some(i8::from(*value).to_string().into_bytes()),
+        Value::Int64(value) => Some(value.to_string().into_bytes()),
+        Value::UInt64(value) => Some(value.to_string().into_bytes()),
+        Value::Float64(value) => Some(value.get().to_string().into_bytes()),
+        Value::Utf8(value) => Some(value.clone().into_bytes()),
+        Value::Binary(value) => Some(value.clone()),
+    }
+}
+
+/// Renders one value in the binary protocol: fixed-width bytes for numeric
+/// and temporal columns, length-encoded text for everything else. Getting a
+/// column's width wrong here is silent — the client decodes *something*,
+/// just not the value that was meant.
+fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<Vec<u8>>> {
+    let length_encoded = |bytes: &[u8]| {
+        let mut encoded = Vec::new();
+        put_length_encoded_bytes(&mut encoded, bytes);
+        encoded
+    };
+    Ok(Some(match (field.data_type, value) {
+        (_, Value::Null) => return Ok(None),
+        (_, Value::Boolean(value)) => encode_binary_int(i64::from(*value), IntWidth::Tiny),
+        (Some(DataType::Int8), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Tiny),
+        (Some(DataType::Int16), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Short),
+        (Some(DataType::Int32), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Long),
+        (_, Value::Int64(value)) => encode_binary_int(*value, IntWidth::LongLong),
         (Some(DataType::UInt8), Value::UInt64(value)) => {
-            rows.write_col(u8::try_from(*value).map_err(io_invalid)?)
+            encode_binary_int(value.cast_signed(), IntWidth::Tiny)
         }
         (Some(DataType::UInt16), Value::UInt64(value)) => {
-            rows.write_col(u16::try_from(*value).map_err(io_invalid)?)
+            encode_binary_int(value.cast_signed(), IntWidth::Short)
         }
         (Some(DataType::UInt32), Value::UInt64(value)) => {
-            rows.write_col(u32::try_from(*value).map_err(io_invalid)?)
+            encode_binary_int(value.cast_signed(), IntWidth::Long)
         }
-        (_, Value::UInt64(value)) => rows.write_col(*value),
+        (_, Value::UInt64(value)) => encode_binary_int(value.cast_signed(), IntWidth::LongLong),
         (Some(DataType::Float32), Value::Float64(value)) => {
-            rows.write_col(value.get().to_string().parse::<f32>().map_err(io_invalid)?)
+            let value = value.get().to_string().parse::<f32>().map_err(io_invalid)?;
+            value.to_le_bytes().to_vec()
         }
-        (_, Value::Float64(value)) => rows.write_col(value.get()),
+        (_, Value::Float64(value)) => value.get().to_le_bytes().to_vec(),
         (Some(DataType::Date32), Value::Utf8(value)) => {
-            let value = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(io_invalid)?;
-            rows.write_col(value)
+            let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(io_invalid)?;
+            encode_binary_datetime(
+                u16::try_from(date.year()).unwrap_or(0),
+                date.month() as u8,
+                date.day() as u8,
+                None,
+            )
         }
         (Some(DataType::DateTime64 { .. }), Value::Utf8(value)) => {
-            let value = parse_datetime(value).ok_or_else(|| {
+            let datetime = parse_datetime(value).ok_or_else(|| {
                 io_invalid(format!("invalid canonical MySQL DATETIME value: {value}"))
             })?;
-            rows.write_col(value)
+            let micros = datetime.and_utc().timestamp_subsec_micros();
+            encode_binary_datetime(
+                u16::try_from(datetime.year()).unwrap_or(0),
+                datetime.month() as u8,
+                datetime.day() as u8,
+                Some((
+                    datetime.hour() as u8,
+                    datetime.minute() as u8,
+                    datetime.second() as u8,
+                    Some(micros),
+                )),
+            )
         }
         (Some(DataType::Time64 { .. }), Value::Utf8(value)) => {
-            rows.write_col(MysqlTimeValue::parse(value).map_err(io_invalid)?)
+            let time = MysqlTimeValue::parse(value).map_err(io_invalid)?;
+            encode_binary_time(
+                time.negative,
+                time.days,
+                time.hours,
+                time.minutes,
+                time.seconds,
+                Some(time.micros),
+            )
         }
-        (_, Value::Utf8(value)) => rows.write_col(value.as_str()),
-        (_, Value::Binary(value)) => rows.write_col(value.as_slice()),
-    }
+        (_, Value::Utf8(value)) => length_encoded(value.as_bytes()),
+        (_, Value::Binary(value)) => length_encoded(value),
+    }))
 }
 
 fn parse_datetime(value: &str) -> Option<NaiveDateTime> {
@@ -971,8 +1043,7 @@ fn parse_datetime(value: &str) -> Option<NaiveDateTime> {
     .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
 }
 
-struct MysqlTimeValue<'a> {
-    raw: &'a str,
+struct MysqlTimeValue {
     negative: bool,
     days: u32,
     hours: u8,
@@ -981,8 +1052,8 @@ struct MysqlTimeValue<'a> {
     micros: u32,
 }
 
-impl<'a> MysqlTimeValue<'a> {
-    fn parse(raw: &'a str) -> Result<Self, String> {
+impl MysqlTimeValue {
+    fn parse(raw: &str) -> Result<Self, String> {
         let (negative, unsigned) = raw
             .strip_prefix('-')
             .map_or((false, raw), |value| (true, value));
@@ -1018,7 +1089,6 @@ impl<'a> MysqlTimeValue<'a> {
                 .map_err(|_| format!("invalid canonical MySQL TIME value: {raw}"))?
         };
         Ok(Self {
-            raw,
             negative,
             days: total_hours / 24,
             hours: u8::try_from(total_hours % 24)
@@ -1030,33 +1100,6 @@ impl<'a> MysqlTimeValue<'a> {
     }
 }
 
-impl ToMysqlValue for MysqlTimeValue<'_> {
-    fn to_mysql_text<W: std::io::Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.raw.to_mysql_text(writer)
-    }
-
-    fn to_mysql_bin<W: std::io::Write>(&self, writer: &mut W, column: &Column) -> io::Result<()> {
-        if column.coltype != ColumnType::MYSQL_TYPE_TIME {
-            return Err(io_invalid("MySQL TIME value used with a non-TIME column"));
-        }
-        if self.days == 0
-            && self.hours == 0
-            && self.minutes == 0
-            && self.seconds == 0
-            && self.micros == 0
-        {
-            return writer.write_all(&[0]);
-        }
-        writer.write_all(&[if self.micros == 0 { 8 } else { 12 }])?;
-        writer.write_all(&[u8::from(self.negative)])?;
-        writer.write_all(&self.days.to_le_bytes())?;
-        writer.write_all(&[self.hours, self.minutes, self.seconds])?;
-        if self.micros != 0 {
-            writer.write_all(&self.micros.to_le_bytes())?;
-        }
-        Ok(())
-    }
-}
 
 fn mysql_text_character_set(charset: &str) -> u16 {
     match charset {
@@ -1558,10 +1601,25 @@ fn placeholder_offsets(sql: &str) -> Vec<usize> {
         .collect()
 }
 
-fn parameter_literal(value: ValueInner<'_>) -> Result<String, String> {
+/// Renders one decoded EXECUTE parameter as a `SQL` literal, substituted
+/// directly into the prepared statement's text.
+///
+/// `DateTime`/`Time` need no re-parsing of the raw binary payload here: the
+/// crate's own decoder already rendered exact `MySQL` text for them —
+/// including the length-dependent shape and fractional seconds — so this is
+/// just quoting a string that is already correct, not a second
+/// implementation of the same layout rules that could drift from the first.
+fn parameter_literal(value: &BinaryValue) -> Result<String, String> {
     match value {
-        ValueInner::NULL => Ok("NULL".to_owned()),
-        ValueInner::Bytes(value) => std::str::from_utf8(value).map_or_else(
+        BinaryValue::Null => Ok("NULL".to_owned()),
+        BinaryValue::Int(value) => Ok(value.to_string()),
+        BinaryValue::UInt(value) => Ok(value.to_string()),
+        BinaryValue::Float(value) if value.is_finite() => Ok(value.to_string()),
+        BinaryValue::Double(value) if value.is_finite() => Ok(value.to_string()),
+        BinaryValue::Float(_) | BinaryValue::Double(_) => {
+            Err("non-finite prepared parameters are unsupported".to_owned())
+        }
+        BinaryValue::Bytes(value) => std::str::from_utf8(value).map_or_else(
             |_| Ok(format!("X'{}'", encode_hex(value))),
             |value| {
                 Ok(format!(
@@ -1570,70 +1628,7 @@ fn parameter_literal(value: ValueInner<'_>) -> Result<String, String> {
                 ))
             },
         ),
-        ValueInner::Int(value) => Ok(value.to_string()),
-        ValueInner::UInt(value) => Ok(value.to_string()),
-        ValueInner::Double(value) if value.is_finite() => Ok(value.to_string()),
-        ValueInner::Double(_) => Err("non-finite prepared parameters are unsupported".to_owned()),
-        ValueInner::Date(payload) | ValueInner::Datetime(payload) => temporal_date_literal(payload),
-        ValueInner::Time(payload) => temporal_time_literal(payload),
-    }
-}
-
-/// Renders `MySQL`'s binary `DATE`/`DATETIME` parameter encoding as a quoted
-/// literal: 0, 4, 7, or 11 payload bytes for zero, date, seconds, and
-/// microsecond precision respectively.
-fn temporal_date_literal(payload: &[u8]) -> Result<String, String> {
-    let field = |index: usize| payload.get(index).copied().unwrap_or(0);
-    match payload.len() {
-        0 => Ok("'0000-00-00'".to_owned()),
-        4 | 7 | 11 => {
-            let year = u16::from(field(0)) | (u16::from(field(1)) << 8);
-            let mut literal = format!("'{year:04}-{:02}-{:02}", field(2), field(3));
-            if payload.len() >= 7 {
-                let _ = std::fmt::Write::write_fmt(
-                    &mut literal,
-                    format_args!(" {:02}:{:02}:{:02}", field(4), field(5), field(6)),
-                );
-            }
-            if payload.len() == 11 {
-                let micros = u32::from(field(7))
-                    | (u32::from(field(8)) << 8)
-                    | (u32::from(field(9)) << 16)
-                    | (u32::from(field(10)) << 24);
-                let _ = std::fmt::Write::write_fmt(&mut literal, format_args!(".{micros:06}"));
-            }
-            literal.push('\'');
-            Ok(literal)
-        }
-        length => Err(format!("temporal parameter has invalid length {length}")),
-    }
-}
-
-/// Renders `MySQL`'s binary `TIME` parameter encoding as a quoted literal:
-/// 0, 8, or 12 payload bytes; hours fold in the day count.
-fn temporal_time_literal(payload: &[u8]) -> Result<String, String> {
-    let field = |index: usize| payload.get(index).copied().unwrap_or(0);
-    match payload.len() {
-        0 => Ok("'00:00:00'".to_owned()),
-        8 | 12 => {
-            let sign = if field(0) == 0 { "" } else { "-" };
-            let days = u32::from(field(1))
-                | (u32::from(field(2)) << 8)
-                | (u32::from(field(3)) << 16)
-                | (u32::from(field(4)) << 24);
-            let hours = u64::from(days) * 24 + u64::from(field(5));
-            let mut literal = format!("'{sign}{hours:02}:{:02}:{:02}", field(6), field(7));
-            if payload.len() == 12 {
-                let micros = u32::from(field(8))
-                    | (u32::from(field(9)) << 8)
-                    | (u32::from(field(10)) << 16)
-                    | (u32::from(field(11)) << 24);
-                let _ = std::fmt::Write::write_fmt(&mut literal, format_args!(".{micros:06}"));
-            }
-            literal.push('\'');
-            Ok(literal)
-        }
-        length => Err(format!("time parameter has invalid length {length}")),
+        BinaryValue::DateTime(text) | BinaryValue::Time(text) => Ok(format!("'{text}'")),
     }
 }
 

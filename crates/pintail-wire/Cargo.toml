@@ -11,12 +11,12 @@ rust-version.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-opensrv-mysql.workspace = true
 pintail-catalog.workspace = true
 pintail-cdc.workspace = true
 pintail-exec.workspace = true
 pintail-meta.workspace = true
 pintail-probe.workspace = true
+pintail-protocol.workspace = true
 pintail-sql.workspace = true
 pintail-store.workspace = true
 pintail-types.workspace = true
@@ -26,7 +26,7 @@ tokio-rustls.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 sha2.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 thiserror.workspace = true
 
 [lints]
