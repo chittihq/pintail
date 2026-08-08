@@ -691,91 +691,86 @@ impl Backend {
 }
 
 #[async_trait]
-impl<W> AsyncMysqlShim<W> for Backend
-where
-    W: AsyncWrite + Send + Unpin,
-{
-    type Error = io::Error;
-
-    fn version(&self) -> String {
+impl Handler for Backend {
+    fn server_version(&self) -> String {
         format!("8.4.0-pintail-{}", env!("CARGO_PKG_VERSION"))
     }
 
-    fn connect_id(&self) -> u32 {
+    fn connection_id(&self) -> u32 {
         self.connection_id
     }
 
-    fn salt(&self) -> [u8; 20] {
-        self.salt
-    }
-
-    // The opensrv trait fixes the &str return; the literal is 'static.
-    #[allow(clippy::unnecessary_literal_bound)]
-    fn default_auth_plugin(&self) -> &str {
-        "caching_sha2_password"
-    }
-
-    #[allow(clippy::unnecessary_literal_bound)]
-    async fn auth_plugin_for_username(&self, _user: &[u8]) -> &str {
-        // Auth-switch target for legacy clients that answered the
-        // caching_sha2_password greeting with an empty response.
+    // caching_sha2_password's fast-auth path (a single round trip against a
+    // cached verifier) is what wire_key_is_valid implements; the full
+    // RSA-key-exchange path a fresh connection can fall back to is not.
+    // mysql_native_password needs no such fallback and every MySQL client
+    // library speaks it, so it is the safer plugin to advertise even though
+    // the previous implementation defaulted to caching_sha2_password.
+    fn auth_plugin(&self) -> &'static str {
         "mysql_native_password"
     }
 
-    async fn authenticate(
-        &self,
-        _auth_plugin: &str,
-        username: &[u8],
-        salt: &[u8],
-        auth_data: &[u8],
-    ) -> bool {
-        // The response length identifies the plugin the client actually used:
-        // 32 bytes = caching_sha2_password fast auth, 20 = mysql_native_password.
-        self.authenticate_wire_key(username, salt, auth_data)
+    async fn authenticate(&mut self, response: &HandshakeResponse, scramble: &[u8]) -> bool {
+        self.authenticate_wire_key(&response.username, scramble, &response.auth_response)
             .unwrap_or(false)
     }
 
-    async fn on_prepare<'a>(
-        &'a mut self,
-        query: &'a str,
-        info: StatementMetaWriter<'a, W>,
-    ) -> io::Result<()> {
-        let parameters = placeholder_count(query);
-        let preview = substitute_parameters(query, &placeholder_preview_literals(query))
-            .map_err(io_invalid)?;
-        let output = match self.execute(&preview).await {
-            Ok(output) => output,
-            Err(error) => {
-                return info
-                    .error(error_kind(&error), error.to_string().as_bytes())
-                    .await;
-            }
+    async fn query(&mut self, sql: &[u8]) -> Response {
+        let Ok(sql) = std::str::from_utf8(sql) else {
+            return Response::Error(
+                ErrorKind::ErParseError,
+                "statement is not valid UTF-8".to_owned(),
+            );
         };
+        if is_session_command(sql) {
+            return match self.apply_session_command(sql) {
+                Ok(()) => Response::Ok(OkPacket::default(), String::new()),
+                Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
+            };
+        }
+        let Some((group_concat_max_len, charset)) = self.session_snapshot() else {
+            return Response::Error(
+                ErrorKind::ErUnknownError,
+                "session state is unavailable".to_owned(),
+            );
+        };
+        query_output_to_response(self.execute(sql).await, group_concat_max_len, &charset, false)
+    }
+
+    async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
+        let sql = std::str::from_utf8(sql)
+            .map_err(|_| (ErrorKind::ErParseError, "statement is not valid UTF-8".to_owned()))?;
+        let parameters = placeholder_count(sql);
+        let preview = substitute_parameters(sql, &placeholder_preview_literals(sql))
+            .map_err(|error| (ErrorKind::ErParseError, error))?;
+        let output = self
+            .execute(&preview)
+            .await
+            .map_err(|error| (error_kind(&error), error.to_string()))?;
         let statement_id = self.next_statement_id;
         self.next_statement_id = self.next_statement_id.wrapping_add(1).max(1);
         self.prepared.insert(
             statement_id,
             Prepared {
-                sql: query.to_owned(),
+                sql: sql.to_owned(),
                 parameters,
+                parameter_types: None,
+                used_long_data: false,
             },
         );
-        let (group_concat_max_len, charset) = {
-            let session = self.session.lock().map_err(io_other)?;
+        let (group_concat_max_len, charset) = self.session_snapshot().ok_or_else(|| {
             (
-                session.group_concat_max_len,
-                session.charset_results.clone(),
+                ErrorKind::ErUnknownError,
+                "session state is unavailable".to_owned(),
             )
-        };
+        })?;
         let params = (0..parameters)
-            .map(|index| Column {
-                table: String::new(),
-                column: format!("param_{}", index + 1),
-                column_length: 1024,
-                character_set: mysql_text_character_set(&charset),
-                coltype: ColumnType::MYSQL_TYPE_VAR_STRING,
-                colflags: ColumnFlags::empty(),
-                decimals: 0,
+            .map(|index| {
+                let mut column =
+                    Column::new(format!("param_{}", index + 1), ColumnType::MysqlTypeVarString);
+                column.column_length = 1024;
+                column.character_set = mysql_text_character_set(&charset);
+                column
             })
             .collect::<Vec<_>>();
         let columns = output
@@ -783,142 +778,100 @@ where
             .iter()
             .map(|field| mysql_column(field, group_concat_max_len, &charset))
             .collect::<Vec<_>>();
-        info.reply(statement_id, &params, &columns).await
+        Ok(PreparedStatement {
+            id: statement_id,
+            parameters: params,
+            columns,
+        })
     }
 
-    async fn on_execute<'a>(
-        &'a mut self,
-        id: u32,
-        params: ParamParser<'a>,
-        results: QueryResultWriter<'a, W>,
-    ) -> io::Result<()> {
+    async fn execute(&mut self, id: u32, body: &[u8]) -> Response {
         let Some(statement) = self.prepared.get(&id).cloned() else {
-            return results
-                .error(
-                    ErrorKind::ER_UNKNOWN_STMT_HANDLER,
-                    b"unknown prepared statement",
-                )
-                .await;
+            return Response::Error(
+                ErrorKind::ErUnknownStmtHandler,
+                "unknown prepared statement".to_owned(),
+            );
         };
-        let parameters = params
-            .into_iter()
-            .map(|parameter| parameter_literal(parameter.value.into_inner()))
-            .collect::<Result<Vec<_>, _>>();
-        let parameters = match parameters {
-            Ok(parameters) if parameters.len() == statement.parameters => parameters,
-            Ok(_) => {
-                return results
-                    .error(
-                        ErrorKind::ER_WRONG_ARGUMENTS,
-                        b"prepared statement parameter count does not match",
-                    )
-                    .await;
-            }
-            Err(error) => {
-                return results
-                    .error(ErrorKind::ER_WRONG_ARGUMENTS, error.as_bytes())
-                    .await;
-            }
+        if statement.used_long_data {
+            return Response::Error(
+                ErrorKind::ErWrongArguments,
+                "COM_STMT_SEND_LONG_DATA is not supported".to_owned(),
+            );
+        }
+        let Some((values, types)) = decode_execute_parameters(
+            body,
+            statement.parameters,
+            statement.parameter_types.as_deref(),
+        ) else {
+            return Response::Error(
+                ErrorKind::ErWrongArguments,
+                "malformed EXECUTE parameters".to_owned(),
+            );
         };
-        let query = substitute_parameters(&statement.sql, &parameters).map_err(io_invalid)?;
-        let (group_concat_max_len, charset) = {
-            let session = self.session.lock().map_err(io_other)?;
-            (
-                session.group_concat_max_len,
-                session.charset_results.clone(),
-            )
+        if let Some(entry) = self.prepared.get_mut(&id) {
+            entry.parameter_types = Some(types);
+        }
+        let literals = match values.iter().map(parameter_literal).collect::<Result<Vec<_>, _>>() {
+            Ok(literals) => literals,
+            Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
-        write_query_result(
-            self.execute(&query).await,
-            results,
-            group_concat_max_len,
-            &charset,
-        )
-        .await
+        let query = match substitute_parameters(&statement.sql, &literals) {
+            Ok(query) => query,
+            Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
+        };
+        let Some((group_concat_max_len, charset)) = self.session_snapshot() else {
+            return Response::Error(
+                ErrorKind::ErUnknownError,
+                "session state is unavailable".to_owned(),
+            );
+        };
+        query_output_to_response(self.execute(&query).await, group_concat_max_len, &charset, true)
     }
 
-    async fn on_close(&mut self, statement: u32) {
+    async fn send_long_data(&mut self, statement: u32, _parameter: u16, _data: &[u8]) {
+        if let Some(entry) = self.prepared.get_mut(&statement) {
+            entry.used_long_data = true;
+        }
+    }
+
+    async fn close_statement(&mut self, statement: u32) {
         self.prepared.remove(&statement);
     }
 
-    async fn on_reset_statement(&mut self, statement: u32) -> io::Result<bool> {
-        Ok(self.prepared.contains_key(&statement))
-    }
-
-    async fn on_reset(&mut self) -> io::Result<()> {
-        self.reset_session_state()
-    }
-
-    async fn on_change_user(
-        &mut self,
-        user: &[u8],
-        auth_plugin: Option<&[u8]>,
-        auth_response: &[u8],
-        database: &[u8],
-    ) -> io::Result<bool> {
-        if auth_plugin.is_some_and(|plugin| {
-            !matches!(plugin, b"caching_sha2_password" | b"mysql_native_password")
-        }) {
-            return Ok(false);
-        }
-        let Some(authenticated) =
-            self.verify_wire_key(user, &self.salt, auth_response, Some(database))?
-        else {
-            return Ok(false);
+    async fn reset_statement(&mut self, statement: u32) -> bool {
+        let Some(entry) = self.prepared.get_mut(&statement) else {
+            return false;
         };
-        self.reset_session_state()?;
-        *self.authentication.lock().map_err(io_other)? = Some(authenticated);
-        Ok(true)
+        entry.used_long_data = false;
+        true
     }
 
-    async fn on_query<'a>(
-        &'a mut self,
-        query: &'a str,
-        results: QueryResultWriter<'a, W>,
-    ) -> io::Result<()> {
-        if is_session_command(query) {
-            return match self.apply_session_command(query) {
-                Ok(()) => results.completed(OkResponse::default()).await,
-                Err(error) => {
-                    results
-                        .error(ErrorKind::ER_WRONG_ARGUMENTS, error.as_bytes())
-                        .await
-                }
-            };
-        }
-        let (group_concat_max_len, charset) = {
-            let session = self.session.lock().map_err(io_other)?;
+    async fn reset_connection(&mut self) {
+        let _ = self.reset_session_state();
+    }
+
+    async fn init_database(&mut self, database: &[u8]) -> Result<(), (ErrorKind, String)> {
+        let database = std::str::from_utf8(database).map_err(|_| {
             (
-                session.group_concat_max_len,
-                session.charset_results.clone(),
+                ErrorKind::ErBadDbError,
+                "database name is not valid UTF-8".to_owned(),
             )
-        };
-        write_query_result(
-            self.execute(query).await,
-            results,
-            group_concat_max_len,
-            &charset,
-        )
-        .await
-    }
-
-    async fn on_init<'a>(
-        &'a mut self,
-        database: &'a str,
-        writer: InitWriter<'a, W>,
-    ) -> io::Result<()> {
-        let authenticated = self.authenticated()?;
+        })?;
+        let authenticated = self.authenticated().map_err(|_| {
+            (
+                ErrorKind::ErAccessDeniedError,
+                "authentication required".to_owned(),
+            )
+        })?;
         if authenticated.database_name.eq_ignore_ascii_case(database)
             || database.eq_ignore_ascii_case("information_schema")
         {
-            writer.ok().await
+            Ok(())
         } else {
-            writer
-                .error(
-                    ErrorKind::ER_DBACCESS_DENIED_ERROR,
-                    b"API key is scoped to another database",
-                )
-                .await
+            Err((
+                ErrorKind::ErDbaccessDeniedError,
+                "API key is scoped to another database".to_owned(),
+            ))
         }
     }
 }

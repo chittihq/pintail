@@ -118,6 +118,24 @@ pub trait Handler: Send {
     /// Restores session defaults, keeping the connection open.
     async fn reset_connection(&mut self) {}
 
+    /// Reauthenticates a live connection as a possibly different user and
+    /// database, keeping the physical socket open. Returning `false` fails
+    /// the command with an access-denied error and leaves whichever
+    /// identity was already authenticated in place.
+    ///
+    /// The default rejects every attempt. That is a deliberate fail-closed
+    /// choice: a caller that does not override this must not let a
+    /// `CHANGE_USER` command that merely resembled a successful switch
+    /// silently keep the connection under its previous identity.
+    async fn change_user(
+        &mut self,
+        _username: &[u8],
+        _auth_response: &[u8],
+        _database: &[u8],
+    ) -> bool {
+        false
+    }
+
     /// Changes the default schema.
     async fn init_database(&mut self, database: &[u8]) -> Result<(), (ErrorKind, String)>;
 }
@@ -446,12 +464,21 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                 parameter,
                 data,
             } => handler.send_long_data(statement, parameter, data).await,
-            // Change-user reauthenticates in MySQL; a replica keyed to one
-            // database has nothing to switch to, so both restore session
-            // defaults and acknowledge.
-            Command::ResetConnection | Command::ChangeUser { .. } => {
+            Command::ResetConnection => {
                 handler.reset_connection().await;
                 self.write_ok().await?;
+            }
+            Command::ChangeUser {
+                username,
+                auth_response,
+                database,
+            } => {
+                if handler.change_user(username, auth_response, database).await {
+                    self.write_ok().await?;
+                } else {
+                    self.write_error(ErrorKind::ErAccessDeniedError, "access denied")
+                        .await?;
+                }
             }
             // A malformed or unrecognised command is answered rather than
             // dropped, so the client learns which of the two happened.
