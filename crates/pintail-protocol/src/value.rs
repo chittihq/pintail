@@ -238,6 +238,14 @@ pub fn decode_execute_parameters(
     parameters: usize,
     remembered: Option<&[ParameterType]>,
 ) -> Option<(Vec<BinaryValue>, Vec<ParameterType>)> {
+    // The NULL-bitmap, bind-flag, types and values block is present only
+    // when the statement takes parameters; a placeholder-free EXECUTE body
+    // ends right after flags(1) + iteration count(4), so reading a bind-flag
+    // byte here for a zero-parameter statement reads past the body and must
+    // not be attempted.
+    if parameters == 0 {
+        return Some((Vec::new(), Vec::new()));
+    }
     // flags(1) + iteration count(4)
     let mut cursor = 5;
     let bitmap_len = null_bitmap_len(parameters, 0);
@@ -517,6 +525,18 @@ mod tests {
         assert_eq!(values[1], BinaryValue::Null);
         // Without remembered types there is nothing to decode against.
         assert!(decode_execute_parameters(&reused, 2, None).is_none());
+    }
+
+    #[test]
+    fn a_parameterless_execute_body_carries_no_bitmap_or_bind_flag() {
+        // A statement with zero placeholders sends only flags(1) and
+        // iteration_count(4); MySQL clients never append a NULL-bitmap or a
+        // rebind flag when there is nothing to bind. Reading past this short
+        // body must not be mistaken for a malformed one.
+        let body = [0x00, 0x01, 0x00, 0x00, 0x00];
+        let (values, types) = decode_execute_parameters(&body, 0, None).expect("decode");
+        assert!(values.is_empty());
+        assert!(types.is_empty());
     }
 }
 
