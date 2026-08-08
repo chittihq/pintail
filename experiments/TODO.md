@@ -52,6 +52,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   real PTSEG-shaped sparse indexes, including the level-0 memtable overlap case.
 - [x] **e12-normalized-keys** — memcmp-able normalized composite sort keys + offset-value
   coding vs typed comparators for the k-way merge path.
+- [x] **e27-adaptive-compression** — exact PTSEG payload layouts under always-LZ4,
+  never-LZ4, and per-block keep-only-when-smaller policies. Global removal and
+  encoding-class shortcuts both lose; local evidence supports per-block selection.
 
 ## Decision criteria
 

@@ -24,6 +24,7 @@ members = [
     "e20-encoding-census",
     "e21-fastlanes-layout",
     "e22-encoding-settled",
+    "e27-adaptive-compression",
 ]
 
 [workspace.dependencies]

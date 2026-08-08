@@ -1004,3 +1004,73 @@ carrying a delete would resurrect it. So the flag is
 `rows.iter().all(|row| !row.is_deleted())`, and `tests/suite/direct_scan.rs`
 pins the boundary — every case there passes with the flag hardcoded false,
 which is the point: what they catch is the flag being set when it must not be.
+
+## e27 — adaptive LZ4 must be per block, not per encoding
+
+Question: should PTSEG remove LZ4 globally, disable it for packed encodings,
+or retain it only when the compressed block is materially smaller?
+
+The harness reproduces the current production payload bytes rather than an
+abstract codec: 16,384-row blocks; FOR and delta bit-packing with the same
+base/width/length framing; dictionary strings followed by fixed-width u32
+codes; and plain Float64/UTF-8 payloads. Each shape contains 4,194,304 rows
+(256 blocks). Always-LZ4, never-LZ4, any-saving, and 5%-saving policies decode
+to the same position-sensitive checksum. Shared block framing is excluded.
+
+Run locally with:
+
+```bash
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo run --manifest-path experiments/Cargo.toml --release -p e27-adaptive-compression
+```
+
+### Size
+
+| PTSEG payload shape | never LZ4 | always LZ4 | adaptive | LZ4 blocks |
+|---|---:|---:|---:|---:|
+| FOR bit-packed amount | 10,489,088 B | 10,529,817 B | **10,489,088 B** | 0/256 |
+| Delta-bit-packed primary key | 527,616 B | **7,929 B** | **7,929 B** | 256/256 |
+| Mixed FOR + delta blocks | 5,508,352 B | 5,268,869 B | **5,248,510 B** | 128/256 |
+| Dictionary status, cyclic | 16,792,320 B | **88,832 B** | **88,832 B** | 256/256 |
+| Dictionary region, random | 16,797,184 B | **5,917,623 B** | **5,917,623 B** | 256/256 |
+| Plain random Float64 | 33,554,432 B | 33,686,272 B | **33,554,432 B** | 0/256 |
+| Plain high-cardinality UTF-8 | 159,383,552 B | **94,518,596 B** | **94,518,596 B** | 256/256 |
+
+The any-saving and 5%-saving policies made identical choices on every block.
+On the mixed integer control, adaptive is the only policy that avoids both the
+FOR expansion and the loss of delta compression. It is smaller than either
+global policy.
+
+### Decode median on Apple M2 Pro
+
+| Shape | never | always | adaptive |
+|---|---:|---:|---:|
+| FOR amount | 12.119 ms | 12.686 ms | **12.123 ms** |
+| Delta primary key | 0.614 ms | 0.612 ms | **0.609 ms** |
+| Mixed FOR + delta | 6.366 ms | 6.481 ms | **6.302 ms** |
+| Dictionary status | **19.224 ms** | 23.003 ms | 22.788 ms |
+| Dictionary region | **19.717 ms** | 25.108 ms | 25.140 ms |
+| Random Float64 | **38.883 ms** | 41.250 ms | 39.800 ms |
+| High-cardinality UTF-8 | **188.543 ms** | 215.285 ms | 214.566 ms |
+
+Trying LZ4 and then selecting the representation costs the same as always-LZ4
+within noise; it saves read/decompression work only on rejected blocks. The
+dictionary/text decompression tax is real (roughly 14-27%), but it buys 41-99.5%
+fewer payload bytes. FOR and random-float blocks receive neither benefit, so
+adaptive correctly serves them raw.
+
+### Verdict
+
+**Global LZ4 removal is rejected.** It would inflate delta-packed primary-key
+blocks by 66x, cyclic dictionary blocks by 189x, random dictionary blocks by
+2.8x, and the tested high-cardinality text by 1.7x.
+
+**“Never compress packed integers” is also rejected.** Uniform FOR blocks are
+incompressible, but delta-packed monotonic blocks compress to 1.5% of their
+encoded size. Encoding kind alone is not a sound selector.
+
+**Per-block try-and-keep is supported locally.** A practical threshold of at
+least 5% savings produced the same decisions as the pure size winner and avoids
+paying decompression on incompressible blocks. Production adoption still needs
+the Linux reference-host run plus a `Compression::None` tag, old-segment read
+coverage, corruption fixtures, and a full engine benchmark. This experiment
+does not itself change PTSEG.
