@@ -2546,7 +2546,7 @@ impl TableStore {
             &self.schema,
             &rows,
             self.options.block_rows,
-            segment::Compression::Lz4,
+            segment::Compression::AdaptiveLz4,
             true,
         )?;
         let segment_path = self.directory.join(&segment.file_name);
@@ -2615,7 +2615,7 @@ impl TableStore {
             &self.schema,
             &rows,
             self.options.block_rows,
-            segment::Compression::Lz4,
+            segment::Compression::AdaptiveLz4,
             unique_keys,
         )?;
         let segment_path = self.directory.join(&segment.file_name);
@@ -2755,7 +2755,7 @@ impl TableStore {
         let compression = if full_merge {
             segment::Compression::Zstd
         } else {
-            segment::Compression::Lz4
+            segment::Compression::AdaptiveLz4
         };
         let output_row_limit =
             usize::try_from(self.options.max_compaction_rows).unwrap_or(usize::MAX);

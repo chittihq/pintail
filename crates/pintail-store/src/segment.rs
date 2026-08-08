@@ -19,13 +19,14 @@ use crate::{
 
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
-const FORMAT_VERSION: u8 = 2;
+const FORMAT_VERSION: u8 = 3;
 
 /// Segment versions this reader understands: v1 stores text carriers for
 /// every Utf8-storage column; v2 additionally stores fixed-width native
-/// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns.
+/// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns;
+/// v3 permits raw block payloads when LZ4 cannot save at least 5%.
 const fn format_version_supported(version: u8) -> bool {
-    matches!(version, 1 | 2)
+    matches!(version, 1 | 2 | 3)
 }
 const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
@@ -480,15 +481,19 @@ pub(crate) fn compute_segment_smas(schema: &TableSchema, rows: &[StoredRow]) -> 
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Compression {
+    None = 0,
     Lz4 = 1,
     Zstd = 2,
+    /// Writer policy only. Stored blocks carry either `None` or `Lz4`.
+    AdaptiveLz4 = 3,
 }
 
 impl Compression {
     fn decode(tag: u8) -> Result<Self, String> {
         match tag {
+            0 => Ok(Self::None),
             1 => Ok(Self::Lz4),
             2 => Ok(Self::Zstd),
             _ => Err(format!("unknown block compression {tag}")),
@@ -2989,10 +2994,10 @@ fn write_block(
     block.bytes(&null_bitmap, "null bitmap")?;
     let encoding = select_encoding(logical_type, &non_null);
     block.u8(encoding as u8);
-    block.u8(compression as u8);
     let uncompressed = encode_payload(logical_type, encoding, &non_null)?;
+    let (stored_compression, compressed) = compress_block_for_storage(compression, &uncompressed)?;
+    block.u8(stored_compression as u8);
     block.length(uncompressed.len(), "uncompressed block")?;
-    let compressed = compress_block(compression, &uncompressed)?;
     block.bytes(&compressed, "compressed block")?;
     block.u32(null_count);
 
@@ -3737,11 +3742,29 @@ fn decode_utf8_payload_into(
     Ok(())
 }
 
-fn compress_block(compression: Compression, bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
+fn materially_smaller(uncompressed: usize, compressed: usize) -> bool {
+    uncompressed > 0
+        && compressed.saturating_mul(100) <= uncompressed.saturating_mul(95)
+}
+
+fn compress_block_for_storage(
+    compression: Compression,
+    bytes: &[u8],
+) -> Result<(Compression, Vec<u8>), StoreError> {
     match compression {
-        Compression::Lz4 => Ok(lz4_compress(bytes)),
+        Compression::None => Ok((Compression::None, bytes.to_vec())),
+        Compression::Lz4 => Ok((Compression::Lz4, lz4_compress(bytes))),
         Compression::Zstd => zstd::bulk::compress(bytes, 3)
+            .map(|compressed| (Compression::Zstd, compressed))
             .map_err(|error| StoreError::io("compress zstd segment block", error)),
+        Compression::AdaptiveLz4 => {
+            let compressed = lz4_compress(bytes);
+            if materially_smaller(bytes.len(), compressed.len()) {
+                Ok((Compression::Lz4, compressed))
+            } else {
+                Ok((Compression::None, bytes.to_vec()))
+            }
+        }
     }
 }
 
@@ -3751,10 +3774,22 @@ fn decompress_block(
     uncompressed_length: usize,
 ) -> Result<Vec<u8>, String> {
     match compression {
+        Compression::None => {
+            if bytes.len() != uncompressed_length {
+                return Err(format!(
+                    "raw block length is {}, expected {uncompressed_length}",
+                    bytes.len()
+                ));
+            }
+            Ok(bytes.to_vec())
+        }
         Compression::Lz4 => lz4_decompress(bytes, uncompressed_length)
             .map_err(|error| format!("invalid LZ4 block: {error}")),
         Compression::Zstd => zstd::bulk::decompress(bytes, uncompressed_length)
             .map_err(|error| format!("invalid zstd block: {error}")),
+        Compression::AdaptiveLz4 => {
+            Err("adaptive LZ4 is a writer policy, not a stored compression".to_owned())
+        }
     }
 }
 
@@ -4526,6 +4561,56 @@ fn corrupt_here(
     reason: impl Into<String>,
 ) -> StoreError {
     corrupt(path, decoder.decode_position(), reason)
+}
+
+#[cfg(test)]
+mod compression_tests {
+    use super::{
+        Compression, compress_block_for_storage, decompress_block, materially_smaller,
+    };
+
+    #[test]
+    fn five_percent_threshold_is_inclusive_and_overflow_safe() {
+        assert!(materially_smaller(100, 95));
+        assert!(!materially_smaller(100, 96));
+        assert!(materially_smaller(usize::MAX, 0));
+        assert!(!materially_smaller(0, 0));
+    }
+
+    #[test]
+    fn adaptive_lz4_keeps_only_material_savings() {
+        let compressible = vec![7_u8; 64 * 1024];
+        let (compression, stored) =
+            compress_block_for_storage(Compression::AdaptiveLz4, &compressible)
+                .expect("compress repetitive payload");
+        assert_eq!(compression, Compression::Lz4);
+        assert!(stored.len() * 100 <= compressible.len() * 95);
+        assert_eq!(
+            decompress_block(compression, &stored, compressible.len()).expect("decode LZ4"),
+            compressible
+        );
+
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let incompressible = (0..64 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect::<Vec<_>>();
+        let (compression, stored) =
+            compress_block_for_storage(Compression::AdaptiveLz4, &incompressible)
+                .expect("try incompressible payload");
+        assert_eq!(compression, Compression::None);
+        assert_eq!(stored, incompressible);
+    }
+
+    #[test]
+    fn raw_blocks_reject_declared_length_mismatches() {
+        let error = decompress_block(Compression::None, b"raw", 4).expect_err("bad length");
+        assert!(error.contains("raw block length"), "{error}");
+    }
 }
 
 #[cfg(test)]

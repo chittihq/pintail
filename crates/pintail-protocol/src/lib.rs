@@ -6,9 +6,11 @@
 //! available implementation fixed at constants.
 
 pub mod command;
+pub mod handshake;
 pub mod packet;
 pub mod types;
 
 pub use command::Command;
+pub use handshake::{CapabilityFlags, Handshake, HandshakeResponse, SCRAMBLE_SIZE};
 pub use packet::{MAX_PAYLOAD, PacketReader, PacketWriter};
 pub use types::{Column, ColumnFlags, ColumnType, ErrorKind, StatusFlags};

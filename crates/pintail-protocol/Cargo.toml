@@ -9,6 +9,8 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+sha1.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 
 [lints]
