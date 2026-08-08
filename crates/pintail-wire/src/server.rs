@@ -12,21 +12,19 @@ use std::{
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
-use opensrv_mysql::{
-    AsyncMysqlIntermediary, AsyncMysqlShim, Column, ColumnFlags, ColumnType, ErrorKind, InitWriter,
-    IntermediaryOptions, OkResponse, ParamParser, QueryResultWriter, StatementMetaWriter,
-    ToMysqlValue, ValueInner, plain_run_with_options, secure_run_with_options,
-};
 use pintail_meta::{ApiKeyRecord, MetaStore};
+use pintail_protocol::{
+    BinaryValue, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch, ErrorKind, Handler,
+    HandshakeResponse, IntWidth, OkPacket, PreparedStatement, Response, ResultSet, SCRAMBLE_SIZE,
+    WatchOutcome, decode_execute_parameters, encode_binary_datetime, encode_binary_int,
+    encode_binary_time, packet::put_length_encoded_bytes,
+};
 use pintail_sql::DEFAULT_TEXT_COLLATION;
 use pintail_types::{DataType, Value};
 use rand::RngCore as _;
 use sha1::{Digest as _, Sha1};
 use sha2::{Digest as _, Sha256};
-use tokio::{
-    io::AsyncWrite,
-    net::{TcpListener, TcpStream},
-};
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
@@ -199,31 +197,162 @@ where
     }
 }
 
+/// Watches a duplicated handle to the same socket for a disconnected peer.
+///
+/// `try_clone` dups the underlying file descriptor rather than sharing
+/// `Connection`'s own reader, so this can poll read-readiness and peek
+/// without any risk of a second waker overwriting the packet reader's —
+/// they are independent registrations at the OS level, not two users of one
+/// tokio-internal registration. `peek` never consumes bytes, so a false
+/// alarm here has nothing to hand back through [`WatchOutcome::Primed`].
+struct TcpDisconnectWatch {
+    probe: TcpStream,
+}
+
+#[async_trait]
+impl DisconnectWatch for TcpDisconnectWatch {
+    async fn watch(&mut self) -> WatchOutcome {
+        let mut probe_byte = [0_u8; 1];
+        loop {
+            if self.probe.readable().await.is_err() {
+                return WatchOutcome::Disconnected;
+            }
+            match self.probe.peek(&mut probe_byte).await {
+                Ok(0) => return WatchOutcome::Disconnected,
+                // Data is genuinely there and untouched; not a disconnect.
+                Ok(_) => return WatchOutcome::Primed(Vec::new()),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(_) => return WatchOutcome::Disconnected,
+            }
+        }
+    }
+}
+
 async fn serve_connection(
     stream: TcpStream,
     mut backend: Backend,
     tls: Option<WireTls>,
     idle_timeout: Duration,
 ) -> io::Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let options = IntermediaryOptions {
-        process_use_statement_on_query: true,
-        reject_connection_on_dbname_absence: false,
-        idle_timeout: Some(idle_timeout),
+    // Duplicating at the std level (rather than sharing a handle) gives the
+    // watch its own OS-level socket registration, independent of the packet
+    // reader's — two tokio users polling read-readiness on the SAME
+    // registration can silently overwrite each other's waker; two
+    // independent registrations over the same underlying socket cannot.
+    let std_stream = stream.into_std()?;
+    let probe_stream = std_stream.try_clone()?;
+    let stream = TcpStream::from_std(std_stream)?;
+    let watch = TcpDisconnectWatch {
+        probe: TcpStream::from_std(probe_stream)?,
     };
-    let tls_config = tls.as_ref().map(|tls| std::sync::Arc::clone(&tls.config));
-    let (client_requested_tls, init) =
-        AsyncMysqlIntermediary::init_before_ssl(&mut backend, reader, &mut writer, &tls_config)
-            .await?;
-    match (client_requested_tls, tls) {
-        (true, Some(tls)) => {
-            secure_run_with_options(backend, writer, options, tls.config, init).await
+    let scramble = backend.salt;
+    let (reader, writer) = stream.into_split();
+    let mut connection = Connection::new(reader, writer);
+    connection.send_greeting(&backend, scramble).await?;
+    let initial = connection.read_initial_response().await?;
+    match (initial, tls) {
+        (pintail_protocol::InitialResponse::Full(response), _) => {
+            run_connection(connection, response, backend, scramble, watch, idle_timeout).await
+        }
+        (pintail_protocol::InitialResponse::Ssl, Some(tls)) => {
+            let (reader, writer, read_sequence, write_sequence) = connection.into_parts();
+            let stream = reader.reunite(writer).map_err(io_other)?;
+            let acceptor = tokio_rustls::TlsAcceptor::from(tls.config);
+            let tls_stream = acceptor.accept(stream).await?;
+            let (tls_reader, tls_writer) = tokio::io::split(tls_stream);
+            let mut connection = Connection::new_at_sequence(
+                tls_reader,
+                tls_writer,
+                read_sequence,
+                write_sequence,
+            );
+            let response = match connection.read_initial_response().await? {
+                pintail_protocol::InitialResponse::Full(response) => response,
+                pintail_protocol::InitialResponse::Ssl => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "client requested TLS twice",
+                    ));
+                }
+            };
+            // The disconnect watch peeks the plaintext socket; once TLS is
+            // established the ciphertext stream carries no equivalent
+            // non-consuming probe, so this connection loses that guard and
+            // relies on the idle timeout and the next read to notice a gone
+            // peer, same as before this driver existed.
+            run_connection_without_watch(connection, response, backend, scramble, idle_timeout)
+                .await
         }
         // A required-TLS listener drops plaintext clients after the
         // greeting; MySQL clients report the closed connection as
         // "server requires secure transport".
-        (false, Some(tls)) if tls.required => Ok(()),
-        _ => plain_run_with_options(backend, writer, options, init).await,
+        (pintail_protocol::InitialResponse::Full(_), None) => unreachable!(),
+        (pintail_protocol::InitialResponse::Ssl, None) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "client requested TLS but this listener has none configured",
+        )),
+    }
+}
+
+async fn run_connection<R, W>(
+    mut connection: Connection<R, W>,
+    response: HandshakeResponse,
+    mut backend: Backend,
+    scramble: [u8; SCRAMBLE_SIZE],
+    mut watch: TcpDisconnectWatch,
+    idle_timeout: Duration,
+) -> io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send,
+    W: tokio::io::AsyncWrite + Unpin + Send,
+{
+    if connection
+        .complete_authentication(&mut backend, response, &scramble)
+        .await
+        .is_err()
+    {
+        return Ok(());
+    }
+    loop {
+        let served = tokio::time::timeout(
+            idle_timeout,
+            connection.serve_one_with_disconnect_watch(&mut backend, &mut watch),
+        )
+        .await;
+        match served {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) | Err(_) => return Ok(()),
+            Ok(Err(error)) => return Err(error),
+        }
+    }
+}
+
+async fn run_connection_without_watch<R, W>(
+    mut connection: Connection<R, W>,
+    response: HandshakeResponse,
+    mut backend: Backend,
+    scramble: [u8; SCRAMBLE_SIZE],
+    idle_timeout: Duration,
+) -> io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send,
+    W: tokio::io::AsyncWrite + Unpin + Send,
+{
+    if connection
+        .complete_authentication(&mut backend, response, &scramble)
+        .await
+        .is_err()
+    {
+        return Ok(());
+    }
+    loop {
+        let served =
+            tokio::time::timeout(idle_timeout, connection.serve_one(&mut backend)).await;
+        match served {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) | Err(_) => return Ok(()),
+            Ok(Err(error)) => return Err(error),
+        }
     }
 }
 
@@ -272,6 +401,16 @@ struct Authenticated {
 struct Prepared {
     sql: String,
     parameters: usize,
+    /// Types from the last EXECUTE that rebound them, reused when a later
+    /// EXECUTE on the same handle does not.
+    parameter_types: Option<Vec<pintail_protocol::ParameterType>>,
+    /// `COM_STMT_SEND_LONG_DATA` is not implemented: decoding an EXECUTE
+    /// body assumes every parameter's value is present in the body itself,
+    /// which is false for one a client streamed in over several
+    /// long-data chunks. Rather than silently misdecode the following
+    /// parameters, EXECUTE on a statement that received one rejects
+    /// explicitly.
+    used_long_data: bool,
 }
 
 struct Backend {

@@ -98,6 +98,15 @@ pub trait Handler: Send {
     /// the handle, because decoding needs the statement's parameter types.
     async fn execute(&mut self, statement: u32, body: &[u8]) -> Response;
 
+    /// Observes `COM_STMT_SEND_LONG_DATA`. The protocol sends no reply, and
+    /// the default does nothing — but a caller whose EXECUTE decoder
+    /// assumes every parameter's value is present in the EXECUTE body
+    /// itself (true for a fixed-width decode, false once a parameter
+    /// arrived here instead) needs this to know that assumption no longer
+    /// holds for this statement, or it silently misdecodes rather than
+    /// failing explicitly.
+    async fn send_long_data(&mut self, _statement: u32, _parameter: u16, _data: &[u8]) {}
+
     /// Deallocates a prepared statement. The protocol expects no reply.
     async fn close_statement(&mut self, statement: u32);
 
@@ -432,7 +441,11 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             Command::FieldList(_) => {
                 self.write_eof().await?;
             }
-            Command::SendLongData { .. } => {}
+            Command::SendLongData {
+                statement,
+                parameter,
+                data,
+            } => handler.send_long_data(statement, parameter, data).await,
             // Change-user reauthenticates in MySQL; a replica keyed to one
             // database has nothing to switch to, so both restore session
             // defaults and acknowledge.
