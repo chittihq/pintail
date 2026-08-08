@@ -55,6 +55,10 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
 - [x] **e27-adaptive-compression** — exact PTSEG payload layouts under always-LZ4,
   never-LZ4, and per-block keep-only-when-smaller policies. Global removal and
   encoding-class shortcuts both lose; local evidence supports per-block selection.
+- [x] **e28-fastlanes-real-scan** — A/B/A replacement of PTSEG's horizontal
+  bitstream with FastLanes 1a inside the real 20M-row writer/reader path. The old
+  0.14% estimate was stale; current gains are 7-10% for column scans and 4.5% after
+  row materialization, still below the 15% format-change threshold.
 
 ## Decision criteria
 
@@ -67,8 +71,6 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
 
 ## Pending (third wave)
 
-- [ ] **e13-fastlanes** — the `fastlanes` crate's transposed layout vs e06's plain-scan
-  winner (e06 proved hand-rolled packing loses; the transposed layout is the open question).
 - [ ] **e14-predicate-cache-nonzonemap** — condition cache for predicates zone maps can't
   express (LIKE, IN-list, JSON path) — e09 showed no value where zone maps already work.
 - [ ] **e15-ovc** — offset-value coding in a loser-tree merge vs e12's packed-u128 winner.

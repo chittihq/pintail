@@ -1074,3 +1074,70 @@ paying decompression on incompressible blocks. Production adoption still needs
 the Linux reference-host run plus a `Compression::None` tag, old-segment read
 coverage, corruption fixtures, and a full engine benchmark. This experiment
 does not itself change PTSEG.
+
+## e28 — FastLanes in the current real PTSEG scan path
+
+The earlier e23 estimate assigned FastLanes roughly 13 ms out of a 9,055 ms
+five-column scan: 0.14%. That denominator predates the direct columnar path and
+its storage fixes, so this experiment measures the layout inside today's real
+writer and reader instead of carrying the estimate forward.
+
+The temporary variant replaced PTSEG's horizontal LSB-first bitstream with the
+FastLanes 1a layout for every complete 1,024-value chunk: 16 lanes, 64 slots per
+lane, and `width` interleaved virtual-register rows. A final partial chunk kept
+the horizontal representation. Framing, integer normalization, block choice,
+checksums, LZ4, file I/O, and typed column construction were unchanged. The
+variant passed all 81 `pintail-store` tests and strict clippy, then was removed;
+no format code from the experiment remains in the engine.
+
+The probe generated the same deterministic 20M-row table for each run, closed
+and reopened it, and scanned real PTSEG files. Each `columns` and `+rows` result
+is the median of three scans. A/B/A ordering brackets the variant with two
+horizontal runs to expose session-level drift.
+
+Run locally on Apple M2 Pro with:
+
+```bash
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo run --release -p pintail-store --example scan_probe -- --rows 20000000
+```
+
+### Column scan median
+
+| Projection | horizontal A1 | FastLanes B | horizontal A2 | A mean | B vs A mean |
+|---|---:|---:|---:|---:|---:|
+| amount | 831.8 ms | **745.3 ms** | 770.6 ms | 801.2 ms | **-7.0%** |
+| amount + day | 1006.9 ms | **905.0 ms** | 976.9 ms | 991.9 ms | **-8.8%** |
+| status dictionary control | 823.1 ms | 815.3 ms | 834.8 ms | 829.0 ms | -1.7% |
+| all five columns | 1809.8 ms | **1636.2 ms** | 1829.0 ms | 1819.4 ms | **-10.1%** |
+
+### Row-materializing scan median
+
+| Projection | horizontal A1 | FastLanes B | horizontal A2 | A mean | B vs A mean |
+|---|---:|---:|---:|---:|---:|
+| amount | 1470.3 ms | **1387.7 ms** | 1455.6 ms | 1463.0 ms | **-5.1%** |
+| amount + day | 1891.8 ms | **1800.9 ms** | 1860.9 ms | 1876.4 ms | **-4.0%** |
+| status dictionary control | 1945.9 ms | 1958.8 ms | 1936.7 ms | 1941.3 ms | +0.9% |
+| all five columns | 4361.2 ms | **4160.4 ms** | 4355.2 ms | 4358.2 ms | **-4.5%** |
+
+The two horizontal runs produced exactly 224,867,282 bytes across 60 segment
+files. FastLanes produced 223,981,934 bytes, 0.39% less, because LZ4 sees a
+different byte order even though the uncompressed bit count is identical.
+Load time fell from a 128.5 s A mean to 111.6 s (-13.2%); replacing the current
+bit-at-a-time packer contributes on the write side too.
+
+### Verdict
+
+**The old 0.14% estimate is rejected, but PTSEG v3 is not justified.** On the
+current direct path the layout saves 7-10% for columnar numeric scans and about
+4.5% once five columns become rows. The dictionary-only control is flat, which
+supports attributing the numeric gain to packing rather than a generally faster
+middle run. The format and migration cost are real, while every measured gain
+remains below the lab's 15% adoption threshold. PTSEG therefore keeps the
+simpler horizontal v2 layout.
+
+This is local evidence only; the Linux reference run was unavailable. That does
+not block the rejection: a sub-threshold win on one required target cannot make
+FastLanes the cross-target winner under the experiment rules. Revisit only if a
+fused predicate/aggregate kernel can consume the interleaved representation
+without materializing decoded values, because that is a different benefit than
+the format-only change measured here.
