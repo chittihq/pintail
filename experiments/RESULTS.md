@@ -1141,3 +1141,86 @@ FastLanes the cross-target winner under the experiment rules. Revisit only if a
 fused predicate/aggregate kernel can consume the interleaved representation
 without materializing decoded values, because that is a different benefit than
 the format-only change measured here.
+
+## e29 — metadata accelerators without captured demand
+
+Question: should Pintail persist grouped SMA sub-cubes or a cache of blocks
+covered by predicates that zone maps cannot express before a real workload asks
+for them?
+
+The throwaway harness used the engine's 16,384-row block size over 20M
+deterministic rows (1,221 blocks). Every competing path returned the same
+position-sensitive checksum. Timings are median-of-seven 32-query batches on
+Apple M2 Pro; batching keeps sub-millisecond metadata folds out of timer noise.
+The harness was deleted after recording the result.
+
+### Grouped SMA sub-cubes
+
+This is the strongest possible case: stable dense dictionary codes, implicit
+keys, only `COUNT` and `SUM`, and no predicate, join, DISTINCT, expression, NULL
+mapping, CDC overlay, or dictionary-identity work. One aggregate cell is two
+eight-byte values. Cubes were built per block and folded across blocks.
+
+| Fixed cube | cells/block | build once | metadata | full scan, 32 queries | cube fold, 32 queries | speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| status | 5 | 7.6 ms | 97,680 B | 129.638 ms | **2.303 ms** | **56.3x** |
+| region x status | 40 | 7.2 ms | 781,440 B | 146.659 ms | **2.826 ms** | **51.9x** |
+| status x payment x fulfillment | 80 | 9.2 ms | 1,562,880 B | 186.834 ms | **2.881 ms** | **64.9x** |
+
+All three together cost 2,442,000 bytes (0.122 B/row) and about 24 ms to build
+in this idealized in-memory model. The performance lever is real. The product
+problem is coverage: every persisted combination answers only its exact group
+dimensions and compatible aggregates, while metadata grows with the product of
+dimension cardinalities.
+
+The repository's ten-query production-shaped commerce workload contains zero
+queries directly answerable by these fixed cubes. Its grouped queries also
+carry tenant/date/deletion predicates, joins, DISTINCT, conditional aggregates,
+or derived time buckets. Adding all of those dimensions would no longer be the
+small low-cardinality structure measured here. Synthetic gate Q3/Q4 and novel
+N2 are foldable, but repeated settled executions already use the generation-
+keyed memo; their remaining niche is a recurring cold query on a continuously
+changing replica.
+
+### Predicate-covered-block cache
+
+The predicate was deliberately cheap: one precomputed flag byte per row. This
+is conservative for cache benefit because LIKE or JSON evaluation would make a
+skipped block more valuable. The cold path scans all blocks and builds one
+160-byte bitmap per normalized predicate; the warm path reevaluates only blocks
+that contained at least one match. It caches block coverage, never query rows or
+answers.
+
+| Match topology | blocks covered | full, 32 queries | cold build, 32 queries | warm, 32 queries | warm vs full |
+|---|---:|---:|---:|---:|---:|
+| scattered 0.1% | 1,221/1,221 (100%) | 46.474 ms | 46.335 ms | 48.854 ms | **5.1% slower** |
+| scattered 0.001% | 186/1,221 (15.2%) | 44.163 ms | 43.931 ms | **8.317 ms** | **5.31x** |
+| clustered 1% | 13/1,221 (1.1%) | 44.590 ms | 44.931 ms | **6.009 ms** | **7.42x** |
+| matches in 10% of blocks | 123/1,221 (10.1%) | 52.441 ms | 49.627 ms | **11.645 ms** | **4.50x** |
+
+Cold construction costs essentially one ordinary scan, so the second identical
+query amortizes it when coverage is sparse. Selectivity alone is insufficient:
+even 0.1% scattered matches touch every 16K-row block and make the cache a net
+loss. Block coverage is the admission statistic that matters.
+
+The production-shaped workload contains no LIKE or JSON-path filter. Its IN and
+status predicates select common values scattered through the data, the 100%-
+coverage case where this cache does not help. There is therefore no captured
+reuse-plus-sparse-coverage workload to optimize today.
+
+### Verdict
+
+**Defer both features, with measured re-entry gates.** Grouped sub-cubes become
+eligible when a captured recurring query misses its latency goal while the
+generation memo is routinely invalidated, and its exact low-cardinality group
+key plus aggregates are stable enough to name one bounded cube. Predicate-
+covered-block caching becomes eligible when instrumentation observes the same
+normalized non-zone-map predicate at least twice per immutable generation and
+its first scan covers no more than roughly 15% of blocks. Until then, both add
+persistent state, invalidation rules, and format surface for synthetic wins the
+current workload cannot consume.
+
+This is local evidence only, but no production path is selected: the experiment
+defines demand gates rather than an ISA-sensitive kernel winner. Persistent
+per-segment SMAs, zone-map pruning, and the generation-keyed memo remain the
+smaller mechanisms for the workloads Pintail currently has.

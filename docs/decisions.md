@@ -405,10 +405,13 @@ specialization, which won ordering on x86.
 
 ### Clustering determines pruning value
 
-e09 showed zone maps and predicate caches deliver 10-18x on clustered layouts
-and exactly nothing on scattered ones. Optional clustering/ordering keys move
-from a v1.1 convenience into the performance-critical path; the
-condition-cache niche narrows to predicates zone maps cannot express (e14).
+e09 showed zone maps deliver 10-18x on clustered layouts and exactly nothing on
+scattered ones. e29 isolated the remaining condition-cache niche: a repeated
+non-zone-map predicate was 4.5-7.4x faster when its first scan covered only
+1-15% of blocks, but 5% slower when scattered matches covered every block. The
+production-shaped workload contains no qualifying repeated predicate, so a
+cache stays deferred until observed reuse and block coverage satisfy that gate.
+Optional clustering/ordering keys remain the broader pruning lever.
 
 ### Window functions and recursive CTEs are in scope after all
 
