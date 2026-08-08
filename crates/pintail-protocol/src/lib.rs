@@ -5,8 +5,10 @@
 //! length, character set and decimal scale — are exactly the ones the
 //! available implementation fixed at constants.
 
+pub mod command;
 pub mod packet;
 pub mod types;
 
+pub use command::Command;
 pub use packet::{MAX_PAYLOAD, PacketReader, PacketWriter};
 pub use types::{Column, ColumnFlags, ColumnType, ErrorKind, StatusFlags};
