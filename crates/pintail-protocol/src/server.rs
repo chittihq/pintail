@@ -113,6 +113,17 @@ pub trait Handler: Send {
     async fn init_database(&mut self, database: &[u8]) -> Result<(), (ErrorKind, String)>;
 }
 
+/// What the client's first handshake packet turned out to be.
+#[derive(Clone, Debug)]
+pub enum InitialResponse {
+    /// A full `HandshakeResponse41`, ready to authenticate.
+    Full(HandshakeResponse),
+    /// A bare capability packet requesting TLS. The caller upgrades the
+    /// stream via [`Connection::into_parts`] and re-reads the full response
+    /// over the encrypted connection.
+    Ssl,
+}
+
 /// Drives one client connection.
 pub struct Connection<R, W> {
     reader: PacketReader<R>,
@@ -135,18 +146,18 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         self.capabilities
     }
 
-    /// Runs the opening handshake.
-    ///
-    /// Returns the client's response once authenticated. A rejected login is
-    /// reported to the client as access-denied before the error returns.
+    /// Sends `HandshakeV10`. The first of the three handshake phases; split
+    /// out from [`Self::handshake`] so a caller offering TLS can inspect the
+    /// client's answer before deciding whether to authenticate over this
+    /// stream or upgrade first.
     ///
     /// # Errors
-    /// Propagates I/O failures, and reports a truncated or failed login.
-    pub async fn handshake(
+    /// Propagates I/O failures.
+    pub async fn send_greeting(
         &mut self,
-        handler: &mut dyn Handler,
+        handler: &dyn Handler,
         scramble: [u8; SCRAMBLE_SIZE],
-    ) -> std::io::Result<HandshakeResponse> {
+    ) -> std::io::Result<()> {
         let greeting = Handshake {
             server_version: &handler.server_version(),
             connection_id: handler.connection_id(),
@@ -157,12 +168,26 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         };
         self.writer.set_sequence(0);
         self.writer.write_payload(&greeting.encode()).await?;
-        self.writer.flush().await?;
+        self.writer.flush().await
+    }
 
+    /// Reads the client's answer to the greeting.
+    ///
+    /// A client offering TLS sends a short capability-only packet, upgrades,
+    /// then repeats the full response encrypted; [`InitialResponse::Ssl`]
+    /// distinguishes that packet from a truncated one so the caller upgrades
+    /// rather than rejecting a well-formed request.
+    ///
+    /// # Errors
+    /// Propagates I/O failures, and reports a truncated or malformed packet.
+    pub async fn read_initial_response(&mut self) -> std::io::Result<InitialResponse> {
         let payload =
             self.reader.next_payload().await?.ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no response")
             })?;
+        if HandshakeResponse::is_ssl_request(&payload) {
+            return Ok(InitialResponse::Ssl);
+        }
         let response = HandshakeResponse::parse(&payload).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -170,8 +195,22 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             )
         })?;
         self.capabilities = response.capabilities;
+        Ok(InitialResponse::Full(response))
+    }
 
-        if handler.authenticate(&response, &scramble).await {
+    /// Verifies the client's response and writes the outcome. The final
+    /// handshake phase, run once over whichever stream — plaintext or
+    /// upgraded — carried the full response.
+    ///
+    /// # Errors
+    /// Propagates I/O failures, and reports a failed login.
+    pub async fn complete_authentication(
+        &mut self,
+        handler: &mut dyn Handler,
+        response: HandshakeResponse,
+        scramble: &[u8],
+    ) -> std::io::Result<HandshakeResponse> {
+        if handler.authenticate(&response, scramble).await {
             self.writer.set_sequence(self.reader.sequence());
             let ok = encode_ok(OkPacket::default(), "");
             self.writer.write_payload(&ok).await?;
@@ -186,6 +225,65 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                 std::io::ErrorKind::PermissionDenied,
                 "authentication failed",
             ))
+        }
+    }
+
+    /// Runs the opening handshake over one plaintext or already-upgraded
+    /// stream. Rejects an [`InitialResponse::Ssl`] packet, since honoring a
+    /// TLS request means upgrading between [`Self::read_initial_response`]
+    /// and this point — see [`Self::into_parts`] for that split.
+    ///
+    /// # Errors
+    /// Propagates I/O failures, and reports a truncated, TLS-requesting, or
+    /// failed login.
+    pub async fn handshake(
+        &mut self,
+        handler: &mut dyn Handler,
+        scramble: [u8; SCRAMBLE_SIZE],
+    ) -> std::io::Result<HandshakeResponse> {
+        self.send_greeting(handler, scramble).await?;
+        let response = match self.read_initial_response().await? {
+            InitialResponse::Full(response) => response,
+            InitialResponse::Ssl => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "client requested TLS; use read_initial_response and into_parts",
+                ));
+            }
+        };
+        self.complete_authentication(handler, response, &scramble)
+            .await
+    }
+
+    /// Reclaims the underlying reader and writer along with their sequence
+    /// ids, so a caller that saw [`InitialResponse::Ssl`] can wrap the
+    /// streams in TLS and continue the same handshake sequence on the
+    /// encrypted connection via [`Self::new_at_sequence`]. `MySQL` does not
+    /// reset numbering across the upgrade, so losing the sequence here
+    /// desynchronises the very next packet.
+    #[must_use]
+    pub fn into_parts(self) -> (R, W, u8, u8) {
+        let (reader, read_sequence) = self.reader.into_inner();
+        let (writer, write_sequence) = self.writer.into_inner();
+        (reader, writer, read_sequence, write_sequence)
+    }
+
+    /// Wraps a stream pair at specific sequence ids, the counterpart to
+    /// [`Self::into_parts`] after a mid-handshake TLS upgrade.
+    pub const fn new_at_sequence(
+        reader: R,
+        writer: W,
+        read_sequence: u8,
+        write_sequence: u8,
+    ) -> Self {
+        let mut reader = PacketReader::new(reader);
+        reader.set_sequence(read_sequence);
+        let mut writer = PacketWriter::new(writer);
+        writer.set_sequence(write_sequence);
+        Self {
+            reader,
+            writer,
+            capabilities: CapabilityFlags::empty(),
         }
     }
 
@@ -371,7 +469,10 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
 
 #[cfg(test)]
 mod tests {
-    use super::{Connection, Handler, PreparedStatement, Response, ResultSet, server_capabilities};
+    use super::{
+        Connection, Handler, InitialResponse, PreparedStatement, Response, ResultSet,
+        server_capabilities,
+    };
     use crate::handshake::{CapabilityFlags, HandshakeResponse, SCRAMBLE_SIZE};
     use crate::packet::PacketReader;
     use crate::resultset::OkPacket;
@@ -547,5 +648,90 @@ mod tests {
         reader.next_payload().await.expect("io").expect("auth ok");
         let error = reader.next_payload().await.expect("io").expect("error");
         assert_eq!(error[0], 0xff);
+    }
+
+    fn ssl_request(capabilities: CapabilityFlags) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&capabilities.bits().to_le_bytes());
+        payload.extend_from_slice(&16_777_216_u32.to_le_bytes());
+        payload.push(255);
+        payload.extend_from_slice(&[0_u8; 23]);
+        payload
+    }
+
+    #[tokio::test]
+    async fn a_bare_ssl_request_is_recognised_before_a_full_response_is_expected() {
+        let input = packet(
+            1,
+            &ssl_request(CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_SSL),
+        );
+        let mut output = Vec::new();
+        let mut connection = Connection::new(input.as_slice(), &mut output);
+        let handler = Fixture {
+            accept: true,
+            last_query: Vec::new(),
+        };
+        connection
+            .send_greeting(&handler, [0_u8; SCRAMBLE_SIZE])
+            .await
+            .expect("greeting");
+        assert!(matches!(
+            connection.read_initial_response().await.expect("read"),
+            InitialResponse::Ssl
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_tls_upgrade_preserves_sequence_numbers_across_the_stream_swap() {
+        // The client's SSL request is sequence 1; after upgrading, its full
+        // response continues at sequence 2. Losing that number here would
+        // desynchronise every packet the encrypted side sends afterward.
+        let ssl_packet = packet(
+            1,
+            &ssl_request(CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_SSL),
+        );
+        let mut output = Vec::new();
+        let mut connection = Connection::new(ssl_packet.as_slice(), &mut output);
+        let mut handler = Fixture {
+            accept: true,
+            last_query: Vec::new(),
+        };
+        connection
+            .send_greeting(&handler, [0_u8; SCRAMBLE_SIZE])
+            .await
+            .expect("greeting");
+        assert!(matches!(
+            connection.read_initial_response().await.expect("read"),
+            InitialResponse::Ssl
+        ));
+
+        let (_reader, writer, read_sequence, write_sequence) = connection.into_parts();
+        assert_eq!(read_sequence, 2, "next read continues from the SSL request");
+
+        // Simulate the encrypted stream by feeding the deferred full
+        // response as if it arrived over TLS, framed at the preserved
+        // sequence.
+        let upgraded_input = packet(
+            read_sequence,
+            &client_response(CapabilityFlags::CLIENT_PROTOCOL_41),
+        );
+        let mut upgraded = Connection::new_at_sequence(
+            upgraded_input.as_slice(),
+            writer,
+            read_sequence,
+            write_sequence,
+        );
+        let response = upgraded
+            .read_initial_response()
+            .await
+            .expect("read upgraded response");
+        let InitialResponse::Full(response) = response else {
+            panic!("expected a full response over the upgraded stream");
+        };
+        let response = upgraded
+            .complete_authentication(&mut handler, response, &[0_u8; SCRAMBLE_SIZE])
+            .await
+            .expect("authenticate");
+        assert_eq!(response.username, b"analytics");
     }
 }
