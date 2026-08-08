@@ -310,8 +310,7 @@ worth refusing.
   not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
-- Explicit `KILL QUERY` is unsupported; clients cancel active work by closing
-  the connection or by setting `max_execution_time` before the statement.
+- Explicit `KILL QUERY` is unsupported.
 - DBeaver and Metabase application-level smokes are not automated in CI.
 ## Operations and backup
 

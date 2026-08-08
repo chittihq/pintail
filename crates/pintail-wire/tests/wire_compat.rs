@@ -153,6 +153,7 @@ fn disconnecting_clients_cancel_active_query_execution() {
     let data = tempfile::tempdir().expect("wire data directory");
     let metadata_path = data.path().join("pintail-meta.db");
     seed_replica(data.path(), &metadata_path);
+    append_cancellation_rows(data.path());
 
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -202,19 +203,14 @@ fn disconnecting_clients_cancel_active_query_execution() {
             > = if prepared {
                 let statement = connection
                     .prep(
-                        "WITH RECURSIVE r (n) AS (\
-                         SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < ?) \
-                         SELECT MAX(n) FROM r",
+                        "SELECT name, COUNT(*) FROM events \
+                         WHERE id <= ? GROUP BY name",
                     )
                     .await
                     .expect("prepare cancellation workload");
-                Box::pin(connection.exec_drop(statement, (1_000_000_u64,)))
+                Box::pin(connection.exec_drop(statement, (20_002_u64,)))
             } else {
-                Box::pin(connection.query_drop(
-                    "WITH RECURSIVE r (n) AS (\
-                     SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 1000000) \
-                     SELECT MAX(n) FROM r",
-                ))
+                Box::pin(connection.query_drop("SELECT name, COUNT(*) FROM events GROUP BY name"))
             };
             assert!(
                 tokio::time::timeout(Duration::from_millis(250), query)
@@ -243,6 +239,27 @@ fn disconnecting_clients_cancel_active_query_execution() {
         .join()
         .expect("wire server thread")
         .expect("wire server");
+}
+
+fn append_cancellation_rows(data_dir: &std::path::Path) {
+    let root = data_dir.join("databases").join("db-1").join("tables");
+    let mut store = TableStore::open(
+        pintail_wire::table_directory(&root, "events"),
+        source_table().table_schema().expect("events schema"),
+        StoreOptions::default(),
+    )
+    .expect("events store");
+    let rows = (3_u64..=20_002)
+        .map(|id| {
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("event key"),
+                vec![Value::UInt64(id), Value::Utf8(format!("cancel-{id:05}"))],
+                id,
+                false,
+            )
+        })
+        .collect();
+    store.ingest(rows).expect("cancellation rows");
 }
 
 #[tokio::test(flavor = "multi_thread")]

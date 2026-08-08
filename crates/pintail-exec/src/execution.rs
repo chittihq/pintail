@@ -941,6 +941,18 @@ impl MemoryTracker {
         }
     }
 
+    /// Builds an accounting-independent worker tracker that retains the
+    /// parent query's interruption state.
+    fn unbounded_worker(&self) -> Self {
+        Self {
+            limit: usize::MAX,
+            deadline: self.deadline,
+            cancellation: self.cancellation.clone(),
+            used: std::sync::atomic::AtomicUsize::new(0),
+            spill: self.spill.clone(),
+        }
+    }
+
     /// Returns the hard byte limit.
     #[must_use]
     pub const fn limit(&self) -> usize {
@@ -5966,8 +5978,8 @@ fn build_buffered_hash_aggregate(
             .par_iter()
             .map(|batch| {
                 direct_columns.map_or_else(
-                    || build_local_expression_groups(batch, group_by, aggregates),
-                    |columns| build_local_direct_groups(batch, columns, aggregates),
+                    || build_local_expression_groups(batch, group_by, aggregates, memory),
+                    |columns| build_local_direct_groups(batch, columns, aggregates, memory),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -6728,6 +6740,7 @@ fn build_fused_inner_join_aggregate(
                     &join.build,
                     dense.as_ref(),
                     &plan,
+                    memory,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -6789,6 +6802,7 @@ fn build_local_fused_join_groups(
     build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
     dense: Option<&DenseJoinTable<'_>>,
     plan: &JoinGroupPlan,
+    parent_memory: &MemoryTracker,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     // Groups are fixed by the build side: start with the resolved set and
     // index into it, so the probe loop never hashes or compares group
@@ -6802,7 +6816,7 @@ fn build_local_fused_join_groups(
         })
         .collect::<Vec<_>>();
     let mut touched = vec![false; groups.len()];
-    let memory = MemoryTracker::new(usize::MAX);
+    let memory = parent_memory.unbounded_worker();
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
@@ -6818,7 +6832,10 @@ fn build_local_fused_join_groups(
                 )
             })
     });
-    for row in batch.selection().selected_rows() {
+    for (offset, row) in batch.selection().selected_rows().enumerate() {
+        if offset % 1024 == 0 {
+            memory.check_interruption()?;
+        }
         let matches = if let (Some((min, table)), Some((typed, validity))) = (dense, left_typed) {
             if !validity.is_valid(row) {
                 continue;
@@ -6914,6 +6931,7 @@ fn build_local_dictionary_groups(
     batch: &RecordBatch,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
+    parent_memory: &MemoryTracker,
 ) -> Result<Option<HashMap<Vec<Value>, AggregateGroup>>, ExecError> {
     struct DictAggregate {
         function: AggregateFunction,
@@ -6921,6 +6939,7 @@ fn build_local_dictionary_groups(
     }
     const MAX_CODES: usize = 256;
     const MAX_SLOTS: usize = 4096;
+    let memory = parent_memory.unbounded_worker();
     if group_columns.is_empty() || group_columns.len() > 2 {
         return Ok(None);
     }
@@ -6985,7 +7004,10 @@ fn build_local_dictionary_groups(
     let composite_capacity = MAX_CODES.pow(u32::try_from(key_columns.len()).expect("<= 2 columns"));
     let mut slot_table = vec![u16::MAX; composite_capacity];
     let mut slot_rows: Vec<usize> = Vec::new();
-    for row in batch.selection().selected_rows() {
+    for (offset, row) in batch.selection().selected_rows().enumerate() {
+        if offset % 1024 == 0 {
+            memory.check_interruption()?;
+        }
         let mut composite = 0_usize;
         for ((_, keys, validity), dict) in key_columns.iter().zip(column_dicts.iter_mut()) {
             let views = keys.views();
@@ -7038,7 +7060,10 @@ fn build_local_dictionary_groups(
                 let mut counts = vec![0_u64; code_count];
                 match dict_aggregate.column {
                     None => {
-                        for &code in &codes_buffer {
+                        for (offset, &code) in codes_buffer.iter().enumerate() {
+                            if offset % 1024 == 0 {
+                                memory.check_interruption()?;
+                            }
                             counts[usize::from(code)] += 1;
                         }
                     }
@@ -7047,7 +7072,12 @@ fn build_local_dictionary_groups(
                             .column(column)
                             .and_then(ColumnVector::typed)
                             .map(|(_, validity)| validity);
-                        for (&row, &code) in rows_buffer.iter().zip(&codes_buffer) {
+                        for (offset, (&row, &code)) in
+                            rows_buffer.iter().zip(&codes_buffer).enumerate()
+                        {
+                            if offset % 1024 == 0 {
+                                memory.check_interruption()?;
+                            }
                             let non_null = match validity {
                                 Some(validity) => validity.is_valid(row),
                                 None => !matches!(
@@ -7073,7 +7103,10 @@ fn build_local_dictionary_groups(
                     .expect("validated typed input");
                 let mut sums = vec![0.0_f64; code_count];
                 let mut counts = vec![0_u64; code_count];
-                for (&row, &code) in rows_buffer.iter().zip(&codes_buffer) {
+                for (offset, (&row, &code)) in rows_buffer.iter().zip(&codes_buffer).enumerate() {
+                    if offset % 1024 == 0 {
+                        memory.check_interruption()?;
+                    }
                     if validity.is_valid(row)
                         && let Some(number) = typed.number_at(row)
                     {
@@ -7105,7 +7138,6 @@ fn build_local_dictionary_groups(
     // Finalize: original values from each slot's representative row,
     // normalized map keys — the general local builder's exact contract.
     let mut groups: HashMap<Vec<Value>, AggregateGroup> = HashMap::with_capacity(code_count * 2);
-    let memory = MemoryTracker::new(usize::MAX);
     for (slot, &row) in slot_rows.iter().enumerate() {
         let mut values = Vec::with_capacity(key_columns.len());
         for (vector, _, _) in &key_columns {
@@ -7149,15 +7181,21 @@ fn build_local_direct_groups(
     batch: &RecordBatch,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
+    parent_memory: &MemoryTracker,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
-    if let Some(groups) = build_local_dictionary_groups(batch, group_columns, aggregates)? {
+    if let Some(groups) =
+        build_local_dictionary_groups(batch, group_columns, aggregates, parent_memory)?
+    {
         return Ok(groups);
     }
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
-    let memory = MemoryTracker::new(usize::MAX);
+    let memory = parent_memory.unbounded_worker();
     let batch_bytes = batch.estimated_bytes();
-    for row in batch.selection().selected_rows() {
+    for (offset, row) in batch.selection().selected_rows().enumerate() {
+        if offset % 1024 == 0 {
+            memory.check_interruption()?;
+        }
         let raw_hash = direct_group_hash(batch, row, group_columns)?;
         let existing = raw_index
             .get(&raw_hash)
@@ -7214,11 +7252,15 @@ fn build_local_expression_groups(
     batch: &RecordBatch,
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
+    parent_memory: &MemoryTracker,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
-    let memory = MemoryTracker::new(usize::MAX);
+    let memory = parent_memory.unbounded_worker();
     let batch_bytes = batch.estimated_bytes();
-    for row in batch.selection().selected_rows() {
+    for (offset, row) in batch.selection().selected_rows().enumerate() {
+        if offset % 1024 == 0 {
+            memory.check_interruption()?;
+        }
         let values = group_by
             .iter()
             .map(|expression| expression.evaluate(batch, row))
@@ -11665,6 +11707,18 @@ mod tests {
         mem::size_of,
         sync::Mutex,
     };
+
+    #[test]
+    fn parallel_worker_trackers_inherit_query_cancellation() {
+        let cancellation = super::ExecutionCancellation::new();
+        let parent = super::with_execution_cancellation(cancellation.clone(), || {
+            super::MemoryTracker::new(usize::MAX)
+        });
+        cancellation.cancel();
+
+        let (outcome, ()) = rayon::join(|| parent.unbounded_worker().check_interruption(), || ());
+        assert!(matches!(outcome, Err(super::ExecError::QueryCancelled)));
+    }
 
     fn drain_partitions(runs: &mut [super::GraceRun]) -> Vec<u64> {
         let mut ids = Vec::new();
