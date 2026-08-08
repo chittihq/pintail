@@ -160,9 +160,9 @@ borrowed, with sources:
 - Date arithmetic is Howard Hinnant's
   [civil-date algorithms](https://howardhinnant.github.io/date_algorithms.html).
 - The MySQL frontend stands on
-  [sqlparser-rs](https://github.com/apache/datafusion-sqlparser-rs) and
-  [opensrv](https://github.com/databendlabs/opensrv), and the engine leans
-  on rayon, zstd, lz4_flex, and xxHash daily.
+  [sqlparser-rs](https://github.com/apache/datafusion-sqlparser-rs) for SQL
+  and a from-scratch `pintail-protocol` crate for the wire protocol itself;
+  the engine leans on rayon, zstd, lz4_flex, and xxHash daily.
 
 ## License
 
