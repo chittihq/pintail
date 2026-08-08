@@ -62,6 +62,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   statement deadline. Execution and subquery pulls return MySQL interruption
   error 1317 when it expires, and pool reset/change-user restore the disabled
   default.
+- Dropping a MySQL wire connection now cancels its active text, prepare-preview,
+  or prepared execution cooperatively across scans, joins, aggregates, windows,
+  recursive CTEs, and nested subqueries instead of retaining server capacity
+  until the abandoned query finishes.
 - Recursive CTE execution has a session-scoped `cte_max_recursion_depth`
   guard with a safe default and bounded configurable range; attempts to
   disable the guard are rejected.

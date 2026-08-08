@@ -604,6 +604,10 @@ where
             let Some((seq, packet)) = packet else {
                 break;
             };
+            // Command parsing borrows the packet for the duration of the
+            // callback. Own those bytes so the reader is independently
+            // available to observe a disconnect while that callback runs.
+            let packet = packet.into_owned();
             self.writer.set_seq(seq + 1);
             let res = commands::parse(&packet);
             match res {
@@ -636,14 +640,24 @@ where
                                         w.finish().await?;
                                     }
                                     _ => {
-                                        self.shim
-                                            .on_query(
+                                        let query = self.shim.on_query(
                                                 ::std::str::from_utf8(q).map_err(|e| {
                                                     io::Error::new(io::ErrorKind::InvalidData, e)
                                                 })?,
                                                 w,
-                                            )
-                                            .await?;
+                                            );
+                                        tokio::pin!(query);
+                                        let disconnected = tokio::select! {
+                                            biased;
+                                            result = &mut query => {
+                                                result?;
+                                                false
+                                            }
+                                            _ = self.reader.next_async() => true,
+                                        };
+                                        if disconnected {
+                                            return Ok(());
+                                        }
                                     }
                                 }
                             } else if !self.process_use_statement_on_query
@@ -663,14 +677,24 @@ where
                                     false,
                                     self.client_capabilities,
                                 );
-                                self.shim
-                                    .on_query(
+                                let query = self.shim.on_query(
                                         ::std::str::from_utf8(q).map_err(|e| {
                                             io::Error::new(io::ErrorKind::InvalidData, e)
                                         })?,
                                         w,
-                                    )
-                                    .await?;
+                                    );
+                                tokio::pin!(query);
+                                let disconnected = tokio::select! {
+                                    biased;
+                                    result = &mut query => {
+                                        result?;
+                                        false
+                                    }
+                                    _ = self.reader.next_async() => true,
+                                };
+                                if disconnected {
+                                    return Ok(());
+                                }
                             }
                         }
                         Command::Prepare(q) => {
@@ -680,14 +704,24 @@ where
                                 client_capabilities: self.client_capabilities,
                             };
 
-                            self.shim
-                                .on_prepare(
+                            let prepare = self.shim.on_prepare(
                                     ::std::str::from_utf8(q).map_err(|e| {
                                         io::Error::new(io::ErrorKind::InvalidData, e)
                                     })?,
                                     w,
-                                )
-                                .await?;
+                                );
+                            tokio::pin!(prepare);
+                            let disconnected = tokio::select! {
+                                biased;
+                                result = &mut prepare => {
+                                    result?;
+                                    false
+                                }
+                                _ = self.reader.next_async() => true,
+                            };
+                            if disconnected {
+                                return Ok(());
+                            }
                         }
                         Command::Execute { stmt, params } => {
                             let Some(state) = stmts.get_mut(&stmt) else {
@@ -707,7 +741,19 @@ where
                                     true,
                                     self.client_capabilities,
                                 );
-                                self.shim.on_execute(stmt, params, w).await?;
+                                let execute = self.shim.on_execute(stmt, params, w);
+                                tokio::pin!(execute);
+                                let disconnected = tokio::select! {
+                                    biased;
+                                    result = &mut execute => {
+                                        result?;
+                                        false
+                                    }
+                                    _ = self.reader.next_async() => true,
+                                };
+                                if disconnected {
+                                    return Ok(());
+                                }
                             }
                             state.long_data.clear();
                         }

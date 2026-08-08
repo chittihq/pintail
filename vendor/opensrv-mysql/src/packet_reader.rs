@@ -219,6 +219,14 @@ impl<'a> Packet<'a> {
             self.0 = &[];
         }
     }
+
+    pub(crate) fn into_owned(self) -> Vec<u8> {
+        if self.1.is_empty() {
+            self.0.to_vec()
+        } else {
+            self.1
+        }
+    }
 }
 
 impl<'a> AsRef<[u8]> for Packet<'a> {

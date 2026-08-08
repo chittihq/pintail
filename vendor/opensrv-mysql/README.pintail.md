@@ -9,7 +9,8 @@ Pintail's patch adds `column_length`, `character_set`, and `decimals` to
 `Column` and writes those values into result metadata. It also parses
 `COM_RESET_CONNECTION`, `COM_STMT_RESET`, and `COM_CHANGE_USER`, exposes shim
 hooks for session reset and reauthentication, supports an optional connection
-idle timeout, and turns malformed command packets into protocol errors rather
+idle timeout, observes peer disconnects while query/prepare/execute callbacks
+are active, and turns malformed command packets into protocol errors rather
 than dropping the connection silently. The original Apache-2.0 license is
 retained in `LICENSE`.
 

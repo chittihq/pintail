@@ -4,6 +4,10 @@ use std::{
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
     mem::{size_of, size_of_val},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
     time::Instant,
 };
 
@@ -37,6 +41,55 @@ thread_local! {
         const { std::cell::Cell::new(0) };
     static SESSION_CTE_MAX_RECURSION_DEPTH: std::cell::Cell<u64> =
         const { std::cell::Cell::new(DEFAULT_CTE_MAX_RECURSION_DEPTH) };
+    static EXECUTION_CANCELLATION: std::cell::RefCell<Option<ExecutionCancellation>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Cooperative cancellation shared by one query and every nested/parallel
+/// executor path it opens.
+#[derive(Clone, Debug, Default)]
+pub struct ExecutionCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ExecutionCancellation {
+    /// Creates a live cancellation handle.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests prompt cooperative cancellation.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, AtomicOrdering::Release);
+    }
+
+    /// Returns whether cancellation has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(AtomicOrdering::Acquire)
+    }
+}
+
+/// Runs synchronous query setup/execution with a cancellation handle that is
+/// captured by every [`MemoryTracker`] opened in the scope.
+pub fn with_execution_cancellation<T>(
+    cancellation: ExecutionCancellation,
+    operation: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<ExecutionCancellation>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EXECUTION_CANCELLATION.with(|current| {
+                current.replace(self.0.take());
+            });
+        }
+    }
+
+    let previous = EXECUTION_CANCELLATION.with(|current| current.replace(Some(cancellation)));
+    let _restore = Restore(previous);
+    operation()
 }
 
 /// Installs the current connection's `group_concat_max_len` on this
@@ -840,6 +893,7 @@ pub trait ScanProvider {
 pub struct MemoryTracker {
     limit: usize,
     deadline: Option<Instant>,
+    cancellation: Option<ExecutionCancellation>,
     /// Atomic so parallel operators can reserve from worker threads through
     /// a shared `&MemoryTracker` (experiments/RESULTS.md e02: thread-local
     /// partial state + merge is the adopted parallel-aggregation shape).
@@ -852,6 +906,7 @@ impl Clone for MemoryTracker {
         Self {
             limit: self.limit,
             deadline: self.deadline,
+            cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(self.used()),
             spill: self.spill.clone(),
         }
@@ -880,6 +935,7 @@ impl MemoryTracker {
         Self {
             limit,
             deadline,
+            cancellation: EXECUTION_CANCELLATION.with(|current| current.borrow().clone()),
             used: std::sync::atomic::AtomicUsize::new(0),
             spill: spill::QuerySpill::new(),
         }
@@ -920,7 +976,7 @@ impl MemoryTracker {
     /// Returns [`ExecError::MemoryLimitExceeded`] before exceeding the query
     /// limit.
     pub fn reserve(&self, bytes: usize) -> Result<(), ExecError> {
-        self.check_deadline()?;
+        self.check_interruption()?;
         let outcome = self.used.fetch_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
@@ -949,7 +1005,7 @@ impl MemoryTracker {
     }
 
     fn ensure_transient(&self, bytes: usize) -> Result<(), ExecError> {
-        self.check_deadline()?;
+        self.check_interruption()?;
         let used = self.used();
         if used.saturating_add(bytes) > self.limit {
             return Err(ExecError::MemoryLimitExceeded {
@@ -961,8 +1017,14 @@ impl MemoryTracker {
         Ok(())
     }
 
-    fn check_deadline(&self) -> Result<(), ExecError> {
+    fn check_interruption(&self) -> Result<(), ExecError> {
         if self
+            .cancellation
+            .as_ref()
+            .is_some_and(ExecutionCancellation::is_cancelled)
+        {
+            Err(ExecError::QueryCancelled)
+        } else if self
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
@@ -1134,7 +1196,7 @@ impl Execution {
         )?;
         let output_fields = plan.output_fields();
         let memory = MemoryTracker::with_deadline(memory_limit, deadline);
-        memory.check_deadline()?;
+        memory.check_interruption()?;
         memory.reserve(subquery_bytes.saturating_add(plan_regex_memory_upper_bound(&plan)))?;
         let (root, _) = build_operator(plan, provider, &memory)?;
         Ok(Self {
@@ -1714,7 +1776,7 @@ fn resolve_dependent_expr_subqueries(
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
-    memory.check_deadline()?;
+    memory.check_interruption()?;
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) => {
             let mut query = (**query).clone();
@@ -2054,7 +2116,7 @@ impl PullOperator {
 
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, memory: &MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
-        memory.check_deadline()?;
+        memory.check_interruption()?;
         match self {
             Self::Empty => Ok(None),
             Self::OneRow { emitted } => {
@@ -9439,7 +9501,7 @@ fn execute_nested_loop_join(
         .collect::<Vec<_>>();
     let mut output = Vec::new();
     for left in left_rows {
-        memory.check_deadline()?;
+        memory.check_interruption()?;
         let mut matches = 0_usize;
         for right in right_rows {
             memory.ensure_transient(
@@ -10421,7 +10483,7 @@ impl SetOpRows {
         memory: &MemoryTracker,
     ) -> Result<Option<(Vec<Value>, u64)>, ExecError> {
         loop {
-            memory.check_deadline()?;
+            memory.check_interruption()?;
             self.left.ensure_head()?;
             self.right.ensure_head()?;
             let ordering = match (self.left.head.as_ref(), self.right.head.as_ref()) {
@@ -11451,6 +11513,8 @@ pub enum ExecError {
     },
     /// The configured statement execution deadline elapsed.
     QueryTimedOut,
+    /// The client or caller abandoned the running query.
+    QueryCancelled,
     /// A source-specific failure.
     Source(String),
     /// The scan provider was configured twice for one stable table.
@@ -11520,6 +11584,7 @@ impl fmt::Display for ExecError {
             ),
             Self::QueryTimedOut => formatter
                 .write_str("query execution was interrupted after max_execution_time elapsed"),
+            Self::QueryCancelled => formatter.write_str("query execution was cancelled"),
             Self::InvalidPhysicalPlan(message) => {
                 write!(formatter, "invalid physical plan: {message}")
             }

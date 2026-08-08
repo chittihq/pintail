@@ -14,8 +14,9 @@ pub use batch::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SelectedRows, SelectionMask,
 };
 pub use execution::{
-    BatchStream, DEFAULT_CTE_MAX_RECURSION_DEPTH, ExecError, Execution, MAX_CROSS_JOIN_ROWS,
-    MemoryTracker, OutputField, PhysicalPlan, PhysicalPlanner, ScanProvider,
+    BatchStream, DEFAULT_CTE_MAX_RECURSION_DEPTH, ExecError, Execution, ExecutionCancellation,
+    MAX_CROSS_JOIN_ROWS, MemoryTracker, OutputField, PhysicalPlan, PhysicalPlanner, ScanProvider,
+    with_execution_cancellation,
 };
 pub use execution::{
     set_session_cte_max_recursion_depth, set_session_group_concat_max_len,

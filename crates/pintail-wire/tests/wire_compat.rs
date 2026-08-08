@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, hash_map::DefaultHasher};
+use std::future::Future;
 use std::hash::{Hash as _, Hasher as _};
 use std::process::Command;
 use std::time::Duration;
@@ -144,6 +145,103 @@ async fn wire_idle_timeout_closes_inactive_authenticated_connections() {
     server
         .await
         .expect("wire server task")
+        .expect("wire server");
+}
+
+#[test]
+fn disconnecting_clients_cancel_active_query_execution() {
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_replica(data.path(), &metadata_path);
+
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server_metadata = metadata_path.clone();
+    let server = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(2)
+            .enable_all()
+            .build()
+            .expect("server runtime")
+            .block_on(async move {
+                let listener = TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("wire listener");
+                ready_tx
+                    .send(listener.local_addr().expect("wire address"))
+                    .expect("publish wire address");
+                pintail_wire::serve_until(listener, data_dir, server_metadata, async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+            })
+    });
+    let address = ready_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("wire server start");
+    let dsn = format!("mysql://analytics:pk_wire_secret@{address}/analytics");
+    let clients = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("client runtime");
+
+    clients.block_on(async {
+        let abandon = |dsn: String, prepared: bool| async move {
+            let mut connection = mysql_async::Conn::new(Opts::from_url(&dsn).expect("wire DSN"))
+                .await
+                .expect("authenticated wire client");
+            connection
+                .query_drop("SET SESSION cte_max_recursion_depth = 1000000")
+                .await
+                .expect("raise recursion guard");
+            let query: std::pin::Pin<
+                Box<dyn Future<Output = Result<(), mysql_async::Error>> + Send + '_>,
+            > = if prepared {
+                let statement = connection
+                    .prep(
+                        "WITH RECURSIVE r (n) AS (\
+                         SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < ?) \
+                         SELECT MAX(n) FROM r",
+                    )
+                    .await
+                    .expect("prepare cancellation workload");
+                Box::pin(connection.exec_drop(statement, (1_000_000_u64,)))
+            } else {
+                Box::pin(connection.query_drop(
+                    "WITH RECURSIVE r (n) AS (\
+                     SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 1000000) \
+                     SELECT MAX(n) FROM r",
+                ))
+            };
+            assert!(
+                tokio::time::timeout(Duration::from_millis(250), query)
+                    .await
+                    .is_err(),
+                "cancellation workload must still be active before disconnect"
+            );
+            drop(connection);
+        };
+        tokio::join!(abandon(dsn.clone(), false), abandon(dsn.clone(), true));
+
+        let quick_query = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut connection =
+                mysql_async::Conn::new(Opts::from_url(&dsn).expect("wire DSN")).await?;
+            connection.query_first::<u64, _>("SELECT 1").await
+        })
+        .await;
+        assert!(
+            matches!(quick_query, Ok(Ok(Some(1)))),
+            "abandoned execution must release server capacity promptly: {quick_query:?}"
+        );
+    });
+
+    let _ = shutdown_tx.send(());
+    server
+        .join()
+        .expect("wire server thread")
         .expect("wire server");
 }
 

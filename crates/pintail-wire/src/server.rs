@@ -285,6 +285,26 @@ struct Backend {
     salt: [u8; 20],
 }
 
+struct CancelExecutionOnDrop(Option<pintail_exec::ExecutionCancellation>);
+
+impl CancelExecutionOnDrop {
+    fn new(cancellation: pintail_exec::ExecutionCancellation) -> Self {
+        Self(Some(cancellation))
+    }
+
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CancelExecutionOnDrop {
+    fn drop(&mut self) {
+        if let Some(cancellation) = &self.0 {
+            cancellation.cancel();
+        }
+    }
+}
+
 impl Backend {
     fn new(data_dir: &Path, metadata_path: &Path, query_memory_limit: usize) -> Self {
         Self {
@@ -373,7 +393,7 @@ impl Backend {
         Ok(())
     }
 
-    fn execute(&self, sql: &str) -> Result<QueryOutput, QueryError> {
+    async fn execute(&self, sql: &str) -> Result<QueryOutput, QueryError> {
         let authenticated = self
             .authenticated()
             .map_err(|error| QueryError::Internal(error.to_string()))?;
@@ -382,8 +402,22 @@ impl Backend {
             .lock()
             .map_err(|error| QueryError::Internal(error.to_string()))?
             .clone();
-        compatibility_query(sql, &authenticated.database_name, &session).map_or_else(
-            || {
+        if let Some(output) = compatibility_query(sql, &authenticated.database_name, &session) {
+            return Ok(output);
+        }
+
+        let deadline = (session.max_execution_time_ms > 0)
+            .then(|| {
+                Instant::now().checked_add(Duration::from_millis(session.max_execution_time_ms))
+            })
+            .flatten();
+        let cancellation = pintail_exec::ExecutionCancellation::new();
+        let mut cancel_on_drop = CancelExecutionOnDrop::new(cancellation.clone());
+        let engine = self.engine.clone();
+        let database_id = authenticated.database_id;
+        let sql = sql.to_owned();
+        let execution = tokio::task::spawn_blocking(move || {
+            pintail_exec::with_execution_cancellation(cancellation, || {
                 // The session zone shifts statement-pinned time functions;
                 // optimization runs on this thread, so install-and-restore
                 // brackets exactly one statement.
@@ -392,29 +426,22 @@ impl Backend {
                 pintail_exec::set_session_cte_max_recursion_depth(Some(
                     session.cte_max_recursion_depth,
                 ));
-                let deadline = (session.max_execution_time_ms > 0)
-                    .then(|| {
-                        Instant::now()
-                            .checked_add(Duration::from_millis(session.max_execution_time_ms))
-                    })
-                    .flatten();
-                let result = self.engine.execute_with_deadline(
-                    &authenticated.database_id,
-                    sql,
-                    DEFAULT_MAX_ROWS,
-                    deadline,
-                );
+                let result =
+                    engine.execute_with_deadline(&database_id, &sql, DEFAULT_MAX_ROWS, deadline);
                 let warnings = pintail_exec::take_session_group_concat_warnings();
                 pintail_exec::set_session_group_concat_max_len(None);
                 pintail_exec::set_session_cte_max_recursion_depth(None);
                 let _ = pintail_exec::set_session_time_zone(None);
-                if let Ok(mut current) = self.session.lock() {
-                    current.group_concat_warnings = warnings;
-                }
-                result
-            },
-            Ok,
-        )
+                (result, warnings)
+            })
+        })
+        .await
+        .map_err(|error| QueryError::Internal(format!("query worker failed: {error}")))?;
+        cancel_on_drop.disarm();
+        if let Ok(mut current) = self.session.lock() {
+            current.group_concat_warnings = execution.1;
+        }
+        execution.0
     }
 
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
@@ -577,7 +604,7 @@ where
         let parameters = placeholder_count(query);
         let preview = substitute_parameters(query, &placeholder_preview_literals(query))
             .map_err(io_invalid)?;
-        let output = match self.execute(&preview) {
+        let output = match self.execute(&preview).await {
             Ok(output) => output,
             Err(error) => {
                 return info
@@ -663,7 +690,7 @@ where
             )
         };
         write_query_result(
-            self.execute(&query),
+            self.execute(&query).await,
             results,
             group_concat_max_len,
             &charset,
@@ -727,7 +754,13 @@ where
                 session.charset_results.clone(),
             )
         };
-        write_query_result(self.execute(query), results, group_concat_max_len, &charset).await
+        write_query_result(
+            self.execute(query).await,
+            results,
+            group_concat_max_len,
+            &charset,
+        )
+        .await
     }
 
     async fn on_init<'a>(

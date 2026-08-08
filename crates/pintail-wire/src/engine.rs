@@ -469,14 +469,16 @@ fn collect_rows(
 
 fn query_execution_error(error: ExecError) -> QueryError {
     match error {
-        ExecError::QueryTimedOut => QueryError::Interrupted,
+        ExecError::QueryTimedOut | ExecError::QueryCancelled => QueryError::Interrupted,
         error => QueryError::Internal(error.to_string()),
     }
 }
 
 fn query_explain_error(error: ExplainError) -> QueryError {
     match error {
-        ExplainError::Exec(ExecError::QueryTimedOut) => QueryError::Interrupted,
+        ExplainError::Exec(ExecError::QueryTimedOut | ExecError::QueryCancelled) => {
+            QueryError::Interrupted
+        }
         error => QueryError::Invalid(error.to_string()),
     }
 }
