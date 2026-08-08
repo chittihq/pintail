@@ -28,6 +28,17 @@ const FORMAT_VERSION: u8 = 3;
 const fn format_version_supported(version: u8) -> bool {
     matches!(version, 1..=3)
 }
+
+fn read_format_version(path: &Path, decoder: &mut FileDecoder) -> Result<u8, StoreError> {
+    let version = decoder
+        .u8()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    if !format_version_supported(version) {
+        return Err(corrupt(path, MAGIC.len(), "unsupported format version"));
+    }
+    decoder.format_version = Some(version);
+    Ok(version)
+}
 const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
 const TOMBSTONE_COLUMN_ID: u32 = u32::MAX;
@@ -46,6 +57,7 @@ impl DecodePosition for Decoder<'_> {
 struct FileDecoder {
     reader: BufReader<File>,
     position: usize,
+    format_version: Option<u8>,
 }
 
 impl FileDecoder {
@@ -55,7 +67,13 @@ impl FileDecoder {
         Ok(Self {
             reader: BufReader::new(file),
             position: 0,
+            format_version: None,
         })
+    }
+
+    fn format_version(&self) -> Result<u8, String> {
+        self.format_version
+            .ok_or_else(|| "segment format version has not been decoded".to_owned())
     }
 
     fn u8(&mut self) -> Result<u8, String> {
