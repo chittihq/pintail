@@ -9,6 +9,7 @@ members = [
     "crates/pintail-meta",
     "crates/pintail-poll",
     "crates/pintail-probe",
+    "crates/pintail-protocol",
     "crates/pintail-snapshot",
     "crates/pintail-sql",
     "crates/pintail-store",
@@ -68,6 +69,7 @@ pintail-exec = { path = "crates/pintail-exec" }
 pintail-meta = { path = "crates/pintail-meta" }
 pintail-poll = { path = "crates/pintail-poll" }
 pintail-probe = { path = "crates/pintail-probe" }
+pintail-protocol = { path = "crates/pintail-protocol" }
 pintail-snapshot = { path = "crates/pintail-snapshot" }
 pintail-store = { path = "crates/pintail-store" }
 pintail-sql = { path = "crates/pintail-sql" }

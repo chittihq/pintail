@@ -2655,6 +2655,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pintail-protocol"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+]
+
+[[package]]
 name = "pintail-snapshot"
 version = "0.1.0"
 dependencies = [
