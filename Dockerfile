@@ -20,13 +20,11 @@ WORKDIR /source
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY vendor ./vendor
 COPY tests/sqllogic ./tests/sqllogic
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /source/recipe.json recipe.json
-COPY --from=planner /source/vendor ./vendor
 # Rebuilds only when Cargo.lock changes.
 RUN cargo chef cook --locked --release --package pintail --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
