@@ -1112,34 +1112,34 @@ fn mysql_text_character_set(charset: &str) -> u16 {
 fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) -> Column {
     let (coltype, unsigned) = match field.data_type {
         Some(DataType::Utf8) if field.group_concat && group_concat_max_len > 512 => {
-            (ColumnType::MYSQL_TYPE_BLOB, false)
+            (ColumnType::MysqlTypeBlob, false)
         }
         Some(DataType::Boolean | DataType::Int8 | DataType::UInt8) => (
-            ColumnType::MYSQL_TYPE_TINY,
+            ColumnType::MysqlTypeTiny,
             matches!(field.data_type, Some(DataType::UInt8)),
         ),
         Some(DataType::Int16 | DataType::UInt16) => (
-            ColumnType::MYSQL_TYPE_SHORT,
+            ColumnType::MysqlTypeShort,
             matches!(field.data_type, Some(DataType::UInt16)),
         ),
         Some(DataType::Int32 | DataType::UInt32) => (
-            ColumnType::MYSQL_TYPE_LONG,
+            ColumnType::MysqlTypeLong,
             matches!(field.data_type, Some(DataType::UInt32)),
         ),
         Some(DataType::Int64 | DataType::UInt64) => (
-            ColumnType::MYSQL_TYPE_LONGLONG,
+            ColumnType::MysqlTypeLonglong,
             matches!(field.data_type, Some(DataType::UInt64)),
         ),
-        Some(DataType::Float32) => (ColumnType::MYSQL_TYPE_FLOAT, false),
-        Some(DataType::Float64) => (ColumnType::MYSQL_TYPE_DOUBLE, false),
-        Some(DataType::Decimal { .. }) => (ColumnType::MYSQL_TYPE_NEWDECIMAL, false),
-        Some(DataType::Date32) => (ColumnType::MYSQL_TYPE_DATE, false),
-        Some(DataType::DateTime64 { .. }) => (ColumnType::MYSQL_TYPE_DATETIME, false),
-        Some(DataType::Time64 { .. }) => (ColumnType::MYSQL_TYPE_TIME, false),
-        Some(DataType::Year) => (ColumnType::MYSQL_TYPE_YEAR, true),
-        Some(DataType::Binary) => (ColumnType::MYSQL_TYPE_BLOB, false),
-        Some(DataType::Json) => (ColumnType::MYSQL_TYPE_JSON, false),
-        Some(DataType::Utf8) | None => (ColumnType::MYSQL_TYPE_VAR_STRING, false),
+        Some(DataType::Float32) => (ColumnType::MysqlTypeFloat, false),
+        Some(DataType::Float64) => (ColumnType::MysqlTypeDouble, false),
+        Some(DataType::Decimal { .. }) => (ColumnType::MysqlTypeNewdecimal, false),
+        Some(DataType::Date32) => (ColumnType::MysqlTypeDate, false),
+        Some(DataType::DateTime64 { .. }) => (ColumnType::MysqlTypeDatetime, false),
+        Some(DataType::Time64 { .. }) => (ColumnType::MysqlTypeTime, false),
+        Some(DataType::Year) => (ColumnType::MysqlTypeYear, true),
+        Some(DataType::Binary) => (ColumnType::MysqlTypeBlob, false),
+        Some(DataType::Json) => (ColumnType::MysqlTypeJson, false),
+        Some(DataType::Utf8) | None => (ColumnType::MysqlTypeVarString, false),
     };
     let mut colflags = ColumnFlags::empty();
     colflags.set(ColumnFlags::UNSIGNED_FLAG, unsigned);
@@ -1185,15 +1185,12 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) 
     } else {
         63
     };
-    Column {
-        table: String::new(),
-        column: field.name.clone(),
-        column_length,
-        character_set,
-        coltype,
-        colflags,
-        decimals,
-    }
+    let mut column = Column::new(field.name.clone(), coltype);
+    column.column_length = column_length;
+    column.character_set = character_set;
+    column.colflags = colflags;
+    column.decimals = decimals;
+    column
 }
 
 fn wire_key_is_valid(key: &ApiKeyRecord, salt: &[u8], response: &[u8]) -> bool {
@@ -1285,13 +1282,14 @@ fn is_expired(value: &str) -> bool {
 
 fn error_kind(error: &QueryError) -> ErrorKind {
     match error {
-        QueryError::DatabaseNotFound => ErrorKind::ER_BAD_DB_ERROR,
+        QueryError::DatabaseNotFound => ErrorKind::ErBadDbError,
+        // 1290 is what real MySQL's --read-only mode actually raises.
         QueryError::Invalid(message) if message.contains("read-only") => {
-            ErrorKind::ER_NOT_SUPPORTED_YET
+            ErrorKind::ErOptionPreventsStatement
         }
-        QueryError::Invalid(_) => ErrorKind::ER_PARSE_ERROR,
-        QueryError::Interrupted => ErrorKind::ER_QUERY_INTERRUPTED,
-        QueryError::NotReady(_) | QueryError::Internal(_) => ErrorKind::ER_UNKNOWN_ERROR,
+        QueryError::Invalid(_) => ErrorKind::ErParseError,
+        QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
+        QueryError::NotReady(_) | QueryError::Internal(_) => ErrorKind::ErUnknownError,
     }
 }
 

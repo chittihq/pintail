@@ -68,7 +68,7 @@ pub struct PreparedStatement {
 
 /// Everything the driver asks of the server it front-ends.
 #[async_trait]
-pub trait Handler: Send {
+pub trait Handler: Send + Sync {
     /// Version string reported to clients.
     fn server_version(&self) -> String {
         "8.0.0".to_owned()
