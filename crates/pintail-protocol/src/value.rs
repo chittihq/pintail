@@ -274,7 +274,7 @@ pub fn decode_execute_parameters(
 #[cfg(test)]
 mod tests {
     use super::{
-        BinaryValue, ParameterType, decode_binary_value, decode_execute_parameters,
+        BinaryValue, IntWidth, ParameterType, decode_binary_value, decode_execute_parameters,
         parse_parameter_types,
     };
     use crate::types::ColumnType;
@@ -392,6 +392,69 @@ mod tests {
     }
 
     #[test]
+    fn encoded_integers_round_trip_through_the_decoder() {
+        // The same bytes must be readable back at the width they were
+        // written, whichever sign the caller intended — the wire carries no
+        // sign tag of its own.
+        for (width, tag, value) in [
+            (IntWidth::Tiny, ColumnType::MysqlTypeTiny, -1_i64),
+            (IntWidth::Short, ColumnType::MysqlTypeShort, -1_i64),
+            (IntWidth::Long, ColumnType::MysqlTypeLong, -1_i64),
+            (IntWidth::LongLong, ColumnType::MysqlTypeLonglong, i64::MIN),
+        ] {
+            let encoded = super::encode_binary_int(value, width);
+            let (decoded, consumed) =
+                decode_binary_value(parameter(tag, false), &encoded).expect("decode");
+            assert_eq!(decoded, BinaryValue::Int(value));
+            assert_eq!(consumed, encoded.len());
+        }
+    }
+
+    #[test]
+    fn encoded_datetimes_round_trip_at_every_length_the_decoder_reads() {
+        type DatetimeCase = (u16, u8, u8, Option<(u8, u8, u8, Option<u32>)>, &'static str);
+        let cases: &[DatetimeCase] = &[
+            (0, 0, 0, None, "0000-00-00"),
+            (2024, 1, 15, None, "2024-01-15"),
+            (2024, 1, 15, Some((10, 30, 45, None)), "2024-01-15 10:30:45"),
+            (
+                2024,
+                1,
+                15,
+                Some((10, 30, 45, Some(1_000))),
+                "2024-01-15 10:30:45.001000",
+            ),
+        ];
+        for (year, month, day, time, expected) in cases.iter().copied() {
+            let encoded = super::encode_binary_datetime(year, month, day, time);
+            let (decoded, consumed) =
+                decode_binary_value(parameter(ColumnType::MysqlTypeDatetime, false), &encoded)
+                    .expect("decode");
+            assert_eq!(decoded, BinaryValue::DateTime(expected.to_owned()));
+            assert_eq!(consumed, encoded.len());
+        }
+    }
+
+    #[test]
+    fn encoded_times_round_trip_including_the_beyond_24_hour_and_negative_cases() {
+        type TimeCase = (bool, u32, u8, u8, u8, Option<u32>, &'static str);
+        let cases: &[TimeCase] = &[
+            (false, 0, 0, 0, 0, None, "00:00:00"),
+            (false, 2, 3, 4, 5, None, "51:04:05"),
+            (true, 0, 1, 2, 3, None, "-01:02:03"),
+            (false, 0, 1, 2, 3, Some(1_000), "01:02:03.001000"),
+        ];
+        for (negative, days, hour, minute, second, micros, expected) in cases.iter().copied() {
+            let encoded = super::encode_binary_time(negative, days, hour, minute, second, micros);
+            let (decoded, consumed) =
+                decode_binary_value(parameter(ColumnType::MysqlTypeTime, false), &encoded)
+                    .expect("decode");
+            assert_eq!(decoded, BinaryValue::Time(expected.to_owned()));
+            assert_eq!(consumed, encoded.len());
+        }
+    }
+
+    #[test]
     fn parameter_types_carry_the_unsigned_bit() {
         let (types, consumed) =
             parse_parameter_types(&[0x08, 0x80, 0x08, 0x00], 2).expect("two types");
@@ -455,4 +518,101 @@ mod tests {
         // Without remembered types there is nothing to decode against.
         assert!(decode_execute_parameters(&reused, 2, None).is_none());
     }
+}
+
+/// Encodes an 8/16/32/64-bit integer's raw little-endian bytes for the
+/// binary result protocol. Signed and unsigned values of the same width
+/// share an identical byte pattern (two's complement), so the caller need
+/// only pick the width that matches the column's declared type; the
+/// UNSIGNED flag on the column, not this encoding, is what tells the client
+/// how to interpret the sign.
+#[must_use]
+pub fn encode_binary_int(value: i64, width: IntWidth) -> Vec<u8> {
+    match width {
+        IntWidth::Tiny => vec![value.to_le_bytes()[0]],
+        IntWidth::Short => value.to_le_bytes()[..2].to_vec(),
+        IntWidth::Long => value.to_le_bytes()[..4].to_vec(),
+        IntWidth::LongLong => value.to_le_bytes().to_vec(),
+    }
+}
+
+/// Integer column width, matching the four protocol type tags that carry a
+/// fixed-width integer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntWidth {
+    /// `MYSQL_TYPE_TINY`.
+    Tiny,
+    /// `MYSQL_TYPE_SHORT` / `MYSQL_TYPE_YEAR`.
+    Short,
+    /// `MYSQL_TYPE_LONG`.
+    Long,
+    /// `MYSQL_TYPE_LONGLONG`.
+    LongLong,
+}
+
+/// Encodes a `DATE`/`DATETIME`/`TIMESTAMP` result value in the binary
+/// protocol's variable-length form: the shortest of 0/4/7/11 bytes that
+/// carries every non-zero field, exactly mirroring the lengths
+/// [`decode_datetime`] reads. A shorter encoding than the value needs would
+/// silently drop the time or the fractional seconds; a longer one than
+/// necessary is legal but not what real servers send.
+#[must_use]
+pub fn encode_binary_datetime(
+    year: u16,
+    month: u8,
+    day: u8,
+    time: Option<(u8, u8, u8, Option<u32>)>,
+) -> Vec<u8> {
+    let Some((hour, minute, second, micros)) = time else {
+        if year == 0 && month == 0 && day == 0 {
+            return vec![0];
+        }
+        let mut body = vec![4];
+        body.extend_from_slice(&year.to_le_bytes());
+        body.push(month);
+        body.push(day);
+        return body;
+    };
+    let micros = micros.filter(|value| *value != 0);
+    let mut body = vec![if micros.is_some() { 11 } else { 7 }];
+    body.extend_from_slice(&year.to_le_bytes());
+    body.push(month);
+    body.push(day);
+    body.push(hour);
+    body.push(minute);
+    body.push(second);
+    if let Some(micros) = micros {
+        body.extend_from_slice(&micros.to_le_bytes());
+    }
+    body
+}
+
+/// Encodes a `TIME` result value in the binary protocol's variable-length
+/// form, mirroring the lengths [`decode_time`] reads. `days` and `hour` are
+/// carried separately on the wire — `MySQL`'s TIME spans beyond 24 hours —
+/// but only their sum is meaningful, so a caller with a plain hour count
+/// past 24 passes `days: 0` and the full count as `hour`.
+#[must_use]
+pub fn encode_binary_time(
+    negative: bool,
+    days: u32,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    micros: Option<u32>,
+) -> Vec<u8> {
+    let micros = micros.filter(|value| *value != 0);
+    if !negative && days == 0 && hour == 0 && minute == 0 && second == 0 && micros.is_none() {
+        return vec![0];
+    }
+    let mut body = vec![if micros.is_some() { 12 } else { 8 }];
+    body.push(u8::from(negative));
+    body.extend_from_slice(&days.to_le_bytes());
+    body.push(hour);
+    body.push(minute);
+    body.push(second);
+    if let Some(micros) = micros {
+        body.extend_from_slice(&micros.to_le_bytes());
+    }
+    body
 }

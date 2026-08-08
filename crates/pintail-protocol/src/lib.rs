@@ -22,4 +22,7 @@ pub use server::{
     WatchOutcome,
 };
 pub use types::{Column, ColumnFlags, ColumnType, ErrorKind, StatusFlags};
-pub use value::{BinaryValue, ParameterType, decode_execute_parameters};
+pub use value::{
+    BinaryValue, IntWidth, ParameterType, decode_execute_parameters, encode_binary_datetime,
+    encode_binary_int, encode_binary_time,
+};
