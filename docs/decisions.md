@@ -336,6 +336,13 @@ compaction rewrite. In the same ruling the owner **confirmed
 plus safe SIMD crates only; any per-kernel exception requires new profiling
 evidence and a fresh ruling.
 
+PTSEG v3 adds only adaptive block compression, not a new integer layout. e27
+reproduced production payload shapes on Apple and Linux: FOR-packed and random
+Float64 blocks expand under LZ4, while delta-packed keys and dictionary/text
+blocks save 41-99.5%. Normal flushes therefore try LZ4 and keep it only at 5%
+or greater savings; raw blocks carry compression tag `0`. Existing LZ4/zstd
+segments remain readable and cold full-merge output remains zstd.
+
 ### Merge-on-read uses granule-level sweep-line classification
 
 Scans classify granule ranges against newer segments and the memtable using

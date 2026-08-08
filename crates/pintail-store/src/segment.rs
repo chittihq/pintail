@@ -3743,8 +3743,7 @@ fn decode_utf8_payload_into(
 }
 
 fn materially_smaller(uncompressed: usize, compressed: usize) -> bool {
-    uncompressed > 0
-        && compressed.saturating_mul(100) <= uncompressed.saturating_mul(95)
+    uncompressed > 0 && compressed.saturating_mul(100) <= uncompressed.saturating_mul(95)
 }
 
 fn compress_block_for_storage(
@@ -4565,9 +4564,7 @@ fn corrupt_here(
 
 #[cfg(test)]
 mod compression_tests {
-    use super::{
-        Compression, compress_block_for_storage, decompress_block, materially_smaller,
-    };
+    use super::{Compression, compress_block_for_storage, decompress_block, materially_smaller};
 
     #[test]
     fn five_percent_threshold_is_inclusive_and_overflow_safe() {
@@ -4610,6 +4607,21 @@ mod compression_tests {
     fn raw_blocks_reject_declared_length_mismatches() {
         let error = decompress_block(Compression::None, b"raw", 4).expect_err("bad length");
         assert!(error.contains("raw block length"), "{error}");
+    }
+
+    #[test]
+    fn legacy_lz4_and_zstd_blocks_still_decode() {
+        let bytes = vec![42_u8; 32 * 1024];
+        for compression in [Compression::Lz4, Compression::Zstd] {
+            let (stored_compression, stored) =
+                compress_block_for_storage(compression, &bytes).expect("compress legacy block");
+            assert_eq!(stored_compression, compression);
+            assert_eq!(
+                decompress_block(stored_compression, &stored, bytes.len())
+                    .expect("decode legacy block"),
+                bytes
+            );
+        }
     }
 }
 

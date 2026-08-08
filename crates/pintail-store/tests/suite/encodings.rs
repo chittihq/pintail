@@ -8,9 +8,11 @@ const DICTIONARY: u8 = 1;
 const RLE: u8 = 2;
 const BIT_PACKED: u8 = 3;
 const DELTA_BIT_PACKED: u8 = 4;
+const RAW: u8 = 0;
+const LZ4: u8 = 1;
 
 #[test]
-fn segment_selects_and_round_trips_every_version_one_block_encoding() {
+fn segment_selects_and_round_trips_every_block_encoding() {
     let directory = tempfile::tempdir().expect("temporary table directory");
     let schema = TableSchema::new(
         1,
@@ -60,6 +62,64 @@ fn segment_selects_and_round_trips_every_version_one_block_encoding() {
     );
 }
 
+#[test]
+fn adaptive_compression_mixes_raw_and_lz4_blocks_and_reopens() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "opaque", DataType::Binary, false),
+        ],
+    )
+    .expect("schema");
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    let rows = (0..16_384_u64)
+        .map(|id| {
+            let opaque = (0..32)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state as u8
+                })
+                .collect::<Vec<_>>();
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                vec![Value::UInt64(id), Value::Binary(opaque)],
+                id + 1,
+                false,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let path = {
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open");
+        table.ingest(rows.clone()).expect("ingest");
+        let path = table
+            .flush()
+            .expect("flush")
+            .segment_path()
+            .expect("segment")
+            .to_path_buf();
+        assert_eq!(table.snapshot().scan().expect("live scan"), rows);
+        path
+    };
+
+    let bytes = std::fs::read(path).expect("segment bytes");
+    assert_eq!(bytes[5], 3, "adaptive compression is PTSEG v3");
+    assert_eq!(
+        block_compressions(&bytes),
+        BTreeSet::from([RAW, LZ4]),
+        "monotonic integer blocks retain LZ4 while random binary stays raw"
+    );
+
+    let reopened =
+        TableStore::open(directory.path(), schema, StoreOptions::default()).expect("reopen");
+    assert_eq!(reopened.snapshot().scan().expect("reopened scan"), rows);
+}
+
 fn block_encodings(bytes: &[u8]) -> BTreeSet<u8> {
     assert_eq!(&bytes[..5], b"PTSEG");
     let column_count = read_u32(bytes, 26) as usize;
@@ -79,6 +139,28 @@ fn block_encodings(bytes: &[u8]) -> BTreeSet<u8> {
         }
     }
     encodings
+}
+
+fn block_compressions(bytes: &[u8]) -> BTreeSet<u8> {
+    assert_eq!(&bytes[..5], b"PTSEG");
+    let column_count = read_u32(bytes, 26) as usize;
+    let mut position = 34;
+    let mut compressions = BTreeSet::new();
+    for _ in 0..column_count {
+        position += 5;
+        let block_count = take_u32(bytes, &mut position);
+        for _ in 0..block_count {
+            let block_length = take_u32(bytes, &mut position) as usize;
+            let block = &bytes[position..position + block_length];
+            let mut block_position = 4;
+            skip_bytes(block, &mut block_position);
+            take_u8(block, &mut block_position);
+            compressions.insert(take_u8(block, &mut block_position));
+            position += block_length;
+            position += 8;
+        }
+    }
+    compressions
 }
 
 fn skip_bytes(bytes: &[u8], position: &mut usize) {

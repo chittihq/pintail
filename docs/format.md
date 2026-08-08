@@ -1,4 +1,4 @@
-# Pintail storage format version 1
+# Pintail storage formats
 
 All integers are little-endian. Every variable byte string is encoded as a
 `u32` length followed by exactly that many bytes. File-format version numbers
@@ -114,7 +114,13 @@ Publication writes and synchronizes `.manifest.ptm.tmp`, atomically renames
 it to `manifest.ptm`, then synchronizes the table directory. A snapshot holds
 an `Arc` to one immutable decoded generation.
 
-## Segment (`PTSEG`, version 1)
+## Segment (`PTSEG`, version 3)
+
+Readers accept all published segment versions. Version 1 stores the original
+text carriers and always-compressed blocks. Version 2 adds fixed-width native
+units for eligible decimal and temporal columns. Version 3 adds raw block
+payloads when LZ4 cannot save at least 5%; the other framing and all prior
+compression tags remain readable.
 
 ### Header
 
@@ -173,9 +179,11 @@ Encoding IDs:
 
 Pintail selects RLE for constant blocks, dictionary encoding for repeated
 string/binary blocks, delta encoding for monotonic integers, bit-packing for
-other integer/boolean blocks, and plain otherwise. Compression ID `1` is LZ4
-and is the flush default. Compression ID `2` is zstd and is used by a
-full-merge cold-tier compaction.
+other integer/boolean blocks, and plain otherwise. Compression ID `0` is a raw
+payload whose byte length must exactly equal `uncompressed_payload_length`.
+Compression ID `1` is LZ4. Normal flushes try LZ4 per block and retain it only
+when the encoded payload is at least 5% smaller; otherwise they store ID `0`.
+Compression ID `2` is zstd and remains the full-merge cold-tier codec.
 
 Physical scalars are one byte for boolean, eight bytes for integer/float
 bits, and length-prefixed bytes for UTF-8/binary. Composite keys start with a

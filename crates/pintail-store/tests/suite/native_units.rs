@@ -1,4 +1,4 @@
-//! PTSEG v2: eligible text-carried columns store fixed-width units on the
+//! PTSEG v2+: eligible text-carried columns store fixed-width units on the
 //! wire and regenerate byte-identical canonical text on every read path.
 
 use pintail_store::{StoreOptions, TableStore};
@@ -170,10 +170,10 @@ fn non_canonical_text_keeps_the_column_on_the_text_path() {
 }
 
 #[test]
-fn version_one_segments_remain_readable() {
+fn version_one_headers_remain_accepted() {
     let directory = tempfile::tempdir().expect("temporary table directory");
-    // Only non-native columns, so the file body is identical to what a v1
-    // writer produces; flipping the version byte yields a true v1 segment.
+    // Header-version dispatch is independent of the block compression tag;
+    // legacy LZ4 decode is covered directly in segment unit tests.
     let schema = TableSchema::new(
         1,
         vec![
@@ -204,7 +204,7 @@ fn version_one_segments_remain_readable() {
         flush.segment_path().expect("segment path").to_path_buf()
     };
     let mut bytes = std::fs::read(&segment_path).expect("segment bytes");
-    assert_eq!(bytes[5], 2);
+    assert_eq!(bytes[5], 3);
     bytes[5] = 1;
     std::fs::write(&segment_path, bytes).expect("rewrite as v1");
 
@@ -218,11 +218,11 @@ fn version_one_segments_remain_readable() {
 }
 
 #[test]
-fn compaction_rewrites_v1_segments_as_v2_with_native_units() {
+fn compaction_rewrites_legacy_version_headers_as_v3_with_native_units() {
     let directory = tempfile::tempdir().expect("temporary table directory");
-    // Two flushes of native-eligible rows, then downgrade both segments'
-    // version bytes to v1: compaction must read them fine and publish a
-    // v2 segment carrying units on the wire.
+    // Two flushes of native-eligible rows, then downgrade both segment
+    // headers to v1: compaction must read them and publish a v3 segment
+    // carrying native units and adaptive block compression.
     let versioned = |id: u64, version: u64, amount: &str, day: &str| {
         StoredRow::new(
             key(id),
@@ -259,7 +259,7 @@ fn compaction_rewrites_v1_segments_as_v2_with_native_units() {
     drop(table);
     for path in [&first_path, &second_path] {
         let mut bytes = std::fs::read(path).expect("segment bytes");
-        assert_eq!(bytes[5], 2);
+        assert_eq!(bytes[5], 3);
         bytes[5] = 1;
         std::fs::write(path, bytes).expect("downgrade to v1");
     }
@@ -273,7 +273,7 @@ fn compaction_rewrites_v1_segments_as_v2_with_native_units() {
         .expect("compacted segment")
         .to_path_buf();
     let bytes = std::fs::read(&output).expect("compacted bytes");
-    assert_eq!(bytes[5], 2, "compaction publishes v2");
+    assert_eq!(bytes[5], 3, "compaction publishes v3");
     for (id, tag) in wire_types(&bytes) {
         if let 2..=3 = id {
             assert_eq!(tag, 1, "column {id} stores native units after rewrite");
@@ -287,6 +287,6 @@ fn compaction_rewrites_v1_segments_as_v2_with_native_units() {
     assert_eq!(
         table.snapshot().scan().expect("post-compaction scan"),
         expected,
-        "v1 data survives the v2 rewrite byte-identically"
+        "legacy-version data survives the v3 rewrite byte-identically"
     );
 }

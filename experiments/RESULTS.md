@@ -1068,12 +1068,27 @@ blocks by 66x, cyclic dictionary blocks by 189x, random dictionary blocks by
 incompressible, but delta-packed monotonic blocks compress to 1.5% of their
 encoded size. Encoding kind alone is not a sound selector.
 
-**Per-block try-and-keep is supported locally.** A practical threshold of at
-least 5% savings produced the same decisions as the pure size winner and avoids
-paying decompression on incompressible blocks. Production adoption still needs
-the Linux reference-host run plus a `Compression::None` tag, old-segment read
-coverage, corruption fixtures, and a full engine benchmark. This experiment
-does not itself change PTSEG.
+### Decode median on Linux x86-64 (8 CPU / 8 GB)
+
+| Shape | never | always | adaptive |
+|---|---:|---:|---:|
+| FOR amount | **8.950 ms** | 9.354 ms | **8.949 ms** |
+| Delta primary key | **0.449 ms** | 0.472 ms | 0.471 ms |
+| Mixed FOR + delta | **4.695 ms** | 4.912 ms | 4.716 ms |
+| Dictionary status | **14.405 ms** | 21.750 ms | 21.749 ms |
+| Dictionary region | **14.429 ms** | 19.707 ms | 19.685 ms |
+| Random Float64 | **28.978 ms** | 30.949 ms | 29.072 ms |
+| High-cardinality UTF-8 | **138.524 ms** | 167.725 ms | 167.567 ms |
+
+The Linux run made exactly the same per-block decisions as Apple and every
+raw/LZ4/adaptive decode arm returned the same checksum. Trying LZ4 before
+selection was within 0.2% of always-LZ4 encode time on every shape.
+
+**Per-block try-and-keep is supported on both required targets and adopted in
+PTSEG v3.** A 5% threshold produced the same choices as the pure size winner.
+Compression tag `0` carries exact-length raw payloads, old LZ4/zstd tags remain
+readable, and cold full-merge output remains zstd. Mixed raw/LZ4 reopen,
+legacy-codec decode, and corrupt raw-length coverage pin the boundary.
 
 ## e28 — FastLanes in the current real PTSEG scan path
 
@@ -1127,13 +1142,14 @@ bit-at-a-time packer contributes on the write side too.
 
 ### Verdict
 
-**The old 0.14% estimate is rejected, but PTSEG v3 is not justified.** On the
-current direct path the layout saves 7-10% for columnar numeric scans and about
-4.5% once five columns become rows. The dictionary-only control is flat, which
-supports attributing the numeric gain to packing rather than a generally faster
-middle run. The format and migration cost are real, while every measured gain
-remains below the lab's 15% adoption threshold. PTSEG therefore keeps the
-simpler horizontal v2 layout.
+**The old 0.14% estimate is rejected, but a FastLanes format change is not
+justified.** On the current direct path the layout saves 7-10% for columnar
+numeric scans and about 4.5% once five columns become rows. The dictionary-only
+control is flat, which supports attributing the numeric gain to packing rather
+than a generally faster middle run. The layout and migration cost are real,
+while every measured gain remains below the lab's 15% adoption threshold.
+PTSEG therefore keeps the simpler horizontal packing. The later v3 compression
+tag from e27 does not alter this layout decision.
 
 This is local evidence only; the Linux reference run was unavailable. That does
 not block the rejection: a sub-threshold win on one required target cannot make

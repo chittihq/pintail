@@ -54,7 +54,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   coding vs typed comparators for the k-way merge path.
 - [x] **e27-adaptive-compression** — exact PTSEG payload layouts under always-LZ4,
   never-LZ4, and per-block keep-only-when-smaller policies. Global removal and
-  encoding-class shortcuts both lose; local evidence supports per-block selection.
+  encoding-class shortcuts both lose; Apple and Linux evidence supports the
+  adopted PTSEG v3 per-block 5% selection rule.
 - [x] **e28-fastlanes-real-scan** — A/B/A replacement of PTSEG's horizontal
   bitstream with FastLanes 1a inside the real 20M-row writer/reader path. The old
   0.14% estimate was stale; current gains are 7-10% for column scans and 4.5% after

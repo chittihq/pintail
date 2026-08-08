@@ -8,9 +8,11 @@
 pub mod command;
 pub mod handshake;
 pub mod packet;
+pub mod resultset;
 pub mod types;
 
 pub use command::Command;
 pub use handshake::{CapabilityFlags, Handshake, HandshakeResponse, SCRAMBLE_SIZE};
 pub use packet::{MAX_PAYLOAD, PacketReader, PacketWriter};
+pub use resultset::{OkPacket, encode_column_definition, encode_eof, encode_error, encode_ok};
 pub use types::{Column, ColumnFlags, ColumnType, ErrorKind, StatusFlags};
