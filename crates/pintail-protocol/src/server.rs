@@ -213,12 +213,13 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         &mut self,
         handler: &dyn Handler,
         scramble: [u8; SCRAMBLE_SIZE],
+        extra_capabilities: CapabilityFlags,
     ) -> std::io::Result<()> {
         let greeting = Handshake {
             server_version: &handler.server_version(),
             connection_id: handler.connection_id(),
             scramble,
-            capabilities: server_capabilities(),
+            capabilities: server_capabilities() | extra_capabilities,
             character_set: 255,
             auth_plugin: handler.auth_plugin(),
         };
@@ -297,7 +298,8 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         handler: &mut dyn Handler,
         scramble: [u8; SCRAMBLE_SIZE],
     ) -> std::io::Result<HandshakeResponse> {
-        self.send_greeting(handler, scramble).await?;
+        self.send_greeting(handler, scramble, CapabilityFlags::empty())
+            .await?;
         let response = match self.read_initial_response().await? {
             InitialResponse::Full(response) => response,
             InitialResponse::Ssl => {
@@ -809,7 +811,7 @@ mod tests {
             last_query: Vec::new(),
         };
         connection
-            .send_greeting(&handler, [0_u8; SCRAMBLE_SIZE])
+            .send_greeting(&handler, [0_u8; SCRAMBLE_SIZE], CapabilityFlags::CLIENT_SSL)
             .await
             .expect("greeting");
         assert!(matches!(
@@ -834,7 +836,7 @@ mod tests {
             last_query: Vec::new(),
         };
         connection
-            .send_greeting(&handler, [0_u8; SCRAMBLE_SIZE])
+            .send_greeting(&handler, [0_u8; SCRAMBLE_SIZE], CapabilityFlags::CLIENT_SSL)
             .await
             .expect("greeting");
         assert!(matches!(

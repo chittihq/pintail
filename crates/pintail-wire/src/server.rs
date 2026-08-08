@@ -14,10 +14,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_protocol::{
-    BinaryValue, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch, ErrorKind, Handler,
-    HandshakeResponse, IntWidth, OkPacket, PreparedStatement, Response, ResultSet, SCRAMBLE_SIZE,
-    WatchOutcome, decode_execute_parameters, encode_binary_datetime, encode_binary_int,
-    encode_binary_time, packet::put_length_encoded_bytes,
+    BinaryValue, CapabilityFlags, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch,
+    ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PreparedStatement, Response,
+    ResultSet, SCRAMBLE_SIZE, WatchOutcome, decode_execute_parameters, encode_binary_datetime,
+    encode_binary_int, encode_binary_time, packet::put_length_encoded_bytes,
 };
 use pintail_sql::DEFAULT_TEXT_COLLATION;
 use pintail_types::{DataType, Value};
@@ -221,7 +221,7 @@ impl DisconnectWatch for TcpDisconnectWatch {
                 Ok(0) => return WatchOutcome::Disconnected,
                 // Data is genuinely there and untouched; not a disconnect.
                 Ok(_) => return WatchOutcome::Primed(Vec::new()),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(_) => return WatchOutcome::Disconnected,
             }
         }
@@ -230,7 +230,7 @@ impl DisconnectWatch for TcpDisconnectWatch {
 
 async fn serve_connection(
     stream: TcpStream,
-    mut backend: Backend,
+    backend: Backend,
     tls: Option<WireTls>,
     idle_timeout: Duration,
 ) -> io::Result<()> {
@@ -248,9 +248,20 @@ async fn serve_connection(
     let scramble = backend.salt;
     let (reader, writer) = stream.into_split();
     let mut connection = Connection::new(reader, writer);
-    connection.send_greeting(&backend, scramble).await?;
+    let extra_capabilities = if tls.is_some() {
+        CapabilityFlags::CLIENT_SSL
+    } else {
+        CapabilityFlags::empty()
+    };
+    connection
+        .send_greeting(&backend, scramble, extra_capabilities)
+        .await?;
     let initial = connection.read_initial_response().await?;
     match (initial, tls) {
+        // A required-TLS listener drops a plaintext client after the
+        // greeting rather than serve it unencrypted; MySQL clients report
+        // the closed connection as "server requires secure transport".
+        (pintail_protocol::InitialResponse::Full(_), Some(tls)) if tls.required => Ok(()),
         (pintail_protocol::InitialResponse::Full(response), _) => {
             run_connection(connection, response, backend, scramble, watch, idle_timeout).await
         }
@@ -260,12 +271,8 @@ async fn serve_connection(
             let acceptor = tokio_rustls::TlsAcceptor::from(tls.config);
             let tls_stream = acceptor.accept(stream).await?;
             let (tls_reader, tls_writer) = tokio::io::split(tls_stream);
-            let mut connection = Connection::new_at_sequence(
-                tls_reader,
-                tls_writer,
-                read_sequence,
-                write_sequence,
-            );
+            let mut connection =
+                Connection::new_at_sequence(tls_reader, tls_writer, read_sequence, write_sequence);
             let response = match connection.read_initial_response().await? {
                 pintail_protocol::InitialResponse::Full(response) => response,
                 pintail_protocol::InitialResponse::Ssl => {
@@ -283,10 +290,6 @@ async fn serve_connection(
             run_connection_without_watch(connection, response, backend, scramble, idle_timeout)
                 .await
         }
-        // A required-TLS listener drops plaintext clients after the
-        // greeting; MySQL clients report the closed connection as
-        // "server requires secure transport".
-        (pintail_protocol::InitialResponse::Full(_), None) => unreachable!(),
         (pintail_protocol::InitialResponse::Ssl, None) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "client requested TLS but this listener has none configured",
@@ -346,8 +349,7 @@ where
         return Ok(());
     }
     loop {
-        let served =
-            tokio::time::timeout(idle_timeout, connection.serve_one(&mut backend)).await;
+        let served = tokio::time::timeout(idle_timeout, connection.serve_one(&mut backend)).await;
         match served {
             Ok(Ok(true)) => {}
             Ok(Ok(false)) | Err(_) => return Ok(()),
@@ -589,7 +591,10 @@ impl Backend {
     /// error to the client than propagated as a connection-ending one.
     fn session_snapshot(&self) -> Option<(usize, String)> {
         let session = self.session.lock().ok()?;
-        Some((session.group_concat_max_len, session.charset_results.clone()))
+        Some((
+            session.group_concat_max_len,
+            session.charset_results.clone(),
+        ))
     }
 
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
@@ -743,17 +748,25 @@ impl Handler for Backend {
                 "session state is unavailable".to_owned(),
             );
         };
-        query_output_to_response(self.execute(sql).await, group_concat_max_len, &charset, false)
+        query_output_to_response(
+            Backend::execute(self, sql).await,
+            group_concat_max_len,
+            &charset,
+            false,
+        )
     }
 
     async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
-        let sql = std::str::from_utf8(sql)
-            .map_err(|_| (ErrorKind::ErParseError, "statement is not valid UTF-8".to_owned()))?;
+        let sql = std::str::from_utf8(sql).map_err(|_| {
+            (
+                ErrorKind::ErParseError,
+                "statement is not valid UTF-8".to_owned(),
+            )
+        })?;
         let parameters = placeholder_count(sql);
         let preview = substitute_parameters(sql, &placeholder_preview_literals(sql))
             .map_err(|error| (ErrorKind::ErParseError, error))?;
-        let output = self
-            .execute(&preview)
+        let output = Backend::execute(self, &preview)
             .await
             .map_err(|error| (error_kind(&error), error.to_string()))?;
         let statement_id = self.next_statement_id;
@@ -775,8 +788,10 @@ impl Handler for Backend {
         })?;
         let params = (0..parameters)
             .map(|index| {
-                let mut column =
-                    Column::new(format!("param_{}", index + 1), ColumnType::MysqlTypeVarString);
+                let mut column = Column::new(
+                    format!("param_{}", index + 1),
+                    ColumnType::MysqlTypeVarString,
+                );
                 column.column_length = 1024;
                 column.character_set = mysql_text_character_set(&charset);
                 column
@@ -820,7 +835,11 @@ impl Handler for Backend {
         if let Some(entry) = self.prepared.get_mut(&id) {
             entry.parameter_types = Some(types);
         }
-        let literals = match values.iter().map(parameter_literal).collect::<Result<Vec<_>, _>>() {
+        let literals = match values
+            .iter()
+            .map(parameter_literal)
+            .collect::<Result<Vec<_>, _>>()
+        {
             Ok(literals) => literals,
             Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
@@ -834,7 +853,12 @@ impl Handler for Backend {
                 "session state is unavailable".to_owned(),
             );
         };
-        query_output_to_response(self.execute(&query).await, group_concat_max_len, &charset, true)
+        query_output_to_response(
+            Backend::execute(self, &query).await,
+            group_concat_max_len,
+            &charset,
+            true,
+        )
     }
 
     async fn send_long_data(&mut self, statement: u32, _parameter: u16, _data: &[u8]) {
@@ -884,7 +908,12 @@ impl Handler for Backend {
         }
     }
 
-    async fn change_user(&mut self, username: &[u8], auth_response: &[u8], database: &[u8]) -> bool {
+    async fn change_user(
+        &mut self,
+        username: &[u8],
+        auth_response: &[u8],
+        database: &[u8],
+    ) -> bool {
         let salt = self.salt;
         let Ok(Some(authenticated)) =
             self.verify_wire_key(username, &salt, auth_response, Some(database))
@@ -927,7 +956,9 @@ fn query_output_to_response(
             let cell = if binary {
                 match binary_column_value(field, value) {
                     Ok(cell) => cell,
-                    Err(error) => return Response::Error(ErrorKind::ErUnknownError, error.to_string()),
+                    Err(error) => {
+                        return Response::Error(ErrorKind::ErUnknownError, error.to_string());
+                    }
                 }
             } else {
                 text_column_value(value)
@@ -977,15 +1008,17 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
         (Some(DataType::Int32), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Long),
         (_, Value::Int64(value)) => encode_binary_int(*value, IntWidth::LongLong),
         (Some(DataType::UInt8), Value::UInt64(value)) => {
-            encode_binary_int(value.cast_signed(), IntWidth::Tiny)
+            encode_binary_int(i64::from_le_bytes(value.to_le_bytes()), IntWidth::Tiny)
         }
         (Some(DataType::UInt16), Value::UInt64(value)) => {
-            encode_binary_int(value.cast_signed(), IntWidth::Short)
+            encode_binary_int(i64::from_le_bytes(value.to_le_bytes()), IntWidth::Short)
         }
         (Some(DataType::UInt32), Value::UInt64(value)) => {
-            encode_binary_int(value.cast_signed(), IntWidth::Long)
+            encode_binary_int(i64::from_le_bytes(value.to_le_bytes()), IntWidth::Long)
         }
-        (_, Value::UInt64(value)) => encode_binary_int(value.cast_signed(), IntWidth::LongLong),
+        (_, Value::UInt64(value)) => {
+            encode_binary_int(i64::from_le_bytes(value.to_le_bytes()), IntWidth::LongLong)
+        }
         (Some(DataType::Float32), Value::Float64(value)) => {
             let value = value.get().to_string().parse::<f32>().map_err(io_invalid)?;
             value.to_le_bytes().to_vec()
@@ -995,8 +1028,8 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
             let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(io_invalid)?;
             encode_binary_datetime(
                 u16::try_from(date.year()).unwrap_or(0),
-                date.month() as u8,
-                date.day() as u8,
+                u8::try_from(date.month()).map_err(io_invalid)?,
+                u8::try_from(date.day()).map_err(io_invalid)?,
                 None,
             )
         }
@@ -1007,12 +1040,12 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
             let micros = datetime.and_utc().timestamp_subsec_micros();
             encode_binary_datetime(
                 u16::try_from(datetime.year()).unwrap_or(0),
-                datetime.month() as u8,
-                datetime.day() as u8,
+                u8::try_from(datetime.month()).map_err(io_invalid)?,
+                u8::try_from(datetime.day()).map_err(io_invalid)?,
                 Some((
-                    datetime.hour() as u8,
-                    datetime.minute() as u8,
-                    datetime.second() as u8,
+                    u8::try_from(datetime.hour()).map_err(io_invalid)?,
+                    u8::try_from(datetime.minute()).map_err(io_invalid)?,
+                    u8::try_from(datetime.second()).map_err(io_invalid)?,
                     Some(micros),
                 )),
             )
@@ -1099,7 +1132,6 @@ impl MysqlTimeValue {
         })
     }
 }
-
 
 fn mysql_text_character_set(charset: &str) -> u16 {
     match charset {
@@ -1650,7 +1682,8 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use opensrv_mysql::{ColumnFlags, ColumnType};
+    use pintail_protocol::value::decode_binary_value;
+    use pintail_protocol::{ColumnFlags, ColumnType, ParameterType};
     use pintail_sql::DEFAULT_TEXT_COLLATION;
     use pintail_types::DataType;
     use sha1::{Digest as _, Sha1};
@@ -1676,7 +1709,7 @@ mod tests {
             1024,
             "utf8mb4",
         );
-        assert_eq!(column.coltype, ColumnType::MYSQL_TYPE_JSON);
+        assert_eq!(column.coltype, ColumnType::MysqlTypeJson);
     }
 
     #[test]
@@ -1692,7 +1725,7 @@ mod tests {
             1024,
             "utf8mb4",
         );
-        assert_eq!(unsigned.coltype, ColumnType::MYSQL_TYPE_LONGLONG);
+        assert_eq!(unsigned.coltype, ColumnType::MysqlTypeLonglong);
         assert!(unsigned.colflags.contains(ColumnFlags::UNSIGNED_FLAG));
         assert!(unsigned.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
 
@@ -1707,7 +1740,7 @@ mod tests {
             1024,
             "utf8mb4",
         );
-        assert_eq!(nullable_text.coltype, ColumnType::MYSQL_TYPE_VAR_STRING);
+        assert_eq!(nullable_text.coltype, ColumnType::MysqlTypeVarString);
         assert!(!nullable_text.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
 
         let binary = mysql_column(
@@ -1721,7 +1754,7 @@ mod tests {
             1024,
             "utf8mb4",
         );
-        assert_eq!(binary.coltype, ColumnType::MYSQL_TYPE_BLOB);
+        assert_eq!(binary.coltype, ColumnType::MysqlTypeBlob);
         assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
         assert_eq!(nullable_text.character_set, 255);
         assert_eq!(binary.character_set, 63);
@@ -1773,11 +1806,11 @@ mod tests {
         };
         assert_eq!(
             mysql_column(&field, 512, "utf8mb4").coltype,
-            ColumnType::MYSQL_TYPE_VAR_STRING
+            ColumnType::MysqlTypeVarString
         );
         assert_eq!(
             mysql_column(&field, 513, "utf8mb4").coltype,
-            ColumnType::MYSQL_TYPE_BLOB
+            ColumnType::MysqlTypeBlob
         );
     }
 
@@ -1799,29 +1832,42 @@ mod tests {
 
     #[test]
     fn renders_temporal_prepared_parameters_as_mysql_literals() {
+        // Decodes the same raw EXECUTE-parameter bytes the wire actually
+        // sends, through the crate's own decoder, then through
+        // parameter_literal — the full path pintail-wire uses, not a
+        // reimplementation of the byte layout to test against itself.
+        let literal = |tag, body: &[u8]| {
+            let parameter = ParameterType {
+                column_type: tag,
+                unsigned: false,
+            };
+            let (value, _) = decode_binary_value(parameter, body).expect("decode");
+            super::parameter_literal(&value).expect("literal")
+        };
+        let date_tag = ColumnType::MysqlTypeDate as u8;
+        let time_tag = ColumnType::MysqlTypeTime as u8;
+
+        assert_eq!(literal(date_tag, &[4, 0xE8, 0x07, 2, 29]), "'2024-02-29'");
         assert_eq!(
-            super::temporal_date_literal(&[0xE8, 0x07, 2, 29]).unwrap(),
-            "'2024-02-29'"
-        );
-        assert_eq!(
-            super::temporal_date_literal(&[0xE8, 0x07, 2, 29, 12, 34, 56]).unwrap(),
+            literal(date_tag, &[7, 0xE8, 0x07, 2, 29, 12, 34, 56]),
             "'2024-02-29 12:34:56'"
         );
         assert_eq!(
-            super::temporal_date_literal(&[0xE8, 0x07, 2, 29, 12, 34, 56, 0x40, 0xE2, 0x01, 0])
-                .unwrap(),
+            literal(
+                date_tag,
+                &[11, 0xE8, 0x07, 2, 29, 12, 34, 56, 0x40, 0xE2, 0x01, 0]
+            ),
             "'2024-02-29 12:34:56.123456'"
         );
-        assert_eq!(super::temporal_date_literal(&[]).unwrap(), "'0000-00-00'");
+        assert_eq!(literal(date_tag, &[0]), "'0000-00-00'");
         assert_eq!(
-            super::temporal_time_literal(&[1, 2, 0, 0, 0, 3, 4, 5]).unwrap(),
+            literal(time_tag, &[8, 1, 2, 0, 0, 0, 3, 4, 5]),
             "'-51:04:05'"
         );
         assert_eq!(
-            super::temporal_time_literal(&[0, 0, 0, 0, 0, 2, 3, 4, 0x40, 0xE2, 0x01, 0]).unwrap(),
+            literal(time_tag, &[12, 0, 0, 0, 0, 0, 2, 3, 4, 0x40, 0xE2, 0x01, 0]),
             "'02:03:04.123456'"
         );
-        assert!(super::temporal_date_literal(&[1, 2]).is_err());
     }
 
     #[test]
