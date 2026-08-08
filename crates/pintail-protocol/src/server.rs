@@ -113,6 +113,35 @@ pub trait Handler: Send {
     async fn init_database(&mut self, database: &[u8]) -> Result<(), (ErrorKind, String)>;
 }
 
+/// What probing for a disconnected peer turned up.
+#[derive(Debug)]
+pub enum WatchOutcome {
+    /// The peer appears to have gone away.
+    Disconnected,
+    /// A real read from the transport was unavoidable and returned data
+    /// rather than EOF — not a disconnect. The bytes are handed back so
+    /// [`Connection`] can prime them into the reader instead of losing them;
+    /// dropping them would answer a different command than the client sent.
+    Primed(Vec<u8>),
+}
+
+/// Watches the transport for a peer that vanished while a handler callback
+/// is running. `MySQL` clients send nothing while waiting for a query's
+/// response, so the only well-behaved way to notice an early disconnect is
+/// to check the read side concurrently rather than only between commands.
+///
+/// Deliberately transport-agnostic: peeking a live socket without consuming
+/// bytes is not something every stream type can do, so this crate does not
+/// assume `TcpStream` or attempt the probe itself. A caller that owns the
+/// real socket implements it however that transport allows.
+#[async_trait]
+pub trait DisconnectWatch: Send {
+    /// Resolves once the peer appears to have disconnected, or a read could
+    /// not be avoided. Must never resolve for a healthy, merely idle peer —
+    /// resolving early would abort a query that was going to finish fine.
+    async fn watch(&mut self) -> WatchOutcome;
+}
+
 /// What the client's first handshake packet turned out to be.
 #[derive(Clone, Debug)]
 pub enum InitialResponse {
@@ -292,9 +321,65 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
     /// Returns `false` once the client asked to quit or closed its socket, so
     /// the caller can distinguish a normal end from an error.
     ///
+    /// A long QUERY or EXECUTE is not raced against a disconnect here; the
+    /// command loop only notices the client is gone on its next read. See
+    /// [`Self::serve_one_with_disconnect_watch`] for a caller that wants that
+    /// noticed sooner.
+    ///
     /// # Errors
     /// Propagates I/O failures from the underlying stream.
     pub async fn serve_one(&mut self, handler: &mut dyn Handler) -> std::io::Result<bool> {
+        self.serve_one_inner(handler, None).await
+    }
+
+    /// Reads and serves one command, racing a long-running QUERY or EXECUTE
+    /// against `watch` so a peer that vanished mid-query is noticed rather
+    /// than waited on to completion.
+    ///
+    /// Every other command completes exactly as [`Self::serve_one`] would;
+    /// racing them would not shorten anything, since none of them run a
+    /// caller-supplied callback that could hang. A disconnect noticed here
+    /// ends the loop without writing a reply, since there is nothing left to
+    /// write it to.
+    ///
+    /// # Errors
+    /// Propagates I/O failures from the underlying stream.
+    pub async fn serve_one_with_disconnect_watch(
+        &mut self,
+        handler: &mut dyn Handler,
+        watch: &mut dyn DisconnectWatch,
+    ) -> std::io::Result<bool> {
+        self.serve_one_inner(handler, Some(watch)).await
+    }
+
+    /// Runs a handler future to completion, unless `watch` reports the peer
+    /// disconnected first. A watch that instead reports an unavoidable real
+    /// read primes those bytes back into the reader and then simply awaits
+    /// the handler normally — the false alarm is not worth a second race.
+    async fn race<F: std::future::Future<Output = Response>>(
+        &mut self,
+        watch: &mut dyn DisconnectWatch,
+        handler_future: F,
+    ) -> Option<Response> {
+        tokio::pin!(handler_future);
+        tokio::select! {
+            biased;
+            outcome = watch.watch() => match outcome {
+                WatchOutcome::Disconnected => None,
+                WatchOutcome::Primed(bytes) => {
+                    self.reader.prime(bytes);
+                    Some(handler_future.await)
+                }
+            },
+            response = &mut handler_future => Some(response),
+        }
+    }
+
+    async fn serve_one_inner(
+        &mut self,
+        handler: &mut dyn Handler,
+        watch: Option<&mut dyn DisconnectWatch>,
+    ) -> std::io::Result<bool> {
         let Some(payload) = self.reader.next_payload().await? else {
             return Ok(false);
         };
@@ -310,7 +395,13 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                 Err((kind, message)) => self.write_error(kind, &message).await?,
             },
             Command::Query(sql) => {
-                let response = handler.query(sql).await;
+                let response = match watch {
+                    Some(watch) => match self.race(watch, handler.query(sql)).await {
+                        Some(response) => response,
+                        None => return Ok(false),
+                    },
+                    None => handler.query(sql).await,
+                };
                 self.write_response(response).await?;
             }
             Command::Prepare(sql) => match handler.prepare(sql).await {
@@ -318,7 +409,13 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                 Err((kind, message)) => self.write_error(kind, &message).await?,
             },
             Command::Execute { statement, body } => {
-                let response = handler.execute(statement, body).await;
+                let response = match watch {
+                    Some(watch) => match self.race(watch, handler.execute(statement, body)).await {
+                        Some(response) => response,
+                        None => return Ok(false),
+                    },
+                    None => handler.execute(statement, body).await,
+                };
                 self.write_response(response).await?;
             }
             Command::Close(statement) => handler.close_statement(statement).await,
@@ -470,8 +567,8 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
 #[cfg(test)]
 mod tests {
     use super::{
-        Connection, Handler, InitialResponse, PreparedStatement, Response, ResultSet,
-        server_capabilities,
+        Connection, DisconnectWatch, Handler, InitialResponse, PreparedStatement, Response,
+        ResultSet, WatchOutcome, server_capabilities,
     };
     use crate::handshake::{CapabilityFlags, HandshakeResponse, SCRAMBLE_SIZE};
     use crate::packet::PacketReader;
@@ -733,5 +830,157 @@ mod tests {
             .await
             .expect("authenticate");
         assert_eq!(response.username, b"analytics");
+    }
+
+    /// `biased;` in `race` polls the watch branch first each time, so a
+    /// watch future that is `Ready` on its very first poll always wins over
+    /// a handler that would also resolve immediately — these fixtures don't
+    /// need real delays to be deterministic.
+    enum WatchBehavior {
+        NeverFires,
+        FiresImmediately,
+        PrimesOnce(Vec<u8>),
+    }
+
+    struct TestWatch(WatchBehavior);
+
+    #[async_trait]
+    impl DisconnectWatch for TestWatch {
+        async fn watch(&mut self) -> WatchOutcome {
+            match &self.0 {
+                WatchBehavior::NeverFires => std::future::pending().await,
+                WatchBehavior::FiresImmediately => WatchOutcome::Disconnected,
+                WatchBehavior::PrimesOnce(bytes) => WatchOutcome::Primed(bytes.clone()),
+            }
+        }
+    }
+
+    async fn authenticated_connection<'a>(
+        input: &'a [u8],
+        output: &'a mut Vec<u8>,
+        handler: &mut Fixture,
+    ) -> Connection<&'a [u8], &'a mut Vec<u8>> {
+        let mut connection = Connection::new(input, output);
+        connection
+            .handshake(handler, [0_u8; SCRAMBLE_SIZE])
+            .await
+            .expect("handshake");
+        connection
+    }
+
+    #[tokio::test]
+    async fn a_watch_that_fires_immediately_ends_the_query_without_a_reply() {
+        let mut input = packet(1, &client_response(server_capabilities()));
+        input.extend_from_slice(&packet(0, b"\x03SELECT 1"));
+        let mut output = Vec::new();
+        let mut handler = Fixture {
+            accept: true,
+            last_query: Vec::new(),
+        };
+        let mut connection = authenticated_connection(&input, &mut output, &mut handler).await;
+        let mut watch = TestWatch(WatchBehavior::FiresImmediately);
+
+        let served = connection
+            .serve_one_with_disconnect_watch(&mut handler, &mut watch)
+            .await
+            .expect("serve");
+        assert!(!served, "a disconnect ends the loop like a closed socket");
+
+        let mut reader = PacketReader::new(output.as_slice());
+        reader.next_payload().await.expect("io").expect("greeting");
+        reader.next_payload().await.expect("io").expect("auth ok");
+        // Nothing else was written — no result set for a query that lost
+        // the race, and no error either; there is no one left to send it to.
+        assert_eq!(reader.next_payload().await.expect("io"), None);
+    }
+
+    #[tokio::test]
+    async fn a_watch_that_never_fires_lets_the_query_complete_normally() {
+        let mut input = packet(1, &client_response(server_capabilities()));
+        input.extend_from_slice(&packet(0, b"\x03SELECT 1"));
+        let mut output = Vec::new();
+        let mut handler = Fixture {
+            accept: true,
+            last_query: Vec::new(),
+        };
+        let mut connection = authenticated_connection(&input, &mut output, &mut handler).await;
+        let mut watch = TestWatch(WatchBehavior::NeverFires);
+
+        let served = connection
+            .serve_one_with_disconnect_watch(&mut handler, &mut watch)
+            .await
+            .expect("serve");
+        assert!(served);
+        assert_eq!(handler.last_query, b"SELECT 1");
+
+        let mut reader = PacketReader::new(output.as_slice());
+        reader.next_payload().await.expect("io").expect("greeting");
+        reader.next_payload().await.expect("io").expect("auth ok");
+        // One column, one row — the real query result, not a disconnect.
+        assert_eq!(reader.next_payload().await.expect("io"), Some(vec![1]));
+    }
+
+    #[tokio::test]
+    async fn a_primed_false_alarm_finishes_the_query_and_returns_its_bytes() {
+        // A watch that had to perform a real read and got a PING rather than
+        // EOF: not a disconnect, and the PING must still be answered next —
+        // dropping it would silently swallow a command the client sent.
+        let mut input = packet(1, &client_response(server_capabilities()));
+        input.extend_from_slice(&packet(0, b"\x03SELECT 1"));
+        let mut output = Vec::new();
+        let mut handler = Fixture {
+            accept: true,
+            last_query: Vec::new(),
+        };
+        let mut connection = authenticated_connection(&input, &mut output, &mut handler).await;
+        let stolen_ping = packet(1, b"\x0e");
+        let mut watch = TestWatch(WatchBehavior::PrimesOnce(stolen_ping.clone()));
+
+        let served = connection
+            .serve_one_with_disconnect_watch(&mut handler, &mut watch)
+            .await
+            .expect("serve query");
+        assert!(served);
+        assert_eq!(handler.last_query, b"SELECT 1");
+
+        // The stream itself has nothing left; the PING can only come from
+        // what was primed back.
+        assert!(
+            connection
+                .serve_one(&mut handler)
+                .await
+                .expect("serve primed ping")
+        );
+
+        let mut reader = PacketReader::new(output.as_slice());
+        reader.next_payload().await.expect("io").expect("greeting");
+        reader.next_payload().await.expect("io").expect("auth ok");
+        reader
+            .next_payload()
+            .await
+            .expect("io")
+            .expect("query header");
+        reader
+            .next_payload()
+            .await
+            .expect("io")
+            .expect("query column def");
+        reader
+            .next_payload()
+            .await
+            .expect("io")
+            .expect("query row 1");
+        reader
+            .next_payload()
+            .await
+            .expect("io")
+            .expect("query row 2");
+        reader
+            .next_payload()
+            .await
+            .expect("io")
+            .expect("query terminator");
+        let ping_ok = reader.next_payload().await.expect("io").expect("ping ok");
+        assert_eq!(ping_ok[0], 0x00, "the primed PING was answered with OK");
     }
 }

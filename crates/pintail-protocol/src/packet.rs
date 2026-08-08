@@ -17,12 +17,21 @@ pub const MAX_PAYLOAD: usize = 0xff_ff_ff;
 pub struct PacketReader<R> {
     inner: R,
     sequence: u8,
+    /// Bytes a caller unavoidably consumed from the transport (for example,
+    /// while probing for a peer disconnect) and is handing back. Drained
+    /// before the underlying stream is touched again, so a byte can be read
+    /// exactly once no matter which caller ends up reading it.
+    primed: std::collections::VecDeque<u8>,
 }
 
 impl<R: AsyncRead + Unpin> PacketReader<R> {
     /// Wraps a stream at sequence zero.
     pub const fn new(inner: R) -> Self {
-        Self { inner, sequence: 0 }
+        Self {
+            inner,
+            sequence: 0,
+            primed: std::collections::VecDeque::new(),
+        }
     }
 
     /// The sequence id the next written packet must carry.
@@ -36,10 +45,40 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         self.sequence = sequence;
     }
 
+    /// Queues bytes to be read before the underlying stream is touched
+    /// again. For a caller that had to perform a real read while checking
+    /// whether the peer was still connected and got data rather than EOF —
+    /// those bytes are still owed to the protocol and must not be dropped
+    /// silently or read twice.
+    pub fn prime(&mut self, bytes: Vec<u8>) {
+        self.primed.extend(bytes);
+    }
+
     /// Returns the stream, so a plaintext connection can be upgraded to TLS
     /// mid-handshake without losing the sequence.
+    ///
+    /// Any bytes still queued via [`Self::prime`] are prepended to the
+    /// returned pair rather than lost — a caller upgrading a connection has
+    /// no other place to put them, and dropping them would answer a
+    /// different command than the client actually sent.
+    #[must_use]
     pub fn into_inner(self) -> (R, u8) {
+        debug_assert!(
+            self.primed.is_empty(),
+            "primed bytes must be drained before an upgrade, or they are lost"
+        );
         (self.inner, self.sequence)
+    }
+
+    async fn read_exact_primed(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        let from_primed = self.primed.len().min(buf.len());
+        for slot in &mut buf[..from_primed] {
+            *slot = self.primed.pop_front().expect("checked length above");
+        }
+        if from_primed < buf.len() {
+            self.inner.read_exact(&mut buf[from_primed..]).await?;
+        }
+        Ok(())
     }
 
     /// Reads one logical payload, rejoining continuation packets.
@@ -54,8 +93,8 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         let mut payload = Vec::new();
         loop {
             let mut header = [0_u8; 4];
-            match self.inner.read_exact(&mut header).await {
-                Ok(_) => {}
+            match self.read_exact_primed(&mut header).await {
+                Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
                     // A clean close between packets is a disconnect, not a
                     // protocol violation; mid-payload it is corruption.
@@ -75,7 +114,7 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
             self.sequence = header[3].wrapping_add(1);
             let start = payload.len();
             payload.resize(start + length, 0);
-            self.inner.read_exact(&mut payload[start..]).await?;
+            self.read_exact_primed(&mut payload[start..]).await?;
             if length < MAX_PAYLOAD {
                 return Ok(Some(payload));
             }
@@ -230,6 +269,35 @@ mod tests {
             .await
             .expect("read")
             .expect("one payload")
+    }
+
+    #[tokio::test]
+    async fn primed_bytes_are_read_exactly_once_before_the_underlying_stream() {
+        // A caller that peeked the socket for a disconnect and got real data
+        // instead of EOF hands those bytes back rather than losing them.
+        // They must come out ahead of, not mixed into, whatever the stream
+        // still holds.
+        let mut encoded = Vec::new();
+        let mut writer = PacketWriter::new(&mut encoded);
+        writer.write_payload(b"tail").await.expect("write");
+
+        // The header's first two bytes were "unavoidably" read elsewhere.
+        let stolen = encoded[..2].to_vec();
+        let remaining = &encoded[2..];
+
+        let mut reader = PacketReader::new(remaining);
+        reader.prime(stolen);
+        let payload = reader
+            .next_payload()
+            .await
+            .expect("read")
+            .expect("one payload");
+        assert_eq!(payload, b"tail");
+    }
+
+    #[tokio::test]
+    async fn priming_with_nothing_owed_changes_nothing() {
+        assert_eq!(round_trip(b"steady").await, b"steady");
     }
 
     #[tokio::test]
