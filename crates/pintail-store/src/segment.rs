@@ -26,7 +26,7 @@ const FORMAT_VERSION: u8 = 3;
 /// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns;
 /// v3 permits raw block payloads when LZ4 cannot save at least 5%.
 const fn format_version_supported(version: u8) -> bool {
-    matches!(version, 1 | 2 | 3)
+    matches!(version, 1..=3)
 }
 const KEY_COLUMN_ID: u32 = u32::MAX - 2;
 const VERSION_COLUMN_ID: u32 = u32::MAX - 1;
@@ -4593,7 +4593,7 @@ mod compression_tests {
                 state ^= state << 13;
                 state ^= state >> 7;
                 state ^= state << 17;
-                state as u8
+                state.to_le_bytes()[0]
             })
             .collect::<Vec<_>>();
         let (compression, stored) =

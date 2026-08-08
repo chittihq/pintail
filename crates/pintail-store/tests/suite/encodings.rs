@@ -81,7 +81,7 @@ fn adaptive_compression_mixes_raw_and_lz4_blocks_and_reopens() {
                     state ^= state << 13;
                     state ^= state >> 7;
                     state ^= state << 17;
-                    state as u8
+                    state.to_le_bytes()[0]
                 })
                 .collect::<Vec<_>>();
             StoredRow::new(
