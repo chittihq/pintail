@@ -1090,6 +1090,13 @@ Compression tag `0` carries exact-length raw payloads, old LZ4/zstd tags remain
 readable, and cold full-merge output remains zstd. Mixed raw/LZ4 reopen,
 legacy-codec decode, and corrupt raw-length coverage pin the boundary.
 
+The sub-15% decode differences remain performance ties under rule 3; they are
+not the adoption claim. PTSEG v3 is the narrower storage-policy exception:
+normal-tier compression must not expand a block, and the same local choice must
+retain the 41-99.5% reductions on compressible payloads. The 5% threshold adds
+hysteresis so marginal byte savings do not impose decompression. Both targets
+selected exactly the same blocks, so this exception is not ISA-specific.
+
 ## e28 — FastLanes in the current real PTSEG scan path
 
 The earlier e23 estimate assigned FastLanes roughly 13 ms out of a 9,055 ms

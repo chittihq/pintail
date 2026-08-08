@@ -341,7 +341,12 @@ reproduced production payload shapes on Apple and Linux: FOR-packed and random
 Float64 blocks expand under LZ4, while delta-packed keys and dictionary/text
 blocks save 41-99.5%. Normal flushes therefore try LZ4 and keep it only at 5%
 or greater savings; raw blocks carry compression tag `0`. Existing LZ4/zstd
-segments remain readable and cold full-merge output remains zstd.
+segments remain readable and cold full-merge output remains zstd. This is not a
+claim that the sub-15% decode differences beat the lab's performance threshold;
+they are ties. The adoption instead enforces a storage invariant: normal-tier
+compression may not expand a block, while retaining the 41-99.5% reductions on
+compressible blocks. The 5% hysteresis keeps marginal size wins from adding a
+decode step. The decision is identical on both reference targets.
 
 ### Merge-on-read uses granule-level sweep-line classification
 

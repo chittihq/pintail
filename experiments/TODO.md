@@ -71,7 +71,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
 2. A winner must win on **both** machines (Apple M2 Pro local; remote docker host with
    pinned CPU/memory limits) or the difference is treated as ISA-specific and both
    paths are kept behind the kernel-dispatch layer.
-3. Margins < 15% are ties — prefer the simpler implementation.
+3. Performance margins < 15% are ties — prefer the simpler implementation and
+   do not claim a throughput win. A separately stated storage invariant may
+   choose between tied kernels, but its evidence and tradeoff must be recorded.
 4. Results feed `docs/decisions.md` entries when adopted into `crates/pintail-*`.
 
 ## Pending (third wave)
