@@ -7,10 +7,13 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
+use super::scan::{
+    ProjectedRow, ProjectedScan, ProjectedScanStream, ScanPart, ScanStats,
+    bound_range_is_searchable, columns_to_rows,
+};
 use super::{
-    ProjectedCandidate, ProjectedRow, ProjectedScan, ProjectedScanStream, ProjectedSource,
-    ScanPart, ScanStats, WAL_FILE, adapt_recovered_row, apply_latest, apply_projected_latest,
-    bound_range_is_searchable, columns_to_rows, projected_scan_pool, register_pinned_manifest,
+    ProjectedCandidate, ProjectedSource, WAL_FILE, adapt_recovered_row, apply_latest,
+    apply_projected_latest, projected_scan_pool, register_pinned_manifest,
 };
 use rayon::prelude::*;
 
