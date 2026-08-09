@@ -1321,6 +1321,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
         }
         QueryError::Invalid(_) => ErrorKind::ErParseError,
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
+        QueryError::Overloaded => ErrorKind::ErConCountError,
         QueryError::NotReady(_) | QueryError::Internal(_) => ErrorKind::ErUnknownError,
     }
 }

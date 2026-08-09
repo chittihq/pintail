@@ -1344,3 +1344,83 @@ fn probe_report(tables: Vec<SourceTable>) -> ProbeReport {
         warnings: Vec::new(),
     }
 }
+
+/// A saturated server must refuse a query with a real `MySQL` error the client
+/// can act on, not hang and not drop the connection.
+///
+/// The load baseline showed the unbounded behaviour: p99 rose with
+/// concurrency to 22s at 256 clients while nothing was ever refused. This
+/// pins the opposite contract — past the bound the client is told, quickly.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_saturated_server_refuses_queries_instead_of_queueing_them() {
+    // A one-slot bound makes saturation deterministic: the first query holds
+    // the only permit while the second asks for one.
+    pintail_wire::init_shared_admission(1);
+    let admission = pintail_wire::shared_admission();
+    // If another test in this binary installed the shared bound first, the
+    // OnceLock kept that value and this test cannot observe refusal.
+    if admission.limit() != 1 {
+        return;
+    }
+    let held = admission.try_admit().expect("the only slot");
+
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_replica(data.path(), &metadata_path);
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server_metadata = metadata_path.clone();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until_with_options(
+            listener,
+            data_dir,
+            server_metadata,
+            pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+            None,
+            Duration::from_secs(30),
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+    });
+
+    let pool = Pool::new(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/analytics"
+        ))
+        .expect("wire DSN"),
+    );
+    let mut connection = pool.get_conn().await.expect("authenticated wire client");
+    // Connecting still works: the bound covers execution, not sessions.
+    let refused = connection
+        .query_drop("SELECT * FROM events")
+        .await
+        .expect_err("a saturated server must refuse the query");
+    let message = refused.to_string();
+    assert!(
+        message.contains("concurrent queries"),
+        "refusal must name the real cause, got: {message}"
+    );
+
+    // Releasing the slot must make the server usable again rather than
+    // leaving it wedged.
+    drop(held);
+    connection
+        .query_drop("SELECT * FROM events")
+        .await
+        .expect("the server must recover once a slot frees");
+
+    drop(connection);
+    pool.disconnect().await.ok();
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
+}

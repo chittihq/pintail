@@ -51,6 +51,10 @@ async fn main() -> Result<()> {
         Err(error) => eprintln!("could not reclaim old spill files: {error}"),
     }
 
+    // Installed before either listener binds so every query on both
+    // surfaces draws from one bound.
+    pintail_wire::init_shared_admission(config.max_concurrent_queries());
+
     let api_state = ApiState::new(
         config.data_dir(),
         &metadata_path,

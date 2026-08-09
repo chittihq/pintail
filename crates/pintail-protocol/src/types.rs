@@ -225,6 +225,16 @@ pub enum ErrorKind {
     /// often a client executing after `COM_STMT_CLOSE` or against the wrong
     /// connection.
     ErUnknownStmtHandler = 1243,
+    /// 1040: the server refused to start the query because it is at its
+    /// concurrency limit.
+    ///
+    /// `MySQL` publishes no code meaning exactly "query admission refused";
+    /// 1040 names connections, not queries. It is used anyway because it is
+    /// the code clients and pools already treat as retryable backpressure,
+    /// which is the behaviour a refused query needs. The message says
+    /// concurrent queries so an operator reading the log is not sent
+    /// hunting a connection limit that is not the cause.
+    ErConCountError = 1040,
     /// 1105: anything without a more specific code.
     ErUnknownError = 1105,
 }
@@ -248,6 +258,7 @@ impl ErrorKind {
             | Self::ErOptionPreventsStatement => b"42000",
             Self::ErNoSuchTable => b"42S02",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
+            Self::ErConCountError => b"08004",
             Self::ErQueryInterrupted => b"70100",
             Self::ErWrongArguments | Self::ErUnknownStmtHandler | Self::ErUnknownError => b"HY000",
         }

@@ -13,6 +13,8 @@ use pintail_exec::{
     SnapshotScanProvider, explain_analyze_statement_with_deadline, explain_statement,
 };
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
+
+use crate::admission::{QueryAdmission, shared_admission};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
     Binder, BoundExprKind, BoundJoinKind, BoundQuery, ColumnFacts, DEFAULT_TEXT_COLLATION,
@@ -75,6 +77,8 @@ pub enum QueryError {
     Internal(String),
     #[error("query execution was interrupted after max_execution_time elapsed")]
     Interrupted,
+    #[error("too many concurrent queries; the server is at its execution limit, retry shortly")]
+    Overloaded,
 }
 
 /// Opens reader-pinned table snapshots and runs Pintail's native SQL engine.
@@ -83,6 +87,10 @@ pub struct ReplicaEngine {
     data_dir: PathBuf,
     metadata_path: PathBuf,
     memory_limit: usize,
+    /// Bounds concurrent execution. Without it the server admits every
+    /// query and converts overload into unbounded latency rather than
+    /// backpressure (see `tests/load/results.md`).
+    admission: std::sync::Arc<QueryAdmission>,
     /// Loaded replicas keyed by database, revalidated per request against
     /// on-disk file stamps: reopening every table snapshot (manifest read
     /// plus WAL merge) and the metadata store cost ~200ms on EVERY query,
@@ -124,6 +132,7 @@ impl ReplicaEngine {
             data_dir: data_dir.into(),
             metadata_path: metadata_path.into(),
             memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
+            admission: shared_admission(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -206,6 +215,19 @@ impl ReplicaEngine {
         self
     }
 
+    /// Bounds concurrent query execution. Zero is unbounded.
+    #[must_use]
+    pub fn with_max_concurrent_queries(mut self, limit: usize) -> Self {
+        self.admission = std::sync::Arc::new(QueryAdmission::new(limit));
+        self
+    }
+
+    /// The configured concurrency ceiling; zero means unbounded.
+    #[must_use]
+    pub fn max_concurrent_queries(&self) -> usize {
+        self.admission.limit()
+    }
+
     /// Executes one read-only MySQL-dialect statement.
     ///
     /// # Errors
@@ -235,6 +257,10 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
     ) -> Result<QueryOutput, QueryError> {
         let started = Instant::now();
+        // Held for the whole execution and released on drop, including on
+        // an early return or panic. Taken before any replica or catalog
+        // work so a saturated server refuses cheaply.
+        let _permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
         let replica = self.load_replica_cached(database_id)?;
         let catalog = build_catalog(&replica)?;
         let mut provider = build_provider(&replica)?;

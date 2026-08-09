@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT;
+use pintail_wire::{DEFAULT_QUERY_MEMORY_LIMIT, default_max_concurrent_queries};
 use serde::Deserialize;
 
 const DEFAULT_CONFIG_FILE: &str = "pintail.toml";
@@ -55,6 +55,12 @@ pub struct Cli {
     #[arg(long)]
     pub query_memory_limit_bytes: Option<usize>,
 
+    /// Maximum queries executing at once. Beyond this, queries wait briefly
+    /// and are then refused so overload becomes backpressure rather than
+    /// unbounded latency. Zero disables the bound.
+    #[arg(long)]
+    pub max_concurrent_queries: Option<usize>,
+
     /// Directory for query spill files. Defaults to `<data-dir>/spill`.
     #[arg(long)]
     pub spill_dir: Option<PathBuf>,
@@ -77,6 +83,7 @@ pub struct AppConfig {
     wire_bind: SocketAddr,
     wire_idle_timeout_seconds: u64,
     query_memory_limit_bytes: usize,
+    max_concurrent_queries: usize,
     query_spill_limit_bytes: u64,
     global_spill_limit_bytes: u64,
     wire_tls_certificate: Option<PathBuf>,
@@ -218,6 +225,23 @@ impl AppConfig {
         if query_memory_limit_bytes == 0 {
             bail!("query memory limit must be greater than zero");
         }
+        let environment_max_concurrent_queries = environment
+            .get(&OsString::from("PINTAIL_MAX_CONCURRENT_QUERIES"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_MAX_CONCURRENT_QUERIES must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_MAX_CONCURRENT_QUERIES must be a non-negative integer")
+            })
+            .transpose()?;
+        // Zero is a deliberate opt-out rather than an error: an operator
+        // measuring the unbounded behaviour needs a way back to it.
+        let max_concurrent_queries = cli
+            .max_concurrent_queries
+            .or(environment_max_concurrent_queries)
+            .or(file.query.max_concurrent_queries)
+            .unwrap_or_else(default_max_concurrent_queries);
         let environment_query_spill_limit = environment
             .get(&OsString::from("PINTAIL_QUERY_SPILL_LIMIT_BYTES"))
             .map(|value| {
@@ -294,6 +318,7 @@ impl AppConfig {
             wire_bind,
             wire_idle_timeout_seconds,
             query_memory_limit_bytes,
+            max_concurrent_queries,
             query_spill_limit_bytes,
             global_spill_limit_bytes,
             wire_tls_certificate,
@@ -341,6 +366,11 @@ impl AppConfig {
     #[must_use]
     pub const fn query_memory_limit_bytes(&self) -> usize {
         self.query_memory_limit_bytes
+    }
+
+    #[must_use]
+    pub const fn max_concurrent_queries(&self) -> usize {
+        self.max_concurrent_queries
     }
 
     /// Returns the directory query spill files are written to.
@@ -393,6 +423,7 @@ struct FileWireConfig {
 #[serde(default, deny_unknown_fields)]
 struct FileQueryConfig {
     memory_limit_bytes: Option<usize>,
+    max_concurrent_queries: Option<usize>,
     spill_limit_bytes: Option<u64>,
 }
 
@@ -443,6 +474,7 @@ mod tests {
             wire_bind: None,
             wire_idle_timeout_seconds: None,
             query_memory_limit_bytes: None,
+            max_concurrent_queries: None,
             spill_dir: None,
             query_spill_limit_bytes: None,
             global_spill_limit_bytes: None,

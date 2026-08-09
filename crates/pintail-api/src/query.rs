@@ -289,7 +289,13 @@ fn execute_query(
 fn query_error(error: QueryError) -> ApiError {
     match error {
         QueryError::DatabaseNotFound => ApiError::not_found(error.to_string()),
-        QueryError::NotReady(_) => ApiError::unavailable(error.to_string()),
+        // Both are "not now, try again": the replica is still catching up,
+        // or the engine is at its concurrency bound and never started the
+        // query. 503 is what tells a caller or load balancer to retry,
+        // which 500 would not.
+        QueryError::NotReady(_) | QueryError::Overloaded => {
+            ApiError::unavailable(error.to_string())
+        }
         QueryError::Invalid(message) => {
             let message = if message == "Pintail's query surfaces are read-only" {
                 "Pintail's HTTP query surface is read-only".to_owned()

@@ -1,8 +1,13 @@
 //! Read-only `MySQL` wire protocol server for Pintail.
 
+mod admission;
 mod engine;
 mod server;
 
+pub use admission::{
+    QueryAdmission, QueryPermit, default_max_concurrent_queries, init_shared_admission,
+    shared_admission,
+};
 pub use engine::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
     ReplicaEngine, table_directory,
