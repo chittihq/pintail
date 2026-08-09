@@ -6,6 +6,8 @@ use pintail_catalog::{DatabaseId, TableId};
 
 use crate::BatchError;
 
+use super::budget::MemoryScope;
+
 /// Physical planning or execution failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecError {
@@ -88,8 +90,10 @@ pub enum ExecError {
         used: usize,
         /// Additional transient or persistent bytes requested.
         requested: usize,
-        /// Hard query limit.
+        /// The ceiling that was hit.
         limit: usize,
+        /// Which ceiling: one query's own, or the process-wide budget.
+        scope: MemoryScope,
     },
     /// A batch invariant was violated.
     Batch(BatchError),
@@ -174,9 +178,11 @@ impl fmt::Display for ExecError {
                 used,
                 requested,
                 limit,
+                scope,
             } => write!(
                 formatter,
-                "query memory limit exceeded: {used} bytes used, {requested} requested, {limit} limit"
+                "{} memory limit exceeded: {used} bytes used, {requested} requested, {limit} limit",
+                scope.describe()
             ),
             Self::Batch(error) => error.fmt(formatter),
         }

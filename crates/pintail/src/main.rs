@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
     // Installed before either listener binds so every query on both
     // surfaces draws from one bound.
     pintail_wire::init_shared_admission(config.max_concurrent_queries());
+    pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
 
     let api_state = ApiState::new(
         config.data_dir(),

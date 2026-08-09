@@ -19,8 +19,8 @@ pub use execution::{
     with_execution_cancellation,
 };
 pub use execution::{
-    set_session_cte_max_recursion_depth, set_session_group_concat_max_len,
-    take_session_group_concat_warnings,
+    MemoryScope, init_shared_memory_budget, set_session_cte_max_recursion_depth,
+    set_session_group_concat_max_len, shared_memory_budget, take_session_group_concat_warnings,
 };
 pub use explain::{
     ExplainError, explain_analyze_statement, explain_analyze_statement_with_deadline,

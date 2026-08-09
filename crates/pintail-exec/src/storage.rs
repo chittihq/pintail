@@ -15,6 +15,7 @@ use pintail_store::{
 use pintail_types::{KeyPart, PrimaryKey, Value};
 use rayon::prelude::*;
 
+use crate::execution::MemoryScope;
 use crate::{
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
     array::{StrColumn, ValidityMask},
@@ -216,6 +217,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 used: 0,
                 requested: stream_overhead,
                 limit: memory_limit,
+                scope: MemoryScope::Query,
             });
         }
 
@@ -378,6 +380,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     used: used.saturating_add(stream_overhead),
                     requested,
                     limit: memory_limit,
+                    scope: MemoryScope::Query,
                 },
                 other => ExecError::Source(other.to_string()),
             })?;

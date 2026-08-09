@@ -165,10 +165,15 @@ worth refusing.
   Measured in `tests/load/results.md`. Connections themselves are still
   accepted without limit, so a client that only holds sessions open is
   not bounded by this.
-- The query memory ceiling is per query, not process-wide. Bounding
-  concurrency indirectly bounds how many ceilings are live at once, which
-  is why resident memory stops growing with load, but there is still no
-  single process budget that concurrent queries draw from.
+- A process-wide memory budget exists (`--total-query-memory-limit-bytes`)
+  but defaults to unbounded, so by default the per-query ceiling is still
+  the only memory bound and concurrent queries can sum past it. Enabling it
+  makes exhaustion report `server memory limit exceeded` rather than
+  `query`; spilling operators treat both alike and spill, so the budget
+  degrades a query to disk before failing it. Only reservations tracked by
+  `MemoryTracker` are charged: batch decode buffers and per-connection
+  session state are outside it, so the budget bounds operator memory rather
+  than the whole process resident set.
 
 - Text keys, numeric/string coercions, out-of-range signedness conversions,
   synthetic append-row IDs, undeclared mappings and composite keys remain

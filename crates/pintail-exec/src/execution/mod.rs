@@ -1,4 +1,5 @@
 mod aggregate;
+mod budget;
 mod error;
 mod join;
 mod sort;
@@ -9,6 +10,8 @@ pub(crate) use aggregate::compare_decimal_text;
 /// Test-only accessor for the SMA fold-hit counter the storage tests assert on.
 #[cfg(test)]
 pub(crate) use aggregate::sma_fold_hits;
+use budget::MemoryBudget;
+pub use budget::MemoryScope;
 pub use error::ExecError;
 pub(crate) use join::compare_collated_text;
 
@@ -131,6 +134,25 @@ pub fn set_session_cte_max_recursion_depth(limit: Option<u64>) {
 /// Maximum estimated result rows accepted by the unqualified cross-join
 /// operator.
 pub const MAX_CROSS_JOIN_ROWS: u64 = 1_000_000;
+
+/// The process-wide memory budget every query draws from.
+///
+/// Separate from the per-query ceiling: that one bounds a single query, this
+/// one bounds their sum. Zero (the default) is unbounded, so a caller that
+/// never configures a budget keeps exactly the previous behaviour.
+static SHARED_MEMORY_BUDGET: std::sync::OnceLock<MemoryBudget> = std::sync::OnceLock::new();
+
+/// Installs the process-wide memory budget. Called once at startup; later
+/// calls are ignored so a stray caller cannot loosen a configured budget.
+pub fn init_shared_memory_budget(limit: usize) {
+    let _ = SHARED_MEMORY_BUDGET.set(MemoryBudget::new(limit));
+}
+
+/// The process-wide budget, unbounded when startup configured none.
+#[must_use]
+pub fn shared_memory_budget() -> &'static MemoryBudget {
+    SHARED_MEMORY_BUDGET.get_or_init(|| MemoryBudget::new(0))
+}
 
 /// Client-visible output field metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -915,6 +937,10 @@ pub struct MemoryTracker {
     /// a shared `&MemoryTracker` (experiments/RESULTS.md e02: thread-local
     /// partial state + merge is the adopted parallel-aggregation shape).
     used: std::sync::atomic::AtomicUsize,
+    /// Whether this tracker charges the process-wide budget. Worker
+    /// trackers are accounting-independent clones of a parent that already
+    /// charged it, so they must not charge it twice.
+    charges_shared: bool,
     spill: spill::QuerySpill,
 }
 
@@ -925,6 +951,7 @@ impl Clone for MemoryTracker {
             deadline: self.deadline,
             cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(self.used()),
+            charges_shared: self.charges_shared,
             spill: self.spill.clone(),
         }
     }
@@ -954,6 +981,7 @@ impl MemoryTracker {
             deadline,
             cancellation: EXECUTION_CANCELLATION.with(|current| current.borrow().clone()),
             used: std::sync::atomic::AtomicUsize::new(0),
+            charges_shared: true,
             spill: spill::QuerySpill::new(),
         }
     }
@@ -966,6 +994,7 @@ impl MemoryTracker {
             deadline: self.deadline,
             cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(0),
+            charges_shared: false,
             spill: self.spill.clone(),
         }
     }
@@ -1015,22 +1044,41 @@ impl MemoryTracker {
             },
         );
         match outcome {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                if self.charges_shared
+                    && let Err(error) = shared_memory_budget().reserve(bytes)
+                {
+                    // The query ceiling already accepted these bytes. Give
+                    // them back before reporting, or a refused reservation
+                    // permanently shrinks this query's own allowance.
+                    self.release_local(bytes);
+                    return Err(error);
+                }
+                Ok(())
+            }
             Err(used) => Err(ExecError::MemoryLimitExceeded {
                 used,
                 requested: bytes,
                 limit: self.limit,
+                scope: MemoryScope::Query,
             }),
         }
     }
 
-    /// Releases persistent operator memory.
-    pub fn release(&self, bytes: usize) {
+    fn release_local(&self, bytes: usize) {
         let _ = self.used.fetch_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |used| Some(used.saturating_sub(bytes)),
         );
+    }
+
+    /// Releases persistent operator memory from both ceilings.
+    pub fn release(&self, bytes: usize) {
+        self.release_local(bytes);
+        if self.charges_shared {
+            shared_memory_budget().release(bytes);
+        }
     }
 
     fn ensure_transient(&self, bytes: usize) -> Result<(), ExecError> {
@@ -1041,6 +1089,16 @@ impl MemoryTracker {
                 used,
                 requested: bytes,
                 limit: self.limit,
+                scope: MemoryScope::Query,
+            });
+        }
+        let shared = shared_memory_budget();
+        if self.charges_shared && !shared.would_fit(bytes) {
+            return Err(ExecError::MemoryLimitExceeded {
+                used: shared.used(),
+                requested: bytes,
+                limit: shared.limit(),
+                scope: MemoryScope::Server,
             });
         }
         Ok(())
@@ -2002,6 +2060,7 @@ fn materialize_subquery(
                     used: live_bytes,
                     requested: bytes,
                     limit: memory_limit,
+                    scope: MemoryScope::Query,
                 });
             }
             used += bytes;
@@ -2029,6 +2088,7 @@ fn reserve_subquery_values(
             used: *retained_bytes,
             requested: bytes,
             limit: memory_limit,
+            scope: MemoryScope::Query,
         });
     }
     *retained_bytes += bytes;
@@ -4423,8 +4483,7 @@ mod tests {
             execution.next_batch(),
             Err(ExecError::MemoryLimitExceeded {
                 limit: actual,
-                ..
-            }) if actual == limit
+                .. }) if actual == limit
         ));
     }
 

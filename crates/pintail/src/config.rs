@@ -61,6 +61,11 @@ pub struct Cli {
     #[arg(long)]
     pub max_concurrent_queries: Option<usize>,
 
+    /// Byte ceiling shared by every concurrent query. The per-query limit
+    /// bounds one query; this bounds their sum. Zero disables the bound.
+    #[arg(long)]
+    pub total_query_memory_limit_bytes: Option<usize>,
+
     /// Directory for query spill files. Defaults to `<data-dir>/spill`.
     #[arg(long)]
     pub spill_dir: Option<PathBuf>,
@@ -84,6 +89,7 @@ pub struct AppConfig {
     wire_idle_timeout_seconds: u64,
     query_memory_limit_bytes: usize,
     max_concurrent_queries: usize,
+    total_query_memory_limit_bytes: usize,
     query_spill_limit_bytes: u64,
     global_spill_limit_bytes: u64,
     wire_tls_certificate: Option<PathBuf>,
@@ -242,6 +248,26 @@ impl AppConfig {
             .or(environment_max_concurrent_queries)
             .or(file.query.max_concurrent_queries)
             .unwrap_or_else(default_max_concurrent_queries);
+        let environment_total_query_memory = environment
+            .get(&OsString::from("PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES must be valid UTF-8")?
+                    .parse()
+                    .context(
+                        "PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES must be a non-negative integer",
+                    )
+            })
+            .transpose()?;
+        // Defaults to unbounded: a process budget that silently starts
+        // refusing queries on an existing deployment would be a regression
+        // dressed as a safety feature. Operators opt in.
+        let total_query_memory_limit_bytes = cli
+            .total_query_memory_limit_bytes
+            .or(environment_total_query_memory)
+            .or(file.query.total_memory_limit_bytes)
+            .unwrap_or(0);
         let environment_query_spill_limit = environment
             .get(&OsString::from("PINTAIL_QUERY_SPILL_LIMIT_BYTES"))
             .map(|value| {
@@ -319,6 +345,7 @@ impl AppConfig {
             wire_idle_timeout_seconds,
             query_memory_limit_bytes,
             max_concurrent_queries,
+            total_query_memory_limit_bytes,
             query_spill_limit_bytes,
             global_spill_limit_bytes,
             wire_tls_certificate,
@@ -373,6 +400,11 @@ impl AppConfig {
         self.max_concurrent_queries
     }
 
+    #[must_use]
+    pub const fn total_query_memory_limit_bytes(&self) -> usize {
+        self.total_query_memory_limit_bytes
+    }
+
     /// Returns the directory query spill files are written to.
     #[must_use]
     pub fn spill_dir(&self) -> &Path {
@@ -424,6 +456,7 @@ struct FileWireConfig {
 struct FileQueryConfig {
     memory_limit_bytes: Option<usize>,
     max_concurrent_queries: Option<usize>,
+    total_memory_limit_bytes: Option<usize>,
     spill_limit_bytes: Option<u64>,
 }
 
@@ -475,6 +508,7 @@ mod tests {
             wire_idle_timeout_seconds: None,
             query_memory_limit_bytes: None,
             max_concurrent_queries: None,
+            total_query_memory_limit_bytes: None,
             spill_dir: None,
             query_spill_limit_bytes: None,
             global_spill_limit_bytes: None,
