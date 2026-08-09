@@ -155,6 +155,21 @@ worth refusing.
 
 ### Planning and execution
 
+- Concurrent query execution is bounded (`--max-concurrent-queries`,
+  default four times the core count with a floor of sixteen). Past the
+  bound a query waits up to two seconds for a slot and is then refused
+  with `MySQL` 1040 on the wire or HTTP 503, so overload becomes
+  backpressure rather than unbounded queueing. The bound is what keeps
+  tail latency flat under load; the cost is that median latency rises
+  once the queue engages, because admitted queries may wait for a slot.
+  Measured in `tests/load/results.md`. Connections themselves are still
+  accepted without limit, so a client that only holds sessions open is
+  not bounded by this.
+- The query memory ceiling is per query, not process-wide. Bounding
+  concurrency indirectly bounds how many ceilings are live at once, which
+  is why resident memory stops growing with load, but there is still no
+  single process budget that concurrent queries draw from.
+
 - Text keys, numeric/string coercions, out-of-range signedness conversions,
   synthetic append-row IDs, undeclared mappings and composite keys remain
   correct but deliberately skip physical range pruning.

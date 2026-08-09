@@ -207,6 +207,10 @@ function percentile(sorted: number[], fraction: number): number {
 /// Bucket an error by kind rather than by message, so a hundred distinct
 /// row counts in one message do not read as a hundred distinct failures.
 function errorKind(message: string): string {
+  // Admission refusal is the designed response to overload, not a failure.
+  // It must be distinguishable from a real error or the load evidence
+  // cannot tell load shedding apart from the server falling over.
+  if (/concurrent queries/i.test(message)) return 'admission-refused'
   if (/query memory limit exceeded/i.test(message)) return 'query-memory-limit'
   if (/too many connections|connection limit/i.test(message)) return 'connection-limit'
   if (/ECONNRESET|socket hang up|closed/i.test(message)) return 'connection-dropped'
