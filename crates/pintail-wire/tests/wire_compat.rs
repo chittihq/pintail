@@ -371,15 +371,28 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("restore utf8mb4 names");
-    connection
+    // ANSI_QUOTES changes how a statement parses, and the parser is a fixed
+    // MySqlDialect. Accepting and echoing it - which this test used to
+    // assert - meant a client could ask for identifier quoting, be told it
+    // succeeded, and silently get string literals instead.
+    let refused = connection
         .query_drop("SET sql_mode = 'ANSI_QUOTES'")
         .await
-        .expect("set sql mode");
+        .expect_err("a result-changing sql_mode must be refused");
+    assert!(
+        refused.to_string().contains("ANSI_QUOTES"),
+        "refusal must name the mode, got: {refused}"
+    );
+    // A mode that is genuinely inert on a read-only replica still round-trips.
+    connection
+        .query_drop("SET sql_mode = 'STRICT_TRANS_TABLES'")
+        .await
+        .expect("an inert sql_mode must still be accepted");
     let mode: Option<String> = connection
         .query_first("SELECT @@sql_mode")
         .await
         .expect("sql mode probe");
-    assert_eq!(mode.as_deref(), Some("ANSI_QUOTES"));
+    assert_eq!(mode.as_deref(), Some("STRICT_TRANS_TABLES"));
     connection
         .query_drop("SET SESSION group_concat_max_len = 5")
         .await
@@ -825,8 +838,10 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .prep("SELECT name FROM events WHERE id = ?")
         .await
         .expect("prepare before change-user");
+    // Any non-default mode dirties the session; the point here is that
+    // COM_CHANGE_USER resets it, not which mode was set.
     connection
-        .query_drop("SET sql_mode = 'ANSI_QUOTES'")
+        .query_drop("SET sql_mode = 'STRICT_ALL_TABLES'")
         .await
         .expect("dirty session before change-user");
     connection

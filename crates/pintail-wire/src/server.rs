@@ -358,10 +358,64 @@ where
     }
 }
 
+/// `sql_mode` flags that change how a statement parses or evaluates, and
+/// that Pintail does not implement.
+///
+/// The parser is a fixed `MySqlDialect`, so `PIPES_AS_CONCAT` cannot make
+/// `||` concatenate and `ANSI_QUOTES` cannot make `"x"` an identifier.
+/// Storing such a mode and carrying on would answer a different question
+/// than the client asked - `a || b` returning a boolean where the client
+/// expected a string - with no error to notice. These are refused instead.
+const RESULT_CHANGING_SQL_MODES: &[&str] = &[
+    // Parsing.
+    "ANSI_QUOTES",
+    "PIPES_AS_CONCAT",
+    "HIGH_NOT_PRECEDENCE",
+    "NO_BACKSLASH_ESCAPES",
+    "IGNORE_SPACE",
+    // Evaluation.
+    "REAL_AS_FLOAT",
+    "NO_UNSIGNED_SUBTRACTION",
+    // Would ask ingestion to keep values it normalizes to NULL.
+    "ALLOW_INVALID_DATES",
+];
+
+/// Compound modes, each of which turns on result-changing flags.
+const COMPOUND_SQL_MODES: &[&str] = &["ANSI", "DB2", "MAXDB", "MSSQL", "ORACLE", "POSTGRESQL"];
+
+/// Refuses a `sql_mode` that would change results Pintail cannot deliver.
+///
+/// Write-and-DDL modes (`STRICT_*`, `NO_ZERO_*`, `NO_ENGINE_SUBSTITUTION`
+/// and friends) are accepted quietly: this endpoint is read-only, so they
+/// are genuinely inert here rather than silently ignored.
+fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
+    for mode in value.split(',') {
+        let mode = mode.trim().to_ascii_uppercase();
+        if mode.is_empty() {
+            continue;
+        }
+        if RESULT_CHANGING_SQL_MODES.contains(&mode.as_str()) {
+            return Err(format!(
+                "Variable 'sql_mode' can't be set to the value of '{mode}': \
+                 Pintail does not implement it and would otherwise return a \
+                 different result than the mode requests"
+            ));
+        }
+        if COMPOUND_SQL_MODES.contains(&mode.as_str()) {
+            return Err(format!(
+                "Variable 'sql_mode' can't be set to the value of '{mode}': \
+                 the combination mode enables parsing changes Pintail does \
+                 not implement"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Per-connection session variables with real semantics: `time_zone`
 /// shifts the statement-pinned time functions, `NAMES` accepts only the
-/// utf8 charsets Pintail actually serves, and `sql_mode` is stored and
-/// echoed with documented no-op semantics.
+/// utf8 charsets Pintail actually serves, and `sql_mode` accepts only
+/// modes that are genuinely inert on a read-only replica.
 #[derive(Clone, Debug)]
 struct Session {
     time_zone: String,
@@ -646,6 +700,7 @@ impl Backend {
                 }
             }
             "sql_mode" => {
+                reject_unsupported_sql_modes(&value)?;
                 session.sql_mode = value;
                 Ok(())
             }
@@ -1935,6 +1990,53 @@ mod tests {
         assert_eq!(
             placeholder_preview_literals("SELECT '?' AS literal LIMIT ?"),
             vec!["0"]
+        );
+    }
+
+    #[test]
+    fn sql_mode_refuses_modes_that_would_change_results() {
+        // PIPES_AS_CONCAT is the sharpest case: the parser is a fixed
+        // MySqlDialect, so `a || b` stays OR. Accepting the mode would
+        // answer a different question than the client asked, silently.
+        let refused = super::reject_unsupported_sql_modes("PIPES_AS_CONCAT")
+            .expect_err("must refuse a mode it cannot honour");
+        assert!(refused.contains("PIPES_AS_CONCAT"), "got: {refused}");
+
+        for mode in ["ANSI_QUOTES", "NO_BACKSLASH_ESCAPES", "ALLOW_INVALID_DATES"] {
+            assert!(
+                super::reject_unsupported_sql_modes(mode).is_err(),
+                "{mode} changes results and must be refused"
+            );
+        }
+        // Compound modes turn the above on by another name.
+        assert!(super::reject_unsupported_sql_modes("ANSI").is_err());
+        // Refusal must survive being buried in a list, which is how clients
+        // actually send sql_mode.
+        assert!(
+            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,PIPES_AS_CONCAT,NO_ZERO_DATE")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sql_mode_accepts_modes_that_are_genuinely_inert_here() {
+        // Write and DDL modes have nothing to act on in a read-only
+        // replica, so accepting them is honest rather than a silent no-op.
+        for mode in [
+            "",
+            "STRICT_TRANS_TABLES",
+            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+        ] {
+            assert!(
+                super::reject_unsupported_sql_modes(mode).is_ok(),
+                "{mode} is inert on a read-only replica and must be accepted"
+            );
+        }
+        // The default session value must not refuse itself.
+        assert!(
+            super::reject_unsupported_sql_modes(&super::Session::default().sql_mode).is_ok(),
+            "the default sql_mode must be settable"
         );
     }
 

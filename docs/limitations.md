@@ -138,9 +138,9 @@ worth refusing.
 - Date parsing accepts the canonical date and date-time forms implemented by the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not implemented (#13). Compound qualifiers are rejected early by the SQL parser rather than during engine binding: sqlparser 0.62 only accepts simple interval unit keywords, so a compound qualifier fails with `INTERVAL requires a unit after the literal value`; supporting them requires the parser to accept the qualifier first (an upstream change). `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER` and `WEEK`; compound units reject explicitly.
 
 - Zero-component and invalid source `DATE`/`DATETIME` values normalize to SQL
-  `NULL` during snapshot and CDC ingestion. Query-session `sql_mode` is stored
-  and echoed but does not reinterpret mirrored values or alter temporal
-  expression semantics.
+  `NULL` during snapshot and CDC ingestion. `sql_mode` does not reinterpret
+  mirrored values, and `ALLOW_INVALID_DATES` is refused rather than accepted
+  and ignored, so a client cannot believe it has asked for them back.
 
 - `STR_TO_DATE` supports the calendar/date, clock, month/weekday name, day-of-year, fractional-second, and composite clock directives used by the reporting corpus. Literal formats containing an unimplemented MySQL-only directive (ordinal dates or week/year reconstruction) reject at bind time; dynamic unsupported formats return `NULL`. They are never forwarded to chrono under a different meaning. `DATE_FORMAT` implements MySQL's full directive inventory, including the four `WEEK` numbering modes behind `%U %u %V %v` and their paired years `%X %x`, and copies an unrecognized directive's bare character the way MySQL does.
 
@@ -321,8 +321,18 @@ worth refusing.
   before metadata schema version 13 must be rotated before use with
   caching_sha2_password clients; keys from before schema version 6 also lack
   the mysql_native_password verifier.
-- The endpoint is read-only. `SET sql_mode` is stored and echoed with no
-  semantic effect. Multiple SQL statements in one command are not supported.
+- The endpoint is read-only. `SET sql_mode` accepts only modes that are
+  genuinely inert on a read-only replica: write and DDL modes
+  (`STRICT_*`, `NO_ZERO_*`, `NO_ENGINE_SUBSTITUTION`) are stored and
+  echoed, while modes that would change how a statement parses or
+  evaluates are refused rather than accepted and ignored. `ANSI_QUOTES`,
+  `PIPES_AS_CONCAT`, `HIGH_NOT_PRECEDENCE`, `NO_BACKSLASH_ESCAPES`,
+  `IGNORE_SPACE`, `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`,
+  `ALLOW_INVALID_DATES` and the combination modes (`ANSI`, `DB2`,
+  `MAXDB`, `MSSQL`, `ORACLE`, `POSTGRESQL`) all reject: the parser is a
+  fixed `MySQL` dialect, so honouring them is not possible and accepting
+  them would answer a different question than the client asked. Multiple
+  SQL statements in one command are not supported.
 - Variable-width text, binary, and JSON expressions without a retained source
   declaration report a type-derived `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB
