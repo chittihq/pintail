@@ -19,6 +19,7 @@ import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
 import { chromium } from 'playwright'
 import type { Browser, Page } from 'playwright'
+import { redactBootSecrets } from './output'
 
 const repository = resolve(import.meta.dir, '..', '..')
 const artifacts = join(import.meta.dir, 'artifacts')
@@ -38,6 +39,8 @@ interface CheckResult {
 const results: CheckResult[] = []
 let mysqlConnection: mysql.Connection | undefined
 let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
+let pintailStdout: Promise<string> | undefined
+let pintailStderr: Promise<string> | undefined
 let browser: Browser | undefined
 let page: Page | undefined
 let pintailDataDir = ''
@@ -227,8 +230,10 @@ async function main() {
       '--wire-bind',
       `127.0.0.1:${wirePort}`,
     ],
-    { cwd: repository, stdout: 'inherit', stderr: 'inherit' },
+    { cwd: repository, stdout: 'pipe', stderr: 'pipe' },
   )
+  pintailStdout = new Response(pintailProcess.stdout).text()
+  pintailStderr = new Response(pintailProcess.stderr).text()
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await fetch(`${pintailUrl}/health`)
@@ -321,6 +326,15 @@ async function main() {
 async function cleanup() {
   await browser?.close().catch(() => {})
   pintailProcess?.kill()
+  await pintailProcess?.exited.catch(() => {})
+  if (process.exitCode) {
+    const [stdout, stderr] = await Promise.all([
+      pintailStdout ?? Promise.resolve(''),
+      pintailStderr ?? Promise.resolve(''),
+    ])
+    const captured = redactBootSecrets(`${stdout}${stderr}`).trim()
+    if (captured) console.error(captured)
+  }
   await mysqlConnection?.end().catch(() => {})
   if (mysqlStarted) await docker('rm', '-f', mysqlName).catch(() => {})
   if (pintailDataDir) rmSync(pintailDataDir, { recursive: true, force: true })

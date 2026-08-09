@@ -121,7 +121,7 @@ const STAGES: Stage[] = [
     timeoutMinutes: 30,
     // Builds the release binary before Chromium starts producing output.
     stallMinutes: 25,
-    command: ['bun', 'run', 'smoke'],
+    command: ['bun', 'run', 'gate'],
     cwd: join(repository, 'tests', 'browser'),
     env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
   },

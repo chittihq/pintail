@@ -45,7 +45,7 @@ PINTAIL_DASHBOARD_PREBUILT=1 \
 (cd tests/browser && \
   bun install --frozen-lockfile && \
   bunx playwright install chromium && \
-  bun run smoke)
+  bun run gate)
 docker compose config --quiet
 PINTAIL_HTTP_PORT=0 PINTAIL_WIRE_PORT=0 \
   docker compose --project-name pintail-release up --build --detach --wait

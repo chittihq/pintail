@@ -110,7 +110,7 @@ jobs:
           bun install --frozen-lockfile
           bunx playwright install --with-deps chromium
       - name: Browser smoke (dashboard walkthrough)
-        run: bun run smoke
+        run: bun run gate
         working-directory: tests/browser
         env:
           PINTAIL_DASHBOARD_PREBUILT: '1'
