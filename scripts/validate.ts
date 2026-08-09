@@ -5,7 +5,7 @@
 /// benchmark, hung stages, crashed containers cleaned up before their logs
 /// were read).
 ///
-/// Usage:  bun run scripts/validate.ts [--stages fmt,unit,oracle,e2e,bench,accept]
+/// Usage:  bun run scripts/validate.ts [--stages fmt,unit,oracle,e2e,browser,bench,accept]
 ///
 /// Progress is streamed to stdout and mirrored into validate-status.log
 /// (one line per transition — poll this file, not the process), with the
@@ -114,6 +114,16 @@ const STAGES: Stage[] = [
     stallMinutes: 25,
     command: ['bun', 'run', 'run.ts'],
     cwd: join(repository, 'tests', 'e2e'),
+  },
+  {
+    name: 'browser',
+    remote: true,
+    timeoutMinutes: 30,
+    // Builds the release binary before Chromium starts producing output.
+    stallMinutes: 25,
+    command: ['bun', 'run', 'smoke'],
+    cwd: join(repository, 'tests', 'browser'),
+    env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
   },
   {
     name: 'bench',
@@ -330,7 +340,7 @@ function classify(output: string): 'transient' | 'host' | 'product' {
 
 async function main() {
   const requested = (process.argv.find((arg) => arg.startsWith('--stages='))?.slice(9) ??
-    process.env.VALIDATE_STAGES ?? 'fmt,unit,oracle,e2e,bench,accept')
+    process.env.VALIDATE_STAGES ?? 'fmt,unit,oracle,e2e,browser,bench,accept')
     .split(',')
     .map((stage) => stage.trim())
   mkdirSync(reportDir, { recursive: true })

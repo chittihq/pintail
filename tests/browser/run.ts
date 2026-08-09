@@ -14,7 +14,7 @@
 
 import { createServer } from 'node:net'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
 import { chromium } from 'playwright'
@@ -22,6 +22,8 @@ import type { Browser, Page } from 'playwright'
 
 const repository = resolve(import.meta.dir, '..', '..')
 const artifacts = join(import.meta.dir, 'artifacts')
+const cargoBinary = join(homedir(), '.cargo', 'bin', 'cargo')
+const cargoTargetDir = join(repository, 'target')
 const nonce = Date.now().toString(36)
 const mysqlName = `pintail-browser-mysql-${process.pid}-${nonce}`
 const DATABASE = 'smoke_db'
@@ -47,7 +49,12 @@ function log(message: string) {
 }
 
 async function command(args: string[], options: { quiet?: boolean } = {}) {
-  const child = Bun.spawn(args, { cwd: repository, stdout: 'pipe', stderr: 'pipe' })
+  const child = Bun.spawn(args, {
+    cwd: repository,
+    env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
   const [stdout, stderr, status] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -146,8 +153,8 @@ async function check(name: string, action: () => Promise<void>) {
 async function buildPintail(): Promise<string> {
   if (process.env.PINTAIL_E2E_BINARY) return resolve(process.env.PINTAIL_E2E_BINARY)
   log('building the release pintail binary')
-  await command(['cargo', 'build', '--release', '-p', 'pintail'])
-  const metadata = await command(['cargo', 'metadata', '--format-version', '1', '--no-deps'], {
+  await command([cargoBinary, 'build', '--release', '-p', 'pintail'])
+  const metadata = await command([cargoBinary, 'metadata', '--format-version', '1', '--no-deps'], {
     quiet: true,
   })
   return join(JSON.parse(metadata.stdout).target_directory, 'release', 'pintail')

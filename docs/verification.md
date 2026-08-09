@@ -42,6 +42,10 @@ PINTAIL_DASHBOARD_PREBUILT=1 \
   cargo test -p pintail-api --test mysql_api \
   -- --ignored --nocapture --test-threads=1
 (cd tests/e2e && bun install --frozen-lockfile && bun run e2e)
+(cd tests/browser && \
+  bun install --frozen-lockfile && \
+  bunx playwright install chromium && \
+  bun run smoke)
 docker compose config --quiet
 PINTAIL_HTTP_PORT=0 PINTAIL_WIRE_PORT=0 \
   docker compose --project-name pintail-release up --build --detach --wait
@@ -120,7 +124,7 @@ Current compatibility boundaries are recorded in
 Locally, `bun run scripts/validate.ts` drives the full sequence as one
 detached process — preflighting the shared Docker host (reachability,
 free disk, leftover harness containers), running stages strictly in
-order (fmt+clippy, unit, oracle, e2e, benchmark, acceptance), retrying
+order (fmt+clippy, unit, oracle, e2e, browser, benchmark, acceptance), retrying
 once on transient container-init races, aborting on host-level failures
 like a full disk, and capturing crashed-container logs before harness
 cleanup. Progress streams to `validate-out/validate-status.log`; the
@@ -129,13 +133,15 @@ verdict lands in `validate-out/validate-report.md`. Use
 
 CI runs these gates automatically on GitHub-hosted runners with no external
 infrastructure: `.github/workflows/e2e.yml` gives every push and pull
-request a three-phase e2e smoke and runs the full eight-phase gate nightly,
+request a three-phase e2e smoke plus the browser dashboard walkthrough and
+runs the full eight-phase gate nightly,
 and `.github/workflows/compat.yml` runs the Docker-gated compatibility
 suites (CDC against MySQL 8.4 GTID/file-position/MINIMAL-metadata and
 MariaDB 11, snapshot and polling sources, the control-plane API suite,
 MinIO backup restore, and the wire-protocol client matrix) every night.
-The nightly e2e workflow also runs the browser smoke suite
-(`tests/browser`): headless Chromium walks the embedded dashboard through
+The e2e workflow also runs the browser smoke suite (`tests/browser`) on every
+`dev`/`main` push and pull request, plus its nightly schedule and manual
+dispatch. Headless Chromium walks the embedded dashboard through
 first-boot operator setup, the add-database wizard against a live MySQL
 source, replication reaching streaming, the SQL console returning typed
 results, and a 390-pixel login render, capturing screenshots on failure.
