@@ -66,8 +66,11 @@ async function command(args: string[], options: { stdin?: string } = {}) {
 const docker = (...args: string[]) => command(['docker', ...args])
 
 async function dockerHost(): Promise<string> {
-  const context = await docker('context', 'show')
-  const endpoint = await docker('context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}')
+  let endpoint = process.env.DOCKER_HOST?.trim()
+  if (!endpoint) {
+    const context = await docker('context', 'show')
+    endpoint = await docker('context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}')
+  }
   if (!endpoint.startsWith('ssh://')) return '127.0.0.1'
   const target = endpoint.slice('ssh://'.length).split('@').at(-1)!.split(':')[0]
   const ssh = await command(['ssh', '-G', target])
