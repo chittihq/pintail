@@ -502,8 +502,23 @@ async fn ddl_evolution_add_drop_rename_create_truncate_and_orphan() {
         .query_batch("ALTER TABLE rename_me RENAME COLUMN value TO renamed;")
         .expect("RENAME COLUMN");
     targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    let renamed_target = cdc_target(&targets, "rename_me");
+    assert_eq!(
+        renamed_target
+            .store()
+            .schema()
+            .columns()
+            .iter()
+            .map(Column::name)
+            .collect::<Vec<_>>(),
+        ["id", "renamed"]
+    );
+    assert_eq!(
+        renamed_target.store().snapshot().scan().unwrap()[0].values()[1],
+        Value::Utf8("rename-old".to_owned())
+    );
     assert!(
-        MetaStore::open(&metadata_path)
+        !MetaStore::open(&metadata_path)
             .unwrap()
             .tables_needing_resync(DATABASE_ID)
             .unwrap()
