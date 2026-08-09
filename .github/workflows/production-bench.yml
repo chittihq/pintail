@@ -40,6 +40,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
+      - name: Dashboard assets
+        run: |
+          cd packages/dashboard
+          bun install --frozen-lockfile
+          bun run generate
       - run: bun install --frozen-lockfile
         working-directory: benchmark
       - name: Production acceptance (ci profile, runner-local docker)
@@ -47,6 +52,8 @@ jobs:
           bun run run-production.ts --profile ci --dataset ci
           --phases snapshot,cold --engines mysql,pintail
         working-directory: benchmark
+        env:
+          PINTAIL_DASHBOARD_PREBUILT: '1'
       - name: Publish summary
         if: always()
         run: |
@@ -99,6 +106,11 @@ jobs:
           path: benchmark/.dataset-cache
           key: dataset-${{ runner.os }}-${{ hashFiles('benchmark/workloads/commerce-production-v1/dataset-manifest.json') }}
           restore-keys: dataset-${{ runner.os }}-
+      - name: Dashboard assets
+        run: |
+          cd packages/dashboard
+          bun install --frozen-lockfile
+          bun run generate
       - run: bun install --frozen-lockfile
         working-directory: benchmark
       - name: Dataset provenance (warn-only)
@@ -107,6 +119,8 @@ jobs:
       - name: Run ci profile (dataset-loaded, snapshot/cold/warm)
         run: bun run run-production.ts --profile ci --dataset ci --phases snapshot,cold,warm
         working-directory: benchmark
+        env:
+          PINTAIL_DASHBOARD_PREBUILT: '1'
       - name: Publish summary
         if: always()
         run: |
@@ -168,11 +182,18 @@ jobs:
           path: benchmark/.dataset-cache
           key: dataset-${{ runner.os }}-${{ hashFiles('benchmark/workloads/commerce-production-v1/dataset-manifest.json') }}
           restore-keys: dataset-${{ runner.os }}-
+      - name: Dashboard assets
+        run: |
+          cd packages/dashboard
+          bun install --frozen-lockfile
+          bun run generate
       - run: bun install --frozen-lockfile
         working-directory: benchmark
       - name: Run ci profile with mixed CDC + restart phases
         run: bun run run-production.ts --profile ci --dataset ci
         working-directory: benchmark
+        env:
+          PINTAIL_DASHBOARD_PREBUILT: '1'
       - name: Publish summary
         if: always()
         run: |
@@ -242,11 +263,18 @@ jobs:
           path: benchmark/.dataset-cache
           key: dataset-${{ runner.os }}-${{ hashFiles('benchmark/workloads/commerce-production-v1/dataset-manifest.json') }}
           restore-keys: dataset-${{ runner.os }}-
+      - name: Dashboard assets
+        run: |
+          cd packages/dashboard
+          bun install --frozen-lockfile
+          bun run generate
       - run: bun install --frozen-lockfile
         working-directory: benchmark
       - name: Engine microbenchmark (20M, four-engine fairness table)
         run: bun run run.ts
         working-directory: benchmark
+        env:
+          PINTAIL_DASHBOARD_PREBUILT: '1'
       - name: Check out the dataset store
         uses: actions/checkout@v4
         with:
@@ -271,6 +299,8 @@ jobs:
       - name: Full production workload
         run: bun run run-production.ts --profile full --dataset full
         working-directory: benchmark
+        env:
+          PINTAIL_DASHBOARD_PREBUILT: '1'
       - name: Publish summary
         if: always()
         run: |
