@@ -275,7 +275,8 @@ async function main() {
     await page!.getByRole('button', { name: 'Choose tables' }).click()
     await page!.getByText('events', { exact: true }).waitFor()
     await page!.getByRole('button', { name: 'Review & start' }).click()
-    await page!.getByText('Snapshot started').waitFor()
+    await page!.waitForURL(/\/databases\/[^/?]+\?tab=snapshot$/)
+    await page!.getByRole('heading', { name: DATABASE }).waitFor()
   })
 
   await check('replication reaches streaming', async () => {
@@ -285,7 +286,7 @@ async function main() {
     const deadline = Date.now() + 120_000
     for (;;) {
       await page!.reload()
-      await page!.getByRole('link', { name: 'Databases' }).click()
+      await page!.getByRole('link', { name: 'Databases', exact: true }).click()
       await Bun.sleep(1_000)
       const body = (await page!.textContent('body')) ?? ''
       if (/streaming/i.test(body)) break
@@ -295,8 +296,8 @@ async function main() {
   })
 
   await check('SQL console returns typed results', async () => {
-    await page!.getByRole('link', { name: 'SQL Console' }).click()
-    await page!.locator('.sql-page select').selectOption({ index: 1 })
+    await page!.getByRole('link', { name: 'SQL Console', exact: true }).click()
+    await page!.getByRole('heading', { name: 'SQL Console' }).waitFor()
     await page!.getByRole('button', { name: 'Run' }).click()
     await page!.getByText('4 rows ·').waitFor()
     await page!.getByRole('cell', { name: 'purchase' }).first().waitFor()
