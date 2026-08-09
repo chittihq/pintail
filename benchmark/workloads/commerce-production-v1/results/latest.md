@@ -1,28 +1,28 @@
 # commerce-production-v1 — ci profile
 
-Run: 2026-08-08T10:34:01.845Z → 2026-08-08T10:39:30.133Z. Engines: mysql, pintail. Scale: 0.01.
+Run: 2026-08-09T17:40:02.631Z → 2026-08-09T17:42:24.245Z. Engines: mysql, pintail. Scale: 0.01.
 
 ## Phase: cold
 
 | Query | Engine | Status | Median ms | p95 ms |
 |---|---|---|---:|---:|
-| q01-tenant-revenue | mysql | ok | 129.4 | 398.2 |
-| q01-tenant-revenue | pintail | ok | 563.9 | 691.4 |
-| q02-customer-history | mysql | ok | 20.6 | 21.8 |
-| q02-customer-history | pintail | ok | 882.3 | 984.4 |
-| q03-fulfillment-backlog | mysql | ok | 30.8 | 105.6 |
+| q01-tenant-revenue | mysql | ok | 58.8 | 387.8 |
+| q01-tenant-revenue | pintail | ok | 430.4 | 490.1 |
+| q02-customer-history | mysql | ok | 31.7 | 154.4 |
+| q02-customer-history | pintail | ok | 689.8 | 774.3 |
+| q03-fulfillment-backlog | mysql | ok | 8.2 | 11.5 |
 | q03-fulfillment-backlog | pintail | error | — | — |
-| q04-inventory-risk | mysql | ok | 43.3 | 214.6 |
+| q04-inventory-risk | mysql | ok | 20.1 | 44.8 |
 | q04-inventory-risk | pintail | error | — | — |
-| q05-payment-failures | mysql | ok | 172.9 | 238.5 |
-| q05-payment-failures | pintail | ok | 5.3 | 453.3 |
-| q06-refund-rate | mysql | ok | 1024.3 | 1027.0 |
+| q05-payment-failures | mysql | ok | 134.2 | 170.2 |
+| q05-payment-failures | pintail | ok | 5.5 | 312.1 |
+| q06-refund-rate | mysql | ok | 1053.9 | 1140.8 |
 | q06-refund-rate | pintail | error | — | — |
-| q07-product-performance | mysql | ok | 1055.5 | 1058.6 |
-| q07-product-performance | pintail | ok | 1578.5 | 1622.5 |
-| q08-regional-cohorts | mysql | ok | 459.8 | 474.2 |
-| q08-regional-cohorts | pintail | ok | 1025.4 | 1097.4 |
-| q09-order-lifecycle | mysql | ok | 298.0 | 304.7 |
-| q09-order-lifecycle | pintail | ok | 856.7 | 864.1 |
-| q10-wide-operational-join | mysql | ok | 614.7 | 772.1 |
-| q10-wide-operational-join | pintail | ok | 1406.8 | 1686.0 |
+| q07-product-performance | mysql | ok | 1049.3 | 1050.9 |
+| q07-product-performance | pintail | ok | 1287.2 | 1292.4 |
+| q08-regional-cohorts | mysql | ok | 456.6 | 606.4 |
+| q08-regional-cohorts | pintail | ok | 807.7 | 855.5 |
+| q09-order-lifecycle | mysql | ok | 265.7 | 290.2 |
+| q09-order-lifecycle | pintail | ok | 648.6 | 665.2 |
+| q10-wide-operational-join | mysql | ok | 601.4 | 769.6 |
+| q10-wide-operational-join | pintail | ok | 971.1 | 1500.6 |
