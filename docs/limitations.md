@@ -165,10 +165,10 @@ worth refusing.
   Measured in `tests/load/results.md`. Connections themselves are still
   accepted without limit, so a client that only holds sessions open is
   not bounded by this.
-- A process-wide memory budget exists (`--total-query-memory-limit-bytes`)
-  but defaults to unbounded, so by default the per-query ceiling is still
-  the only memory bound and concurrent queries can sum past it. Enabling it
-  makes exhaustion report `server memory limit exceeded` rather than
+- The process-wide memory budget (`--total-query-memory-limit-bytes`)
+  defaults to three quarters of host memory, and to unbounded when host
+  memory cannot be read rather than guessing a ceiling. It
+  reports exhaustion as `server memory limit exceeded` rather than
   `query`; spilling operators treat both alike and spill, so the budget
   degrades a query to disk before failing it. Only reservations tracked by
   `MemoryTracker` are charged: batch decode buffers and per-connection

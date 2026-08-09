@@ -14,6 +14,62 @@ use clap::Parser;
 use pintail_wire::{DEFAULT_QUERY_MEMORY_LIMIT, default_max_concurrent_queries};
 use serde::Deserialize;
 
+/// Host memory in bytes, or `None` when it cannot be determined.
+///
+/// Probes the host the same way the metrics endpoint reads RSS rather than
+/// taking a dependency for one number. An unknown value is reported as
+/// `None` so the caller can choose to stay unbounded instead of inventing
+/// a ceiling from a guess.
+fn host_memory_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|bytes| *bytes > 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // MemTotal is reported in kibibytes.
+        std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|meminfo| {
+                meminfo
+                    .lines()
+                    .find_map(|line| line.strip_prefix("MemTotal:"))
+                    .and_then(|value| {
+                        value
+                            .trim()
+                            .trim_end_matches(" kB")
+                            .trim()
+                            .parse::<u64>()
+                            .ok()
+                    })
+            })
+            .and_then(|kibibytes| kibibytes.checked_mul(1024))
+            .filter(|bytes| *bytes > 0)
+    }
+}
+
+/// The default process-wide query memory budget.
+///
+/// Returns zero (unbounded) when host memory cannot be read, because a
+/// guessed ceiling could refuse work the host could actually have done.
+fn default_total_query_memory_limit() -> usize {
+    host_memory_bytes()
+        .and_then(|bytes| {
+            bytes
+                .checked_mul(DEFAULT_MEMORY_BUDGET_NUMERATOR)
+                .map(|scaled| scaled / DEFAULT_MEMORY_BUDGET_DENOMINATOR)
+        })
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .unwrap_or(0)
+}
+
 const DEFAULT_CONFIG_FILE: &str = "pintail.toml";
 const DEFAULT_DATA_DIR: &str = "./data";
 /// Spill lives under the data directory by default so it inherits whatever
@@ -23,6 +79,15 @@ const DEFAULT_DATA_DIR: &str = "./data";
 const DEFAULT_SPILL_SUBDIRECTORY: &str = "spill";
 const DEFAULT_QUERY_SPILL_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
 const DEFAULT_GLOBAL_SPILL_LIMIT_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// Fraction of host memory the process budget claims by default.
+///
+/// High enough that it never engages on a healthy server - a budget that
+/// refuses queries which used to succeed would be a regression wearing a
+/// safety feature's clothes - but low enough to leave the page cache and
+/// the rest of the box room before the kernel starts killing processes.
+const DEFAULT_MEMORY_BUDGET_NUMERATOR: u64 = 3;
+const DEFAULT_MEMORY_BUDGET_DENOMINATOR: u64 = 4;
+
 const DEFAULT_HTTP_PORT: u16 = 8080;
 const DEFAULT_WIRE_PORT: u16 = 3306;
 const DEFAULT_WIRE_IDLE_TIMEOUT_SECONDS: u64 = 15 * 60;
@@ -260,14 +325,18 @@ impl AppConfig {
                     )
             })
             .transpose()?;
-        // Defaults to unbounded: a process budget that silently starts
-        // refusing queries on an existing deployment would be a regression
-        // dressed as a safety feature. Operators opt in.
+        // Defaults to a fraction of host memory rather than to unbounded.
+        // Unbounded means the safety feature protects nobody by default; a
+        // fixed byte figure would refuse queries on a large host and starve
+        // a small one. A fraction adapts, and at three quarters it sits far
+        // enough above normal working set that it engages only when the
+        // alternative was the kernel choosing which process to kill.
+        // Zero remains an explicit opt-out.
         let total_query_memory_limit_bytes = cli
             .total_query_memory_limit_bytes
             .or(environment_total_query_memory)
             .or(file.query.total_memory_limit_bytes)
-            .unwrap_or(0);
+            .unwrap_or_else(default_total_query_memory_limit);
         let environment_query_spill_limit = environment
             .get(&OsString::from("PINTAIL_QUERY_SPILL_LIMIT_BYTES"))
             .map(|value| {
@@ -497,7 +566,7 @@ fn resolve_config_relative(path: PathBuf, config_dir: Option<&Path>) -> PathBuf 
 mod tests {
     use std::time::Duration;
 
-    use super::{AppConfig, Cli, DEFAULT_QUERY_MEMORY_LIMIT};
+    use super::{AppConfig, Cli, DEFAULT_QUERY_MEMORY_LIMIT, host_memory_bytes};
 
     fn cli() -> Cli {
         Cli {
@@ -513,6 +582,35 @@ mod tests {
             query_spill_limit_bytes: None,
             global_spill_limit_bytes: None,
         }
+    }
+
+    #[test]
+    fn the_total_memory_budget_defaults_below_host_memory_and_can_be_disabled() {
+        let default = AppConfig::load_from(&cli(), []).expect("default config");
+        let budget = default.total_query_memory_limit_bytes();
+        if let Some(host) = host_memory_bytes() {
+            // A budget at or above host memory would never engage; one at
+            // zero would mean the default protects nothing.
+            assert!(budget > 0, "a host with known memory must get a budget");
+            assert!(
+                u64::try_from(budget).expect("budget fits") < host,
+                "budget {budget} must leave the host headroom below {host}"
+            );
+        } else {
+            // Unknown host memory must stay unbounded rather than guess.
+            assert_eq!(budget, 0);
+        }
+
+        let disabled = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES".into(), "0".into())],
+        )
+        .expect("environment config");
+        assert_eq!(
+            disabled.total_query_memory_limit_bytes(),
+            0,
+            "zero must remain an explicit opt-out"
+        );
     }
 
     #[test]
