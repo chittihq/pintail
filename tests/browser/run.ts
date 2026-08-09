@@ -244,7 +244,7 @@ async function main() {
 
   await check('first boot shows operator setup', async () => {
     await page!.goto(pintailUrl)
-    await page!.getByRole('heading', { name: 'Create the operator.' }).waitFor()
+    await page!.getByRole('heading', { name: 'Create the operator' }).waitFor()
   })
 
   await check('operator setup signs in', async () => {
@@ -255,7 +255,7 @@ async function main() {
   })
 
   await check('wizard tests the connection and probes capabilities', async () => {
-    await page!.locator('.top-actions').getByRole('button', { name: 'Add database' }).click()
+    await page!.getByRole('link', { name: 'Add database' }).first().click()
     await page!.getByLabel('MySQL schema').fill(DATABASE)
     await page!
       .getByLabel('MySQL DSN')
@@ -280,7 +280,7 @@ async function main() {
     const deadline = Date.now() + 120_000
     for (;;) {
       await page!.reload()
-      await page!.getByRole('button', { name: 'Databases' }).click()
+      await page!.getByRole('link', { name: 'Databases' }).click()
       await Bun.sleep(1_000)
       const body = (await page!.textContent('body')) ?? ''
       if (/streaming/i.test(body)) break
@@ -290,7 +290,7 @@ async function main() {
   })
 
   await check('SQL console returns typed results', async () => {
-    await page!.getByRole('button', { name: 'SQL Console' }).click()
+    await page!.getByRole('link', { name: 'SQL Console' }).click()
     await page!.locator('.sql-page select').selectOption({ index: 1 })
     await page!.getByRole('button', { name: 'Run' }).click()
     await page!.getByText('4 rows ·').waitFor()
