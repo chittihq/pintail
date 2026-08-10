@@ -49,6 +49,7 @@ const RESTORED_DATABASE = 'browser gate restore'
 // target, so one table yields exactly one dead letter until it is resynced.
 const APPEND_TABLE = 'notes'
 const APPEND_TABLE_RETRY = 'memos'
+const INVITE_EMAIL = 'teammate@pintail.local'
 const OPERATOR = { email: 'smoke@pintail.local', password: 'browser-smoke-password' }
 
 interface CheckResult {
@@ -694,6 +695,55 @@ async function main() {
     await page!.getByRole('heading', { name: 'Activity' }).waitFor({ timeout: 20_000 })
     if ((await deadLetters(APPEND_TABLE_RETRY).count()) === 0) {
       throw new Error('a refused retry removed the dead letter')
+    }
+  })
+
+  await check('a teammate is invited, listed and revoked', async () => {
+    await page!.goto(`${pintailUrl}/team`)
+    await page!.getByRole('heading', { name: 'Team' }).waitFor()
+
+    // The operator is a member, and cannot remove themselves - the remove
+    // control is absent on your own row rather than present and failing.
+    const self = page!.getByRole('row').filter({ hasText: OPERATOR.email })
+    await self.waitFor({ timeout: 20_000 })
+    if ((await self.getByRole('button', { name: 'Remove member' }).count()) > 0) {
+      throw new Error('the signed-in operator can remove themselves')
+    }
+
+    await page!.getByLabel('Email').fill(INVITE_EMAIL)
+    await page!.getByRole('combobox').first().click()
+    await page!.getByRole('option', { name: 'Operator' }).click()
+    // exact: the accessible-name match is a case-insensitive substring, so a
+    // bare "Invite" also matches the "Revoke invite" buttons in the table.
+    await page!.getByRole('button', { name: 'Invite', exact: true }).click()
+
+    // The link is shown once and carries a token the recipient needs.
+    const link = page!.getByTestId('invite-link')
+    await link.waitFor({ timeout: 20_000 })
+    const href = (await link.textContent())?.trim() || ''
+    if (!/\/accept-invite\?token=.{16,}/.test(href)) {
+      throw new Error(`invite link looks wrong: ${href}`)
+    }
+
+    const invite = page!.getByRole('row').filter({ hasText: INVITE_EMAIL })
+    await invite.waitFor({ timeout: 20_000 })
+    await invite.getByText('pending', { exact: true }).waitFor()
+    await invite.getByText('operator', { exact: true }).waitFor()
+
+    // Like the API key secret, the token is not recoverable: a reload must not
+    // reproduce a link that would let anyone holding the screen join.
+    await page!.goto(`${pintailUrl}/team`)
+    await invite.waitFor({ timeout: 20_000 })
+    if (await link.isVisible()) throw new Error('the invite link survived a reload')
+
+    // Revoking is durable, and the control disappears once it has no effect.
+    await invite.getByRole('button', { name: 'Revoke invite' }).click()
+    await page!.getByText('Invite revoked').waitFor({ timeout: 20_000 })
+    await invite.getByText('revoked', { exact: true }).waitFor({ timeout: 20_000 })
+    await page!.goto(`${pintailUrl}/team`)
+    await invite.getByText('revoked', { exact: true }).waitFor({ timeout: 20_000 })
+    if ((await invite.getByRole('button', { name: 'Revoke invite' }).count()) > 0) {
+      throw new Error('a revoked invite still offers revoke')
     }
   })
 
