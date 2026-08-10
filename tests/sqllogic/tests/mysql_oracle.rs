@@ -458,7 +458,9 @@ fn canonical_value(value: &Value) -> OracleValue {
         Value::Int64(value) => OracleValue::Exact(value.to_string()),
         Value::UInt64(value) => OracleValue::Exact(value.to_string()),
         Value::Float64(value) => OracleValue::Float(value.get().to_string()),
-        Value::Utf8(value) => OracleValue::Exact(value.clone()),
+        // The oracle compares what MySQL displays, and MySQL displays an
+        // ENUM as its label.
+        Value::Utf8(value) | Value::Enum { label: value, .. } => OracleValue::Exact(value.clone()),
         Value::Binary(value) => OracleValue::Exact(String::from_utf8_lossy(value).into_owned()),
     }
 }

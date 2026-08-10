@@ -171,6 +171,25 @@ pub enum Value {
     Utf8(String),
     /// Arbitrary bytes.
     Binary(Vec<u8>),
+    /// A `MySQL` ENUM: its declaration index alongside its label.
+    ///
+    /// `MySQL` orders and compares ENUM by the declaration index and displays
+    /// the label. Storing only the label - as this engine used to - makes
+    /// `ORDER BY` follow alphabetical order instead, silently.
+    ///
+    /// Deliberately reports [`DataType::Utf8`], so every site that has not
+    /// learned about ENUM treats it as the string it displays as. That keeps
+    /// an unaudited path at today's behaviour rather than giving it a new
+    /// one; only comparison, which is the defect, changes.
+    ///
+    /// Derived `Ord` compares `index` before `label`, which is the ordering
+    /// `MySQL` uses.
+    Enum {
+        /// One-based declaration index, matching `MySQL`'s ordinal.
+        index: u16,
+        /// Declared label, and what the value displays as.
+        label: String,
+    },
 }
 
 impl Value {
@@ -189,7 +208,10 @@ impl Value {
             Self::Int64(_) => Some(DataType::Int64),
             Self::UInt64(_) => Some(DataType::UInt64),
             Self::Float64(_) => Some(DataType::Float64),
-            Self::Utf8(_) => Some(DataType::Utf8),
+            // Reports Utf8 on purpose: an ENUM displays as its label, so
+            // any path that has not learned about ENUM keeps treating it
+            // exactly as it treated the label before.
+            Self::Utf8(_) | Self::Enum { .. } => Some(DataType::Utf8),
             Self::Binary(_) => Some(DataType::Binary),
         }
     }
@@ -198,9 +220,30 @@ impl Value {
     #[must_use]
     pub fn heap_bytes(&self) -> usize {
         match self {
-            Self::Utf8(value) => value.len(),
+            Self::Utf8(value) | Self::Enum { label: value, .. } => value.len(),
             Self::Binary(value) => value.len(),
             _ => 0,
+        }
+    }
+
+    /// The text an ENUM or string value displays as.
+    ///
+    /// Lets a caller read the label without matching both variants, which is
+    /// how most existing string handling should treat an ENUM.
+    #[must_use]
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Utf8(value) | Self::Enum { label: value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The declaration index when this is an ENUM.
+    #[must_use]
+    pub const fn enum_index(&self) -> Option<u16> {
+        match self {
+            Self::Enum { index, .. } => Some(*index),
+            _ => None,
         }
     }
 }

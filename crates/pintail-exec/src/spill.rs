@@ -98,7 +98,7 @@ impl Encoder {
                 self.u8(TAG_FLOAT64);
                 self.f64(inner.get());
             }
-            Value::Utf8(inner) => {
+            Value::Utf8(inner) | Value::Enum { label: inner, .. } => {
                 self.u8(TAG_UTF8);
                 self.str(inner);
             }

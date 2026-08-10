@@ -383,7 +383,8 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 decimal = None;
                 temporal = None;
             }
-            Value::Utf8(text) => {
+            // Packed as its label: an ENUM is a Utf8 column physically.
+            Value::Utf8(text) | Value::Enum { label: text, .. } => {
                 if let Some(packed) = utf8.as_mut() {
                     packed.push(text.as_bytes());
                 }

@@ -3858,7 +3858,10 @@ fn cell_for(spec: &ColumnSpec, row: &StoredRow) -> Cell {
         ColumnSource::Tombstone => Cell::Boolean(row.is_deleted()),
         ColumnSource::Value(index) => match &row.values()[index] {
             Value::Null => Cell::Null,
-            Value::Utf8(value) => {
+            // Stored as its label, for the reason given in codec.rs: the
+            // index belongs to the declaration, so it is reattached on read
+            // rather than duplicated into every row.
+            Value::Utf8(value) | Value::Enum { label: value, .. } => {
                 if let Some(units) = spec.native {
                     // The probe already verified every value round-trips.
                     let parsed = units

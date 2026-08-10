@@ -4134,7 +4134,7 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
         Value::Int64(value) => Ok(value.to_string()),
         Value::UInt64(value) => Ok(value.to_string()),
         Value::Float64(value) => Ok(value.get().to_string()),
-        Value::Utf8(value) => Ok(value.clone()),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(value.clone()),
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }

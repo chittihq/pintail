@@ -147,7 +147,7 @@ fn hash_value(hash: &mut u64, value: &Value) {
             hash_bytes(hash, b"f");
             hash_bytes(hash, &value.to_bits().to_le_bytes());
         }
-        Value::Utf8(value) => {
+        Value::Utf8(value) | Value::Enum { label: value, .. } => {
             hash_bytes(hash, b"s");
             hash_sized(hash, value.as_bytes());
         }

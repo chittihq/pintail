@@ -377,7 +377,8 @@ fn value_to_json(value: &Value) -> JsonValue {
         Value::Float64(value) => {
             Number::from_f64(value.get()).map_or(JsonValue::Null, JsonValue::Number)
         }
-        Value::Utf8(value) => JsonValue::String(value.clone()),
+        // JSON callers receive the label, matching the wire surface.
+        Value::Utf8(value) | Value::Enum { label: value, .. } => JsonValue::String(value.clone()),
         Value::Binary(value) => JsonValue::String(format!("0x{}", encode_hex(value))),
     }
 }

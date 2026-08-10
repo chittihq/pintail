@@ -3138,7 +3138,7 @@ fn scalar_string_memory_upper_bound(value: &Value) -> usize {
         Value::Null => 0,
         Value::Boolean(_) => 1,
         Value::Int64(_) | Value::UInt64(_) | Value::Float64(_) => 24,
-        Value::Utf8(value) => value.len(),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => value.len(),
         Value::Binary(value) => value.len(),
     }
 }

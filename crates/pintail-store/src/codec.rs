@@ -237,6 +237,14 @@ fn encode_value(encoder: &mut Encoder, value: &Value) -> Result<(), StoreError> 
             encoder.u8(6);
             encoder.bytes(value, "binary value")?;
         }
+        // The label is the durable form. An ENUM's index is a property of
+        // the column declaration, not of the value, so persisting it per row
+        // would store the same number a million times and go stale the
+        // moment the declaration changes.
+        Value::Enum { label, .. } => {
+            encoder.u8(5);
+            encoder.bytes(label.as_bytes(), "UTF-8 value")?;
+        }
     }
     Ok(())
 }

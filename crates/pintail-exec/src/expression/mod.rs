@@ -1254,7 +1254,7 @@ fn scalar_string_upper_bound(value: &Value) -> usize {
         Value::Null => 0,
         Value::Boolean(_) => 1,
         Value::Int64(_) | Value::UInt64(_) | Value::Float64(_) => 24,
-        Value::Utf8(value) => value.len(),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => value.len(),
         Value::Binary(value) => value.len(),
     }
 }
@@ -2512,7 +2512,7 @@ fn scalar_string(value: &Value) -> Result<String, ExecError> {
         Value::Int64(value) => Ok(value.to_string()),
         Value::UInt64(value) => Ok(value.to_string()),
         Value::Float64(value) => Ok(value.get().to_string()),
-        Value::Utf8(value) => Ok(value.clone()),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(value.clone()),
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }
@@ -2880,7 +2880,9 @@ fn decimal_add_sub_mul(
 /// tie-rounding is the platform's, an accepted v1 edge).
 fn cast_decimal(value: &Value, scale: u8) -> Result<Value, ExecError> {
     let units = match value {
-        Value::Utf8(text) => pintail_types::parse_decimal_rounded(text, scale),
+        Value::Utf8(text) | Value::Enum { label: text, .. } => {
+            pintail_types::parse_decimal_rounded(text, scale)
+        }
         Value::Boolean(flag) => decimal_units_from_i128(i128::from(*flag), scale),
         Value::Int64(signed) => decimal_units_from_i128(i128::from(*signed), scale),
         Value::UInt64(unsigned) => decimal_units_from_i128(i128::from(*unsigned), scale),
@@ -3410,7 +3412,9 @@ pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
         Value::Int64(inner) => serde_json::Value::from(*inner),
         Value::UInt64(inner) => serde_json::Value::from(*inner),
         Value::Float64(inner) => serde_json::Value::from(inner.get()),
-        Value::Utf8(inner) => serde_json::Value::String(inner.clone()),
+        Value::Utf8(inner) | Value::Enum { label: inner, .. } => {
+            serde_json::Value::String(inner.clone())
+        }
         Value::Binary(inner) => {
             serde_json::Value::String(String::from_utf8_lossy(inner).into_owned())
         }
@@ -4217,7 +4221,9 @@ pub(crate) fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
         Value::Int64(value) => Ok(Some(*value != 0)),
         Value::UInt64(value) => Ok(Some(*value != 0)),
         Value::Float64(value) => Ok(Some(value.get() != 0.0)),
-        Value::Utf8(value) => Ok(Some(parse_mysql_number(value) != 0.0)),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => {
+            Ok(Some(parse_mysql_number(value) != 0.0))
+        }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             Ok(Some(parse_mysql_number(value) != 0.0))
@@ -4237,7 +4243,7 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
             .parse()
             .map_err(|_| ExecError::NumericOverflow),
         Value::Float64(value) => Ok(value.get()),
-        Value::Utf8(value) => Ok(parse_mysql_number(value)),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(parse_mysql_number(value)),
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             Ok(parse_mysql_number(value))
@@ -4252,7 +4258,9 @@ pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
         Value::Int64(value) => Ok(*value),
         Value::UInt64(value) => i64::try_from(*value).map_err(|_| ExecError::NumericOverflow),
         Value::Float64(value) => float_to_i64(value.get()),
-        Value::Utf8(value) => float_to_i64(parse_mysql_number(value)),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => {
+            float_to_i64(parse_mysql_number(value))
+        }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             float_to_i64(parse_mysql_number(value))
@@ -4267,7 +4275,9 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
         Value::Int64(value) => u64::try_from(*value).map_err(|_| ExecError::NumericOverflow),
         Value::UInt64(value) => Ok(*value),
         Value::Float64(value) => float_to_u64(value.get()),
-        Value::Utf8(value) => float_to_u64(parse_mysql_number(value)),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => {
+            float_to_u64(parse_mysql_number(value))
+        }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             float_to_u64(parse_mysql_number(value))

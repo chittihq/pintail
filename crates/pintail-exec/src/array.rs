@@ -516,7 +516,8 @@ impl ColumnArray {
                 Value::Int64(_) => Kind::Int64,
                 Value::UInt64(_) => Kind::UInt64,
                 Value::Float64(_) => Kind::Float64,
-                Value::Utf8(_) => Kind::Utf8,
+                // An ENUM is stored and typed as its label.
+                Value::Utf8(_) | Value::Enum { .. } => Kind::Utf8,
                 Value::Binary(_) => Kind::Binary,
             };
             if kind == Kind::Unknown {
