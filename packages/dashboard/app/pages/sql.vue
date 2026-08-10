@@ -17,6 +17,33 @@ const sqlResult = ref<QueryResponse | null>(null)
 const sqlRunning = ref(false)
 const sqlError = ref('')
 
+/// Completion metadata for the selected database, as table -> columns.
+///
+/// One request rather than one per table, and served from the local replica,
+/// so opening the console cannot add load to the source.
+const completionSchema = ref<Record<string, string[]>>({})
+
+async function loadCompletionSchema() {
+  if (!sqlDatabaseId.value) {
+    completionSchema.value = {}
+    return
+  }
+  try {
+    const response = await request<{ tables: Record<string, string[]> }>(
+      `/tables/columns?db=${encodeURIComponent(sqlDatabaseId.value)}`,
+    )
+    completionSchema.value = response.tables
+  } catch {
+    // Completion is an assist, not a feature the console depends on. A
+    // database that has never been snapshotted has no columns to offer and
+    // returns nothing useful; surfacing that as an error banner over a
+    // perfectly usable editor would be worse than completing only keywords.
+    completionSchema.value = {}
+  }
+}
+
+watch(sqlDatabaseId, loadCompletionSchema, { immediate: true })
+
 if (typeof route.query.describe === 'string') {
   sqlText.value = `DESCRIBE \`${route.query.describe.replaceAll('`', '``')}\``
 }
@@ -66,7 +93,7 @@ async function runSql() {
             <Button size="sm" :disabled="sqlRunning" @click="runSql"><LoaderCircle v-if="sqlRunning" class="animate-spin" /><Play v-else /> Run</Button>
           </div>
         </div>
-        <LazySqlEditor v-model="sqlText" @run="runSql" />
+        <LazySqlEditor v-model="sqlText" :schema="completionSchema" @run="runSql" />
       </Card>
       <p v-if="sqlError" class="text-destructive my-3 text-sm">{{ sqlError }}</p>
       <Card class="mt-4 overflow-hidden p-0">

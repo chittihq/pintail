@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { sql, MySQL } from '@codemirror/lang-sql'
-import { EditorState } from '@codemirror/state'
+import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { EditorState, Compartment } from '@codemirror/state'
 import {
   EditorView,
   keymap,
@@ -10,7 +11,7 @@ import {
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 
-const props = defineProps<{ modelValue: string }>()
+const props = defineProps<{ modelValue: string; schema?: Record<string, string[]> }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   run: []
@@ -18,6 +19,17 @@ const emit = defineEmits<{
 
 const host = ref<HTMLElement>()
 let view: EditorView | undefined
+
+/// The SQL language extension is reconfigured rather than rebuilt when the
+/// schema arrives. The metadata is fetched after mount, and recreating the
+/// editor to apply it would discard whatever the user had already typed.
+const language = new Compartment()
+
+function languageWithSchema(schema?: Record<string, string[]>) {
+  // lang-sql derives both table and column completion from this map, including
+  // qualified `table.` lookups, so nothing here needs to parse SQL itself.
+  return sql({ dialect: MySQL, schema: schema ?? {}, upperCaseKeywords: true })
+}
 
 onMounted(() => {
   if (!host.value) return
@@ -30,7 +42,11 @@ onMounted(() => {
         history(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
-        sql({ dialect: MySQL }),
+        language.of(languageWithSchema(props.schema)),
+        // activateOnTyping keeps the list out of the way until there is a
+        // prefix to filter on: a popup on every keystroke in an empty editor
+        // is noise, not help.
+        autocompletion({ activateOnTyping: true, maxRenderedOptions: 20 }),
         keymap.of([
           {
             key: 'Mod-Enter',
@@ -39,6 +55,9 @@ onMounted(() => {
               return true
             },
           },
+          // Ahead of defaultKeymap so Escape and the arrows drive the
+          // completion popup while it is open.
+          ...completionKeymap,
           ...defaultKeymap,
           ...historyKeymap,
         ]),
@@ -83,6 +102,14 @@ watch(
       changes: { from: 0, to: view.state.doc.length, insert: value },
     })
   },
+)
+
+watch(
+  () => props.schema,
+  (schema) => {
+    view?.dispatch({ effects: language.reconfigure(languageWithSchema(schema)) })
+  },
+  { deep: true },
 )
 
 onBeforeUnmount(() => view?.destroy())
