@@ -162,6 +162,35 @@ pub fn build_s3(destination: &S3Destination) -> Result<Arc<dyn ObjectStore>> {
     ))
 }
 
+/// Logs the shape of a backup run before any object is written.
+fn log_backup_start(source: &BackupSource, parent: Option<&BackupManifest>) {
+    pintail_log::log_info!(
+        "backup start db={} backup={} tables={} kind={}",
+        source.database_id,
+        source.backup_id,
+        source.tables.len(),
+        if parent.is_some() { "incremental" } else { "full" }
+    );
+}
+
+/// Logs what a completed run actually uploaded versus reused.
+///
+/// Reuse is the number that says whether the incremental chain is working: an
+/// incremental run that reuses nothing is a full backup wearing the wrong
+/// label, and the only way to notice was to diff object counts by hand.
+fn log_backup_done(
+    manifest: &BackupManifest,
+    uploaded_objects: u64,
+    uploaded_bytes: u64,
+    reused_segments: u64,
+) {
+    pintail_log::log_info!(
+        "backup done db={} backup={} uploaded_objects={uploaded_objects} uploaded_bytes={uploaded_bytes} reused_segments={reused_segments}",
+        manifest.database_id,
+        manifest.backup_id
+    );
+}
+
 /// Uploads a full or incremental database backup and publishes its manifest
 /// last.
 ///
@@ -182,6 +211,7 @@ pub async fn create_backup(
 
     let root = backup_root(prefix, &source.database_id, &source.backup_id);
     let inherited = inherited_segments(parent);
+    log_backup_start(&source, parent);
     let mut tables = Vec::with_capacity(source.tables.len());
     let mut uploaded_bytes = 0_u64;
     let mut uploaded_objects = 0_u64;
@@ -262,6 +292,7 @@ pub async fn create_backup(
         .context("backup byte counter overflow")?;
     uploaded_objects += 1;
 
+    log_backup_done(&manifest, uploaded_objects, uploaded_bytes, reused_segments);
     Ok((
         manifest,
         BackupSummary {
