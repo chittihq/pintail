@@ -55,6 +55,33 @@ async function linkGoogle() {
   }
 }
 
+/// Mirrors normalize_public_origin on the server. Duplicated deliberately:
+/// the server stays authoritative and still rejects a bad value, but a whole
+/// save failing on a 400 leaves the toggle looking like it silently turned
+/// itself off and the credentials unsaved, with the reason buried in a
+/// generic error line. Naming the problem on the field is the difference
+/// between a five second fix and a puzzle.
+function validateDomainUrl(value: string, required: boolean): string {
+  const trimmed = value.trim()
+  if (!trimmed) return required ? 'A public URL is required to enable Google sign-in.' : ''
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    return 'Must be an absolute URL including the scheme, for example https://pintail.example.com'
+  }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
+    return 'Must use HTTPS. Only localhost may use http.'
+  }
+  if (url.username || url.password || (url.pathname !== '' && url.pathname !== '/') || url.search || url.hash) {
+    return 'Only scheme, host and optional port - no path, query, credentials or fragment.'
+  }
+  return ''
+}
+
+const domainUrlError = computed(() => validateDomainUrl(googleForm.publicUrl, googleForm.enabled))
+
 async function saveGoogleSettings() {
   googleSaving.value = true
   try {
@@ -115,7 +142,7 @@ async function saveGoogleSettings() {
       <Card v-if="isAdmin" class="grid gap-4 p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Node-wide, one OAuth client covers every workspace</p><h2 class="text-base font-semibold">Google sign-in</h2></div><Badge :class="googleConfigured ? 'tone-positive' : 'tone-neutral'">{{ googleConfigured ? 'Configured' : 'Not configured' }}</Badge></div>
         <div class="grid gap-3">
-          <div class="grid content-start gap-1.5"><Label for="google-public-url">Public URL</Label><Input id="google-public-url" v-model="googleForm.publicUrl" inputmode="url" autocomplete="url" placeholder="https://pintail.example.com" /><small class="text-muted-foreground text-xs">The fixed origin registered for the Google callback; forwarded host headers are ignored.</small></div>
+          <div class="grid content-start gap-1.5"><Label for="google-public-url">Public URL</Label><Input id="google-public-url" v-model="googleForm.publicUrl" inputmode="url" autocomplete="url" placeholder="https://pintail.example.com" :aria-invalid="Boolean(domainUrlError)" /><small v-if="domainUrlError" data-testid="domain-url-error" class="text-destructive text-xs">{{ domainUrlError }}</small><small v-else class="text-muted-foreground text-xs">The fixed origin registered for the Google callback; forwarded host headers are ignored.</small></div>
           <div class="grid content-start gap-1.5"><Label for="google-client-id">Client ID</Label><Input id="google-client-id" v-model="googleForm.clientId" autocomplete="off" placeholder="123456789-abc.apps.googleusercontent.com" /></div>
           <div class="grid content-start gap-1.5"><Label for="google-client-secret">Client secret</Label><Input id="google-client-secret" v-model="googleForm.clientSecret" type="password" autocomplete="new-password" placeholder="Leave blank to preserve" /></div>
         </div>
@@ -123,7 +150,7 @@ async function saveGoogleSettings() {
           <span><strong class="block text-sm">Allow sign-in with Google</strong><small class="text-muted-foreground text-xs">Invited identities sign in directly; existing accounts link explicitly above.</small></span>
           <Switch :model-value="googleForm.enabled" @update:model-value="(value) => googleForm.enabled = value === true" />
         </div>
-        <Button :disabled="googleSaving || !googleLoaded" @click="saveGoogleSettings"><LoaderCircle v-if="googleSaving" class="animate-spin" /><KeyRound v-else /> Save Google settings</Button>
+        <Button :disabled="googleSaving || !googleLoaded || Boolean(domainUrlError)" @click="saveGoogleSettings"><LoaderCircle v-if="googleSaving" class="animate-spin" /><KeyRound v-else /> Save Google settings</Button>
       </Card>
       <Card class="p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Telemetry</p><h2 class="text-base font-semibold">Operations</h2></div><Badge class="tone-positive">Live</Badge></div>
