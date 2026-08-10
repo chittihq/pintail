@@ -4,6 +4,42 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc8] - 2026-08-11
+
+### Fixed
+
+- An invited Google identity is admitted in one transaction. Creating the
+  user, granting the workspace membership and consuming the invite were three
+  separate writes, so a failure between the first and the second left an
+  account that could never sign in again: the user row exists, so every later
+  attempt skips the invite path, but no membership exists, so it is refused
+  for belonging to no workspace. If the third write had also landed the invite
+  was spent too, leaving no route back in through the UI.
+- The invite is claimed as a compare-and-set. The first version of the guard
+  checked `accepted_at IS NULL` but discarded the affected-row count and
+  committed regardless, so a missing or already-consumed invite updated zero
+  rows while the user and membership committed anyway — one invite could have
+  admitted an unbounded number of accounts. The update now encodes every
+  predicate that authorizes the admission and requires exactly one affected
+  row, which also closes the window where an invite is revoked while a
+  sign-in is in flight.
+
+### Added
+
+- A Google sign-in callback logs which of its five outcomes it took. Every one
+  answers `303`, so an access log could not tell a successful sign-in from a
+  refused one, and a user reporting that sign-in "just spins" could not be
+  diagnosed at all. The one-time exchange code is never logged.
+
+### Known limitations
+
+- Accounts left half-created by the previous behaviour are not repaired by
+  this release. They need the workspace membership added, or the user row
+  removed so a fresh invite can admit them.
+- Duplicate callbacks remain non-idempotent. Consistency is protected by the
+  transaction, but the losing request fails a unique constraint and reports
+  `sign_in_failed`. What requests a callback twice is not yet understood.
+
 ## [0.0.1-rc7] - 2026-08-10
 
 ### Added
