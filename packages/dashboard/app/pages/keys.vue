@@ -46,17 +46,30 @@ async function createKey() {
   }
 }
 
+// Both of these reload from the server rather than mutating the local row,
+// so a failed request leaves the table showing what the server still holds.
+// Without the catch the rejection was unhandled and the row simply stayed as
+// it was, which reads as "the click did nothing" - the same silent failure
+// the create path already avoids.
 async function toggleKey(key: ApiKeyRecord) {
-  await request(`/databases/${key.database_id}/api-keys/${key.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ enabled: !key.enabled }),
-  })
-  await loadKeys()
+  try {
+    await request(`/databases/${key.database_id}/api-keys/${key.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: !key.enabled }),
+    })
+    await loadKeys()
+  } catch (failure) {
+    error.value = messageOf(failure)
+  }
 }
 
 async function deleteKey(key: ApiKeyRecord) {
-  await request(`/databases/${key.database_id}/api-keys/${key.id}`, { method: 'DELETE' })
-  await loadKeys()
+  try {
+    await request(`/databases/${key.database_id}/api-keys/${key.id}`, { method: 'DELETE' })
+    await loadKeys()
+  } catch (failure) {
+    error.value = messageOf(failure)
+  }
 }
 
 function toggleScope(scope: string, on: boolean) {
@@ -100,9 +113,9 @@ async function copy(value: string) {
     <Alert v-if="revealedSecret" class="mb-4">
       <AlertTriangle />
       <AlertDescription class="flex w-full items-center gap-3">
-        <div class="flex-1"><strong class="text-foreground block">Copy this secret now. It cannot be recovered.</strong><code class="mt-1 block break-all">{{ revealedSecret }}</code></div>
-        <Button variant="ghost" size="icon-sm" class="shrink-0" @click="copy(revealedSecret)"><Copy /></Button>
-        <Button variant="ghost" size="icon-sm" class="shrink-0" @click="revealedSecret = ''"><X /></Button>
+        <div class="flex-1"><strong class="text-foreground block">Copy this secret now. It cannot be recovered.</strong><code data-testid="revealed-secret" class="mt-1 block break-all">{{ revealedSecret }}</code></div>
+        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Copy secret" @click="copy(revealedSecret)"><Copy /></Button>
+        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Dismiss secret" @click="revealedSecret = ''"><X /></Button>
       </AlertDescription>
     </Alert>
     <Card class="overflow-hidden p-0">
@@ -121,7 +134,7 @@ async function copy(value: string) {
             <TableCell>
               <div class="flex items-center gap-1">
                 <Button variant="link" size="sm" @click="toggleKey(key)">{{ key.enabled ? 'Disable' : 'Enable' }}</Button>
-                <Button variant="ghost" size="icon-sm" @click="deleteKey(key)"><Trash2 /></Button>
+                <Button variant="ghost" size="icon-sm" :aria-label="`Delete ${key.name}`" @click="deleteKey(key)"><Trash2 /></Button>
               </div>
             </TableCell>
           </TableRow>
