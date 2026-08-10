@@ -29,10 +29,11 @@ interface Overload {
 /// `!args.is_empty()`, and a faithful copy is more useful in a compatibility
 /// matrix than a lossy normalization.
 function surface(): Map<string, Set<string>> {
-  const source = readFileSync(
-    join(repository, 'crates/pintail-sql/src/binder.rs'),
-    'utf8',
-  )
+  // The binder is split across modules; read every one of them or the
+  // surface silently loses the callables that moved out of mod.rs.
+  const source = ['binder/mod.rs', 'binder/function.rs']
+    .map((module) => readFileSync(join(repository, 'crates/pintail-sql/src', module), 'utf8'))
+    .join('\n')
   const found = new Map<string, Set<string>>()
   // Names sit at the head of a match arm, optionally alternated, optionally
   // followed by a guard, and always followed by `=>`.
