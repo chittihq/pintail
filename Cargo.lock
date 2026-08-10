@@ -2211,6 +2211,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "mysql_async",
+ "pintail-log",
  "pintail-meta",
  "pintail-poll",
  "pintail-probe",

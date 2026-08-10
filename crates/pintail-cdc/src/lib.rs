@@ -359,6 +359,20 @@ async fn run_cdc_inner(
         .snapshot_checkpoint(database_id)?
         .ok_or_else(|| CdcError::InvalidCheckpoint("snapshot position is absent".to_owned()))?;
     let mut position = StreamPosition::from_checkpoint(checkpoint, report.server.flavor)?;
+    // The resumed position is the single most useful line in a replication
+    // log: a mirror that looks stalled is usually one that resumed from an
+    // older checkpoint than the operator assumed.
+    pintail_log::log_info!(
+        "cdc start db={database_id} targets={} blocked={} file={} pos={} gtid={}",
+        targets.len(),
+        blocked_targets.len(),
+        position.file,
+        position.pos,
+        // Presence only. A GTID set names every transaction the replica has
+        // seen and grows without bound on a busy source, so printing it would
+        // swamp the log it is meant to clarify.
+        position.gtid_set.as_ref().map_or("none", |_| "present")
+    );
     let server_id = if options.server_id == 0 {
         generated_server_id(database_id)
     } else {
@@ -1392,6 +1406,13 @@ async fn reconnect_from_checkpoint(
         .saturating_mul(1_u32 << exponent)
         .min(Duration::from_secs(5));
     *attempts += 1;
+    // Logged before the sleep, so a mirror stuck in backoff shows why while
+    // it is still happening rather than only after it gives up.
+    pintail_log::log_error!(
+        "cdc reconnect db={database_id} attempt={attempts} delay={}ms reason={error}",
+        delay.as_millis(),
+        attempts = *attempts
+    );
     tokio::time::sleep(delay).await;
     let checkpoint = metadata
         .snapshot_checkpoint(database_id)?
