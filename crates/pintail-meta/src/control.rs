@@ -34,6 +34,21 @@ pub struct InviteRecord {
 /// Values for one newly generated invite. The raw token is hashed for
 /// storage and only ever returned once, at creation, matching how API-key
 /// secrets are handled.
+/// One invited Google identity being admitted to a workspace.
+///
+/// Grouped because the three writes it drives must succeed or fail together;
+/// passing them as separate arguments invited the split that made a partial
+/// signup possible.
+pub struct GoogleAdmission<'a> {
+    pub user_id: &'a str,
+    pub email: &'a str,
+    pub google_subject: &'a str,
+    pub workspace_id: &'a str,
+    pub invite_id: &'a str,
+    pub role: &'a str,
+    pub now: &'a str,
+}
+
 pub struct NewInvite<'a> {
     pub id: &'a str,
     pub token_hash: &'a [u8],
@@ -630,6 +645,70 @@ impl MetaStore {
                 (id, email, role, now, google_subject),
             )
             .context("failed to create user")?;
+        Ok(())
+    }
+
+    /// Admits an invited Google identity: creates the user, grants the
+    /// workspace membership, and consumes the invite as one unit.
+    ///
+    /// These were three separate writes. A failure or restart between the
+    /// first and the second left an account that could never sign in again:
+    /// the user row exists, so every later attempt skips the invite path, but
+    /// no membership exists, so it is refused for belonging to no workspace.
+    /// If the third had also run, the invite was spent as well - leaving no
+    /// route back in through the UI at all.
+    ///
+    /// One transaction means a partial admission rolls back entirely and the
+    /// invite stays usable, so the operator's remedy is simply to try again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid role or a storage failure. The
+    /// transaction is rolled back on any of them.
+    pub fn admit_invited_google_user(&self, admission: &GoogleAdmission<'_>) -> Result<()> {
+        validate_role(admission.role)?;
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin Google admission")?;
+        transaction
+            .execute(
+                "INSERT INTO users (id, email, argon2_hash, role, created_at, google_subject) \
+                 VALUES (?1, ?2, '', ?3, ?4, ?5)",
+                (
+                    admission.user_id,
+                    admission.email,
+                    admission.role,
+                    admission.now,
+                    admission.google_subject,
+                ),
+            )
+            .context("failed to create user")?;
+        transaction
+            .execute(
+                "INSERT INTO workspace_members (workspace_id, user_id, role, created_at) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role",
+                (
+                    admission.workspace_id,
+                    admission.user_id,
+                    admission.role,
+                    admission.now,
+                ),
+            )
+            .context("failed to add workspace member")?;
+        // Guarded on accepted_at so a replayed callback - the same sign-in
+        // arriving twice, which is observable in production - cannot consume
+        // an invite a second time.
+        transaction
+            .execute(
+                "UPDATE invites SET accepted_at = ?2 WHERE id = ?1 AND accepted_at IS NULL",
+                (admission.invite_id, admission.now),
+            )
+            .context("failed to mark invite accepted")?;
+        transaction
+            .commit()
+            .context("failed to commit Google admission")?;
         Ok(())
     }
 

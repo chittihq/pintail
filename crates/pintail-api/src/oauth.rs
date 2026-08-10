@@ -585,14 +585,20 @@ fn login_google_user(
         })?;
 
     let user_id = random_identifier("usr_", 16);
+    // One transaction. As three separate writes, a failure between creating
+    // the user and granting the membership left an account that could never
+    // sign in: present enough to skip the invite path, without the workspace
+    // that path exists to grant.
     metadata
-        .create_user_via_google(&user_id, email, google_subject, &invite.role, now)
-        .map_err(ApiError::internal)?;
-    metadata
-        .add_workspace_member(&invite.workspace_id, &user_id, &invite.role, now)
-        .map_err(ApiError::internal)?;
-    metadata
-        .mark_invite_accepted(&invite.id, now)
+        .admit_invited_google_user(&pintail_meta::GoogleAdmission {
+            user_id: &user_id,
+            email,
+            google_subject,
+            workspace_id: &invite.workspace_id,
+            invite_id: &invite.id,
+            role: &invite.role,
+            now,
+        })
         .map_err(ApiError::internal)?;
     let new_member = AuthPrincipal {
         subject: user_id.clone(),

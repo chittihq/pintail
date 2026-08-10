@@ -16,8 +16,8 @@ pub use backup::{
     RestoredDatabase, RestoredTable,
 };
 pub use control::{
-    ApiKeyRecord, AuditEventRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, InviteRecord,
-    NewApiKey, NewAuditEvent, NewInvite, SyncRunRecord, TableRecord, UserRecord,
+    ApiKeyRecord, AuditEventRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, GoogleAdmission,
+    InviteRecord, NewApiKey, NewAuditEvent, NewInvite, SyncRunRecord, TableRecord, UserRecord,
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 

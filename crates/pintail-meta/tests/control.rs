@@ -1,6 +1,6 @@
 use pintail_meta::{
-    DatabaseUpdate, MetaStore, NewApiKey, NewBackup, NewBackupConfig, RestoredCheckpoint,
-    RestoredDatabase, RestoredTable,
+    DatabaseUpdate, GoogleAdmission, MetaStore, NewApiKey, NewBackup, NewBackupConfig, NewInvite,
+    RestoredCheckpoint, RestoredDatabase, RestoredTable,
 };
 
 #[test]
@@ -324,5 +324,124 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
             .gtid_set
             .as_deref(),
         Some("server:1-9")
+    );
+}
+
+/// A Google admission is all-or-nothing.
+///
+/// The three writes it replaces used to run separately, and a failure between
+/// creating the user and granting the membership left an account that could
+/// never sign in again: present enough that every later attempt skipped the
+/// invite path, without the workspace that path exists to grant. Production
+/// produced exactly that state, and it was unrecoverable through the UI.
+#[test]
+fn google_admission_grants_user_membership_and_invite_together() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-10T00:00:00Z";
+
+    metadata
+        .create_workspace("ws-1", "Workspace", "workspace", now)
+        .expect("workspace");
+    // invites.created_by is a foreign key onto users.
+    metadata
+        .create_user(
+            "user-0",
+            "admin@example.com",
+            "$argon2id$test",
+            "admin",
+            now,
+        )
+        .expect("inviting user");
+    metadata
+        .create_invite(&NewInvite {
+            id: "inv-1",
+            token_hash: b"hash",
+            workspace_id: "ws-1",
+            email: "invited@example.com",
+            role: "operator",
+            created_by: "user-0",
+            created_at: now,
+            expires_at: "2026-09-10T00:00:00Z",
+        })
+        .expect("invite");
+
+    metadata
+        .admit_invited_google_user(&GoogleAdmission {
+            user_id: "usr-1",
+            email: "invited@example.com",
+            google_subject: "google-subject-1",
+            workspace_id: "ws-1",
+            invite_id: "inv-1",
+            role: "operator",
+            now,
+        })
+        .expect("admission");
+
+    // The membership is the part whose absence made the account unusable.
+    let memberships = metadata.workspaces_for_user("usr-1").expect("memberships");
+    assert_eq!(
+        memberships.len(),
+        1,
+        "admitted user must belong to a workspace"
+    );
+    assert_eq!(memberships[0].1, "operator");
+
+    let invite = metadata
+        .invites_by_email("invited@example.com")
+        .expect("invites")
+        .into_iter()
+        .find(|invite| invite.id == "inv-1")
+        .expect("invite still present");
+    assert!(invite.accepted_at.is_some(), "invite must be consumed");
+}
+
+/// A rolled-back admission leaves no trace, so the invite stays usable.
+///
+/// Without this the operator's only remedy for a half-created account was
+/// editing the control-plane database by hand.
+#[test]
+fn a_failed_google_admission_leaves_no_user_behind() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-10T00:00:00Z";
+
+    metadata
+        .create_workspace("ws-1", "Workspace", "workspace", now)
+        .expect("workspace");
+
+    // A workspace that does not exist fails the membership insert, which is
+    // the second of the three writes - precisely where production broke.
+    let failed = metadata.admit_invited_google_user(&GoogleAdmission {
+        user_id: "usr-2",
+        email: "invited@example.com",
+        google_subject: "google-subject-2",
+        workspace_id: "ws-missing",
+        invite_id: "inv-missing",
+        role: "operator",
+        now,
+    });
+    assert!(
+        failed.is_err(),
+        "admission into a missing workspace must fail"
+    );
+
+    // The user must not survive the failure: an orphaned row is what made the
+    // original bug permanent.
+    assert!(
+        metadata
+            .workspaces_for_user("usr-2")
+            .expect("lookup")
+            .is_empty(),
+        "a rolled-back admission must leave no membership"
+    );
+    assert!(
+        metadata
+            .user_by_email("invited@example.com")
+            .expect("lookup")
+            .is_none(),
+        "a rolled-back admission must leave no user"
     );
 }
