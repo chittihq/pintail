@@ -14,12 +14,58 @@ use clap::Parser;
 use pintail_wire::{DEFAULT_QUERY_MEMORY_LIMIT, default_max_concurrent_queries};
 use serde::Deserialize;
 
-/// Host memory in bytes, or `None` when it cannot be determined.
+/// Memory available to this process in bytes, or `None` when it cannot be
+/// determined.
 ///
-/// Probes the host the same way the metrics endpoint reads RSS rather than
-/// taking a dependency for one number. An unknown value is reported as
-/// `None` so the caller can choose to stay unbounded instead of inventing
-/// a ceiling from a guess.
+/// Reads a cgroup limit before host memory. Pintail's primary deployment is
+/// a container, and `/proc/meminfo` inside one reports the HOST's memory
+/// rather than the cgroup ceiling - on a 64GB host with a 4GB container cap
+/// it would report 64GB, so a budget derived from it never engages and the
+/// kernel OOM killer decides instead. That is the opposite of what a memory
+/// budget is for.
+///
+/// Both cgroup versions report "unlimited" as a number rather than an
+/// absence - v2 as the literal `max`, v1 as a value near `u64::MAX` - so an
+/// unlimited cgroup falls through to host memory rather than producing an
+/// absurd ceiling.
+///
+/// An unknown value is reported as `None` so the caller can stay unbounded
+/// instead of inventing a ceiling from a guess.
+fn available_memory_bytes() -> Option<u64> {
+    cgroup_memory_limit()
+        .or_else(host_memory_bytes)
+        .filter(|bytes| *bytes > 0)
+}
+
+/// The cgroup memory ceiling, when one is set and is not "unlimited".
+#[cfg(not(target_os = "macos"))]
+fn cgroup_memory_limit() -> Option<u64> {
+    let host = host_memory_bytes();
+    // cgroup v2 first: it is the default on every current distribution, and
+    // a v2 host has no v1 hierarchy to fall back to.
+    let limit = std::fs::read_to_string("/sys/fs/cgroup/memory.max")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or_else(|| {
+            std::fs::read_to_string("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+        })?;
+    // v1 writes a sentinel near u64::MAX for "unlimited" rather than
+    // omitting the file, and a limit above host memory is not a limit.
+    match host {
+        Some(host) if limit >= host => None,
+        _ => Some(limit),
+    }
+}
+
+/// macOS has no cgroups; the host figure is the only one.
+#[cfg(target_os = "macos")]
+const fn cgroup_memory_limit() -> Option<u64> {
+    None
+}
+
+/// Physical memory on the host, ignoring any container limit.
 fn host_memory_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
@@ -60,7 +106,7 @@ fn host_memory_bytes() -> Option<u64> {
 /// Returns zero (unbounded) when host memory cannot be read, because a
 /// guessed ceiling could refuse work the host could actually have done.
 fn default_total_query_memory_limit() -> usize {
-    host_memory_bytes()
+    available_memory_bytes()
         .and_then(|bytes| {
             bytes
                 .checked_mul(DEFAULT_MEMORY_BUDGET_NUMERATOR)
@@ -566,7 +612,7 @@ fn resolve_config_relative(path: PathBuf, config_dir: Option<&Path>) -> PathBuf 
 mod tests {
     use std::time::Duration;
 
-    use super::{AppConfig, Cli, DEFAULT_QUERY_MEMORY_LIMIT, host_memory_bytes};
+    use super::{AppConfig, Cli, DEFAULT_QUERY_MEMORY_LIMIT, available_memory_bytes};
 
     fn cli() -> Cli {
         Cli {
@@ -588,13 +634,13 @@ mod tests {
     fn the_total_memory_budget_defaults_below_host_memory_and_can_be_disabled() {
         let default = AppConfig::load_from(&cli(), []).expect("default config");
         let budget = default.total_query_memory_limit_bytes();
-        if let Some(host) = host_memory_bytes() {
+        if let Some(host) = available_memory_bytes() {
             // A budget at or above host memory would never engage; one at
             // zero would mean the default protects nothing.
             assert!(budget > 0, "a host with known memory must get a budget");
             assert!(
                 u64::try_from(budget).expect("budget fits") < host,
-                "budget {budget} must leave the host headroom below {host}"
+                "budget {budget} must leave headroom below the {host} available"
             );
         } else {
             // Unknown host memory must stay unbounded rather than guess.
@@ -611,6 +657,33 @@ mod tests {
             0,
             "zero must remain an explicit opt-out"
         );
+    }
+
+    #[test]
+    fn a_container_limit_takes_precedence_over_host_memory() {
+        // The defect this exists for: /proc/meminfo inside a container
+        // reports the HOST's memory, so a budget derived from it never
+        // engages under a container cap and the OOM killer decides instead.
+        // Where a cgroup limit is set it must win, and it must never exceed
+        // what the host actually has.
+        let available = available_memory_bytes();
+        let host = super::host_memory_bytes();
+        if let (Some(available), Some(host)) = (available, host) {
+            assert!(
+                available <= host,
+                "available {available} cannot exceed host {host}"
+            );
+        }
+        // An unlimited cgroup reports a sentinel rather than an absence, so
+        // it must fall through to the host figure rather than surface an
+        // absurd ceiling.
+        if let Some(limit) = super::cgroup_memory_limit() {
+            let host = host.expect("a cgroup limit implies a readable host figure");
+            assert!(
+                limit < host,
+                "an 'unlimited' cgroup sentinel {limit} must not be treated as a limit"
+            );
+        }
     }
 
     #[test]

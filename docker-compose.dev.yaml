@@ -1,3 +1,10 @@
+# Local development: builds the image from this checkout.
+#
+# Production uses docker-compose.yaml, which pulls the published image
+# instead of compiling on the target host.
+#
+#   docker compose -f docker-compose.dev.yaml up -d --build
+
 services:
   pintail:
     build:
