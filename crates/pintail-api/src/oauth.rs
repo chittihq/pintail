@@ -430,10 +430,27 @@ pub(crate) async fn callback(
 ) -> Response {
     let secure_cookie =
         load_config(&state).is_ok_and(|config| config.public_origin.starts_with("https://"));
+    // Every branch below answers 303, so the access log alone cannot tell a
+    // successful sign-in from a refused one: five very different outcomes,
+    // one indistinguishable line. The outcome is logged here because the
+    // browser is the only other place it appears, and a user reporting "it
+    // just spins" cannot be diagnosed from a redirect nobody can see inside.
+    //
+    // The exchange code is never logged. It is a bearer credential for a
+    // session, briefly, and a log is exactly where it must not be.
     let mut response = match callback_inner(&state, &headers, &query).await {
         Ok(success) => match state.create_oauth_exchange(success.token, success.outcome) {
-            Ok(code) => Redirect::to(&format!("/?auth_code={code}")).into_response(),
-            Err(_) => Redirect::to("/?auth_error=sign_in_failed").into_response(),
+            Ok(code) => {
+                pintail_log::log_info!("oauth callback outcome={} redirect=/", success.outcome);
+                Redirect::to(&format!("/?auth_code={code}")).into_response()
+            }
+            Err(error) => {
+                // The pending-exchange table is bounded, so this fires when
+                // codes are issued and never redeemed - which is what an
+                // interrupted sign-in looks like in aggregate.
+                pintail_log::log_error!("oauth callback failed to issue an exchange code: {error}");
+                Redirect::to("/?auth_error=sign_in_failed").into_response()
+            }
         },
         Err(error) => {
             let code = match error.status() {
@@ -443,6 +460,9 @@ pub(crate) async fn callback(
                 StatusCode::CONFLICT => "link_required",
                 _ => "sign_in_failed",
             };
+            // The reason travels with it. "not_invited" names the policy that
+            // refused; the message says which check inside it did.
+            pintail_log::log_error!("oauth callback rejected={code} reason={error}");
             Redirect::to(&format!("/?auth_error={code}")).into_response()
         }
     };
