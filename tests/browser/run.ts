@@ -6,9 +6,11 @@
 /// add-database wizard (connection test, capability probe, table selection,
 /// snapshot start), replication reaching streaming, the SQL console returning
 /// typed results over /api/query, workspace create and switch, API key
-/// lifecycle, replication mode changes and resnapshot, and a backup
-/// destination saved, run and restored side-by-side. A second pass loads the
-/// login screen at a 390-pixel phone viewport.
+/// lifecycle, replication mode changes and resnapshot, a backup destination
+/// saved, run and restored side-by-side, dead-letter discard and an
+/// unrecoverable retry, team invite and revoke, and the activity and settings
+/// surfaces. A second pass loads the login screen at a 390-pixel phone
+/// viewport.
 ///
 /// The object store is real rather than stubbed because the backup UI is
 /// gated on a destination the server confirmed it could reach, and restore
@@ -744,6 +746,59 @@ async function main() {
     await invite.getByText('revoked', { exact: true }).waitFor({ timeout: 20_000 })
     if ((await invite.getByRole('button', { name: 'Revoke invite' }).count()) > 0) {
       throw new Error('a revoked invite still offers revoke')
+    }
+  })
+
+  await check('activity records the work the gate has already done', async () => {
+    // This page is a durable record, so the assertions are that earlier checks
+    // in this run are visible here. Asserting merely that the page renders
+    // would pass against an empty log, which is the failure worth catching.
+    await page!.goto(`${pintailUrl}/activity`)
+    await page!.getByRole('heading', { name: 'Activity' }).waitFor()
+    await page!.getByRole('cell', { name: 'Snapshot' }).first().waitFor({ timeout: 20_000 })
+
+    // The audit trail is admin-only and records who did what. The API key and
+    // backup checks ran earlier, so their actions must be here by name.
+    await page!.getByRole('heading', { name: 'Audit trail' }).waitFor()
+    for (const action of ['database.create', 'api_key.create', 'backup.restore']) {
+      await page!.getByText(action, { exact: true }).first().waitFor({ timeout: 20_000 })
+    }
+    // Actions are attributed, not anonymous.
+    await page!.getByText(OPERATOR.email).first().waitFor()
+
+    // Refreshing must not empty the table.
+    await page!.getByRole('button', { name: 'Refresh audit trail' }).click()
+    await page!.getByText('database.create', { exact: true }).first().waitFor({ timeout: 20_000 })
+
+    // Filtering to one database keeps its own rows rather than clearing.
+    await page!.getByRole('combobox').first().click()
+    await page!.getByRole('option', { name: DATABASE, exact: true }).click()
+    await page!.getByRole('cell', { name: DATABASE }).first().waitFor({ timeout: 20_000 })
+  })
+
+  await check('settings reports the session, endpoint and operations surface', async () => {
+    await page!.goto(`${pintailUrl}/settings`)
+    await page!.getByRole('heading', { name: 'Settings' }).waitFor()
+    for (const card of ['Current session', 'Interface', 'Client endpoint', 'Google sign-in', 'Operations']) {
+      await page!.getByRole('heading', { name: card, exact: true }).waitFor({ timeout: 20_000 })
+    }
+    // The session card identifies the session by subject and role, not by
+    // email, so this asserts a real resolved subject rather than a blank or a
+    // placeholder where the JWT claims should be.
+    await page!.getByText(/^usr_[A-Za-z0-9]+$/).first().waitFor({ timeout: 20_000 })
+    await page!.getByText('admin', { exact: true }).first().waitFor({ timeout: 20_000 })
+
+    // The Prometheus surface is linked and actually serves metrics. A dead
+    // link here is invisible from the page itself.
+    const metrics = await page!.request.get(`${pintailUrl}/metrics`)
+    if (!metrics.ok()) throw new Error(`/metrics returned ${metrics.status()}`)
+    if (!/^# (HELP|TYPE) /m.test(await metrics.text())) {
+      throw new Error('/metrics did not return Prometheus text format')
+    }
+
+    // Google credentials are write-only: the secret is never rendered back.
+    if ((await page!.getByLabel('Client secret').inputValue()) !== '') {
+      throw new Error('the stored Google client secret was rendered back into the form')
     }
   })
 
