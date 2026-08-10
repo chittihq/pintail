@@ -970,7 +970,7 @@ fn external_client_gate(address: std::net::SocketAddr) {
         ])
         .env("MYSQL_PWD", "pk_wire_secret")
         .output()
-        .unwrap_or_else(|error| panic!("run mysql CLI {mysql_cli:?}: {error}"));
+        .unwrap_or_else(|error| panic!("run mysql CLI {}: {error}", mysql_cli.display()));
     assert!(
         cli.status.success(),
         "mysql CLI failed: {}",

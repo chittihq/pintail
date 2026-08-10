@@ -3029,7 +3029,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(bytes.len().div_ceil(2));
     // An odd-length argument is left-padded with a zero nibble, so seeding
     // the high nibble with zero makes the first digit complete a byte.
-    let mut high = (bytes.len() % 2 != 0).then_some(0_u8);
+    let mut high = (!bytes.len().is_multiple_of(2)).then_some(0_u8);
     for byte in bytes {
         let nibble = match byte {
             b'0'..=b'9' => byte - b'0',

@@ -42,7 +42,7 @@ fn users_schema() -> TableSchema {
 fn order_row(id: u64) -> StoredRow {
     // Every 97th order has a NULL user; user ids run past the users table
     // so a slice of orders never matches.
-    let user = if id % 97 == 0 {
+    let user = if id.is_multiple_of(97) {
         Value::Null
     } else {
         Value::UInt64(id % (USERS + 5_000) + 1)

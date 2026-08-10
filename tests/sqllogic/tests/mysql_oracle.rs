@@ -2760,7 +2760,7 @@ fn event_row(id: u64) -> StoredRow {
             Value::UInt64(id),
             Value::Utf8(format!("event-{id:02}")),
             Value::Int64(i64::try_from(id * 10).expect("small seed score")),
-            Value::Boolean(id % 2 == 0),
+            Value::Boolean(id.is_multiple_of(2)),
             match id {
                 1 | 7 => Value::Utf8("Alpha".to_owned()),
                 2 | 8 => Value::Utf8("alpha".to_owned()),

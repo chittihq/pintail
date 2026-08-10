@@ -132,11 +132,11 @@ impl Wal {
             self.rollback_failed_append(record_offset, &write_error)?;
             return Err(StoreError::io("append WAL record", write_error));
         }
-        if self.sync_policy == WalSync::Always {
-            if let Err(sync_error) = self.file.sync_data() {
-                self.rollback_failed_append(record_offset, &sync_error)?;
-                return Err(StoreError::io("sync WAL append", sync_error));
-            }
+        if self.sync_policy == WalSync::Always
+            && let Err(sync_error) = self.file.sync_data()
+        {
+            self.rollback_failed_append(record_offset, &sync_error)?;
+            return Err(StoreError::io("sync WAL append", sync_error));
         }
         Ok(())
     }

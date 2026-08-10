@@ -237,71 +237,70 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
             // reader and survive in the replica forever. The probe flags the
             // affected tables; this is what actually repairs them, on the same
             // cadence polling mode uses for its reconciler.
-            if let Ok(due) = cascade_reconciliation_due(&metadata_path, database, &report) {
-                if !due.is_empty() {
-                    let names = due.join(", ");
-                    match open_targets(&metadata_path, &database.id, &root, &report, &records) {
-                        Ok(all) => {
-                            let cascade = all
-                                .into_iter()
-                                .filter(|target| {
-                                    due.iter().any(|name| {
-                                        name.eq_ignore_ascii_case(&target.source().name)
-                                    })
-                                })
-                                .map(|target| {
-                                    let source = target.source().clone();
-                                    PollTarget::new(source, target.into_store())
-                                })
-                                .collect::<Result<Vec<_>, _>>();
-                            let cascade = match cascade {
-                                Ok(cascade) => cascade,
-                                Err(error) => {
-                                    state.publish(ApiEvent::database(
-                                        "replication.cascade-reconcile.error",
-                                        &database.id,
-                                        format!("could not build cascade targets: {error}"),
-                                    ));
-                                    Vec::new()
-                                }
-                            };
-                            match run_cdc_reconciliation(
-                                &pool,
-                                &metadata_path,
-                                &database.id,
-                                &report,
-                                cascade,
-                                10_000,
-                            )
-                            .await
-                            {
-                                Ok(outcome) => {
-                                    let repaired: usize =
-                                        outcome.tables.iter().map(|table| table.tombstones).sum();
-                                    state.publish(ApiEvent::database(
+            if let Ok(due) = cascade_reconciliation_due(&metadata_path, database, &report)
+                && !due.is_empty()
+            {
+                let names = due.join(", ");
+                match open_targets(&metadata_path, &database.id, &root, &report, &records) {
+                    Ok(all) => {
+                        let cascade = all
+                            .into_iter()
+                            .filter(|target| {
+                                due.iter()
+                                    .any(|name| name.eq_ignore_ascii_case(&target.source().name))
+                            })
+                            .map(|target| {
+                                let source = target.source().clone();
+                                PollTarget::new(source, target.into_store())
+                            })
+                            .collect::<Result<Vec<_>, _>>();
+                        let cascade = match cascade {
+                            Ok(cascade) => cascade,
+                            Err(error) => {
+                                state.publish(ApiEvent::database(
+                                    "replication.cascade-reconcile.error",
+                                    &database.id,
+                                    format!("could not build cascade targets: {error}"),
+                                ));
+                                Vec::new()
+                            }
+                        };
+                        match run_cdc_reconciliation(
+                            &pool,
+                            &metadata_path,
+                            &database.id,
+                            &report,
+                            cascade,
+                            10_000,
+                        )
+                        .await
+                        {
+                            Ok(outcome) => {
+                                let repaired: usize =
+                                    outcome.tables.iter().map(|table| table.tombstones).sum();
+                                state.publish(ApiEvent::database(
                                         "replication.cascade-reconcile",
                                         &database.id,
                                         format!(
                                             "reconciled cascade-affected tables ({names}); {repaired} rows tombstoned"
                                         ),
                                     ));
-                                }
-                                // A failed repair must not fail the CDC cycle:
-                                // streaming is still correct for everything
-                                // cascades do not touch.
-                                Err(error) => state.publish(ApiEvent::database(
-                                    "replication.cascade-reconcile.error",
-                                    &database.id,
-                                    format!("cascade reconciliation failed for {names}: {error}"),
-                                )),
                             }
+                            // A failed repair must not fail the CDC cycle:
+                            // streaming is still correct for everything
+                            // cascades do not touch.
+                            Err(error) => state.publish(ApiEvent::database(
+                                "replication.cascade-reconcile.error",
+                                &database.id,
+                                format!("cascade reconciliation failed for {names}: {error}"),
+                            )),
                         }
-                        Err(error) => state.publish(ApiEvent::database(
-                            "replication.cascade-reconcile.error",
-                            &database.id,
-                            format!("could not open cascade targets: {error}"),
-                        )),
                     }
+                    Err(error) => state.publish(ApiEvent::database(
+                        "replication.cascade-reconcile.error",
+                        &database.id,
+                        format!("could not open cascade targets: {error}"),
+                    )),
                 }
             }
             result

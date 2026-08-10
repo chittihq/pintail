@@ -277,10 +277,10 @@ impl ApiState {
     }
 
     pub(crate) fn release_job(&self, database_id: &str) {
-        if let Some(inner) = &self.inner {
-            if let Ok(mut jobs) = inner.active_jobs.lock() {
-                jobs.remove(database_id);
-            }
+        if let Some(inner) = &self.inner
+            && let Ok(mut jobs) = inner.active_jobs.lock()
+        {
+            jobs.remove(database_id);
         }
     }
 
