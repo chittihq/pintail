@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+pintail-log.workspace = true
 fs2.workspace = true
 lz4_flex.workspace = true
 pintail-types.workspace = true

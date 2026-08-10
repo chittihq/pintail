@@ -154,6 +154,13 @@ impl DatabaseStore {
             .get_mut(&table_id)
             .ok_or(StoreError::UnknownTable { table_id })?
             .flush()?;
+        // A flush publishes an immutable segment and lets the WAL be
+        // truncated, so it is the moment written data becomes durable in its
+        // final form. Only a flush that produced a segment is logged: a no-op
+        // flush on an empty memtable is not an event.
+        if outcome.segment_path().is_some() {
+            pintail_log::log_debug!("store flush table={table_id} rows={}", outcome.row_count());
+        }
         self.reset_wal_if_fully_flushed()?;
         Ok(outcome)
     }
@@ -178,10 +185,24 @@ impl DatabaseStore {
     ///
     /// Returns an error for an unknown table or failed compaction.
     pub fn compact(&mut self, table_id: u64) -> Result<CompactionOutcome, StoreError> {
-        self.tables
+        let outcome = self
+            .tables
             .get_mut(&table_id)
             .ok_or(StoreError::UnknownTable { table_id })?
-            .compact()
+            .compact()?;
+        // Deferral is the interesting case and the one with no other trace:
+        // compaction that keeps declining to run is how read amplification
+        // grows silently until queries slow down.
+        if let Some(reason) = outcome.deferred_reason() {
+            pintail_log::log_debug!("store compaction deferred table={table_id} reason={reason}");
+        } else if outcome.input_segments() > 0 {
+            pintail_log::log_debug!(
+                "store compaction table={table_id} inputs={} rows={}",
+                outcome.input_segments(),
+                outcome.output_rows()
+            );
+        }
+        Ok(outcome)
     }
 
     /// Reclaims obsolete files for one table after pinned snapshots release.

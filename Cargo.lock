@@ -2353,6 +2353,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "lz4_flex",
+ "pintail-log",
  "pintail-types",
  "rand 0.9.5",
  "rayon",
