@@ -397,10 +397,12 @@ fn google_admission_grants_user_membership_and_invite_together() {
     assert!(invite.accepted_at.is_some(), "invite must be consumed");
 }
 
-/// A rolled-back admission leaves no trace, so the invite stays usable.
+/// A rolled-back admission leaves no user behind.
 ///
-/// Without this the operator's only remedy for a half-created account was
-/// editing the control-plane database by hand.
+/// Scope, stated precisely because an earlier version of this comment claimed
+/// more than the test shows: it creates no invite, so it proves only that the
+/// user insert is undone - not that an invite survives. Invite survival is
+/// covered by the consumed- and revoked-invite tests below.
 #[test]
 fn a_failed_google_admission_leaves_no_user_behind() {
     let data_dir = tempfile::tempdir().expect("temporary data directory");
@@ -443,5 +445,138 @@ fn a_failed_google_admission_leaves_no_user_behind() {
             .expect("lookup")
             .is_none(),
         "a rolled-back admission must leave no user"
+    );
+}
+
+/// Two admissions differing only by identity, against the same invite.
+fn same_invite_admission<'a>(
+    user_id: &'a str,
+    subject: &'a str,
+    now: &'a str,
+) -> GoogleAdmission<'a> {
+    GoogleAdmission {
+        user_id,
+        email: "invited@example.com",
+        google_subject: subject,
+        workspace_id: "ws-1",
+        invite_id: "inv-1",
+        role: "operator",
+        now,
+    }
+}
+
+/// An already-consumed invite admits nobody.
+///
+/// The first version of this guard checked `accepted_at IS NULL` but ignored
+/// the affected-row count, so a second admission updated zero rows while the
+/// user and membership committed anyway - letting an account in against an
+/// invite that no longer authorized it. Codex review caught it; this pins it.
+#[test]
+fn a_consumed_invite_cannot_admit_a_second_user() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-10T00:00:00Z";
+
+    metadata
+        .create_workspace("ws-1", "Workspace", "workspace", now)
+        .expect("workspace");
+    metadata
+        .create_user(
+            "user-0",
+            "admin@example.com",
+            "$argon2id$test",
+            "admin",
+            now,
+        )
+        .expect("inviting user");
+    metadata
+        .create_invite(&NewInvite {
+            id: "inv-1",
+            token_hash: b"hash",
+            workspace_id: "ws-1",
+            email: "invited@example.com",
+            role: "operator",
+            created_by: "user-0",
+            created_at: now,
+            expires_at: "2026-09-10T00:00:00Z",
+        })
+        .expect("invite");
+
+    metadata
+        .admit_invited_google_user(&same_invite_admission("usr-1", "subject-1", now))
+        .expect("first admission");
+
+    // Same invite, a different identity. It must be refused and leave nothing
+    // behind, or one invite would admit an unbounded number of accounts.
+    let second =
+        metadata.admit_invited_google_user(&same_invite_admission("usr-2", "subject-2", now));
+    assert!(
+        second.is_err(),
+        "a consumed invite must not admit a second user"
+    );
+    assert!(
+        metadata
+            .workspaces_for_user("usr-2")
+            .expect("lookup")
+            .is_empty(),
+        "the refused admission must leave no membership"
+    );
+}
+
+/// A revoked invite admits nobody, even if it was valid when read.
+///
+/// The caller checks revocation before opening the transaction, so only a
+/// re-check inside it closes the window where an admin revokes an invite
+/// while a sign-in is in flight.
+#[test]
+fn a_revoked_invite_cannot_admit_a_user() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-10T00:00:00Z";
+
+    metadata
+        .create_workspace("ws-1", "Workspace", "workspace", now)
+        .expect("workspace");
+    metadata
+        .create_user(
+            "user-0",
+            "admin@example.com",
+            "$argon2id$test",
+            "admin",
+            now,
+        )
+        .expect("inviting user");
+    metadata
+        .create_invite(&NewInvite {
+            id: "inv-1",
+            token_hash: b"hash",
+            workspace_id: "ws-1",
+            email: "invited@example.com",
+            role: "operator",
+            created_by: "user-0",
+            created_at: now,
+            expires_at: "2026-09-10T00:00:00Z",
+        })
+        .expect("invite");
+    metadata.revoke_invite("inv-1", now).expect("revoke");
+
+    let refused = metadata.admit_invited_google_user(&GoogleAdmission {
+        user_id: "usr-1",
+        email: "invited@example.com",
+        google_subject: "subject-1",
+        workspace_id: "ws-1",
+        invite_id: "inv-1",
+        role: "operator",
+        now,
+    });
+    assert!(refused.is_err(), "a revoked invite must not admit a user");
+    assert!(
+        metadata
+            .user_by_email("invited@example.com")
+            .expect("lookup")
+            .is_none(),
+        "the refused admission must leave no user"
     );
 }

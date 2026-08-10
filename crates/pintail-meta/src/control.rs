@@ -697,15 +697,41 @@ impl MetaStore {
                 ),
             )
             .context("failed to add workspace member")?;
-        // Guarded on accepted_at so a replayed callback - the same sign-in
-        // arriving twice, which is observable in production - cannot consume
-        // an invite a second time.
-        transaction
+        // A compare-and-set, not a best-effort update. The predicates that
+        // authorize this admission are re-checked here, inside the
+        // transaction, because the caller read them before it began: between
+        // that read and this write the invite can be revoked or accepted by
+        // someone else.
+        //
+        // Requiring exactly one affected row is the point. An earlier version
+        // guarded only on `accepted_at IS NULL` and ignored the count, so a
+        // missing or already-consumed invite updated nothing while the user
+        // and the membership committed anyway - admitting an account against
+        // an invite that no longer authorized it.
+        let claimed = transaction
             .execute(
-                "UPDATE invites SET accepted_at = ?2 WHERE id = ?1 AND accepted_at IS NULL",
-                (admission.invite_id, admission.now),
+                "UPDATE invites SET accepted_at = ?2 \
+                 WHERE id = ?1 \
+                   AND accepted_at IS NULL \
+                   AND revoked_at IS NULL \
+                   AND email = ?3 \
+                   AND workspace_id = ?4 \
+                   AND role = ?5",
+                (
+                    admission.invite_id,
+                    admission.now,
+                    admission.email,
+                    admission.workspace_id,
+                    admission.role,
+                ),
             )
             .context("failed to mark invite accepted")?;
+        if claimed != 1 {
+            bail!(
+                "invite {} was not claimable: it is missing, already accepted, revoked, or no longer matches this email, workspace and role",
+                admission.invite_id
+            );
+        }
         transaction
             .commit()
             .context("failed to commit Google admission")?;
