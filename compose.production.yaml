@@ -3,8 +3,7 @@
 # `compose.yaml` alongside this file builds from source, which is right for
 # development and wrong for a server - it would compile the whole Rust
 # workspace and the dashboard on the deploy host on every release. This file
-# runs the exact image the release workflow built and `validate.ts` signed
-# off.
+# runs the exact image the release workflow built.
 #
 #   docker compose -f compose.production.yaml up -d
 #
@@ -23,11 +22,9 @@ services:
       - "${PINTAIL_WIRE_PORT:-3306}:3306"
     environment:
       PINTAIL_DATA_DIR: /var/lib/pintail
-      # Spill defaults under the data directory, so it shares this volume.
-      # Point it at its own mount when spill should not share a device with
-      # segments - it is write-once-read-once and benefits from faster
-      # storage than bulk data does.
-      PINTAIL_SPILL_DIR: ${PINTAIL_SPILL_DIR:-/var/lib/pintail/spill}
+      # Spill defaults under the data directory, so it shares that mount
+      # unless PINTAIL_SPILL_DATA below points it elsewhere.
+      PINTAIL_SPILL_DIR: /var/lib/pintail/spill
       # Set this explicitly under a container memory limit.
       #
       # The default is three quarters of host memory read from
@@ -38,37 +35,59 @@ services:
       # limit configured in `deploy.resources` below.
       PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES:-3221225472}
     volumes:
-      # A named volume, not a bind mount. The container runs as uid 10001
-      # and Docker seeds a new named volume with the image's ownership; a
-      # host path keeps the host's ownership instead, so pintail cannot
-      # write and first boot fails. For a bind mount, chown the host
-      # directory to 10001:10001 first.
-      #
-      # This volume holds the first-boot secrets, the replica, and spill.
-      # Losing it means every encrypted source DSN becomes unreadable and
-      # every table needs a resnapshot.
-      - pintail-data:/var/lib/pintail
-      # Uncomment together with the volume declaration below to give spill
-      # its own device.
-      # - pintail-spill:/var/lib/pintail/spill
+      # The replica, the metadata store, and the first-boot secrets.
+      - ${PINTAIL_DATA:-pintail-data}:/var/lib/pintail
+      # Spill is write-once-read-once and benefits from faster storage than
+      # bulk data does. Left unset it stays inside the data mount above.
+      - ${PINTAIL_SPILL_DATA:-pintail-spill}:/var/lib/pintail/spill
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
       interval: 5s
       timeout: 2s
       retries: 12
-      # Startup reopens every table snapshot, so a large replica needs
-      # longer than the 2s a development stack does.
+      # Startup reopens every table snapshot, so a real replica needs longer
+      # than the 2s a development stack does.
       start_period: 30s
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          # Keep this and PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES in step:
-          # the query budget bounds operator memory, not the whole resident
-          # set, so leave the container headroom above it.
-          memory: 4G
+          # Keep this and PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES in step: the
+          # query budget bounds operator memory, not the whole resident set,
+          # so leave the container headroom above it.
+          memory: ${PINTAIL_MEMORY_LIMIT:-4G}
 
+# Storage defaults to Docker-managed named volumes, which is the right choice
+# when the host has one disk and nothing else wants a say.
+#
+# To relocate it, set either of these to an ABSOLUTE host path - no edits to
+# this file required, so the setting survives redeploys on platforms that
+# re-clone the repo (e.g. Dokploy):
+#
+#   PINTAIL_DATA=/mnt/your_volume/pintail/data          # the big one
+#   PINTAIL_SPILL_DATA=/mnt/your_volume/pintail/spill   # put this on fast storage
+#
+# Compose treats a value starting with "/" as a bind mount and anything else
+# as a named volume, so leaving a variable unset keeps the default exactly.
+# Set only the ones you care about - relocating just the replica is a valid
+# setup.
+#
+# Docker creates missing bind directories automatically, owned by root.
+# Pintail runs as uid 10001 and does not fix its own ownership, so prepare a
+# bind path before first boot or it cannot write and startup fails:
+#
+#   sudo mkdir -p /mnt/your_volume/pintail/data
+#   sudo chown -R 10001:10001 /mnt/your_volume/pintail/data
+#
+# Size the spill mount against `global_spill_limit_bytes` (8GB by default) on
+# top of whatever the replica needs, or a large sort fails on disk before it
+# fails on its own limit.
+#
+# Docker will not repoint a volume that already holds data: stop the stack and
+# remove the old named volumes, copying their contents across first if you
+# want to keep them. Losing the data volume means every encrypted source DSN
+# becomes unreadable and every table needs a resnapshot, so copy rather than
+# recreate.
 volumes:
   pintail-data:
-  # Uncomment together with the mount above.
-  # pintail-spill:
+  pintail-spill:
