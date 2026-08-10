@@ -44,6 +44,11 @@ const DATABASE = 'smoke_db'
 const RESTRICTED_DATABASE = 'restricted_db'
 const API_KEY_NAME = 'browser-gate-key'
 const RESTORED_DATABASE = 'browser gate restore'
+// Two keyless tables, not one. A quarantine durably marks its table as
+// needing resync, and the CDC loop skips every later event for a blocked
+// target, so one table yields exactly one dead letter until it is resynced.
+const APPEND_TABLE = 'notes'
+const APPEND_TABLE_RETRY = 'memos'
 const OPERATOR = { email: 'smoke@pintail.local', password: 'browser-smoke-password' }
 
 interface CheckResult {
@@ -244,6 +249,15 @@ async function main() {
     ('purchase', 49.90, '2026-08-01 11:30:00'),
     ('purchase', 12.50, '2026-08-02 09:15:00'),
     ('refund', -12.50, '2026-08-02 16:45:00')`)
+  // No primary key and no unique key, so this table replicates in
+  // append_row_id mode. That is what makes a dead letter reproducible: an
+  // UPDATE or DELETE against it has no stable source key, so CDC quarantines
+  // the row rather than guessing which duplicate to touch. Inserts are
+  // unaffected, which is why the snapshot and streaming checks still pass.
+  for (const table of [APPEND_TABLE, APPEND_TABLE_RETRY]) {
+    await sql(`CREATE TABLE ${table} (body VARCHAR(64) NOT NULL)`)
+    await sql(`INSERT INTO ${table} (body) VALUES ('first'), ('second')`)
+  }
 
   // A real S3-compatible destination. The backup pages cannot be exercised
   // against a fake: "Backup now" stays disabled until the server confirms a
@@ -612,6 +626,75 @@ async function main() {
     await page!.getByRole('link', { name: 'Databases', exact: true }).click()
     await page!.getByText(RESTORED_DATABASE).first().waitFor({ timeout: 20_000 })
     await page!.getByText(DATABASE).first().waitFor({ timeout: 20_000 })
+  })
+
+  await check('a dead letter is discarded, and an unrecoverable retry refuses', async () => {
+    // Waits for a dead letter naming the append-only table to appear on the
+    // Activity page. Polling is by reload rather than a fixed sleep: the row
+    // only exists once the CDC stream has read the binlog event, and how long
+    // that takes is not something the test should assert.
+    // Dead letters render as cards in a grid, not as table rows, so this
+    // targets the card by test id. getByRole('row') silently matches nothing
+    // here and turns a missing dead letter into an indistinguishable timeout.
+    const deadLetters = (table: string) =>
+      page!.getByTestId('dead-letter').filter({ hasText: table })
+    const awaitDeadLetter = async (table: string, what: string) => {
+      const deadline = Date.now() + 90_000
+      for (;;) {
+        await page!.goto(`${pintailUrl}/activity`)
+        await page!.getByRole('heading', { name: 'Activity' }).waitFor({ timeout: 20_000 })
+        if ((await deadLetters(table).count()) > 0) return deadLetters(table).first()
+        if (Date.now() > deadline) throw new Error(`no dead letter appeared for ${what}`)
+        await Bun.sleep(3_000)
+      }
+    }
+
+    // Precondition, asserted rather than assumed: a dead letter can only be
+    // produced by a table that is actually being replicated. Without this, a
+    // table the wizard never included fails identically to CDC not
+    // quarantining, and the message would send us after the wrong bug.
+    await page!.goto(`${pintailUrl}/databases`)
+    await page!.getByRole('link', { name: DATABASE }).first().click()
+    await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 20_000 })
+    // Not exact: the cell carries the table name plus its key-mode badge, so
+    // the accessible name is "notes KEYLESS · INSERT ONLY".
+    for (const table of [APPEND_TABLE, APPEND_TABLE_RETRY]) {
+      await page!.getByRole('cell', { name: table }).first().waitFor({ timeout: 20_000 })
+    }
+
+    // An UPDATE with no stable source key quarantines rather than guessing
+    // which duplicate row to touch.
+    await sql(`UPDATE ${APPEND_TABLE} SET body = 'changed' WHERE body = 'first'`)
+    const discardable = await awaitDeadLetter(APPEND_TABLE, 'the quarantined UPDATE')
+    await discardable.getByRole('button', { name: 'Discard' }).click()
+    await discardable.waitFor({ state: 'detached', timeout: 20_000 })
+    // Discard must be durable, not just a row removed from the local list.
+    await page!.goto(`${pintailUrl}/activity`)
+    await page!.getByRole('heading', { name: 'Activity' }).waitFor({ timeout: 20_000 })
+    await Bun.sleep(1_000)
+    if ((await deadLetters(APPEND_TABLE).count()) > 0) {
+      throw new Error('the discarded dead letter came back')
+    }
+
+    // A DELETE quarantines for the same reason. Retry cannot recover this one:
+    // it runs a table reconcile, and reconciliation needs a source key that a
+    // keyless table does not have - the dead letter's own message says the
+    // remedy is resnapshot. What is asserted is that retry refuses loudly and
+    // names the reason, rather than failing silently or appearing to succeed.
+    //
+    // This is the refusal path, not retry's success path. Covering the success
+    // path needs a decode failure on a KEYED table, which no SQL statement
+    // reliably produces.
+    await sql(`DELETE FROM ${APPEND_TABLE_RETRY} WHERE body = 'second'`)
+    const unretryable = await awaitDeadLetter(APPEND_TABLE_RETRY, 'the quarantined DELETE')
+    await unretryable.getByRole('button', { name: 'Retry safely' }).click()
+    await page!.getByText(/no source key/i).waitFor({ timeout: 60_000 })
+    // And the record survives a refused retry, so the operator can still act.
+    await page!.goto(`${pintailUrl}/activity`)
+    await page!.getByRole('heading', { name: 'Activity' }).waitFor({ timeout: 20_000 })
+    if ((await deadLetters(APPEND_TABLE_RETRY).count()) === 0) {
+      throw new Error('a refused retry removed the dead letter')
+    }
   })
 
   await check('the Google public URL rejects a non-HTTPS origin inline', async () => {
