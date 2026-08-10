@@ -115,10 +115,10 @@ async function copy(value: string) {
       <AlertDescription class="flex w-full items-center gap-3">
         <div class="flex-1">
           <strong class="text-foreground block">Copy this link and send it to {{ revealedInvite.email }}. It cannot be recovered.</strong>
-          <code class="mt-1 block break-all">{{ inviteLink(revealedInvite.token) }}</code>
+          <code data-testid="invite-link" class="mt-1 block break-all">{{ inviteLink(revealedInvite.token) }}</code>
         </div>
-        <Button variant="ghost" size="icon-sm" class="shrink-0" @click="copy(inviteLink(revealedInvite.token))"><Copy /></Button>
-        <Button variant="ghost" size="icon-sm" class="shrink-0" @click="revealedInvite = null"><X /></Button>
+        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Copy invite link" @click="copy(inviteLink(revealedInvite.token))"><Copy /></Button>
+        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Dismiss invite link" @click="revealedInvite = null"><X /></Button>
       </AlertDescription>
     </Alert>
 
