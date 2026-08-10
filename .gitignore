@@ -22,3 +22,4 @@ REVIEW.md
 /tests/corpus/bi-captured/*.raw.json
 # Local dashboard-development data directory (docs/development.md).
 .devdata/
+.env
