@@ -169,7 +169,11 @@ fn log_backup_start(source: &BackupSource, parent: Option<&BackupManifest>) {
         source.database_id,
         source.backup_id,
         source.tables.len(),
-        if parent.is_some() { "incremental" } else { "full" }
+        if parent.is_some() {
+            "incremental"
+        } else {
+            "full"
+        }
     );
 }
 
