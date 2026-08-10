@@ -277,6 +277,15 @@ pub struct StrColumn {
     /// from codes: predicates, group keys and DISTINCT read codes only, so
     /// a 20M-row low-cardinality column never builds 20M views (issue #6).
     lazy: Option<Box<std::sync::OnceLock<StrBody>>>,
+    /// Source ENUM labels in declaration order, when the column is an ENUM.
+    ///
+    /// Carried here rather than in a new `ColumnVector` variant so no match
+    /// site has to learn about ENUM: this is optional provenance exactly
+    /// like `dict` and `lazy`. Its only effect is that `value_at` returns a
+    /// `Value::Enum` carrying the declaration index, which is what `MySQL`
+    /// orders and compares by. Sorting the label instead - which is what
+    /// happens without this - is alphabetical and silently wrong.
+    enum_labels: Option<std::sync::Arc<Vec<String>>>,
 }
 
 /// Materialized per-row views and their heap.
@@ -294,6 +303,29 @@ pub struct StrDictionary {
 }
 
 impl StrColumn {
+    /// Attaches source ENUM labels in declaration order.
+    #[must_use]
+    pub fn with_enum_labels(mut self, labels: Option<std::sync::Arc<Vec<String>>>) -> Self {
+        self.enum_labels = labels;
+        self
+    }
+
+    /// The one-based declaration index of `label`, when this column is an
+    /// ENUM and the label is declared.
+    ///
+    /// A value absent from the declaration keeps `None` and stays a plain
+    /// string: it cannot be ordered by an index it does not have, and
+    /// inventing one would order it confidently and wrongly.
+    #[must_use]
+    fn enum_index_of(&self, label: &str) -> Option<u16> {
+        self.enum_labels.as_ref().and_then(|labels| {
+            labels
+                .iter()
+                .position(|declared| declared == label)
+                .and_then(|position| u16::try_from(position + 1).ok())
+        })
+    }
+
     /// Appends one string.
     pub fn push(&mut self, bytes: &[u8]) {
         if self.lazy.is_some() {
@@ -364,6 +396,7 @@ impl StrColumn {
                 validity: validity.to_vec(),
             }),
             lazy: Some(Box::new(std::sync::OnceLock::new())),
+            enum_labels: None,
         }
     }
 
@@ -633,7 +666,14 @@ impl ColumnArray {
                     return Value::Null;
                 }
                 values.views()[row].with_bytes(values.heap(), |bytes| {
-                    Value::Utf8(String::from_utf8_lossy(bytes).into_owned())
+                    let text = String::from_utf8_lossy(bytes).into_owned();
+                    values.enum_index_of(&text).map_or_else(
+                        || Value::Utf8(text.clone()),
+                        |index| Value::Enum {
+                            index,
+                            label: text.clone(),
+                        },
+                    )
                 })
             }
             Self::Binary { values, validity } => {
@@ -660,6 +700,79 @@ impl ColumnArray {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_enum_column_materializes_its_declaration_index_and_sorts_by_it() {
+        use std::sync::Arc;
+        // MySQL orders an ENUM by declaration index. These labels are
+        // deliberately in an order where alphabetical and declaration order
+        // disagree, so sorting the label alone gives the wrong answer.
+        let labels = Arc::new(vec![
+            "pending".to_owned(),
+            "delivered".to_owned(),
+            "cancelled".to_owned(),
+        ]);
+        let mut column = StrColumn::default();
+        for label in ["delivered", "pending", "cancelled"] {
+            column.push(label.as_bytes());
+        }
+        let vector = ColumnArray::Utf8 {
+            values: column.with_enum_labels(Some(Arc::clone(&labels))),
+            validity: ValidityMask::from_bools(&[true, true, true]),
+        };
+
+        assert_eq!(
+            vector.value_at(0),
+            Value::Enum {
+                index: 2,
+                label: "delivered".to_owned()
+            }
+        );
+        assert_eq!(
+            vector.value_at(1),
+            Value::Enum {
+                index: 1,
+                label: "pending".to_owned()
+            }
+        );
+
+        // Derived Ord compares index before label, so declaration order wins
+        // over the alphabetical order the label alone would give.
+        let mut values = [vector.value_at(0), vector.value_at(1), vector.value_at(2)];
+        values.sort();
+        let ordered: Vec<_> = values.iter().filter_map(Value::text).collect();
+        assert_eq!(
+            ordered,
+            ["pending", "delivered", "cancelled"],
+            "must follow declaration order, not alphabetical"
+        );
+    }
+
+    #[test]
+    fn a_value_outside_the_declaration_stays_plain_text() {
+        use std::sync::Arc;
+        // An undeclared label has no index. Inventing one would order it
+        // confidently and wrongly, so it stays a plain string.
+        let labels = Arc::new(vec!["a".to_owned(), "b".to_owned()]);
+        let mut column = StrColumn::default();
+        column.push(b"zzz");
+        let vector = ColumnArray::Utf8 {
+            values: column.with_enum_labels(Some(labels)),
+            validity: ValidityMask::from_bools(&[true]),
+        };
+        assert_eq!(vector.value_at(0), Value::Utf8("zzz".to_owned()));
+    }
+
+    #[test]
+    fn a_column_without_labels_is_unchanged() {
+        let mut column = StrColumn::default();
+        column.push(b"shipped");
+        let vector = ColumnArray::Utf8 {
+            values: column,
+            validity: ValidityMask::from_bools(&[true]),
+        };
+        assert_eq!(vector.value_at(0), Value::Utf8("shipped".to_owned()));
+    }
 
     #[test]
     fn validity_all_valid_fast_path_and_counts() {
