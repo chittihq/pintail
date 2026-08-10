@@ -1,13 +1,13 @@
 # Production deployment: pulls the published image instead of building.
 #
-# `docker-compose.dev.yaml` alongside this file builds from source, which is
+# `docker-compose.dev.yml` alongside this file builds from source, which is
 # right for development and wrong for a server - it would compile the whole
 # Rust workspace and the dashboard on the deploy host on every release. This
 # file runs the exact image the release workflow built, and is the one
 # `docker compose up` picks by default.
 #
 #   docker compose up -d                                   # production
-#   docker compose -f docker-compose.dev.yaml up -d --build # local build
+#   docker compose -f docker-compose.dev.yml up -d --build # local build
 #
 # Or point Dokploy at this repository as a Docker Compose service. The image
 # is public, so no registry credential is required.
