@@ -159,7 +159,12 @@ export function useControlPlane() {
     deadLetters.value = []
     await loadWorkspaces()
     await loadControlPlane()
-    await startEventStream()
+    // Deliberately not awaited: startEventStream consumes an SSE stream in a
+    // loop that only ends when the session does, so awaiting it never
+    // returns. Doing so left every caller hanging - the workspace was
+    // created and the request succeeded, but the dialog never closed and its
+    // spinner never stopped. app.vue calls it the same way.
+    void startEventStream()
   }
 
   async function switchWorkspace(workspaceId: string) {
