@@ -4,6 +4,41 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc7] - 2026-08-10
+
+### Added
+
+- The SQL console completes table and column names from the connected
+  database. Completion is fed from the local replica through a single
+  `/tables/columns` request, so it never contacts the source: it keeps working
+  while MySQL is unreachable and typing in the console cannot add load to
+  production. A table that exists upstream but has not been snapshotted does
+  not appear, which matches what can actually be queried.
+- SQL formatting in the console, on a Format button and Shift-Alt-F, using
+  sql-formatter's MySQL dialect. The formatter is imported on demand and
+  compiles to a chunk the initial page never references, so it is downloaded
+  only when someone formats. Unparseable SQL is left exactly as typed.
+
+### Changed
+
+- Activity and the audit trail are separate tabs rather than stacked cards,
+  which previously meant scrolling the whole replication log to reach the
+  audit trail. The dead-letter queue stays above both: it represents work
+  that is stuck until an operator acts, so it must be visible from either tab.
+
+### Verification
+
+- The browser gate covers console completion and formatting, typing a prefix
+  of a table that exists only in the test source so a pass cannot come from a
+  built-in keyword list, and requiring the formatted query to still run.
+- Failing browser checks now report the last browser-side errors. That
+  capture immediately explained two checks previously written off as host
+  contention: the control plane holds one job slot per database and answers
+  409 while a supervisor cycle owns it, so a resnapshot click has to retry.
+  A dead-letter check was also mutating the source while the mirror was still
+  snapshotting, where the row is absorbed by the snapshot and no quarantine
+  can occur.
+
 ## [0.0.1-rc6] - 2026-08-10
 
 ### Added
