@@ -190,7 +190,9 @@ where
                 let backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
                 let tls = tls.clone();
                 tokio::spawn(async move {
-                    let _ = serve_connection(stream, backend, tls, idle_timeout).await;
+                    if let Err(error) = serve_connection(stream, backend, tls, idle_timeout).await {
+                        log_connection_end(&error);
+                    }
                 });
             }
         }
@@ -225,6 +227,45 @@ impl DisconnectWatch for TcpDisconnectWatch {
                 Err(_) => return WatchOutcome::Disconnected,
             }
         }
+    }
+}
+
+/// Reports why a wire connection ended.
+///
+/// The accept loop used to discard this with `let _ =`, so a client that
+/// failed to authenticate or was refused for an unsupported command left no
+/// trace anywhere - the connection simply closed and the operator was told
+/// nothing by either side.
+///
+/// A peer hanging up is normal and logs only at debug: every pooled client
+/// disconnect would otherwise read as a server fault. Anything else is a real
+/// failure and logs at error.
+///
+/// The level check is duplicated from pintail-api rather than shared, because
+/// this crate sits BELOW that one - pintail-api depends on pintail-wire, so
+/// the dependency cannot run the other way for one env lookup.
+fn log_connection_end(error: &io::Error) {
+    let benign = matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::UnexpectedEof
+    );
+    let verbose = matches!(
+        std::env::var("PINTAIL_LOG")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "debug" | "trace"
+    );
+    if benign {
+        if verbose {
+            eprintln!("pintail wire connection closed by peer: {error}");
+        }
+    } else {
+        eprintln!("pintail wire connection failed: {error}");
     }
 }
 
