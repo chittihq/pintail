@@ -52,6 +52,9 @@ const RESTORED_DATABASE = 'browser gate restore'
 const APPEND_TABLE = 'notes'
 const APPEND_TABLE_RETRY = 'memos'
 const INVITE_EMAIL = 'teammate@pintail.local'
+// The seeded table the console assertions complete against. Named here so the
+// completion check cannot accidentally pass on a SQL keyword.
+const DATABASE_TABLE = 'events'
 const OPERATOR = { email: 'smoke@pintail.local', password: 'browser-smoke-password' }
 
 interface CheckResult {
@@ -61,6 +64,11 @@ interface CheckResult {
 }
 
 const results: CheckResult[] = []
+/// Browser-side errors, captured so a failing check can report what the page
+/// itself complained about. A silent no-op in the dashboard - a rejected
+/// dynamic import, a handler that threw - is invisible from Playwright's side
+/// otherwise, and reads identically to a feature that did nothing.
+const pageErrors: string[] = []
 let mysqlConnection: mysql.Connection | undefined
 let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
 let pintailStdout: Promise<string> | undefined
@@ -170,6 +178,7 @@ async function check(name: string, action: () => Promise<void>) {
     const detail = error instanceof Error ? error.message : String(error)
     results.push({ check: name, status: 'FAIL', detail })
     log(`FAIL ${name} — ${detail}`)
+    for (const error of pageErrors.slice(-5)) log(`  browser ${error}`)
     if (page) {
       mkdirSync(artifacts, { recursive: true })
       const file = join(artifacts, `${name.replaceAll(/[^a-z0-9]+/gi, '-')}.png`)
@@ -338,6 +347,10 @@ async function main() {
   browser = await chromium.launch()
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   page.setDefaultTimeout(20_000)
+  page.on('pageerror', (error) => pageErrors.push(`pageerror: ${error.message}`))
+  page.on('console', (message) => {
+    if (message.type() === 'error') pageErrors.push(`console: ${message.text()}`)
+  })
 
   await check('first boot shows operator setup', async () => {
     await page!.goto(pintailUrl)
@@ -393,6 +406,58 @@ async function main() {
     await page!.getByRole('button', { name: 'Run' }).click()
     await page!.getByText('4 rows ·').waitFor()
     await page!.getByRole('cell', { name: 'purchase' }).first().waitFor()
+  })
+
+  await check('the console completes real table names and formats SQL', async () => {
+    // Completion is fed from the local replica, so this only passes once the
+    // snapshot has landed - which is why it runs after the streaming check
+    // rather than beside the other console assertions.
+    await page!.getByRole('link', { name: 'SQL Console', exact: true }).click()
+    await page!.getByRole('heading', { name: 'SQL Console' }).waitFor()
+    const editor = page!.locator('.cm-content')
+    await editor.waitFor({ timeout: 20_000 })
+
+    // Type a prefix of a table that exists only in THIS source, so a passing
+    // assertion cannot come from a built-in keyword list.
+    await editor.click()
+    await page!.keyboard.press('ControlOrMeta+A')
+    await page!.keyboard.type('SELECT * FROM even')
+    const option = page!.locator('.cm-tooltip-autocomplete').getByText(DATABASE_TABLE, { exact: true })
+    await option.waitFor({ timeout: 15_000 })
+    await page!.keyboard.press('Escape')
+
+    // Columns complete after a table qualifier, which is the part that needs
+    // the schema map rather than a plain identifier list.
+    await page!.keyboard.press('ControlOrMeta+A')
+    await page!.keyboard.type(`SELECT ${DATABASE_TABLE}.ki`)
+    const column = page!.locator('.cm-tooltip-autocomplete').getByText('kind', { exact: true })
+    await column.waitFor({ timeout: 15_000 })
+    await page!.keyboard.press('Escape')
+
+    // Formatting rewrites the text without changing what it means. The input
+    // is deliberately ugly - one line, lowercase, collapsed whitespace.
+    await page!.keyboard.press('ControlOrMeta+A')
+    await page!.keyboard.type(`select id,kind from ${DATABASE_TABLE} where kind='purchase' order by id`)
+    await page!.getByTestId('format-sql').click()
+    // Polled rather than slept on. Formatting dynamically imports a 256KB
+    // chunk, so the rewrite lands after the click by an amount that depends on
+    // the machine - a fixed delay passes here and fails on a loaded CI host.
+    const formatDeadline = Date.now() + 20_000
+    let formatted = ''
+    for (;;) {
+      formatted = (await editor.innerText()).trim()
+      if (formatted.includes('\n')) break
+      if (Date.now() > formatDeadline) {
+        throw new Error(`format never rewrote the buffer: ${formatted}`)
+      }
+      await Bun.sleep(250)
+    }
+    if (!formatted.includes('\n')) throw new Error(`format produced one line: ${formatted}`)
+    if (!/FROM/.test(formatted)) throw new Error(`format did not upper-case keywords: ${formatted}`)
+    // And the query still runs, which is the claim that matters: a formatter
+    // that produced pretty but invalid SQL would pass every check above.
+    await page!.getByRole('button', { name: 'Run' }).click()
+    await page!.getByText('2 rows ·').waitFor({ timeout: 20_000 })
   })
 
   await check('creating a workspace closes its dialog', async () => {
