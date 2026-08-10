@@ -4332,8 +4332,15 @@ mod parity_surface {
         let mut names = std::collections::BTreeSet::new();
         for line in sources.iter().flat_map(|source| source.lines()) {
             let trimmed = line.trim_start();
+            // Three dispatch shapes, not two. A matches!() guard ahead of the
+            // match binds several names through one path - DATE_ADD is bound
+            // that way - and reading only match arms and equality tests
+            // counted it as absent while the binder resolved it.
+            let dispatches = trimmed.contains("=>")
+                || trimmed.contains("function_name ==")
+                || trimmed.contains("matches!(function_name");
             if let Some(head) = trimmed.split("=>").next()
-                && (trimmed.contains("=>") || trimmed.contains("function_name =="))
+                && dispatches
             {
                 let mut rest = head;
                 while let Some(open) = rest.find('"') {

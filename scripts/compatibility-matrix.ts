@@ -22,6 +22,8 @@
 ///   DOCKER_HOST=... bun run scripts/compatibility-matrix.ts
 
 import { readFileSync, writeFileSync } from 'node:fs'
+
+import { surface } from './function-surface.ts'
 import { join, resolve } from 'node:path'
 
 const repository = resolve(import.meta.dir, '..')
@@ -74,27 +76,14 @@ function lines(file: string): string[] {
     .filter(Boolean)
 }
 
-/// Pintail's callable names, read from the binder's match arms - the same
-/// extraction scripts/function-surface.ts performs.
+/// Pintail's callable names.
+///
+/// Imported from function-surface.ts rather than re-extracted here: two
+/// readers of the same binder drift, and the first version of this file
+/// proved it by reporting DATE_ADD, DATE_SUB and TIMESTAMPADD as
+/// unsupported when that script already resolved two of them.
 function pintailFunctions(): Set<string> {
-  const source = ['binder/mod.rs', 'binder/function.rs']
-    .map((module) => readFileSync(join(repository, 'crates/pintail-sql/src', module), 'utf8'))
-    .join('\n')
-  const names = new Set<string>()
-  for (const line of source.split('\n')) {
-    // Three dispatch shapes, not one. Missing the matches!() guard form is
-    // what made DATE_ADD look unsupported when it is bound at
-    // binder/function.rs - a false negative in the direction that
-    // understates the engine.
-    const isMatchArm = line.includes('=>')
-    const isGuard = line.includes('function_name') || line.includes('name.as_str()')
-    if (!isMatchArm && !isGuard) continue
-    const head = isMatchArm ? line.split('=>')[0] : line
-    for (const match of head.matchAll(/"([A-Z][A-Z0-9_]*)"/g)) {
-      names.add(match[1])
-    }
-  }
-  return names
+  return new Set(surface().keys())
 }
 
 const mysqlKeywords = lines('mysql-keywords.tsv').map((line) => {

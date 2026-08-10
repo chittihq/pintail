@@ -28,7 +28,7 @@ interface Overload {
 /// the guards include forms like `matches!(args.len(), 1 | 2)` and
 /// `!args.is_empty()`, and a faithful copy is more useful in a compatibility
 /// matrix than a lossy normalization.
-function surface(): Map<string, Set<string>> {
+export function surface(): Map<string, Set<string>> {
   // The binder is split across modules; read every one of them or the
   // surface silently loses the callables that moved out of mod.rs.
   const source = ['binder/mod.rs', 'binder/function.rs']
@@ -56,6 +56,18 @@ function surface(): Map<string, Set<string>> {
   // oracle had covered it for months.
   for (const match of source.matchAll(/function_name == "([A-Z0-9_]+)"/g)) {
     if (!found.has(match[1])) found.set(match[1], new Set(['keyword argument']))
+  }
+  // A third dispatch shape: a matches!() guard ahead of the match, used
+  // where several names share one binder path. DATE_ADD, DATE_SUB and
+  // TIMESTAMPADD are bound this way, and reading only the two shapes above
+  // reported them as unsupported gaps - the same failure the equality-test
+  // handler above was added to fix, one shape further along.
+  for (const guard of source.matchAll(
+    /matches!\(\s*(?:function_name|name)\.as_str\(\)\s*,([^)]*)\)/g,
+  )) {
+    for (const match of guard[1].matchAll(/"([A-Z0-9_]+)"/g)) {
+      if (!found.has(match[1])) found.set(match[1], new Set(['shared binder path']))
+    }
   }
   return found
 }
@@ -137,37 +149,47 @@ const NOT_CALLS = new Set([
   'INTERVAL',
 ])
 
-const supported = surface()
-const files = process.argv.slice(2)
+// Report only when run directly. The compatibility matrix imports
+// `surface()` rather than keeping a second extractor - two readers of the
+// same binder drift - so importing must not print or exit.
+function report() {
+  const supported = surface()
+  const files = process.argv.slice(2)
 
-if (files.length === 0) {
-  const rows = [...supported.entries()].sort(([a], [b]) => a.localeCompare(b))
-  for (const [name, arities] of rows) {
-    console.log(`${name.padEnd(20)} ${[...arities].join(' | ')}`)
+  if (files.length === 0) {
+    const rows = [...supported.entries()].sort(([a], [b]) => a.localeCompare(b))
+    for (const [name, arities] of rows) {
+      console.log(`${name.padEnd(20)} ${[...arities].join(' | ')}`)
+    }
+    console.log(`\n${rows.length} callable names`)
+    return
   }
-  console.log(`\n${rows.length} callable names`)
-  process.exit(0)
-}
 
 const seen = new Map<string, number>()
-for (const file of files) {
-  for (const name of calls(readFileSync(file, 'utf8'))) {
-    if (NOT_CALLS.has(name)) continue
-    seen.set(name, (seen.get(name) ?? 0) + 1)
+  for (const file of files) {
+    for (const name of calls(readFileSync(file, 'utf8'))) {
+      if (NOT_CALLS.has(name)) continue
+      seen.set(name, (seen.get(name) ?? 0) + 1)
+    }
   }
+
+  const missing = [...seen.entries()]
+    .filter(([name]) => !supported.has(name) && !SYNTAX_FORMS.has(name))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+
+  console.log(`corpus: ${files.length} files, ${seen.size} distinct call names`)
+  console.log(`supported surface: ${supported.size} callable names\n`)
+  if (missing.length === 0) {
+    console.log('no unsupported functions in this corpus')
+  } else {
+    console.log('unsupported, by frequency:')
+    for (const [name, count] of missing) {
+      console.log(`  ${String(count).padStart(4)}  ${name}`)
+    }
+  }
+
 }
 
-const missing = [...seen.entries()]
-  .filter(([name]) => !supported.has(name) && !SYNTAX_FORMS.has(name))
-  .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-
-console.log(`corpus: ${files.length} files, ${seen.size} distinct call names`)
-console.log(`supported surface: ${supported.size} callable names\n`)
-if (missing.length === 0) {
-  console.log('no unsupported functions in this corpus')
-} else {
-  console.log('unsupported, by frequency:')
-  for (const [name, count] of missing) {
-    console.log(`  ${String(count).padStart(4)}  ${name}`)
-  }
+if (import.meta.main) {
+  report()
 }
