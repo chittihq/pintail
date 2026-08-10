@@ -321,6 +321,23 @@ async function main() {
     await page!.getByText('Browser gate workspace').first().waitFor()
   })
 
+  await check('switching workspaces settles on the chosen one', async () => {
+    // switchWorkspace goes through the same enterWorkspace that wedged the
+    // create dialog, so it was broken by the identical mechanism and nothing
+    // covered it. The assertion is that the switcher LABEL changes - proof
+    // the handler ran to completion - rather than that the API returned.
+    await page!.getByRole('button', { name: 'Pintail' }).click()
+    await page!.getByRole('menuitem', { name: 'My workspace' }).click()
+    await page!
+      .getByRole('button', { name: 'Pintail' })
+      .filter({ hasText: 'My workspace' })
+      .waitFor({ timeout: 15_000 })
+    // Switching rebuilds the session, so the databases of the original
+    // workspace must be visible again rather than the new one's emptiness.
+    await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+    await page!.getByText(DATABASE).first().waitFor({ timeout: 15_000 })
+  })
+
   await check('login screen renders at a phone viewport', async () => {
     // A fresh context has no stored session, so it lands on the login form.
     const context = await browser!.newContext({ viewport: { width: 390, height: 844 } })
