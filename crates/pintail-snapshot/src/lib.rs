@@ -294,6 +294,15 @@ async fn run_snapshot_inner(
             "snapshot requires at least one table target".to_owned(),
         ));
     }
+    // A snapshot is the longest operation the system performs, and until this
+    // line existed it began and ended in silence. An operator watching a
+    // multi-hour initial copy had no way to tell it apart from a hang.
+    pintail_log::log_info!(
+        "snapshot start db={database_id} tables={} workers={} chunk_rows={}",
+        targets.len(),
+        options.workers,
+        options.chunk_rows
+    );
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     for pair in targets.windows(2) {
         if pair[0].source.name == pair[1].source.name {
@@ -434,6 +443,17 @@ async fn run_snapshot_inner(
                 .sum(),
         });
     }
+    // Consistency is reported because it is a property of the run that no
+    // later inspection can recover: whether the copy shared one source
+    // transaction is decided here and nowhere else.
+    pintail_log::log_info!(
+        "snapshot done db={database_id} tables={} rows={} consistent={globally_consistent}{}",
+        table_outcomes.len(),
+        table_outcomes.iter().map(|table| table.rows).sum::<u64>(),
+        consistency_warning
+            .as_deref()
+            .map_or_else(String::new, |warning| format!(" warning={warning}"))
+    );
     Ok(SnapshotResult {
         position,
         captured_position,
@@ -659,6 +679,14 @@ async fn snapshot_table(
                     )
                 }
             });
+            // Debug, not info: a chunk lands every chunk_rows source rows, so
+            // a large table emits thousands of these. The value is watching a
+            // specific slow table, not narrating every snapshot.
+            pintail_log::log_debug!(
+                "snapshot chunk db={database_id} table={} chunk={chunk_id} rows={run_rows} bytes={run_bytes} eta={}",
+                target.source.name,
+                eta_seconds.map_or_else(|| "unknown".to_owned(), |seconds| format!("{seconds}s"))
+            );
             progress(SnapshotProgress {
                 database_id: database_id.to_owned(),
                 table: target.source.name.clone(),

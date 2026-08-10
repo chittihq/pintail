@@ -2312,6 +2312,7 @@ dependencies = [
  "crc32fast",
  "futures-util",
  "mysql_async",
+ "pintail-log",
  "pintail-meta",
  "pintail-probe",
  "pintail-store",
