@@ -443,6 +443,15 @@ pub(crate) async fn restore(
         .await
         .map_err(unavailable)?;
     register_restore(&metadata, &restored_id, name, &control).map_err(ApiError::internal)?;
+    // Without this the restored row keeps a NULL workspace_id, and every
+    // dashboard listing filters on `workspace_id = ?`. Restore would report
+    // success, write the segments and register the tables, and produce a
+    // database nothing could ever show - with no UI to assign it afterwards.
+    // It joins the workspace of the backup it was restored from, which is the
+    // one the caller is scoped to.
+    metadata
+        .set_database_workspace(&restored_id, principal.require_workspace()?)
+        .map_err(ApiError::internal)?;
     state.publish(ApiEvent::database(
         "backup.restored",
         &restored_id,
