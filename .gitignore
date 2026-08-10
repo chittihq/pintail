@@ -23,3 +23,7 @@ REVIEW.md
 # Local dashboard-development data directory (docs/development.md).
 .devdata/
 .env
+
+# `go build ./...` in the wire-client matrix drops its binary beside the
+# source, named after the module.
+/tests/integration/wire-clients/pintail-wire-clients
