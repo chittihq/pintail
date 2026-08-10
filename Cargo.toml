@@ -25,7 +25,10 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/pintail-db/pintail"
-rust-version = "1.85"
+# 1.88 because time 0.3.47, taken for CVE-2026-25727, requires it. The
+# resolver is MSRV-aware, so leaving this at 1.85 would silently hold the
+# workspace on the vulnerable 0.3.45 the next time the lockfile is regenerated.
+rust-version = "1.88"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
