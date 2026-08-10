@@ -162,7 +162,21 @@ function toggleInclude(name: string, on: boolean) {
       </div>
       <div v-else-if="wizard.step === 3 && wizard.probe" class="grid gap-6">
         <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">03 / Table selection</p><h2 class="text-xl font-semibold">Choose the analytical surface</h2><p class="text-muted-foreground mt-1.5">PK-less append tables preserve rows but cannot model source updates or deletes.</p></div>
-        <div class="grid rounded-md border">
+        <div
+          v-if="!wizard.probe.tables.length"
+          class="grid gap-2 rounded-md border p-4"
+          data-testid="wizard-no-tables"
+        >
+          <strong class="text-sm font-medium">No base tables are visible in this schema</strong>
+          <p class="text-muted-foreground text-sm">
+            <code>information_schema</code> only lists tables the connecting user holds a
+            privilege on, so an empty list usually means missing grants rather than an empty
+            database. Confirm the schema name, and that the user can read it:
+          </p>
+          <pre class="bg-muted overflow-x-auto rounded p-2 text-xs">GRANT SELECT ON `{{ wizard.name || 'your_schema' }}`.* TO 'user'@'%';</pre>
+          <p class="text-muted-foreground text-sm">Views are also excluded: Pintail mirrors base tables only.</p>
+        </div>
+        <div v-else class="grid rounded-md border">
           <div v-for="table in wizard.probe.tables" :key="table.name" class="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 border-b p-3 last:border-0">
             <Checkbox
               :id="`wizard-pick-${table.name}`"
