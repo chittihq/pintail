@@ -614,8 +614,26 @@ async function main() {
 
     // Resnapshot must actually re-run rather than merely being acknowledged,
     // so this waits for the mirror to reach streaming again.
-    await page!.getByRole('button', { name: 'Resnapshot' }).click()
-    await page!.getByText('Resnapshot accepted').waitFor({ timeout: 20_000 })
+    //
+    // Retried, because the control plane holds ONE job slot per database and
+    // answers 409 while a supervisor cycle owns it. That is correct server
+    // behaviour - two concurrent snapshots of one mirror would be worse - so
+    // the click is repeated until it lands rather than the rejection being
+    // treated as a failure.
+    const resnapshotDeadline = Date.now() + 90_000
+    for (;;) {
+      await page!.getByRole('button', { name: 'Resnapshot' }).click()
+      const accepted = await page!
+        .getByText('Resnapshot accepted')
+        .waitFor({ timeout: 10_000 })
+        .then(() => true)
+        .catch(() => false)
+      if (accepted) break
+      if (Date.now() > resnapshotDeadline) {
+        throw new Error('resnapshot was refused for 90s - the job slot never freed')
+      }
+      await Bun.sleep(3_000)
+    }
     const deadline = Date.now() + 120_000
     for (;;) {
       await page!.getByRole('link', { name: 'Databases', exact: true }).click()
@@ -730,6 +748,20 @@ async function main() {
       await page!.getByRole('cell', { name: table }).first().waitFor({ timeout: 20_000 })
     }
 
+    // Wait for the mirror to be streaming before mutating the source. A
+    // quarantine can only happen once CDC is reading the binlog, and the
+    // resnapshot above leaves it snapshotting for a while - issuing the UPDATE
+    // into that window means the event is consumed by the snapshot instead of
+    // producing a dead letter.
+    const streamingDeadline = Date.now() + 120_000
+    for (;;) {
+      await page!.goto(`${pintailUrl}/databases`)
+      await Bun.sleep(1_000)
+      if (/streaming/i.test((await page!.textContent('body')) ?? '')) break
+      if (Date.now() > streamingDeadline) throw new Error('mirror never resumed streaming')
+      await Bun.sleep(3_000)
+    }
+
     // An UPDATE with no stable source key quarantines rather than guessing
     // which duplicate row to touch.
     await sql(`UPDATE ${APPEND_TABLE} SET body = 'changed' WHERE body = 'first'`)
@@ -822,8 +854,10 @@ async function main() {
     await page!.getByRole('heading', { name: 'Activity' }).waitFor()
     await page!.getByRole('cell', { name: 'Snapshot' }).first().waitFor({ timeout: 20_000 })
 
-    // The audit trail is admin-only and records who did what. The API key and
-    // backup checks ran earlier, so their actions must be here by name.
+    // The audit trail sits behind its own tab now, so this also asserts the
+    // tab exists and reveals its content rather than reading a card that
+    // happened to be on the page.
+    await page!.getByRole('tab', { name: 'Audit trail' }).click()
     await page!.getByRole('heading', { name: 'Audit trail' }).waitFor()
     for (const action of ['database.create', 'api_key.create', 'backup.restore']) {
       await page!.getByText(action, { exact: true }).first().waitFor({ timeout: 20_000 })
@@ -834,6 +868,10 @@ async function main() {
     // Refreshing must not empty the table.
     await page!.getByRole('button', { name: 'Refresh audit trail' }).click()
     await page!.getByText('database.create', { exact: true }).first().waitFor({ timeout: 20_000 })
+
+    // Back to the activity tab for the filter, which applies to that table.
+    await page!.getByRole('tab', { name: 'Activity', exact: true }).click()
+    await page!.getByRole('cell', { name: 'Snapshot' }).first().waitFor({ timeout: 20_000 })
 
     // Filtering to one database keeps its own rows rather than clearing.
     await page!.getByRole('combobox').first().click()
