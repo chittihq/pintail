@@ -90,6 +90,37 @@ use crate::workspaces::{
 ///
 /// This compatibility constructor serves health and embedded dashboard assets.
 /// Use [`router_with_state`] in the Pintail binary.
+/// Emits one line per API request: method, path, status, duration.
+///
+/// Before this the binary logged its two startup lines and nothing else, so a
+/// deployment that misbehaved gave an operator nothing to read. A probe that
+/// the browser abandoned after its deadline looked exactly like a probe that
+/// never ran, and the difference is the whole diagnosis.
+///
+/// Duration is the point. The capability probe walks every table in the
+/// schema, so an 82-table source takes tens of seconds; a line showing
+/// `probe 200 14530ms` says the server did its job and the client gave up
+/// first, which no amount of client-side logging can establish.
+///
+/// The query string is deliberately dropped. Invite tokens and the Google
+/// one-time exchange code travel there, and an access log is the last place
+/// a credential should come to rest.
+async fn access_log(request: axum::extract::Request, next: middleware::Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    let millis = started.elapsed().as_millis();
+    let status = response.status().as_u16();
+    // A failing request is logged even at `error` level: it is the line an
+    // operator needs most, and suppressing it would leave a 500 invisible.
+    let level = if status >= 500 { state::LOG_ERROR } else { state::LOG_INFO };
+    if state::log_enabled(level) {
+        eprintln!("pintail {method} {path} {status} {millis}ms");
+    }
+    response
+}
+
 pub fn router() -> Router {
     router_with_state(ApiState::unconfigured())
 }
@@ -160,6 +191,9 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/databases/{id}/tables/{name}/resync", post(resync))
         .route("/databases/{id}/tables/{name}/reconcile", post(reconcile))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+    // Access logging is applied to /api only. The dashboard asset routes and
+    // /health would otherwise bury every real request: a container health
+    // check polls constantly and tells nobody anything.
     let api = Router::new()
         .route("/auth/setup/status", get(setup_status))
         .route("/auth/setup", post(setup))
@@ -169,7 +203,8 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/auth/google/exchange", post(google_exchange))
         .route("/auth/google/status", get(google_status))
         .route("/invites/status", get(invite_status))
-        .merge(protected);
+        .merge(protected)
+        .layer(middleware::from_fn(access_log));
 
     Router::new()
         .route("/health", get(health))
