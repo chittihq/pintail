@@ -108,9 +108,12 @@ const chFunctions = new Set(lines('ch-functions.txt').map((name) => name.toUpper
 const chKeywords = new Set(lines('ch-keywords.txt').map((name) => name.toUpperCase()))
 const ptFunctions = pintailFunctions()
 
-const YES = 'yes'
-const NO = 'no'
-const NA = 'n/a'
+// Marks rather than words: at 1,126 rows a column of ticks is scannable in
+// a way a column of "yes" is not. The legend in the output keeps them
+// unambiguous, since a bare glyph carries no meaning on its own.
+const YES = '✅'
+const NO = '❌'
+const NA = '➖'
 
 function outOfScope(word: string): boolean {
   return OUT_OF_SCOPE.some((pattern) => pattern.test(word))
@@ -127,7 +130,7 @@ const functionRows = mysqlFunctions.map((name) => {
 
 const keywordRows = mysqlKeywords.map(({ word, reserved }) => ({
   word,
-  reserved: reserved ? 'reserved' : '',
+  reserved: reserved ? YES : '',
   pintail: PINTAIL_KEYWORDS.has(word) ? YES : outOfScope(word) ? NA : NO,
   clickhouse: chKeywords.has(word) ? YES : NO,
 }))
@@ -165,6 +168,16 @@ const section = [
   'inventory, so every row would read "yes" and the column would carry no',
   'information.',
   '',
+  '| Mark | Meaning |',
+  '|---|---|',
+  `| ${YES} | callable or accepted by this exact MySQL name |`,
+  `| ${NO} | not callable by this MySQL name |`,
+  `| ${NA} | out of scope by design — a read-only replica cannot encounter it |`,
+  '',
+  `In the **MySQL reserved** column ${YES} means the word is reserved in MySQL`,
+  '8.4, not that anything supports it. Support is only ever the Pintail and',
+  'ClickHouse columns.',
+  '',
   '**The ClickHouse column measures the name, not the capability.** ClickHouse',
   'implements much of this surface under different spellings: it answers `no`',
   'to `JSON_EXTRACT` while shipping 28 `JSONExtract*` functions, and `no` to',
@@ -172,7 +185,7 @@ const section = [
   '`no` here means "not callable by the MySQL name", which is what matters for',
   'pointing an existing MySQL client at it - not "cannot do this".',
   '',
-  '`n/a` marks a keyword a read-only analytical replica cannot encounter by',
+  `${NA} marks a keyword a read-only analytical replica cannot encounter by`,
   'design — DDL, DML writes, replication and administration. Those are out of',
   'scope rather than missing, and counting them as gaps would make this table',
   'read as far worse than the engine is.',
