@@ -1,11 +1,18 @@
 /// Browser smoke suite: the dashboard, driven like an operator would.
 ///
-/// Boots a real MySQL source in Docker and the release pintail binary, then
-/// walks the embedded dashboard in headless Chromium: first-boot operator
-/// setup, the add-database wizard (connection test, capability probe, table
-/// selection, snapshot start), replication reaching streaming, and the SQL
-/// console returning typed results over /api/query. A second pass loads the
+/// Boots a real MySQL source and a real S3-compatible store (RustFS) in
+/// Docker alongside the release pintail binary, then walks the embedded
+/// dashboard in headless Chromium: first-boot operator setup, the
+/// add-database wizard (connection test, capability probe, table selection,
+/// snapshot start), replication reaching streaming, the SQL console returning
+/// typed results over /api/query, workspace create and switch, API key
+/// lifecycle, replication mode changes and resnapshot, and a backup
+/// destination saved, run and restored side-by-side. A second pass loads the
 /// login screen at a 390-pixel phone viewport.
+///
+/// The object store is real rather than stubbed because the backup UI is
+/// gated on a destination the server confirmed it could reach, and restore
+/// has to read back the objects that same server wrote.
 ///
 /// Run with: bun run smoke              (builds the release binary)
 ///           PINTAIL_E2E_BINARY=... bun run smoke
@@ -27,10 +34,16 @@ const cargoBinary = join(homedir(), '.cargo', 'bin', 'cargo')
 const cargoTargetDir = join(repository, 'target')
 const nonce = Date.now().toString(36)
 const mysqlName = `pintail-browser-mysql-${process.pid}-${nonce}`
+const rustfsName = `pintail-browser-rustfs-${process.pid}-${nonce}`
+// Pinned rather than :latest - RustFS is pre-1.0 and the gate should not
+// change behaviour because an upstream tag moved.
+const RUSTFS_IMAGE = 'rustfs/rustfs:1.0.0-beta.12'
+const RUSTFS = { user: 'rustfsadmin', password: 'rustfs-secret', bucket: 'pintail-browser' }
 const DATABASE = 'smoke_db'
 // A schema the probe user can reach but holds no table privilege on.
 const RESTRICTED_DATABASE = 'restricted_db'
 const API_KEY_NAME = 'browser-gate-key'
+const RESTORED_DATABASE = 'browser gate restore'
 const OPERATOR = { email: 'smoke@pintail.local', password: 'browser-smoke-password' }
 
 interface CheckResult {
@@ -49,6 +62,8 @@ let page: Page | undefined
 let pintailDataDir = ''
 let pintailUrl = ''
 let mysqlStarted = false
+let rustfsStarted = false
+let rustfsEndpoint = ''
 
 function log(message: string) {
   console.log(`[browser] ${message}`)
@@ -229,6 +244,51 @@ async function main() {
     ('purchase', 49.90, '2026-08-01 11:30:00'),
     ('purchase', 12.50, '2026-08-02 09:15:00'),
     ('refund', -12.50, '2026-08-02 16:45:00')`)
+
+  // A real S3-compatible destination. The backup pages cannot be exercised
+  // against a fake: "Backup now" stays disabled until the server confirms a
+  // destination it could actually reach, and restore has to read back objects
+  // this same server wrote.
+  log(`starting RustFS ${rustfsName}`)
+  await docker(
+    'run',
+    '--detach',
+    '--name',
+    rustfsName,
+    '--publish',
+    '0:9000',
+    '--env',
+    `RUSTFS_ACCESS_KEY=${RUSTFS.user}`,
+    '--env',
+    `RUSTFS_SECRET_KEY=${RUSTFS.password}`,
+    RUSTFS_IMAGE,
+  )
+  rustfsStarted = true
+  const rustfsPort = await publishedPort(rustfsName, 9000)
+  rustfsEndpoint = `http://${host}:${rustfsPort}`
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(`${rustfsEndpoint}/health`)
+      if (response.ok) break
+    } catch {}
+    if (attempt >= 120) throw new Error('RustFS did not become ready in time')
+    await Bun.sleep(500)
+  }
+  // mc runs on the Docker host and reaches RustFS over the container's own
+  // network namespace, so bucket creation does not depend on the published
+  // port being reachable from here. mc is an S3 client, not a MinIO-only one.
+  await docker(
+    'run',
+    '--rm',
+    '--network',
+    `container:${rustfsName}`,
+    '--entrypoint',
+    'sh',
+    'minio/mc:latest',
+    '-c',
+    `mc alias set local http://127.0.0.1:9000 ${RUSTFS.user} ${RUSTFS.password} >/dev/null` +
+      ` && mc mb --ignore-existing local/${RUSTFS.bucket} >/dev/null`,
+  )
 
   const binary = await buildPintail()
   pintailDataDir = mkdtempSync(join(tmpdir(), 'pintail-browser-'))
@@ -485,6 +545,75 @@ async function main() {
     }
   })
 
+  await check('a backup destination saves, runs and restores', async () => {
+    await page!.goto(`${pintailUrl}/backups`)
+    await page!.getByRole('heading', { name: 'Backups' }).waitFor()
+
+    // Backup now is gated on a *server-confirmed* destination, so this also
+    // proves the gate is real rather than a disabled attribute that never
+    // flips.
+    const backupNow = page!.getByRole('button', { name: 'Backup now' })
+    if (!(await backupNow.isDisabled())) {
+      throw new Error('Backup now must be disabled before a destination is saved')
+    }
+
+    await page!.getByLabel('Bucket').fill(RUSTFS.bucket)
+    await page!.getByLabel('Object prefix').fill('browser-gate')
+    await page!.getByLabel('Endpoint', { exact: false }).fill(rustfsEndpoint)
+    await page!.getByLabel('Region').fill('us-east-1')
+    await page!.getByLabel('Access key ID').fill(RUSTFS.user)
+    await page!.getByLabel('Secret access key').fill(RUSTFS.password)
+    await page!.getByRole('button', { name: 'Save destination' }).click()
+    await page!.getByText('Backup destination saved').waitFor({ timeout: 20_000 })
+    await page!.getByText('Configured', { exact: true }).waitFor({ timeout: 20_000 })
+
+    // Credentials are write-only: the form clears them on reload rather than
+    // rendering a secret the server accepted. Re-reading them would mean the
+    // API hands back a stored secret access key.
+    await page!.goto(`${pintailUrl}/backups`)
+    await page!.getByText('Configured', { exact: true }).waitFor({ timeout: 20_000 })
+    if ((await page!.getByLabel('Secret access key').inputValue()) !== '') {
+      throw new Error('the stored secret access key was rendered back into the form')
+    }
+
+    // Run one, and require it to reach completed rather than merely accepted -
+    // a destination that 403s still produces a row, with status failed.
+    await page!.getByRole('button', { name: 'Backup now' }).click()
+    await page!.getByText('Backup started').waitFor({ timeout: 20_000 })
+    // Scoped to the history table's status cells, not the page text. The
+    // restore select is labelled "Completed backup", so matching /completed/
+    // against the body succeeds before any backup has run and asserts nothing.
+    const statusCell = (status: string) =>
+      page!.getByRole('cell').filter({ hasText: new RegExp(`^${status}$`) })
+    const deadline = Date.now() + 120_000
+    for (;;) {
+      await page!.getByRole('button', { name: 'Refresh backup history' }).click()
+      await Bun.sleep(1_000)
+      if ((await statusCell('failed').count()) > 0) throw new Error('the backup run failed')
+      if ((await statusCell('completed').count()) > 0) break
+      if (Date.now() > deadline) throw new Error('the backup never completed')
+      await Bun.sleep(2_000)
+    }
+
+    // Restore side-by-side. The recovery point select is populated only from
+    // completed backups, so the button enabling is itself the proof that one
+    // landed - and it is the precondition the previous version skipped past.
+    await page!.getByLabel('New database name').fill(RESTORED_DATABASE)
+    const restore = page!.getByRole('button', { name: 'Verify and restore' })
+    for (let attempt = 0; await restore.isDisabled(); attempt += 1) {
+      if (attempt >= 60) throw new Error('restore stayed disabled after a completed backup')
+      await Bun.sleep(500)
+    }
+    await restore.click()
+    await page!.getByText('Backup restored as a new detached database').waitFor({ timeout: 120_000 })
+
+    // The restored mirror must be a real, separate database in the control
+    // plane rather than a toast - and the source must still be there.
+    await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+    await page!.getByText(RESTORED_DATABASE).first().waitFor({ timeout: 20_000 })
+    await page!.getByText(DATABASE).first().waitFor({ timeout: 20_000 })
+  })
+
   await check('the Google public URL rejects a non-HTTPS origin inline', async () => {
     // A rejected public URL used to 400 the whole save, so the client secret
     // was never stored and the enable toggle appeared to turn itself off
@@ -543,6 +672,9 @@ async function cleanup() {
   }
   await mysqlConnection?.end().catch(() => {})
   if (mysqlStarted) await docker('rm', '-f', mysqlName).catch(() => {})
+  // -v as well: the image declares a /data volume, so a bare rm leaves an
+  // anonymous volume behind on the shared Docker host every run.
+  if (rustfsStarted) await docker('rm', '-f', '-v', rustfsName).catch(() => {})
   if (pintailDataDir) rmSync(pintailDataDir, { recursive: true, force: true })
 }
 
