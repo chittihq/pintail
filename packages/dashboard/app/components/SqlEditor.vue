@@ -11,7 +11,11 @@ import {
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 
-const props = defineProps<{ modelValue: string; schema?: Record<string, string[]> }>()
+const props = defineProps<{
+  modelValue: string
+  schema?: Record<string, string[]>
+  formatRequest?: number
+}>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   run: []
@@ -44,7 +48,12 @@ async function format() {
   }
 }
 
-defineExpose({ format })
+watch(
+  () => props.formatRequest,
+  () => {
+    void format()
+  },
+)
 
 const host = ref<HTMLElement>()
 let view: EditorView | undefined

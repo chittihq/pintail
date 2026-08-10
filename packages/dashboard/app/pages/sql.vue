@@ -44,7 +44,13 @@ async function loadCompletionSchema() {
 
 watch(sqlDatabaseId, loadCompletionSchema, { immediate: true })
 
-const editor = ref<{ format: () => Promise<void> } | null>(null)
+/// Bumped to ask the editor to reformat.
+///
+/// A counter rather than a method call through a template ref: the editor is
+/// loaded through Nuxt's async Lazy wrapper, and `editor?.format()` silently
+/// does nothing whenever that ref has not resolved to the inner component.
+/// A watched prop cannot fail that way.
+const formatRequest = ref(0)
 
 if (typeof route.query.describe === 'string') {
   sqlText.value = `DESCRIBE \`${route.query.describe.replaceAll('`', '``')}\``
@@ -92,11 +98,11 @@ async function runSql() {
           <span>query.sql</span>
           <div class="flex items-center gap-3">
             <span class="bg-muted rounded border px-1.5 py-0.5 text-[0.58rem]">⌘ Enter</span>
-            <Button variant="ghost" size="sm" data-testid="format-sql" title="Format (⇧⌥F)" @click="editor?.format()"><WandSparkles /> Format</Button>
+            <Button variant="ghost" size="sm" data-testid="format-sql" title="Format (⇧⌥F)" @click="formatRequest += 1"><WandSparkles /> Format</Button>
             <Button size="sm" :disabled="sqlRunning" @click="runSql"><LoaderCircle v-if="sqlRunning" class="animate-spin" /><Play v-else /> Run</Button>
           </div>
         </div>
-        <LazySqlEditor ref="editor" v-model="sqlText" :schema="completionSchema" @run="runSql" />
+        <LazySqlEditor v-model="sqlText" :schema="completionSchema" :format-request="formatRequest" @run="runSql" />
       </Card>
       <p v-if="sqlError" class="text-destructive my-3 text-sm">{{ sqlError }}</p>
       <Card class="mt-4 overflow-hidden p-0">
