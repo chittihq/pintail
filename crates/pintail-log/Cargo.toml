@@ -1,0 +1,13 @@
+[package]
+name = "pintail-log"
+description = "Level-gated diagnostic logging shared by Pintail's crates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies, deliberately. A logging facade is the classic place to
+# acquire a dependency tree, and everything this needs - a level, one env
+# lookup, a write to stderr - is already in std.
+[dependencies]

@@ -6,6 +6,7 @@ members = [
     "crates/pintail-catalog",
     "crates/pintail-cdc",
     "crates/pintail-exec",
+    "crates/pintail-log",
     "crates/pintail-meta",
     "crates/pintail-poll",
     "crates/pintail-probe",
@@ -59,6 +60,7 @@ pintail-backup = { path = "crates/pintail-backup" }
 pintail-catalog = { path = "crates/pintail-catalog" }
 pintail-cdc = { path = "crates/pintail-cdc" }
 pintail-exec = { path = "crates/pintail-exec" }
+pintail-log = { path = "crates/pintail-log" }
 pintail-meta = { path = "crates/pintail-meta" }
 pintail-poll = { path = "crates/pintail-poll" }
 pintail-probe = { path = "crates/pintail-probe" }
