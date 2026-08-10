@@ -1,0 +1,74 @@
+# Production deployment: pulls the published image instead of building.
+#
+# `compose.yaml` alongside this file builds from source, which is right for
+# development and wrong for a server - it would compile the whole Rust
+# workspace and the dashboard on the deploy host on every release. This file
+# runs the exact image the release workflow built and `validate.ts` signed
+# off.
+#
+#   docker compose -f compose.production.yaml up -d
+#
+# Or paste into Dokploy as a Docker Compose service. The image is public, so
+# no registry credential is required.
+
+services:
+  pintail:
+    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.0.1-rc3}
+    ports:
+      # The dashboard and HTTP query API. Put a TLS terminator in front of
+      # this: the dashboard is a control plane, not a security boundary.
+      - "${PINTAIL_HTTP_PORT:-8080}:8080"
+      # The MySQL wire endpoint. 3306 collides with a MySQL server on the
+      # same host; remap the left-hand side if one is present.
+      - "${PINTAIL_WIRE_PORT:-3306}:3306"
+    environment:
+      PINTAIL_DATA_DIR: /var/lib/pintail
+      # Spill defaults under the data directory, so it shares this volume.
+      # Point it at its own mount when spill should not share a device with
+      # segments - it is write-once-read-once and benefits from faster
+      # storage than bulk data does.
+      PINTAIL_SPILL_DIR: ${PINTAIL_SPILL_DIR:-/var/lib/pintail/spill}
+      # Set this explicitly under a container memory limit.
+      #
+      # The default is three quarters of host memory read from
+      # /proc/meminfo, and inside a container that reports the HOST's RAM
+      # rather than the cgroup limit. On a 64GB host with a 4GB container
+      # cap the default computes ~48GB, so the budget never engages and the
+      # kernel OOM killer decides instead. Set it to roughly 75% of the
+      # limit configured in `deploy.resources` below.
+      PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES:-3221225472}
+    volumes:
+      # A named volume, not a bind mount. The container runs as uid 10001
+      # and Docker seeds a new named volume with the image's ownership; a
+      # host path keeps the host's ownership instead, so pintail cannot
+      # write and first boot fails. For a bind mount, chown the host
+      # directory to 10001:10001 first.
+      #
+      # This volume holds the first-boot secrets, the replica, and spill.
+      # Losing it means every encrypted source DSN becomes unreadable and
+      # every table needs a resnapshot.
+      - pintail-data:/var/lib/pintail
+      # Uncomment together with the volume declaration below to give spill
+      # its own device.
+      # - pintail-spill:/var/lib/pintail/spill
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      # Startup reopens every table snapshot, so a large replica needs
+      # longer than the 2s a development stack does.
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # Keep this and PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES in step:
+          # the query budget bounds operator memory, not the whole resident
+          # set, so leave the container headroom above it.
+          memory: 4G
+
+volumes:
+  pintail-data:
+  # Uncomment together with the mount above.
+  # pintail-spill:
