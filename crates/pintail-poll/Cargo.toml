@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+pintail-log.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 mysql_async.workspace = true

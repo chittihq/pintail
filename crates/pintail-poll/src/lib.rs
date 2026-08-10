@@ -238,17 +238,39 @@ pub async fn run_poll_cycle(
     let mut connection = pool.get_conn().await?;
     let mut outcomes = Vec::with_capacity(targets.len());
     for target in &mut targets {
-        outcomes.push(
-            poll_table(
-                &mut connection,
-                &mut metadata,
-                database_id,
-                &report.database,
-                target,
-                &options,
-            )
-            .await?,
+        let outcome = poll_table(
+            &mut connection,
+            &mut metadata,
+            database_id,
+            &report.database,
+            target,
+            &options,
+        )
+        .await?;
+        // A poll cycle runs every poll interval on every table, so an
+        // unconditional info line would be the loudest thing in the log while
+        // saying nothing. A table that actually moved rows is worth an info
+        // line; an idle one is debug. That way a quiet system stays quiet and
+        // real work is still visible without switching levels.
+        let moved = outcome.ingested > 0 || outcome.tombstones > 0 || outcome.unique_repairs > 0;
+        let line = format!(
+            "poll db={database_id} table={} strategy={:?} changed={} ingested={} tombstones={} chunks={}/{} repairs={} version={}",
+            outcome.table,
+            outcome.strategy,
+            outcome.changed,
+            outcome.ingested,
+            outcome.tombstones,
+            outcome.chunks_redumped,
+            outcome.chunks_scanned,
+            outcome.unique_repairs,
+            outcome.version
         );
+        if moved {
+            pintail_log::log_info!("{line}");
+        } else {
+            pintail_log::log_debug!("{line}");
+        }
+        outcomes.push(outcome);
     }
     Ok(PollResult {
         tables: outcomes,

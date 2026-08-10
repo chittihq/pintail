@@ -2269,6 +2269,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "mysql_async",
+ "pintail-log",
  "pintail-meta",
  "pintail-probe",
  "pintail-snapshot",
