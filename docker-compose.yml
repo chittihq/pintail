@@ -37,11 +37,9 @@ services:
       # limit configured in `deploy.resources` below.
       PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES:-3221225472}
     volumes:
-      # The replica, the metadata store, and the first-boot secrets.
+      # The replica, the metadata store, the first-boot secrets, and - unless
+      # a separate spill mount is added below - spill.
       - ${PINTAIL_DATA:-pintail-data}:/var/lib/pintail
-      # Spill is write-once-read-once and benefits from faster storage than
-      # bulk data does. Left unset it stays inside the data mount above.
-      - ${PINTAIL_SPILL_DATA:-pintail-spill}:/var/lib/pintail/spill
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
       interval: 5s
@@ -67,7 +65,17 @@ services:
 # re-clone the repo (e.g. Dokploy):
 #
 #   PINTAIL_DATA=/mnt/your_volume/pintail/data          # the big one
-#   PINTAIL_SPILL_DATA=/mnt/your_volume/pintail/spill   # put this on fast storage
+#
+# Spill lives inside that mount by default. To put it on faster storage, add
+# a second mount and point the server at it:
+#
+#   volumes:
+#     - /mnt/fast_disk/pintail/spill:/var/lib/pintail/spill
+#
+# A bind path needs the same chown as below. Note that images before
+# 0.0.1-rc5 do not contain /var/lib/pintail/spill, so mounting a fresh NAMED
+# volume there against those gets a root-owned directory the server cannot
+# write to - use a chowned bind path, or an image from rc5 onwards.
 #
 # Compose treats a value starting with "/" as a bind mount and anything else
 # as a named volume, so leaving a variable unset keeps the default exactly.
@@ -92,4 +100,3 @@ services:
 # recreate.
 volumes:
   pintail-data:
-  pintail-spill:

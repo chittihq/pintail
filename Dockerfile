@@ -37,11 +37,17 @@ RUN cargo build --locked --release --package pintail
 
 FROM debian:bookworm-slim
 
+# The spill directory is created here as well as the data directory, even
+# though spill lives inside the data directory by default. Docker only copies
+# ownership into a fresh named volume when the mount point already exists in
+# the image; mounted against a missing path it creates the directory as root,
+# and this container does not run as root, so the server cannot write to it.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 pintail \
-    && install --directory --owner pintail --group pintail /var/lib/pintail
+    && install --directory --owner pintail --group pintail /var/lib/pintail \
+    && install --directory --owner pintail --group pintail /var/lib/pintail/spill
 
 COPY --from=builder /source/target/release/pintail /usr/local/bin/pintail
 
