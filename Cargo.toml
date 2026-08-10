@@ -48,7 +48,11 @@ mime_guess = "2.0.5"
 md-5 = "0.10.6"
 mysql_async = { version = "0.37.0", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio-rustls = { version = "0.25", default-features = false, features = ["ring"] }
+# 0.26 rather than 0.25: 0.25 pulls rustls 0.22, whose rustls-webpki 0.102
+# carries a high-severity panic on a malformed CRL BIT STRING. 0.26 shares the
+# rustls 0.23 the rest of the workspace already uses, so the fix also collapses
+# two copies of rustls into one.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 rustls-pemfile = "2"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = "0.13"
