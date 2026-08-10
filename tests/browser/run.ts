@@ -417,6 +417,74 @@ async function main() {
     if ((await row.count()) > 0) throw new Error('the revoked key came back after a reload')
   })
 
+  await check('pausing, changing mode and resnapshotting all take effect', async () => {
+    // Mode is server state that the page re-polls every 8 seconds, so a
+    // control that only updated the local ref would look correct for one tick
+    // and then silently revert. Every assertion below is therefore made after
+    // leaving the page and coming back, which forces a fresh load from the
+    // control plane.
+    //
+    // Re-entry is a client-side navigation rather than reload(). The detail
+    // route is dynamic and is not prerendered, so a hard load can land on the
+    // SPA fallback instead of the database - which would assert nothing.
+    const reopen = async () => {
+      await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+      await page!.getByRole('link', { name: DATABASE }).first().click()
+      await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+    }
+    const openSettingsTab = async () => {
+      await page!.getByRole('tab', { name: 'settings' }).click()
+      await page!.getByText('Requested mode').waitFor({ timeout: 15_000 })
+    }
+
+    await reopen()
+
+    // Pause. The button label is the state: it flips to Resume only if the
+    // server accepted, because the page renders database.mode.
+    await page!.getByRole('button', { name: 'Pause' }).click()
+    await page!.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 15_000 })
+    await reopen()
+    await page!.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 15_000 })
+
+    // Resume, likewise.
+    await page!.getByRole('button', { name: 'Resume' }).click()
+    await page!.getByRole('button', { name: 'Pause' }).waitFor({ timeout: 15_000 })
+    await reopen()
+    await page!.getByRole('button', { name: 'Pause' }).waitFor({ timeout: 15_000 })
+
+    // The Requested mode select reaches modes the pause button cannot, and
+    // every one of them used to be confirmed as "Replication resumed".
+    await openSettingsTab()
+    await page!.getByRole('combobox').last().click()
+    await page!.getByRole('option', { name: 'Polling' }).click()
+    await page!.getByText('Replication mode set to POLLING').waitFor({ timeout: 15_000 })
+    await reopen()
+    await openSettingsTab()
+    await page!.getByRole('combobox').last().getByText('Polling').waitFor({ timeout: 15_000 })
+
+    // Put it back, so the resnapshot below and any later check start from the
+    // mode the wizard chose.
+    await page!.getByRole('combobox').last().click()
+    await page!.getByRole('option', { name: 'Auto' }).click()
+    // Not "resumed": this leaves polling, not paused. That distinction is the
+    // whole point of the toast change.
+    await page!.getByText('Replication mode set to auto').waitFor({ timeout: 15_000 })
+
+    // Resnapshot must actually re-run rather than merely being acknowledged,
+    // so this waits for the mirror to reach streaming again.
+    await page!.getByRole('button', { name: 'Resnapshot' }).click()
+    await page!.getByText('Resnapshot accepted').waitFor({ timeout: 20_000 })
+    const deadline = Date.now() + 120_000
+    for (;;) {
+      await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+      await Bun.sleep(1_000)
+      if (/streaming/i.test((await page!.textContent('body')) ?? '')) break
+      if (Date.now() > deadline) throw new Error('database never returned to streaming')
+      await Bun.sleep(2_000)
+      await page!.getByRole('link', { name: DATABASE }).first().click()
+    }
+  })
+
   await check('the Google public URL rejects a non-HTTPS origin inline', async () => {
     // A rejected public URL used to 400 the whole save, so the client secret
     // was never stored and the enable toggle appeared to turn itself off
