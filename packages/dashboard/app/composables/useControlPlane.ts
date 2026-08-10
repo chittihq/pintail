@@ -207,7 +207,20 @@ export function useControlPlane() {
         method: 'POST',
         body: JSON.stringify({ mode }),
       })
-      toast(mode === 'paused' ? 'Replication paused' : 'Replication resumed')
+      // Four modes reach this, not two. Reporting anything that is not
+      // "paused" as "resumed" told an operator who picked Polling that
+      // replication had resumed, which is both wrong and unfalsifiable from
+      // the toast - the one signal confirming the click did what was asked.
+      // Resuming is still described as resuming, because that is what leaving
+      // "paused" for any running mode is, and it is how the button is labelled.
+      const resuming = database.mode === 'paused' && mode !== 'paused'
+      toast(
+        mode === 'paused'
+          ? 'Replication paused'
+          : resuming
+            ? 'Replication resumed'
+            : `Replication mode set to ${mode === 'auto' ? 'auto' : mode.toUpperCase()}`,
+      )
       await loadControlPlane()
     } catch (failure) {
       error.value = messageOf(failure)
