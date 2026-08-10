@@ -129,6 +129,24 @@ assets when they change and embeds them in the binary. Configuration
 precedence is CLI flags, then `PINTAIL_*` environment variables, then
 `pintail.toml`; see `pintail.example.toml`.
 
+### Diagnostics
+
+`PINTAIL_LOG` selects how much the server reports on stderr:
+
+| Level | What it adds |
+|---|---|
+| `error` | failures only |
+| `info` (default) | every API request with its duration, replication and backup lifecycle, the resumed CDC position |
+| `debug` | per-table probe timings, per-chunk snapshot progress, idle poll cycles, storage flush and compaction decisions |
+
+Durations are the point. A capability probe walks every table in the source
+schema, so a large schema legitimately takes tens of seconds — a line reading
+`probe done db=… tables=82 11803ms` distinguishes a server that finished the
+work from one that hung, which client-side symptoms cannot.
+
+No log line carries a DSN, API key secret, invite token, OAuth exchange code,
+session JWT, or row value.
+
 ## Contributing
 
 Bug reports with a failing query are gold; so are MySQL compatibility gaps,

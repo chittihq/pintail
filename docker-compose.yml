@@ -36,6 +36,16 @@ services:
       # kernel OOM killer decides instead. Set it to roughly 75% of the
       # limit configured in `deploy.resources` below.
       PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES:-3221225472}
+      # error | info | debug. Defaults to info: every API request with its
+      # duration, replication and backup lifecycle, and all failures. Raise to
+      # debug while diagnosing - it adds per-table probe timings, per-chunk
+      # snapshot progress, idle poll cycles, and storage flush and compaction
+      # decisions. Debug is verbose enough to bury a small deployment's disk
+      # if left on indefinitely.
+      #
+      # No log line carries a DSN, key secret, invite token, OAuth code, JWT
+      # or row value; call sites pass identifiers and counts only.
+      PINTAIL_LOG: ${PINTAIL_LOG:-info}
     volumes:
       # The replica, the metadata store, the first-boot secrets, and - unless
       # a separate spill mount is added below - spill.
