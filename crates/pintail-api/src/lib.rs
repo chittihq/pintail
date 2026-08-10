@@ -114,9 +114,9 @@ async fn access_log(request: axum::extract::Request, next: middleware::Next) -> 
     let status = response.status().as_u16();
     // A failing request is logged even at `error` level: it is the line an
     // operator needs most, and suppressing it would leave a 500 invisible.
-    let level = if status >= 500 { state::LOG_ERROR } else { state::LOG_INFO };
-    if state::log_enabled(level) {
-        eprintln!("pintail {method} {path} {status} {millis}ms");
+    let level = if status >= 500 { pintail_log::ERROR } else { pintail_log::INFO };
+    if pintail_log::enabled(level) {
+        pintail_log::emit(&format!("{method} {path} {status} {millis}ms"));
     }
     response
 }

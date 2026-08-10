@@ -21,37 +21,6 @@ use tokio::sync::broadcast;
 
 use crate::{error::ApiError, events::ApiEvent};
 
-pub(crate) const LOG_ERROR: u8 = 0;
-pub(crate) const LOG_INFO: u8 = 1;
-pub(crate) const LOG_DEBUG: u8 = 2;
-
-/// Whether a message at this level should be written.
-///
-/// Read once from `PINTAIL_LOG`, which accepts `error`, `info` (the default)
-/// or `debug`. There is no logging framework behind this: the binary has no
-/// tracing dependency, and one env var covers the actual need, which is
-/// turning per-cycle replication chatter on while chasing a problem and off
-/// again afterwards.
-///
-/// An unrecognised value falls back to `info` rather than failing to start.
-/// Logging configuration must never be the reason a server does not boot.
-pub(crate) fn log_enabled(level: u8) -> bool {
-    static CONFIGURED: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    let configured = *CONFIGURED.get_or_init(|| {
-        match std::env::var("PINTAIL_LOG")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "error" | "err" => LOG_ERROR,
-            "debug" | "trace" => LOG_DEBUG,
-            _ => LOG_INFO,
-        }
-    });
-    level <= configured
-}
-
 const NONCE_BYTES: usize = 12;
 const OAUTH_EXCHANGE_LIFETIME: Duration = Duration::from_secs(60);
 const MAX_PENDING_OAUTH_EXCHANGES: usize = 256;
@@ -260,16 +229,16 @@ impl ApiState {
         // control-plane row written with `let _ =`, so `docker logs` showed
         // the two startup lines and nothing else.
         let level = if event.kind.contains("error") || event.kind.contains("failed") {
-            LOG_ERROR
+            pintail_log::ERROR
         } else if event.kind.ends_with(".progress") {
             // Emitted per replication cycle, which is every poll interval on
             // every database. Useful when watching a specific problem, ruinous
             // as a default.
-            LOG_DEBUG
+            pintail_log::DEBUG
         } else {
-            LOG_INFO
+            pintail_log::INFO
         };
-        if log_enabled(level) {
+        if pintail_log::enabled(level) {
             let scope = event.database_id.as_deref().unwrap_or("-");
             let table = event
                 .table
@@ -282,10 +251,10 @@ impl ApiState {
                 (None, Some(bytes)) => format!(" bytes={bytes}"),
                 (None, None) => String::new(),
             };
-            eprintln!(
-                "pintail {} db={scope}{table}{counts} {}",
+            pintail_log::emit(&format!(
+                "{} db={scope}{table}{counts} {}",
                 event.kind, event.message
-            );
+            ));
         }
         if let Some(inner) = &self.inner {
             let _ = inner.events.send(event);

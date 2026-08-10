@@ -241,9 +241,6 @@ impl DisconnectWatch for TcpDisconnectWatch {
 /// disconnect would otherwise read as a server fault. Anything else is a real
 /// failure and logs at error.
 ///
-/// The level check is duplicated from pintail-api rather than shared, because
-/// this crate sits BELOW that one - pintail-api depends on pintail-wire, so
-/// the dependency cannot run the other way for one env lookup.
 fn log_connection_end(error: &io::Error) {
     let benign = matches!(
         error.kind(),
@@ -252,20 +249,10 @@ fn log_connection_end(error: &io::Error) {
             | io::ErrorKind::ConnectionAborted
             | io::ErrorKind::UnexpectedEof
     );
-    let verbose = matches!(
-        std::env::var("PINTAIL_LOG")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "debug" | "trace"
-    );
     if benign {
-        if verbose {
-            eprintln!("pintail wire connection closed by peer: {error}");
-        }
+        pintail_log::log_debug!("wire connection closed by peer: {error}");
     } else {
-        eprintln!("pintail wire connection failed: {error}");
+        pintail_log::log_error!("wire connection failed: {error}");
     }
 }
 
