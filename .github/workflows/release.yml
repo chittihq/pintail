@@ -78,9 +78,15 @@ jobs:
           platforms: ${{ matrix.platform }}
           # Push anonymously by digest; the merge job below names them.
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          # Scoped per platform so the two jobs do not evict each other.
-          cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          # Registry cache, not GitHub Actions cache. Measured on
+          # v0.0.1-rc3: exporting to the GHA cache took 235s and the build
+          # had ZERO cache hits. mode=max writes multi-gigabyte Rust layers
+          # for each platform against a 10GB shared cap, so the two scopes
+          # evict each other between runs - 235s spent writing a cache that
+          # never pays. The registry is the one already being pushed to and
+          # has no such cap, so the cooked-dependency layer survives.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ strategy.job-index }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ strategy.job-index }},mode=max,image-manifest=true
 
       - name: Record the digest
         run: |
