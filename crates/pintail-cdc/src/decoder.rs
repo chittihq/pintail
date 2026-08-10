@@ -220,53 +220,8 @@ fn set_bits(value: &MysqlValue) -> Option<u64> {
 }
 
 fn declaration_labels(column_type: &str, kind: &str) -> Result<Vec<String>, CdcError> {
-    let declaration = column_type.trim();
-    let prefix = format!("{kind}(");
-    if !declaration.to_ascii_lowercase().starts_with(&prefix) || !declaration.ends_with(')') {
-        return Err(CdcError::Decode(format!(
-            "cannot parse {kind} declaration {column_type}"
-        )));
-    }
-    let body = &declaration[prefix.len()..declaration.len() - 1];
-    let mut labels = Vec::new();
-    let mut characters = body.chars().peekable();
-    while characters.peek().is_some() {
-        if characters.next() != Some('\'') {
-            return Err(CdcError::Decode(format!(
-                "cannot parse {kind} declaration {column_type}"
-            )));
-        }
-        let mut label = String::new();
-        loop {
-            match characters.next() {
-                Some('\\') => label.push(characters.next().ok_or_else(|| {
-                    CdcError::Decode(format!("unterminated escape in {column_type}"))
-                })?),
-                Some('\'') if characters.peek() == Some(&'\'') => {
-                    characters.next();
-                    label.push('\'');
-                }
-                Some('\'') => break,
-                Some(character) => label.push(character),
-                None => {
-                    return Err(CdcError::Decode(format!(
-                        "unterminated label in {column_type}"
-                    )));
-                }
-            }
-        }
-        labels.push(label);
-        match characters.next() {
-            Some(',') => {}
-            None => break,
-            _ => {
-                return Err(CdcError::Decode(format!(
-                    "cannot parse {kind} declaration {column_type}"
-                )));
-            }
-        }
-    }
-    Ok(labels)
+    pintail_types::declaration_labels(column_type, kind)
+        .ok_or_else(|| CdcError::Decode(format!("cannot parse {kind} declaration {column_type}")))
 }
 
 fn is_textual(column: &SourceColumn) -> bool {

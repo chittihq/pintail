@@ -15,5 +15,5 @@ pub use canonical::{
     parse_decimal_scaled,
 };
 pub use row::{KeyPart, PrimaryKey, StoredRow};
-pub use schema::{Column, KeyMode, SchemaError, TableSchema};
+pub use schema::{Column, KeyMode, SchemaError, TableSchema, declaration_labels};
 pub use value::{DataType, Float64, Value};

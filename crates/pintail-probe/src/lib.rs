@@ -163,6 +163,19 @@ impl SourceTable {
                         .any(|name| name.eq_ignore_ascii_case(&column.name));
                     Column::new(column.id, &column.name, column.pintail_type, !sort_key)
                         .with_collation(column.collation.clone())
+                        // ENUM only: SET has no single ordinal, so it stays text.
+                        .with_enum_labels(
+                            column
+                                .mysql_data_type
+                                .eq_ignore_ascii_case("enum")
+                                .then(|| {
+                                    pintail_types::declaration_labels(
+                                        &column.mysql_column_type,
+                                        "enum",
+                                    )
+                                })
+                                .flatten(),
+                        )
                 })
                 .collect(),
             self.key.mode,

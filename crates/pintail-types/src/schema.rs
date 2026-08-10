@@ -17,6 +17,52 @@ pub enum KeyMode {
     AppendRowId,
 }
 
+/// Parses the labels out of a `MySQL` `ENUM(...)` or `SET(...)` declaration,
+/// in declaration order.
+///
+/// The order is the point: `MySQL` compares and sorts an ENUM by its
+/// one-based declaration index, so the position in this list *is* the sort
+/// key. Returns `None` when the text is not that kind of declaration or is
+/// malformed, leaving the caller to treat the column as plain text rather
+/// than inventing an ordering.
+#[must_use]
+pub fn declaration_labels(column_type: &str, kind: &str) -> Option<Vec<String>> {
+    let declaration = column_type.trim();
+    let prefix = format!("{kind}(");
+    if !declaration.to_ascii_lowercase().starts_with(&prefix) || !declaration.ends_with(')') {
+        return None;
+    }
+    let body = &declaration[prefix.len()..declaration.len() - 1];
+    let mut labels = Vec::new();
+    let mut characters = body.chars().peekable();
+    while characters.peek().is_some() {
+        if characters.next() != Some('\'') {
+            return None;
+        }
+        let mut label = String::new();
+        loop {
+            match characters.next() {
+                Some('\\') => label.push(characters.next()?),
+                // A doubled quote is an escaped quote, not the end.
+                Some('\'') if characters.peek() == Some(&'\'') => {
+                    characters.next();
+                    label.push('\'');
+                }
+                Some('\'') => break,
+                Some(character) => label.push(character),
+                None => return None,
+            }
+        }
+        labels.push(label);
+        match characters.next() {
+            Some(',') => {}
+            None => break,
+            _ => return None,
+        }
+    }
+    (!labels.is_empty()).then_some(labels)
+}
+
 /// A stable table column definition.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Column {
@@ -25,6 +71,14 @@ pub struct Column {
     data_type: DataType,
     nullable: bool,
     collation: Option<String>,
+    /// Declared ENUM labels in declaration order, when the source column is
+    /// an ENUM. Absent for every other column.
+    ///
+    /// Held on the column rather than on each value because the order is a
+    /// property of the declaration: storing the index per row would repeat
+    /// one number a million times and go stale the moment the declaration
+    /// changed. The read path reattaches it.
+    enum_labels: Option<Vec<String>>,
 }
 
 impl Column {
@@ -37,6 +91,7 @@ impl Column {
             data_type,
             nullable,
             collation: None,
+            enum_labels: None,
         }
     }
 
@@ -46,6 +101,32 @@ impl Column {
     pub fn with_collation(mut self, collation: Option<String>) -> Self {
         self.collation = collation;
         self
+    }
+
+    /// Attaches source ENUM labels in declaration order. Storage encoding is
+    /// unchanged; the labels only let the read path recover the sort order
+    /// `MySQL` uses.
+    #[must_use]
+    pub fn with_enum_labels(mut self, enum_labels: Option<Vec<String>>) -> Self {
+        self.enum_labels = enum_labels;
+        self
+    }
+
+    /// Returns the declared ENUM labels in declaration order, when any.
+    #[must_use]
+    pub fn enum_labels(&self) -> Option<&[String]> {
+        self.enum_labels.as_deref()
+    }
+
+    /// Returns the one-based declaration index of `label`, when declared.
+    #[must_use]
+    pub fn enum_index_of(&self, label: &str) -> Option<u16> {
+        self.enum_labels.as_ref().and_then(|labels| {
+            labels
+                .iter()
+                .position(|declared| declared == label)
+                .and_then(|position| u16::try_from(position + 1).ok())
+        })
     }
 
     /// Returns the stable column identifier.
