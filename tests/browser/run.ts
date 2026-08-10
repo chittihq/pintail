@@ -28,6 +28,8 @@ const cargoTargetDir = join(repository, 'target')
 const nonce = Date.now().toString(36)
 const mysqlName = `pintail-browser-mysql-${process.pid}-${nonce}`
 const DATABASE = 'smoke_db'
+// A schema the probe user can reach but holds no table privilege on.
+const RESTRICTED_DATABASE = 'restricted_db'
 const OPERATOR = { email: 'smoke@pintail.local', password: 'browser-smoke-password' }
 
 interface CheckResult {
@@ -200,6 +202,18 @@ async function main() {
   await sql(
     `GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'`,
   )
+  // A user that can connect and satisfy the capability probe but holds no
+  // privilege on any table. information_schema.TABLES lists only tables the
+  // caller can access, so this is what a real misconfigured grant looks
+  // like: connection fine, probe green, table list empty.
+  // Its own schema, because the smoke schema is registered by the wizard
+  // check and Pintail refuses to register the same source twice.
+  await sql(`CREATE DATABASE ${RESTRICTED_DATABASE}`)
+  await sql(`CREATE TABLE ${RESTRICTED_DATABASE}.hidden (id INT PRIMARY KEY)`)
+  await sql(`CREATE USER 'nogrants'@'%' IDENTIFIED BY 'nogrants'`)
+  await sql(
+    `GRANT RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'nogrants'@'%'`,
+  )
   // The SQL console's default query is `SELECT * FROM events LIMIT 100`, so
   // the seed table is named events and the smoke exercises the console
   // exactly as it first opens.
@@ -336,6 +350,51 @@ async function main() {
     // workspace must be visible again rather than the new one's emptiness.
     await page!.getByRole('link', { name: 'Databases', exact: true }).click()
     await page!.getByText(DATABASE).first().waitFor({ timeout: 15_000 })
+  })
+
+  await check('an empty table list explains itself', async () => {
+    // Regression for a wizard that rendered an empty bordered box with
+    // Review & start disabled and no reason given. The cause is almost never
+    // an empty schema - information_schema hides tables the connecting user
+    // cannot access - so the empty state has to say so or the operator has
+    // nothing to act on.
+    await page!.goto(`${pintailUrl}/databases/new`)
+    await page!.getByLabel('MySQL schema').fill(RESTRICTED_DATABASE)
+    await page!
+      .getByLabel('MySQL DSN')
+      .fill(`mysql://nogrants:nogrants@${host}:${mysqlPort}/${RESTRICTED_DATABASE}`)
+    await page!.getByRole('button', { name: 'Test connection' }).click()
+    await page!.getByText('Recommended:').waitFor({ timeout: 20_000 })
+    await page!.getByRole('button', { name: 'Choose tables' }).click()
+    const empty = page!.getByTestId('wizard-no-tables')
+    await empty.waitFor({ timeout: 20_000 })
+    // The message must name the actual cause and the fix, not just report
+    // emptiness.
+    await empty.getByText('privilege').first().waitFor()
+    await empty.getByText('GRANT SELECT').first().waitFor()
+  })
+
+  await check('the Google public URL rejects a non-HTTPS origin inline', async () => {
+    // A rejected public URL used to 400 the whole save, so the client secret
+    // was never stored and the enable toggle appeared to turn itself off
+    // while the card still read "Not Configured" - three symptoms, one
+    // discarded field, and no indication which.
+    await page!.getByRole('link', { name: 'Settings', exact: true }).click()
+    const publicUrl = page!.getByLabel('Public URL')
+    await publicUrl.fill('http://pintail.example.com')
+    const urlError = page!.getByTestId('domain-url-error')
+    await urlError.waitFor()
+    await urlError.getByText('HTTPS').first().waitFor()
+    // Blocking the save is the point: submitting could only 400 and lose the
+    // credentials typed alongside it.
+    const save = page!.getByRole('button', { name: 'Save Google settings' })
+    if (!(await save.isDisabled())) throw new Error('save must be blocked while the URL is invalid')
+    // A valid origin clears it.
+    await publicUrl.fill('https://pintail.example.com')
+    await urlError.waitFor({ state: 'hidden' })
+    // localhost is the documented exception, so http must be accepted there.
+    await publicUrl.fill('http://localhost:8080')
+    await urlError.waitFor({ state: 'hidden' })
   })
 
   await check('login screen renders at a phone viewport', async () => {
