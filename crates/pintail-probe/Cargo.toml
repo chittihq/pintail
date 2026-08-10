@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+pintail-log.workspace = true
 mysql_async.workspace = true
 pintail-types.workspace = true
 serde.workspace = true

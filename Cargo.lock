@@ -2285,6 +2285,7 @@ name = "pintail-probe"
 version = "0.1.0"
 dependencies = [
  "mysql_async",
+ "pintail-log",
  "pintail-types",
  "serde",
  "thiserror",

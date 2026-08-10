@@ -331,10 +331,28 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
             (database,),
         )
         .await?;
+    // Cost here scales with table count, not schema size: each table below
+    // issues its own column, index, foreign-key and key-usage queries. A
+    // measured 82-table source took 11.6 seconds, which is long enough that
+    // a caller with a deadline can abandon a probe the server then completes
+    // for nobody - and until these lines existed there was no way to tell
+    // that apart from a probe that hung.
+    let started = std::time::Instant::now();
+    let total = raw_tables.len();
+    pintail_log::log_info!("probe start db={database} tables={total}");
     let mut tables = Vec::with_capacity(raw_tables.len());
     let mut warnings = Vec::new();
-    for (name, engine, estimated_rows) in raw_tables {
+    for (index, (name, engine, estimated_rows)) in raw_tables.into_iter().enumerate() {
+        // Per table, so a single pathological table is identifiable rather
+        // than hiding inside one aggregate duration.
+        let table_started = std::time::Instant::now();
+        let probed_name = name.clone();
         let table = probe_table(&mut connection, database, name, engine, estimated_rows).await?;
+        pintail_log::log_debug!(
+            "probe table db={database} table={probed_name} {}/{total} {}ms",
+            index + 1,
+            table_started.elapsed().as_millis()
+        );
         warnings.extend(
             table
                 .warnings
@@ -343,6 +361,11 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
         );
         tables.push(table);
     }
+    pintail_log::log_info!(
+        "probe done db={database} tables={total} warnings={} {}ms",
+        warnings.len(),
+        started.elapsed().as_millis()
+    );
 
     Ok(ProbeReport {
         database: database.to_owned(),
