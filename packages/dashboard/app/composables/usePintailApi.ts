@@ -22,6 +22,18 @@ const DEFAULT_TIMEOUT_MS = 30_000
 /// nothing about why.
 const QUERY_TIMEOUT_MS = 120_000
 
+/// Calls that walk the whole source schema. The capability probe issues
+/// several queries PER TABLE - columns, indexes, foreign keys, key usage - so
+/// its cost scales with table count rather than being a fixed control call: a
+/// measured 82-table source took 14.5s from a local network, and a remote
+/// managed database on a slower path takes considerably longer.
+///
+/// These sat on the 30s control-plane deadline until a real 82-table source
+/// hit it, which surfaced as "Request timed out after 30s" on a probe the
+/// server went on to complete successfully. Slow here means large, not stuck.
+const SCHEMA_WALK_TIMEOUT_MS = 300_000
+const SCHEMA_WALK_ROUTES = ['/probe', '/test']
+
 export interface RequestOptions extends RequestInit {
   /// Overrides the deadline for this call. Zero disables it.
   timeoutMs?: number
@@ -52,7 +64,11 @@ export function usePintailApi() {
       headers.set('Content-Type', 'application/json')
     }
     const deadline = timeoutMs
-      ?? (path.startsWith('/query') ? QUERY_TIMEOUT_MS : DEFAULT_TIMEOUT_MS)
+      ?? (path.startsWith('/query')
+        ? QUERY_TIMEOUT_MS
+        : SCHEMA_WALK_ROUTES.some((route) => path.endsWith(route))
+          ? SCHEMA_WALK_TIMEOUT_MS
+          : DEFAULT_TIMEOUT_MS)
     // An explicit signal from the caller wins: it is usually a cancellation
     // the user asked for, which must not be overridden by a deadline.
     const signal = init.signal
@@ -64,7 +80,10 @@ export function usePintailApi() {
       // A timeout aborts rather than rejecting with a network error, and the
       // bare DOMException reads as "signal is aborted without reason".
       if (failure instanceof DOMException && failure.name === 'TimeoutError') {
-        throw new ApiFailure(`Request timed out after ${deadline / 1000}s`, 0)
+        // Naming the path matters: the same bare message appeared for a
+        // stalled control call and for a probe that was merely large, and
+        // those need opposite responses from an operator.
+        throw new ApiFailure(`${path} timed out after ${deadline / 1000}s`, 0)
       }
       throw failure
     }
