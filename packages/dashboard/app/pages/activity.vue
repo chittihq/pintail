@@ -21,6 +21,10 @@ const filteredActivity = computed(() =>
 const isAdmin = computed(() => session.value?.role === 'admin')
 const auditEvents = ref<AuditEvent[]>([])
 const auditLoading = ref(false)
+/// The tab bar renders only for an admin, because the audit trail is the only
+/// other tab and a tablist with one tab reads as a rendering fault. Non-admins
+/// see the activity table with no chrome around it.
+const activityTab = ref('activity')
 
 async function loadAuditLog() {
   if (!isAdmin.value) return
@@ -61,7 +65,27 @@ function auditDetail(event: AuditEvent) {
         </SelectContent>
       </Select>
     </header>
-    <Card class="overflow-hidden p-0">
+    <Card v-if="deadLetters.length" class="mb-4 p-4">
+      <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Requires judgment</p><h2 class="text-base font-semibold">Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div v-for="record in deadLetters" :key="record.id" data-testid="dead-letter" class="rounded-md border p-3">
+          <div class="flex justify-between gap-3"><strong class="text-sm">{{ record.table || 'Database event' }}</strong><span class="text-muted-foreground text-xs">{{ formatDate(record.created_at) }}</span></div>
+          <p class="text-destructive mt-1 text-sm">{{ record.error }}</p>
+          <pre class="bg-muted text-muted-foreground mt-2 max-h-48 overflow-auto rounded p-2.5 text-xs">{{ JSON.stringify(record.event, null, 2) }}</pre>
+          <div class="mt-2 flex items-center gap-2">
+            <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
+            <Button variant="destructive" size="sm" @click="discardDlq(record)">Discard</Button>
+          </div>
+        </div>
+      </div>
+    </Card>
+    <Tabs v-model="activityTab">
+      <TabsList v-if="isAdmin" class="mb-4">
+        <TabsTrigger value="activity">Activity</TabsTrigger>
+        <TabsTrigger value="audit">Audit trail</TabsTrigger>
+      </TabsList>
+      <TabsContent value="activity">
+        <Card class="overflow-hidden p-0">
       <div v-if="!filteredActivity.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><ActivityIcon :size="28" /><h2 class="text-foreground font-semibold">No matching activity</h2><p class="max-w-md text-sm">Completed and failed replication work appears after the first snapshot.</p></div>
       <Table v-else>
         <TableHeader>
@@ -80,21 +104,9 @@ function auditDetail(event: AuditEvent) {
         </TableBody>
       </Table>
     </Card>
-    <Card v-if="deadLetters.length" class="mt-4 p-4">
-      <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Requires judgment</p><h2 class="text-base font-semibold">Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div>
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div v-for="record in deadLetters" :key="record.id" data-testid="dead-letter" class="rounded-md border p-3">
-          <div class="flex justify-between gap-3"><strong class="text-sm">{{ record.table || 'Database event' }}</strong><span class="text-muted-foreground text-xs">{{ formatDate(record.created_at) }}</span></div>
-          <p class="text-destructive mt-1 text-sm">{{ record.error }}</p>
-          <pre class="bg-muted text-muted-foreground mt-2 max-h-48 overflow-auto rounded p-2.5 text-xs">{{ JSON.stringify(record.event, null, 2) }}</pre>
-          <div class="mt-2 flex items-center gap-2">
-            <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
-            <Button variant="destructive" size="sm" @click="discardDlq(record)">Discard</Button>
-          </div>
-        </div>
-      </div>
-    </Card>
-    <Card v-if="isAdmin" class="mt-4 overflow-hidden p-0">
+      </TabsContent>
+      <TabsContent v-if="isAdmin" value="audit">
+        <Card class="overflow-hidden p-0">
       <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Every user, every workspace action</p><h2 class="text-base font-semibold">Audit trail</h2></div><Button variant="ghost" size="icon" :disabled="auditLoading" aria-label="Refresh audit trail" @click="loadAuditLog"><RefreshCw /></Button></div>
       <div v-if="!auditEvents.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><ShieldCheck :size="26" /><strong class="text-foreground">No audit events yet</strong><span class="max-w-sm text-sm">Queries, configuration changes, and workspace management appear here.</span></div>
       <Table v-else>
@@ -112,5 +124,7 @@ function auditDetail(event: AuditEvent) {
         </TableBody>
       </Table>
     </Card>
+      </TabsContent>
+    </Tabs>
   </section>
 </template>
