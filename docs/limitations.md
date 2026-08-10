@@ -137,10 +137,21 @@ worth refusing.
 
 - Date parsing accepts the canonical date and date-time forms implemented by the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not implemented (#13). Compound qualifiers are rejected early by the SQL parser rather than during engine binding: sqlparser 0.62 only accepts simple interval unit keywords, so a compound qualifier fails with `INTERVAL requires a unit after the literal value`; supporting them requires the parser to accept the qualifier first (an upstream change). `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER` and `WEEK`; compound units reject explicitly.
 
-- Zero-component and invalid source `DATE`/`DATETIME` values normalize to SQL
-  `NULL` during snapshot and CDC ingestion. `sql_mode` does not reinterpret
-  mirrored values, and `ALLOW_INVALID_DATES` is refused rather than accepted
-  and ignored, so a client cannot believe it has asked for them back.
+- The all-zero `DATE`/`DATETIME` (`0000-00-00`) is preserved as a value, as
+  MySQL does: it is returned by a `SELECT`, does not match `IS NULL`, and is
+  counted by `COUNT(column)`. Genuinely invalid values such as February 31st
+  still normalize to SQL `NULL` during snapshot and CDC ingestion, because
+  they have no canonical form MySQL round-trips. Existing replicas keep
+  whatever ingestion already wrote; only rows re-ingested after this change
+  carry the zero date.
+- A zero date cannot be evaluated by the temporal functions: `YEAR`,
+  `DATE_ADD` and their relatives error on it where MySQL returns `0` or
+  `NULL`. That is the deliberate trade for it being a value at all - an
+  explicit error rather than three silently wrong answers from mapping it to
+  `NULL`.
+- `sql_mode` does not reinterpret mirrored values, and `ALLOW_INVALID_DATES`
+  is refused rather than accepted and ignored, so a client cannot believe it
+  has asked for the invalid ones back.
 
 - `STR_TO_DATE` supports the calendar/date, clock, month/weekday name, day-of-year, fractional-second, and composite clock directives used by the reporting corpus. Literal formats containing an unimplemented MySQL-only directive (ordinal dates or week/year reconstruction) reject at bind time; dynamic unsupported formats return `NULL`. They are never forwarded to chrono under a different meaning. `DATE_FORMAT` implements MySQL's full directive inventory, including the four `WEEK` numbering modes behind `%U %u %V %v` and their paired years `%X %x`, and copies an unrecognized directive's bare character the way MySQL does.
 

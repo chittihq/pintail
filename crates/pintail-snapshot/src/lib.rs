@@ -946,6 +946,30 @@ fn validate_unsigned_range(data_type: DataType, value: u64) -> Result<(), &'stat
     }
 }
 
+/// `MySQL`'s all-zero date, which is a value rather than an absence.
+///
+/// Legacy sources are full of these: every `MySQL` before 5.7 accepted
+/// `0000-00-00` by default. `MySQL` returns it from a `SELECT`, does not match
+/// it with `IS NULL`, and counts it in `COUNT(column)`. Mapping it to NULL -
+/// as this did - inverted all three of those, silently.
+const ZERO_DATE: &str = "0000-00-00";
+const ZERO_DATETIME: &str = "0000-00-00 00:00:00";
+
+/// Whether every date component is zero, which is the all-zero date rather
+/// than a merely invalid one like February 31st.
+const fn is_zero_date(year: u16, month: u8, day: u8) -> bool {
+    year == 0 && month == 0 && day == 0
+}
+
+/// The all-zero datetime rendered at the column's fractional precision, so
+/// it matches the width every other value of that column carries.
+fn zero_datetime_text(fsp: u8) -> String {
+    if fsp == 0 {
+        return ZERO_DATETIME.to_owned();
+    }
+    format!("{ZERO_DATETIME}.{}", "0".repeat(usize::from(fsp)))
+}
+
 fn normalize_date(value: &MysqlValue) -> Option<String> {
     let (year, month, day) = match value {
         MysqlValue::Date(year, month, day, ..) => (*year, *month, *day),
@@ -961,6 +985,12 @@ fn normalize_date(value: &MysqlValue) -> Option<String> {
         }
         _ => return None,
     };
+    // Preserved verbatim: it is a value MySQL round-trips, not a missing
+    // one. A genuinely invalid date such as February 31st still becomes
+    // NULL, because it has no canonical form to round-trip.
+    if is_zero_date(year, month, day) {
+        return Some(ZERO_DATE.to_owned());
+    }
     NaiveDate::from_ymd_opt(i32::from(year), u32::from(month), u32::from(day))?;
     Some(format!("{year:04}-{month:02}-{day:02}"))
 }
@@ -968,6 +998,11 @@ fn normalize_date(value: &MysqlValue) -> Option<String> {
 fn normalize_datetime(value: &MysqlValue, fsp: u8) -> Option<String> {
     match value {
         MysqlValue::Date(year, month, day, hour, minute, second, micros) => {
+            // Same reasoning as the zero date: MySQL round-trips this rather
+            // than treating it as absent.
+            if is_zero_date(*year, *month, *day) {
+                return Some(zero_datetime_text(fsp));
+            }
             let date =
                 NaiveDate::from_ymd_opt(i32::from(*year), u32::from(*month), u32::from(*day))?;
             date.and_hms_micro_opt(
@@ -982,6 +1017,9 @@ fn normalize_datetime(value: &MysqlValue, fsp: u8) -> Option<String> {
         }
         MysqlValue::Bytes(value) => {
             let value = std::str::from_utf8(value).ok()?;
+            if value.starts_with(ZERO_DATE) {
+                return Some(zero_datetime_text(fsp));
+            }
             let formats = [
                 "%Y-%m-%d %H:%M:%S%.f",
                 "%Y-%m-%dT%H:%M:%S%.f",
@@ -1253,27 +1291,51 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     #[test]
-    fn normalizes_zero_and_invalid_dates_to_null() {
-        assert_eq!(normalize_date(&MysqlValue::Date(0, 0, 0, 0, 0, 0, 0)), None);
+    fn preserves_zero_dates_and_nulls_only_genuinely_invalid_ones() {
+        // MySQL returns the all-zero date from a SELECT, does not match it
+        // with IS NULL, and counts it. Mapping it to NULL inverted all three.
         assert_eq!(
-            normalize_date(&MysqlValue::Date(2024, 0, 1, 0, 0, 0, 0)),
-            None
+            normalize_date(&MysqlValue::Date(0, 0, 0, 0, 0, 0, 0)),
+            Some("0000-00-00".to_owned())
         );
+        assert_eq!(
+            normalize_date(&MysqlValue::Bytes(b"0000-00-00".to_vec())),
+            Some("0000-00-00".to_owned())
+        );
+        // A zero datetime carries the column's fractional width, so it is
+        // the same shape as every other value in that column.
+        assert_eq!(
+            normalize_datetime(&MysqlValue::Date(0, 0, 0, 0, 0, 0, 0), 0),
+            Some("0000-00-00 00:00:00".to_owned())
+        );
+        assert_eq!(
+            normalize_datetime(&MysqlValue::Date(0, 0, 0, 0, 0, 0, 0), 3),
+            Some("0000-00-00 00:00:00.000".to_owned())
+        );
+        assert_eq!(
+            normalize_datetime(&MysqlValue::Bytes(b"0000-00-00 00:00:00".to_vec()), 6),
+            Some("0000-00-00 00:00:00.000000".to_owned())
+        );
+
+        // Genuinely invalid dates still become NULL: unlike the all-zero
+        // date, they have no canonical form MySQL round-trips.
         assert_eq!(
             normalize_date(&MysqlValue::Date(2024, 2, 30, 0, 0, 0, 0)),
             None
         );
         assert_eq!(
-            normalize_date(&MysqlValue::Bytes(b"0000-00-00".to_vec())),
+            normalize_date(&MysqlValue::Date(2024, 0, 1, 0, 0, 0, 0)),
             None
-        );
-        assert_eq!(
-            normalize_date(&MysqlValue::Date(1000, 1, 1, 0, 0, 0, 0)),
-            Some("1000-01-01".to_owned())
         );
         assert_eq!(
             normalize_datetime(&MysqlValue::Date(2024, 2, 30, 12, 0, 0, 0), 0),
             None
+        );
+
+        // Ordinary values are unaffected.
+        assert_eq!(
+            normalize_date(&MysqlValue::Date(1000, 1, 1, 0, 0, 0, 0)),
+            Some("1000-01-01".to_owned())
         );
         assert_eq!(
             normalize_datetime(&MysqlValue::Date(2024, 2, 29, 12, 34, 56, 123_456), 3),
