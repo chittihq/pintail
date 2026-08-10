@@ -14,7 +14,7 @@
 
 services:
   pintail:
-    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.0.1-rc3}
+    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.0.1-rc4}
     ports:
       # The dashboard and HTTP query API. Put a TLS terminator in front of
       # this: the dashboard is a control plane, not a security boundary.
