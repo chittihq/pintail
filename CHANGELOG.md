@@ -4,6 +4,44 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc6] - 2026-08-10
+
+### Added
+
+- Diagnostic logging across the engine, selected by `PINTAIL_LOG` (`error`,
+  `info`, `debug`). Nine crates emit through a new zero-dependency
+  `pintail-log` facade: every API request with its duration, all twenty-three
+  control-plane events, the CDC resumed binlog position and each reconnect,
+  snapshot start and chunk progress with the consistency verdict, per-table
+  poll cycles with the strategy each chose, segment flushes and compaction
+  deferrals, backup upload-versus-reuse counts, per-table probe timings, and
+  why a wire connection ended.
+- No log line carries a DSN, API key secret, invite token, OAuth exchange
+  code, session JWT, or row value. Verified against a live source by
+  searching the output for its password, host, user and session token.
+
+### Fixed
+
+- Replication failures reached no log at all. They were published to a
+  broadcast channel that drops the event when nothing is subscribed, so a
+  supervisor failing with no dashboard open left only a control-plane row
+  written with a discarded result. `docker logs` showed two startup lines.
+- The capability probe and connection test no longer share the 30-second
+  control-plane deadline. Their cost scales with table count — a measured
+  82-table source takes 11.8 seconds — so a large schema surfaced as
+  "Request timed out after 30s" on a probe the server went on to complete.
+  The timeout message now names the path that expired.
+- `tokio-rustls` moves to 0.26, which drops `rustls` 0.22 and its
+  `rustls-webpki` 0.102 (GHSA-82j2-j2ch-gfr8 high, GHSA-pwjx-qhcg-rvj4
+  medium, GHSA-965h-392x-2mh5 and GHSA-xgp8-3hg3-c2mh low). The workspace
+  already used `rustls` 0.23, so both a patched and a vulnerable webpki were
+  compiled into the same binary; this removes the second TLS stack.
+- `time` moves to 0.3.47 for CVE-2026-25727, a stack-exhaustion denial of
+  service. The declared MSRV moves to 1.88 to match, because the MSRV-aware
+  resolver would otherwise pull the workspace back to the vulnerable release.
+- The Go wire-client matrix takes `filippo.io/edwards25519` 1.1.1 for
+  CVE-2026-26958. Test-only; not shipped in the product.
+
 ## [0.0.1-rc5] - 2026-08-10
 
 ### Fixed
