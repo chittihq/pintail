@@ -17,6 +17,35 @@ const emit = defineEmits<{
   run: []
 }>()
 
+/// Reformats the buffer in place, preserving undo history.
+///
+/// sql-formatter is imported on demand rather than at module scope so it stays
+/// out of the initial bundle, matching how the editor itself is lazy-loaded.
+///
+/// A parse failure leaves the text untouched. Formatting is a convenience, and
+/// silently rewriting - or worse, emptying - a query someone is midway through
+/// writing is a far more expensive failure than simply not reformatting it.
+async function format() {
+  if (!view) return
+  const current = view.state.doc.toString()
+  if (!current.trim()) return
+  try {
+    const { format: formatSql } = await import('sql-formatter')
+    const formatted = formatSql(current, { language: 'mysql', keywordCase: 'upper' })
+    if (formatted === current) return
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: formatted },
+      // Park the cursor at the end rather than trying to map the old offset
+      // through a reflow that moved every line.
+      selection: { anchor: formatted.length },
+    })
+  } catch {
+    // Unparseable SQL stays exactly as typed.
+  }
+}
+
+defineExpose({ format })
+
 const host = ref<HTMLElement>()
 let view: EditorView | undefined
 
@@ -52,6 +81,14 @@ onMounted(() => {
             key: 'Mod-Enter',
             run: () => {
               emit('run')
+              return true
+            },
+          },
+          {
+            // The convention every editor with a formatter uses.
+            key: 'Shift-Alt-f',
+            run: () => {
+              void format()
               return true
             },
           },
