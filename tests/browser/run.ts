@@ -303,6 +303,24 @@ async function main() {
     await page!.getByRole('cell', { name: 'purchase' }).first().waitFor()
   })
 
+  await check('creating a workspace closes its dialog', async () => {
+    // Asserts the dialog CLOSES, not merely that the workspace was created.
+    // The bug this covers left the POST succeeding while the dialog stayed
+    // open with its spinner running, because the handler awaited an SSE
+    // consumer that never returns - so every assertion about the workspace
+    // existing passed while the UI was wedged.
+    await page!.getByRole('button', { name: 'Pintail' }).click()
+    await page!.getByRole('menuitem', { name: 'Create workspace' }).click()
+    const dialog = page!.getByRole('dialog')
+    await dialog.getByRole('heading', { name: 'Create a workspace' }).waitFor()
+    await dialog.getByLabel('Name').fill('Browser gate workspace')
+    await dialog.getByRole('button', { name: 'Create workspace' }).click()
+    // The whole point: the dialog must go away on its own.
+    await dialog.waitFor({ state: 'hidden', timeout: 15_000 })
+    // And the new workspace must be the active one in the switcher.
+    await page!.getByText('Browser gate workspace').first().waitFor()
+  })
+
   await check('login screen renders at a phone viewport', async () => {
     // A fresh context has no stored session, so it lands on the login form.
     const context = await browser!.newContext({ viewport: { width: 390, height: 844 } })
