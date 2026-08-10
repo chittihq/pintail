@@ -6,12 +6,118 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Removed
+### Fixed
 
-- Point-in-time restore (`point_in_time` + `dsn` on the restore request,
-  the bounded CDC catch-up, and the CDC stop bound) — product decision;
-  recovery is re-snapshot or restore-latest-backup. Backup retention,
-  restore validation, and the full/incremental cadence are unchanged.
+- A restored backup is assigned to the workspace it was restored from.
+  `register_restored_database` inserted the row without a `workspace_id` while
+  every dashboard listing filters on one, so restore reported success, wrote
+  the segments and registered the tables, and produced a database that nothing
+  could display and no screen could adopt.
+- The dashboard reports failures that previously produced no visible change:
+  API key enable/disable and revoke, dead-letter discard, and database removal
+  all issued their request with no rejection handler, so a failed call left the
+  identical screen behind and read as an inert click.
+- Entering a workspace no longer awaits the SSE consumer loop, which never
+  returns, so the create-workspace dialog closes instead of spinning behind a
+  request that already succeeded.
+- Every dashboard API request carries a deadline, so a hung call surfaces as a
+  timeout instead of an indefinite spinner.
+- The add-database wizard explains an empty table list. `information_schema`
+  lists only tables the connecting user holds a privilege on, so the usual
+  cause is a missing grant rather than an empty schema; the empty state now
+  names that and prints the `GRANT` to run.
+- The Google public URL is validated on the field. A non-HTTPS origin rejected
+  the whole settings save, which appeared as the enable toggle turning itself
+  off, a card still reading "Not Configured", and no Google button on the login
+  page - three symptoms from one discarded field.
+- Selecting a replication mode confirms the mode that was set. Every mode other
+  than `paused` was reported as "Replication resumed", including CDC and
+  polling.
+
+### Verification
+
+- The browser gate covers workspace create and switch, the API key lifecycle,
+  replication mode changes and resnapshot, and backup destination/run/restore
+  against a real S3-compatible object store rather than a stub.
+
+## [0.0.1-rc4] - 2026-08-10
+
+A deployment fix on top of rc3, with no engine changes.
+
+### Fixed
+
+- The process query memory budget reads a cgroup limit before host memory.
+  rc3 derived its default from `/proc/meminfo`, which inside a container
+  reports the host's memory rather than the container's ceiling, so a container
+  capped at 512 MB computed roughly 45 GB of budget: the ceiling never engaged
+  where a container limit makes it matter most, and the kernel OOM killer
+  decided instead. Both cgroup versions are read, v2 first, and both spell
+  "unlimited" as a value rather than an absence - v2 as the literal `max`, v1
+  as a sentinel near `u64::MAX` - so an unlimited cgroup falls through to host
+  memory instead of surfacing an absurd ceiling.
+
+### Changed
+
+- The production Compose file pulls the published image instead of building
+  from source, so a deploy host no longer compiles the Rust workspace and the
+  dashboard on every release; the source build moved to
+  `docker-compose.dev.yml`.
+- Storage relocates by variable — `PINTAIL_DATA` and `PINTAIL_SPILL_DATA` —
+  each defaulting to a named volume and accepting an absolute host path, so the
+  setting survives platforms that re-clone the repository on redeploy. A bind
+  path must be owned by `10001:10001` before first boot, because the container
+  does not run as root and does not fix its own ownership.
+- Release builds cache to the container registry rather than the GitHub Actions
+  cache, which was measured spending 235 s per run writing a cache that
+  produced zero hits against its 10 GB cap.
+
+## [0.0.1-rc3] - 2026-08-10
+
+### Fixed
+
+- ENUM values carry their declaration index and order by it, rather than
+  alphabetically by label.
+- The all-zero date `0000-00-00` is preserved as the value MySQL returns
+  instead of being mapped to `NULL`, which had inverted `IS NULL`, equality and
+  `COUNT` for those rows.
+- `sql_mode` values that would change how a statement parses or evaluates —
+  `ANSI_QUOTES`, `PIPES_AS_CONCAT`, `ALLOW_INVALID_DATES` and the rest — are
+  refused rather than stored and silently ignored.
+- The compatibility matrix counts `DATE_ADD` in the callable surface, and the
+  function-surface reader reads both binder modules instead of one.
+
+### Added
+
+- Concurrent query execution on the wire server is bounded, so overload becomes
+  backpressure instead of unbounded queueing: measured p99 fell 76% at 256
+  concurrent clients and stopped tracking offered load.
+- A process-wide query memory budget bounds the sum of concurrent queries
+  rather than only each one individually, defaulting to three quarters of host
+  memory.
+- A concurrency load harness (`tests/load`) with banked before/after evidence
+  for admission control.
+- A MySQL keyword and function compatibility matrix in `parity.md`, generated
+  from live MySQL and ClickHouse inventories rather than written from memory.
+
+### Changed
+
+- The MySQL wire protocol is implemented by the from-scratch
+  `pintail-protocol` crate; the vendored `opensrv-mysql` fork is gone. This is
+  what lets Pintail control the column metadata — length, charset, decimals —
+  that the fork hardcoded.
+- The five largest engine files are decomposed into focused modules: execution
+  error, window, sort, join and aggregation paths; the block payload codec,
+  projected scans and table snapshot in storage; function binding in the SQL
+  binder; and MySQL temporal semantics in expression evaluation. No behaviour
+  change.
+
+### Verification
+
+- The Playwright browser gate is a required gate rather than advisory, follows
+  the dashboard's navigation roles and the redesigned snapshot flow, and
+  redacts first-boot secrets from its logs.
+
+## [0.0.1-rc2] - 2026-08-08
 
 ### Added
 
@@ -89,21 +195,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   mixed `UNION DISTINCT`/`UNION ALL`, `INTERSECT`, and `EXCEPT` chains.
   Parenthesized operands and branch-local `ORDER BY`/`LIMIT` lower through an
   internal derived boundary instead of leaking clauses onto the full chain.
-- An experiment lab (`experiments/`) benchmarks contested engine designs as
-  checksum-verified head-to-heads on both reference machines; verdicts and
-  three literature results that failed to replicate are recorded in
-  `experiments/RESULTS.md` and ratified as architecture decisions.
-- A production-shaped workload (`benchmark/workloads/commerce-production-v1`)
-  models multi-tenant commerce with Zipf skew, correlated statuses, lifecycle
-  mutations, and a cascade-delete negative control, with smoke/ci/full
-  profiles and phased execution including a mixed CDC read/write phase.
-- Versioned benchmark datasets live in the pintail-ds repository with sha256
-  manifests; runs load them via `--dataset` using server-side TSV bulk import
-  with deferred index creation, and a provenance check flags aliases the
-  current seeder can no longer reproduce.
-- Production benchmark CI tiers: per-merge ci-profile runs, a nightly with the
-  mixed CDC and kill-restart phases, and a full-profile release gate, all
-  gated on a repository variable for the benchmark host.
 
 ### Changed
 
@@ -123,39 +214,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Metadata retains raw MySQL `EXTRA` text, including `ON UPDATE` clauses;
   binary LIKE stays bytewise, while ordinary DISTINCT and GROUP BY use the
   metadata relation's case-insensitive identifier collation.
-
 - Replica temporal policy is explicit and shared by snapshot and CDC: zero or
   invalid DATE/DATETIME values normalize to SQL NULL, `sql_mode` is retained
   but does not reinterpret stored source values, and named timezone DST folds
   choose the earlier instant while gaps return NULL.
-- Merge clusters refine to granule level: a base-plus-tail cluster splits into
-  direct row-ranges of the dominant unique-key segment plus one merge bounded
-  to the actual overlap, located through the segment footer's sparse index
-  (previously written but never read); no storage format change.
-- Low-cardinality string group-bys (one or two key columns) aggregate on
-  per-batch dictionary codes with array-indexed accumulators; integer-keyed
-  fused join aggregates probe a dense direct-address table when build keys
-  occupy a small range; top-K materialization skips rows that cannot beat the
-  current threshold before cloning them.
-- Decimals, dates, and datetimes parse once at column construction into
-  scaled/epoch integers consumed by filters, aggregates, and group hashing,
-  with conservative fallback to their text carriers on any non-canonical
-  value; typed projections build lazily so batches that never use them pay
-  nothing.
-- Scans partition the requested key range by actual segment overlap: disjoint
-  unique-key clusters decode directly, only overlapping clusters pay the
-  bounded last-write-wins merge, and memtable rows are served range-aware —
-  previously any WAL row or overlap forced every row through the k-way merge.
-- The release benchmark measures all engines on the same host under identical
-  CPU/memory limits, adds a ReplacingMergeTree-with-FINAL fair reference,
-  reports median-of-five warm runs, and fails on any result differing from
-  MySQL; the previous cross-host ClickHouse comparison is retired.
-- Column vectors build packed typed projections (integers, floats, string
-  views, scaled-i128 decimals parsed once from their text carrier) during
-  construction; comparison filters and SUM/AVG aggregates resolve from packed
-  values instead of walking or re-parsing per-row `Value`s, with row-at-a-time
-  semantics preserved as the fallback (text comparisons keep their
-  collation-aware path).
 
 ### Fixed
 
@@ -251,6 +313,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   passes the required 50x aggregate-speedup gate. The ci-profile production
   snapshot and cold-query acceptance workload also passes with its declared
   unsupported-query boundaries unchanged.
+
+## [0.0.1-rc1] - 2026-08-05
+
+### Removed
+
+- Point-in-time restore (`point_in_time` + `dsn` on the restore request,
+  the bounded CDC catch-up, and the CDC stop bound) — product decision;
+  recovery is re-snapshot or restore-latest-backup. Backup retention,
+  restore validation, and the full/incremental cadence are unchanged.
+
+### Added
+
+- An experiment lab (`experiments/`) benchmarks contested engine designs as
+  checksum-verified head-to-heads on both reference machines; verdicts and
+  three literature results that failed to replicate are recorded in
+  `experiments/RESULTS.md` and ratified as architecture decisions.
+- A production-shaped workload (`benchmark/workloads/commerce-production-v1`)
+  models multi-tenant commerce with Zipf skew, correlated statuses, lifecycle
+  mutations, and a cascade-delete negative control, with smoke/ci/full
+  profiles and phased execution including a mixed CDC read/write phase.
+- Versioned benchmark datasets live in the pintail-ds repository with sha256
+  manifests; runs load them via `--dataset` using server-side TSV bulk import
+  with deferred index creation, and a provenance check flags aliases the
+  current seeder can no longer reproduce.
+- Production benchmark CI tiers: per-merge ci-profile runs, a nightly with the
+  mixed CDC and kill-restart phases, and a full-profile release gate, all
+  gated on a repository variable for the benchmark host.
+
+### Changed
+
+- Merge clusters refine to granule level: a base-plus-tail cluster splits into
+  direct row-ranges of the dominant unique-key segment plus one merge bounded
+  to the actual overlap, located through the segment footer's sparse index
+  (previously written but never read); no storage format change.
+- Low-cardinality string group-bys (one or two key columns) aggregate on
+  per-batch dictionary codes with array-indexed accumulators; integer-keyed
+  fused join aggregates probe a dense direct-address table when build keys
+  occupy a small range; top-K materialization skips rows that cannot beat the
+  current threshold before cloning them.
+- Decimals, dates, and datetimes parse once at column construction into
+  scaled/epoch integers consumed by filters, aggregates, and group hashing,
+  with conservative fallback to their text carriers on any non-canonical
+  value; typed projections build lazily so batches that never use them pay
+  nothing.
+- Scans partition the requested key range by actual segment overlap: disjoint
+  unique-key clusters decode directly, only overlapping clusters pay the
+  bounded last-write-wins merge, and memtable rows are served range-aware —
+  previously any WAL row or overlap forced every row through the k-way merge.
+- The release benchmark measures all engines on the same host under identical
+  CPU/memory limits, adds a ReplacingMergeTree-with-FINAL fair reference,
+  reports median-of-five warm runs, and fails on any result differing from
+  MySQL; the previous cross-host ClickHouse comparison is retired.
+- Column vectors build packed typed projections (integers, floats, string
+  views, scaled-i128 decimals parsed once from their text carrier) during
+  construction; comparison filters and SUM/AVG aggregates resolve from packed
+  values instead of walking or re-parsing per-row `Value`s, with row-at-a-time
+  semantics preserved as the fallback (text comparisons keep their
+  collation-aware path).
 
 ## [M9] - 2026-07-30
 
