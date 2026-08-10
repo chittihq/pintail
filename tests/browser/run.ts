@@ -30,6 +30,7 @@ const mysqlName = `pintail-browser-mysql-${process.pid}-${nonce}`
 const DATABASE = 'smoke_db'
 // A schema the probe user can reach but holds no table privilege on.
 const RESTRICTED_DATABASE = 'restricted_db'
+const API_KEY_NAME = 'browser-gate-key'
 const OPERATOR = { email: 'smoke@pintail.local', password: 'browser-smoke-password' }
 
 interface CheckResult {
@@ -372,6 +373,48 @@ async function main() {
     // emptiness.
     await empty.getByText('privilege').first().waitFor()
     await empty.getByText('GRANT SELECT').first().waitFor()
+  })
+
+  await check('an API key is created once, disabled and revoked', async () => {
+    // Every assertion here is re-checked after a reload. The page reloads
+    // from the server after each mutation, so an assertion made against the
+    // live DOM alone would pass on a request that never reached the server -
+    // which is exactly how the create-workspace bug survived its test.
+    await page!.goto(`${pintailUrl}/keys`)
+    await page!.getByRole('heading', { name: 'API Keys' }).waitFor()
+    await page!.getByLabel('Name').fill(API_KEY_NAME)
+    await page!.getByRole('button', { name: 'Create' }).click()
+
+    // The secret is shown exactly once, so capture it and prove it is real.
+    const secret = page!.getByTestId('revealed-secret')
+    await secret.waitFor({ timeout: 15_000 })
+    const revealed = (await secret.textContent())?.trim() || ''
+    if (revealed.length < 16) throw new Error(`implausible key secret: ${revealed.length} chars`)
+
+    const row = page!.getByRole('row').filter({ hasText: API_KEY_NAME })
+    await row.waitFor()
+    await row.getByText('enabled').waitFor()
+
+    // "Shown once" is a security claim, not a UI detail: after a reload the
+    // secret must be gone, because the server stores only its SHA-256 hash.
+    await page!.reload()
+    await row.waitFor({ timeout: 15_000 })
+    if (await secret.isVisible()) throw new Error('the key secret survived a reload')
+
+    // Disable, and require the change to survive a reload rather than
+    // trusting the badge the click swapped in.
+    await row.getByRole('button', { name: 'Disable' }).click()
+    await row.getByText('disabled').waitFor({ timeout: 15_000 })
+    await page!.reload()
+    await row.getByText('disabled').waitFor({ timeout: 15_000 })
+
+    // Revoke. The row must be gone after a reload too - a DELETE that 4xx'd
+    // would still empty the local list on an optimistic implementation.
+    await page!.getByRole('button', { name: `Delete ${API_KEY_NAME}` }).click()
+    await row.waitFor({ state: 'detached', timeout: 15_000 })
+    await page!.reload()
+    await page!.getByRole('heading', { name: 'API Keys' }).waitFor()
+    if ((await row.count()) > 0) throw new Error('the revoked key came back after a reload')
   })
 
   await check('the Google public URL rejects a non-HTTPS origin inline', async () => {
