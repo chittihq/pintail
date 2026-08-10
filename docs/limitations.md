@@ -126,9 +126,11 @@ worth refusing.
 
 ### MySQL semantic differences
 
-- `ENUM` values compare and sort as their text, not as MySQL's
-  declaration-index order. `CAST(col AS CHAR)` on the MySQL side produces
-  matching orderings.
+- `ENUM` values carry their declaration index and order by it, matching
+  MySQL. A value not present in the declaration - which a source can hold
+  after the column was altered - has no index and stays plain text, so it
+  orders lexically against the labelled values rather than being given an
+  invented position.
 - Locale-specific collation profiles, full per-expression coercibility, and
   collation-sensitive execution over mixed source profiles remain unsupported
   (#10).
