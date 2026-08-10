@@ -77,7 +77,7 @@ use crate::oauth::{
     link_start as google_link_start, put_settings as put_google_settings, start as google_start,
     status as google_status,
 };
-use crate::query::{list_tables, query, table_count, table_data, table_schema};
+use crate::query::{list_tables, query, table_columns, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 use crate::workspaces::{
     audit_log as workspace_audit_log, create as create_workspace, list as list_workspaces,
@@ -187,6 +187,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/dlq/{id}/retry", post(retry_dead_letter))
         .route("/query", post(query))
         .route("/tables", get(list_tables))
+        .route("/tables/columns", get(table_columns))
         .route("/tables/{name}/schema", get(table_schema))
         .route("/tables/{name}/data", get(table_data))
         .route("/tables/{name}/count", get(table_count))

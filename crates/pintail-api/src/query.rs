@@ -89,6 +89,57 @@ pub(crate) struct TableSummary {
     remediation: Option<&'static str>,
 }
 
+/// Every table's column names in one response, for editor completion.
+///
+/// The per-table `/tables/{name}/schema` route answers the same question, but a
+/// console cannot use it: an 82-table source would need 82 requests before it
+/// could complete a single identifier.
+///
+/// Names only. Types, nullability and key roles are what `/schema` is for, and
+/// a completion list that carried them would be several times the size for
+/// information the editor does not display.
+#[derive(Serialize)]
+pub(crate) struct TableColumnsResponse {
+    tables: BTreeMap<String, Vec<String>>,
+}
+
+/// Serves completion metadata for the whole database.
+///
+/// Read from the local replica, so it never contacts the source: completion
+/// keeps working while the source is unreachable, and typing in the console
+/// cannot add load to a production `MySQL`. A table that exists upstream but has
+/// not been snapshotted will not appear, which is correct - it cannot be
+/// queried here either.
+///
+/// # Errors
+///
+/// Returns an error when the database is unknown, unprobed, or its replica
+/// cannot be opened.
+pub(crate) async fn table_columns(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Query(query): Query<DatabaseQuery>,
+) -> Result<Json<TableColumnsResponse>, ApiError> {
+    principal.require_scope("read")?;
+    principal.authorize_database(&query.db)?;
+    crate::databases::load_database(&state, &principal, &query.db)?;
+    let replica = load_replica(&state, &query.db)?;
+    let tables = replica
+        .targets
+        .iter()
+        .map(|target| {
+            let columns = target
+                .schema
+                .columns()
+                .iter()
+                .map(|column| column.name().to_owned())
+                .collect();
+            (target.source.name.clone(), columns)
+        })
+        .collect();
+    Ok(Json(TableColumnsResponse { tables }))
+}
+
 #[derive(Serialize)]
 pub(crate) struct TableSchemaResponse {
     name: String,
