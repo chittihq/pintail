@@ -257,14 +257,22 @@ export function useControlPlane() {
   }
 
   async function removeDatabase(databaseId: string) {
-    await request(`/databases/${databaseId}`, { method: 'DELETE' })
-    toast('Database configuration removed; mirrored files were retained')
-    await loadControlPlane()
+    try {
+      await request(`/databases/${databaseId}`, { method: 'DELETE' })
+      toast('Database configuration removed; mirrored files were retained')
+      await loadControlPlane()
+    } catch (failure) {
+      error.value = messageOf(failure)
+    }
   }
 
   async function discardDlq(record: DlqRecord) {
     try {
       await request(`/dlq/${record.id}`, { method: 'DELETE' })
+      // Discarding drops a row permanently, so it confirms like every other
+      // mutation here. The row vanishing is not confirmation on its own - a
+      // failed request leaves the identical screen behind.
+      toast(`${record.table || 'Database'} dead letter discarded`)
       await refreshLiveData()
     } catch (failure) {
       error.value = messageOf(failure)

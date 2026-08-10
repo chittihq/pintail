@@ -83,7 +83,7 @@ function auditDetail(event: AuditEvent) {
     <Card v-if="deadLetters.length" class="mt-4 p-4">
       <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Requires judgment</p><h2 class="text-base font-semibold">Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div>
       <div class="grid gap-3 sm:grid-cols-2">
-        <div v-for="record in deadLetters" :key="record.id" class="rounded-md border p-3">
+        <div v-for="record in deadLetters" :key="record.id" data-testid="dead-letter" class="rounded-md border p-3">
           <div class="flex justify-between gap-3"><strong class="text-sm">{{ record.table || 'Database event' }}</strong><span class="text-muted-foreground text-xs">{{ formatDate(record.created_at) }}</span></div>
           <p class="text-destructive mt-1 text-sm">{{ record.error }}</p>
           <pre class="bg-muted text-muted-foreground mt-2 max-h-48 overflow-auto rounded p-2.5 text-xs">{{ JSON.stringify(record.event, null, 2) }}</pre>
