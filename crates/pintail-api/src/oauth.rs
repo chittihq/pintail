@@ -31,6 +31,39 @@ use crate::{
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+
+/// Google's three endpoints, overridable so the browser gate can point the
+/// whole flow at a local stand-in.
+///
+/// Google cannot be driven headlessly, so with these as bare constants the
+/// invite → "Continue with Google" path had no test at all - and it is the
+/// *only* way a new teammate ever gets an account. Every bug on it therefore
+/// reached production first.
+///
+/// The override is read from the process environment rather than a stored
+/// setting deliberately: it is invisible to the dashboard and absent from the
+/// metadata database, so no operator - and nobody who reaches the settings
+/// API - can redirect sign-in to a server of their choosing. Setting it
+/// requires already controlling the process.
+fn endpoint(variable: &str, default: &str) -> String {
+    std::env::var(variable)
+        .map(|value| value.trim().to_owned())
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_owned())
+}
+
+fn auth_endpoint() -> String {
+    endpoint("PINTAIL_GOOGLE_AUTH_URL", AUTH_URL)
+}
+
+fn token_endpoint() -> String {
+    endpoint("PINTAIL_GOOGLE_TOKEN_URL", TOKEN_URL)
+}
+
+fn userinfo_endpoint() -> String {
+    endpoint("PINTAIL_GOOGLE_USERINFO_URL", USERINFO_URL)
+}
 const STATE_ISSUER: &str = "pintail-google-oauth-state";
 const STATE_LIFETIME_SECS: u64 = 600;
 const STATE_COOKIE: &str = "pintail_oauth_state";
@@ -300,7 +333,7 @@ fn redirect_uri(config: &GoogleConfig) -> String {
 }
 
 fn authorization_url(config: &GoogleConfig, state_token: &str) -> Result<String, ApiError> {
-    let mut url = reqwest::Url::parse(AUTH_URL).map_err(ApiError::internal)?;
+    let mut url = reqwest::Url::parse(&auth_endpoint()).map_err(ApiError::internal)?;
     url.query_pairs_mut()
         .append_pair("client_id", &config.client_id)
         .append_pair("redirect_uri", &redirect_uri(config))
@@ -689,7 +722,7 @@ async fn exchange_code(
 ) -> Result<GoogleUser, ApiError> {
     let client = reqwest::Client::new();
     let token: TokenResponse = client
-        .post(TOKEN_URL)
+        .post(token_endpoint())
         .form(&[
             ("code", code),
             ("client_id", config.client_id.as_str()),
@@ -707,7 +740,7 @@ async fn exchange_code(
         .map_err(ApiError::internal)?;
 
     client
-        .get(USERINFO_URL)
+        .get(userinfo_endpoint())
         .bearer_auth(&token.access_token)
         .send()
         .await
