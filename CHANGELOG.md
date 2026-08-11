@@ -4,7 +4,7 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.1-rc9] - 2026-08-11
 
 ### Fixed
 
@@ -41,6 +41,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   They are read from the process environment rather than stored settings, so
   nothing reachable through the dashboard or the settings API can redirect
   sign-in elsewhere.
+
+### Known limitations
+
+- Accounts left half-created by the pre-rc8 behaviour are still not repaired.
+  They need the workspace membership added, or the user row removed so a fresh
+  invite can admit them.
+- The invite page does not carry its token into the Google flow. Admission is
+  resolved from whichever address Google returns, so an invitee who picks a
+  Google account other than the invited one is refused as `not_invited`. That
+  refusal is at least visible now rather than silent, but the mismatch is easy
+  to hit because the consent screen asks which account to use.
+- Duplicate callbacks remain non-idempotent, and their cause is still unknown.
 
 ## [0.0.1-rc8] - 2026-08-11
 
