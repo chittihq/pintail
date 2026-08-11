@@ -1,8 +1,24 @@
 <script setup lang="ts">
 import { Activity, AlertTriangle, ChevronRight, Database, HardDrive, RefreshCw, Server, Radio } from '@lucide/vue'
 import { dotToneClass, formatDate, formatNumber, modeOf, stateTone } from '@/lib/format'
+import type { VitalsSample } from '@/composables/useVitals'
 
 const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, alertCount, loadControlPlane } = useControlPlane()
+
+// One sample per second, for as long as this page is open. The stream is
+// stopped on unmount so a backgrounded tab is not held open against the server.
+const { samples, start, stop, WINDOW_SECONDS } = useVitals()
+onMounted(start)
+onBeforeUnmount(stop)
+
+function gigabytes(bytes: number) {
+  return bytes / 1024 ** 3
+}
+
+const memoryCaption = computed(() => {
+  const limit = samples.value.at(-1)?.memory_limit_bytes
+  return limit ? `of ${gigabytes(limit).toFixed(1)} GB limit` : 'no container limit'
+})
 </script>
 
 <template>
@@ -26,6 +42,42 @@ const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, al
         <Button variant="outline" size="xs" class="shrink-0" as-child><NuxtLink to="/activity">Inspect</NuxtLink></Button>
       </AlertDescription>
     </Alert>
+
+    <!-- Three live readings in one row: what this process is costing, and
+         what it is doing with it. -->
+    <div class="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <VitalsCard
+        label="CPU"
+        unit="%"
+        :decimals="1"
+        :max="100"
+        color="var(--chart-1)"
+        caption="of its core allowance"
+        :window="WINDOW_SECONDS"
+        :samples="samples"
+        :value="(sample: VitalsSample) => sample.cpu_percent"
+      />
+      <VitalsCard
+        label="Memory"
+        unit="GB"
+        :decimals="2"
+        color="var(--chart-2)"
+        :caption="memoryCaption"
+        :window="WINDOW_SECONDS"
+        :samples="samples"
+        :value="(sample: VitalsSample) => gigabytes(sample.memory_bytes)"
+      />
+      <VitalsCard
+        label="Queries"
+        unit="/s"
+        :decimals="2"
+        color="var(--chart-3)"
+        caption="read-only, this node"
+        :window="WINDOW_SECONDS"
+        :samples="samples"
+        :value="(sample: VitalsSample) => sample.queries_per_second"
+      />
+    </div>
 
     <div class="@container/main">
       <div class="grid grid-cols-1 gap-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card *:data-[slot=card]:shadow-xs @xl/main:grid-cols-2 @5xl/main:grid-cols-4 dark:*:data-[slot=card]:bg-card">
