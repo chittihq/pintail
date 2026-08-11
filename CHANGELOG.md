@@ -6,8 +6,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The node issues and manages its own wire-protocol TLS certificate. Without
+  one the server never advertised `CLIENT_SSL`, so a client that would have
+  preferred TLS got plaintext and had no way to ask for better — the state a
+  published port starts in. It is generated on first boot, kept across
+  restarts, and reissued only when the names it covers change, since rewriting
+  it invalidates whatever clients have pinned. Clients now get TLS through
+  their own `PREFERRED` default with nothing configured, which is what
+  actually protects users of managed database services: measured against
+  DigitalOcean, a connection with no SSL flags negotiates TLSv1.3 while
+  `--ssl-mode=DISABLED` still connects. One certificate covers the node
+  because the TLS upgrade completes before the client sends its username, and
+  here the username is the database name — so a per-database certificate
+  cannot exist.
+- The certificate is downloadable from Connect, and its hostnames are set in
+  Settings, defaulting to the host of the public URL already configured for
+  Google sign-in. Downloading it upgrades a connection from encrypted to
+  verified; the hostnames are what make `VERIFY_IDENTITY` possible rather than
+  only `VERIFY_CA`.
+- Live CPU, memory and query-rate charts on the overview, streamed at one
+  sample per second over SSE. CPU was not collected at all before, and memory
+  was sampled by spawning `ps` — tolerable per Prometheus scrape, and not at
+  1 Hz, where it would fork the process 86,400 times a day. Both read `/proc`
+  on Linux, and both are measured against the cgroup limits rather than the
+  host's totals, so a container capped at 4GB reads as busy at 3.5GB instead
+  of using 5% of the machine.
+
 ### Changed
 
+- The dashboard matches shadcn's default sizing. It was generated from the
+  `reka-mira` style, about one step smaller throughout — `h-7` buttons with
+  12px text where the default is `h-9` with 14px — with hand-written values
+  between 8.8px and 10.1px layered on top. 28 components move to 14px; badges,
+  tooltips, menu shortcuts and sidebar group labels stay at 12px because
+  shadcn keeps them there.
 - A refused Google sign-in names the address it refused, in the server log.
   Four different situations reach the browser as the single message "not
   invited" — no invite for that address at all, or one that is already
