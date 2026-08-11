@@ -2131,7 +2131,9 @@ dependencies = [
  "fs2",
  "pintail-api",
  "pintail-exec",
+ "pintail-log",
  "pintail-meta",
+ "pintail-telemetry",
  "pintail-wire",
  "rand 0.9.5",
  "rusqlite",
@@ -2361,6 +2363,18 @@ dependencies = [
  "tempfile",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "pintail-telemetry"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pintail-log",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -31,6 +31,24 @@
 
 use std::sync::OnceLock;
 
+/// A destination for log lines beyond stderr.
+///
+/// Registered once at startup by the binary. Kept as a plain function pointer
+/// so this crate keeps its zero-dependency property: shipping lines to Sentry
+/// or Logtail needs an HTTP client and a runtime, and neither belongs in the
+/// crate every engine crate depends on.
+pub type Sink = fn(level: u8, message: &str);
+
+static SINK: OnceLock<Sink> = OnceLock::new();
+
+/// Registers the sink that receives every emitted line.
+///
+/// Idempotent by construction: a second call is ignored rather than replacing
+/// a live exporter mid-run. Returns whether this call installed it.
+pub fn set_sink(sink: Sink) -> bool {
+    SINK.set(sink).is_ok()
+}
+
 /// Failures only.
 pub const ERROR: u8 = 0;
 /// Lifecycle transitions and request outcomes. The default.
@@ -67,7 +85,23 @@ pub fn enabled(level: u8) -> bool {
 /// the macros work from other crates without exposing stderr handling to each
 /// of them.
 pub fn emit(message: &str) {
+    emit_at(INFO, message);
+}
+
+/// Writes one line to stderr and to the registered sink, unconditionally.
+///
+/// The level travels with the message because the sink needs it: an exporter
+/// that raised an incident for every `info` line would be useless, and one
+/// that could not tell an error from a heartbeat could not filter at all.
+///
+/// stderr is written first. A remote exporter is the part most likely to be
+/// misconfigured or unreachable, and the local line is the one an operator
+/// reads when it is.
+pub fn emit_at(level: u8, message: &str) {
     eprintln!("pintail {message}");
+    if let Some(sink) = SINK.get() {
+        sink(level, message);
+    }
 }
 
 /// Logs a failure. Always emitted.
@@ -75,7 +109,7 @@ pub fn emit(message: &str) {
 macro_rules! log_error {
     ($($arg:tt)*) => {
         if $crate::enabled($crate::ERROR) {
-            $crate::emit(&format!($($arg)*));
+            $crate::emit_at($crate::ERROR, &format!($($arg)*));
         }
     };
 }
@@ -85,7 +119,7 @@ macro_rules! log_error {
 macro_rules! log_info {
     ($($arg:tt)*) => {
         if $crate::enabled($crate::INFO) {
-            $crate::emit(&format!($($arg)*));
+            $crate::emit_at($crate::INFO, &format!($($arg)*));
         }
     };
 }
@@ -98,7 +132,7 @@ macro_rules! log_info {
 macro_rules! log_debug {
     ($($arg:tt)*) => {
         if $crate::enabled($crate::DEBUG) {
-            $crate::emit(&format!($($arg)*));
+            $crate::emit_at($crate::DEBUG, &format!($($arg)*));
         }
     };
 }

@@ -1,0 +1,13 @@
+[package]
+name = "pintail-telemetry"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+chrono.workspace = true
+pintail-log.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

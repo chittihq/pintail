@@ -14,6 +14,12 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() -> Result<()> {
     let started = std::time::Instant::now();
+    // First, before anything that can fail. Secrets loading, metadata open and
+    // spill preparation all abort startup on error, and a boot that dies
+    // before telemetry exists is exactly the failure nobody can diagnose
+    // remotely. This installs the panic hook too, so a crash from here on
+    // carries a stack trace off the node.
+    pintail_log::log_info!("{}", pintail_telemetry::init());
     let cli = Cli::parse();
     let config = AppConfig::load(&cli)?;
 

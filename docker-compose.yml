@@ -46,6 +46,21 @@ services:
       # No log line carries a DSN, key secret, invite token, OAuth code, JWT
       # or row value; call sites pass identifiers and counts only.
       PINTAIL_LOG: ${PINTAIL_LOG:-info}
+      # Optional remote diagnostics. Unset means off: no exporter, no thread,
+      # no behaviour change. Put the real values in a .env file beside this
+      # one, never in the repository - the DSN and the token are credentials.
+      #
+      # Sentry receives errors and panics only. A panic carries its stack
+      # trace, parsed into frames, and is flushed before the process exits.
+      PINTAIL_SENTRY_DSN: ${PINTAIL_SENTRY_DSN:-}
+      # Better Stack (Logtail) receives every line at the PINTAIL_LOG level.
+      # Both of these are required together; one without the other is refused
+      # with a message rather than half-configured.
+      PINTAIL_LOGTAIL_ENDPOINT: ${PINTAIL_LOGTAIL_ENDPOINT:-}
+      PINTAIL_LOGTAIL_TOKEN: ${PINTAIL_LOGTAIL_TOKEN:-}
+      # Tags every event, so one Sentry project can hold several deployments.
+      PINTAIL_ENVIRONMENT: ${PINTAIL_ENVIRONMENT:-}
+      PINTAIL_RELEASE: ${PINTAIL_RELEASE:-}
     volumes:
       # The replica, the metadata store, the first-boot secrets, and - unless
       # a separate spill mount is added below - spill.
