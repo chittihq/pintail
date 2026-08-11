@@ -31,7 +31,10 @@ onMounted(loadTeam)
 function inviteStatus(invite: Invite) {
   if (invite.revoked_at) return { label: 'revoked', tone: 'neutral' }
   if (invite.accepted_at) return { label: 'accepted', tone: 'positive' }
-  if (new Date(invite.expires_at) <= new Date()) return { label: 'expired', tone: 'negative' }
+  // Negated rather than `<=`, so an unparseable date reads as expired instead
+  // of pending: an invalid Date compares false either way, and calling it
+  // pending here would contradict the callback, which refuses it.
+  if (!(new Date(invite.expires_at) > new Date())) return { label: 'expired', tone: 'negative' }
   return { label: 'pending', tone: 'warning' }
 }
 

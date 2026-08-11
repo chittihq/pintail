@@ -657,3 +657,60 @@ fn an_invite_is_matched_and_claimed_regardless_of_address_case() {
         "the invite must be consumed, not merely matched",
     );
 }
+
+/// An invite that expired between the caller's check and the write is not
+/// claimable.
+///
+/// Expiry was the one predicate left outside the transaction, so an invite
+/// could pass the caller’s check, wait on the `SQLite` write lock, and be
+/// consumed after it had already expired.
+#[test]
+fn an_expired_invite_cannot_be_claimed_inside_the_transaction() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-10T00:00:00Z";
+
+    metadata
+        .create_workspace("ws-1", "Workspace", "workspace", now)
+        .expect("workspace");
+    metadata
+        .create_user(
+            "user-0",
+            "admin@example.com",
+            "$argon2id$test",
+            "admin",
+            now,
+        )
+        .expect("inviting user");
+    metadata
+        .create_invite(&NewInvite {
+            id: "inv-1",
+            token_hash: b"hash",
+            workspace_id: "ws-1",
+            email: "late@example.com",
+            role: "viewer",
+            created_by: "user-0",
+            created_at: "2026-07-01T00:00:00Z",
+            // Already in the past relative to `now` below.
+            expires_at: "2026-08-09T00:00:00Z",
+        })
+        .expect("invite");
+
+    let refused = metadata.admit_invited_google_user(&GoogleAdmission {
+        user_id: "usr-1",
+        email: "late@example.com",
+        google_subject: "google-subject-late",
+        workspace_id: "ws-1",
+        invite_id: "inv-1",
+        role: "viewer",
+        now,
+    });
+    assert!(refused.is_err(), "an expired invite must not be claimable");
+
+    // And the refusal rolled the whole admission back.
+    assert!(
+        metadata.user_by_id("usr-1").expect("user lookup").is_none(),
+        "a refused admission must leave no user behind",
+    );
+}

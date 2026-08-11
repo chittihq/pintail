@@ -1560,13 +1560,22 @@ fn claim_invite(
 ) -> Result<()> {
     let claimed = transaction
         .execute(
+            // expires_at is compared here too, so every predicate that
+            // authorizes the admission is checked at one atomic boundary. It
+            // was the only one left outside: an invite could pass the caller's
+            // expiry check, wait on the write lock, and be claimed after it
+            // had expired.
+            //
+            // A lexicographic comparison is correct because both sides are
+            // RFC 3339 produced by the same code path, in UTC.
             "UPDATE invites SET accepted_at = ?2 \
              WHERE id = ?1 \
                AND accepted_at IS NULL \
                AND revoked_at IS NULL \
                AND email = ?3 COLLATE NOCASE \
                AND workspace_id = ?4 \
-               AND role = ?5",
+               AND role = ?5 \
+               AND expires_at > ?2",
             (
                 admission.invite_id,
                 admission.now,

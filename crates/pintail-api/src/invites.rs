@@ -82,9 +82,14 @@ pub(crate) async fn status(
         Some("revoked")
     } else if invite.accepted_at.is_some() {
         Some("accepted")
-    } else if DateTime::parse_from_rfc3339(&invite.expires_at)
-        .is_ok_and(|expires| expires <= Utc::now())
+    } else if !DateTime::parse_from_rfc3339(&invite.expires_at)
+        .is_ok_and(|expires| expires > Utc::now())
     {
+        // Fails closed on a timestamp that will not parse, matching the
+        // callback. Read the other way round, this endpoint called an
+        // unparseable expiry "valid" while the callback called it "expired",
+        // so the invite page invited someone in and the sign-in then refused
+        // them for an invite the page had just shown as good.
         Some("expired")
     } else {
         None
