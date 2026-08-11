@@ -142,10 +142,7 @@ pub(crate) async fn create(
 ) -> Result<Json<CreatedInviteResponse>, ApiError> {
     principal.require_admin()?;
     let workspace_id = principal.require_workspace()?;
-    let email = request.email.trim().to_ascii_lowercase();
-    if email.is_empty() || !email.contains('@') {
-        return Err(ApiError::bad_request("a valid email address is required"));
-    }
+    let email = normalize_invite_email(&request.email)?;
     if !matches!(request.role.as_str(), "admin" | "operator" | "viewer") {
         return Err(ApiError::bad_request(
             "role must be admin, operator, or viewer",
@@ -237,5 +234,80 @@ pub(crate) async fn revoke(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::conflict("invite was already accepted"))
+    }
+}
+
+/// Trims, lowercases and validates an invited address.
+///
+/// The old check was "not empty, and contains an @", which admitted an
+/// address Google can never return byte for byte: an internal space, a
+/// zero-width character pasted in from a chat client, a second @. The invite
+/// then looked completely ordinary in the team list while its holder was
+/// refused as "not invited" forever, with nothing on screen to distinguish it
+/// from a correct one.
+///
+/// Deliberately narrow. It rejects what cannot possibly match rather than
+/// trying to decide which exotic addresses are deliverable, which is not this
+/// function's business.
+fn normalize_invite_email(raw: &str) -> Result<String, ApiError> {
+    let email = raw.trim().to_ascii_lowercase();
+    if email.is_empty() {
+        return Err(ApiError::bad_request("an email address is required"));
+    }
+    if email.chars().any(|character| {
+        character.is_whitespace() || character.is_control() || is_invisible(character)
+    }) {
+        return Err(ApiError::bad_request(
+            "the email address contains spaces or invisible characters; retype it rather than pasting it",
+        ));
+    }
+    let mut parts = email.split('@');
+    let local = parts.next().unwrap_or_default();
+    let domain = parts.next().unwrap_or_default();
+    if parts.next().is_some() || local.is_empty() || domain.is_empty() {
+        return Err(ApiError::bad_request(
+            "enter a valid email address, for example name@example.com",
+        ));
+    }
+    Ok(email)
+}
+
+/// Characters that occupy no width and survive trimming: zero-width spaces and
+/// joiners, bidirectional overrides, word joiners, and the byte-order mark.
+fn is_invisible(character: char) -> bool {
+    matches!(character,
+        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_invite_email;
+
+    #[test]
+    fn an_ordinary_address_is_trimmed_and_lowercased() {
+        assert_eq!(
+            normalize_invite_email("  Teammate@Example.COM ").expect("valid"),
+            "teammate@example.com"
+        );
+    }
+
+    #[test]
+    fn addresses_google_could_never_return_are_refused() {
+        for raw in [
+            "",
+            "   ",
+            "no-at-sign.example.com",
+            "@example.com",
+            "teammate@",
+            "two@at@example.com",
+            "team mate@example.com",
+            "teammate\u{200B}@example.com",
+            "teammate@exa\u{FEFF}mple.com",
+        ] {
+            assert!(
+                normalize_invite_email(raw).is_err(),
+                "{raw:?} should not be invitable",
+            );
+        }
     }
 }
