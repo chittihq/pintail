@@ -22,6 +22,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   two refusal checks assert the diagnostic line exists and names the account
   rather than only that the browser was refused.
 
+## [0.0.1-rc10] - 2026-08-11
+
+### Fixed
+
+- An invite is redeemed by the link that was opened. The token reached only
+  the public status lookup; the sign-in it started carried nothing, so
+  admission was resolved by searching every invite for whatever address Google
+  returned. An existing Google identity was matched by subject and returned
+  before invites were consulted at all, which stranded anyone the pre-atomic
+  admission had left with a user row and no membership — refused for belonging
+  to no workspace, reported as "not invited", and unreachable by any number of
+  fresh invites. The same silence swallowed second-workspace invites. The
+  invite id now travels in the signed OAuth state (never the token, which is a
+  bearer credential) and the callback claims that exact invite, for an existing
+  user or a new one.
+- Sign-in no longer picks the newest invite across the node. The address search
+  chose the most recent claimable invite in any workspace, so an admin of any
+  workspace could aim a newer, higher-privileged invite at an address and
+  capture whoever followed a legitimate invite elsewhere. It survives only as a
+  fallback for visitors who reach the login page directly, and refuses when
+  more than one invite is open rather than guessing.
+- Authorization is re-read per request instead of trusted from the token.
+  Removing a member, demoting one or disabling an account changed nothing until
+  the token expired up to twelve hours later — and a removed admin could mint
+  fresh admin invites to the workspace they had been removed from, renewing the
+  access indefinitely.
+- Invite expiry is checked inside the claiming transaction, alongside accepted,
+  revoked, email, workspace and role, so an invite cannot be consumed after
+  expiring while it waited on the write lock. The status endpoint and the
+  callback also disagreed about a timestamp that will not parse — the invite
+  page called it valid, the sign-in called it expired — and both now fail
+  closed, as does the status shown on the team page.
+- A callback must prove it belongs to this browser's sign-in before anything in
+  it is acted on. The provider-error branch returned before state was verified
+  while the handler still cleared the state cookie, so anyone able to trigger a
+  top-level GET could cancel a sign-in in progress. Provider-supplied error
+  text is escaped before logging, since a percent-encoded newline could forge
+  log lines.
+- Invite addresses that no sign-in could ever match are refused at creation.
+  The check was "not empty, and contains an @", which admitted internal spaces,
+  zero-width characters and second @ signs — producing an invite that looked
+  entirely ordinary while its holder was refused forever.
+
+### Changed
+
+- A refused sign-in says which refusal it was. Accepted, revoked and expired
+  invites, several open invites, and an account belonging to no workspace all
+  arrived as "you were not invited", which is misleading when the invite exists
+  and each case needs a different action.
+- Refusal logging names the address only for people already recorded here. An
+  address with no account and no invite leaves only its domain, which is enough
+  to spot an organization pointed at the wrong node without collecting the
+  mailbox of anyone who merely pressed the button.
+- The sign-in gate covers the admission paths that shipped unguarded: second
+  workspace and orphan repair, immediate session revocation, contested invites,
+  a revoked invite, and a forged callback. 16 checks, each verified to fail
+  without the fix it guards.
+
 ## [0.0.1-rc9] - 2026-08-11
 
 ### Fixed
