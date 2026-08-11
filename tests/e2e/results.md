@@ -1,6 +1,6 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-10T16:14:21.178Z.
+Measured 2026-08-11T05:32:05.596Z.
 
 **637 passed, 0 failed, 2 documented-gap warnings.**
 
