@@ -69,6 +69,10 @@ const STATE_ISSUER: &str = "pintail-google-oauth-state";
 const STATE_LIFETIME_SECS: u64 = 600;
 const STATE_COOKIE: &str = "pintail_oauth_state";
 const STATE_COOKIE_PATH: &str = "/api/auth/google";
+/// Marks a callback that never proved it belonged to this browser's sign-in.
+/// Such a request must not clear the state cookie, or anyone able to make the
+/// browser issue a top-level GET could cancel a sign-in in progress.
+const UNVERIFIED_STATE: &str = "unverified_state";
 const INVITE_LIFETIME_DAYS: i64 = 14;
 
 #[derive(Debug, Clone, Default)]
@@ -521,6 +525,10 @@ pub(crate) async fn callback(
     //
     // The exchange code is never logged. It is a bearer credential for a
     // session, briefly, and a log is exactly where it must not be.
+    // Cleared only for a request that proved it belongs to this browser's
+    // sign-in. Clearing unconditionally let anyone able to trigger a top-level
+    // GET to the callback cancel a sign-in already in progress.
+    let mut clear_state_cookie = true;
     let mut response = match callback_inner(&state, &headers, &query).await {
         Ok(success) => match state.create_oauth_exchange(success.token, success.outcome) {
             Ok(code) => {
@@ -545,16 +553,36 @@ pub(crate) async fn callback(
                 StatusCode::CONFLICT => "link_required",
                 _ => "sign_in_failed",
             });
+            clear_state_cookie = code != UNVERIFIED_STATE;
             // The reason travels with it. "not_invited" names the policy that
             // refused; the message says which check inside it did.
             pintail_log::log_error!("oauth callback rejected={code} reason={error}");
             Redirect::to(&format!("/?auth_error={code}")).into_response()
         }
     };
-    if let Ok(cookie) = state_cookie("", 0, secure_cookie) {
+    if clear_state_cookie && let Ok(cookie) = state_cookie("", 0, secure_cookie) {
         response.headers_mut().insert(header::SET_COOKIE, cookie);
     }
     response
+}
+
+/// Renders provider-supplied text safe to put in a single log line.
+///
+/// Anything that could start a new line, or move the cursor, is escaped:
+/// otherwise a percent-encoded newline in the provider's `error` parameter
+/// forges log entries that look like they came from Pintail itself.
+fn escape_for_log(value: &str) -> String {
+    value
+        .chars()
+        .take(200)
+        .map(|character| {
+            if character.is_control() {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 async fn callback_inner(
@@ -562,22 +590,36 @@ async fn callback_inner(
     headers: &HeaderMap,
     query: &CallbackQuery,
 ) -> Result<CallbackSuccess, ApiError> {
+    // State first, before anything in the query is acted on.
+    //
+    // The provider-error branch used to return above this, so a cross-site
+    // top-level navigation to the callback carrying ?error= reached it without
+    // proving it belonged to this browser's sign-in - and the outer handler
+    // then cleared the state cookie, cancelling whatever sign-in really was in
+    // flight. Everything below has now proved it originated here.
+    let state_token = query
+        .state
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("missing state").with_auth_code(UNVERIFIED_STATE))?;
+    let browser_nonce = cookie_value(headers, STATE_COOKIE).ok_or_else(|| {
+        ApiError::bad_request("the sign-in browser state is missing")
+            .with_auth_code(UNVERIFIED_STATE)
+    })?;
+    let state_claims = verify_state(state, state_token, &browser_nonce)
+        .map_err(|error| error.with_auth_code(UNVERIFIED_STATE))?;
+
     if let Some(error) = &query.error {
+        // Escaped: this is provider-supplied text on its way to a log, and a
+        // percent-encoded newline in it would otherwise forge log entries.
         return Err(ApiError::bad_request(format!(
-            "Google sign-in was cancelled: {error}"
+            "Google sign-in was cancelled: {}",
+            escape_for_log(error)
         )));
     }
     let code = query
         .code
         .as_deref()
         .ok_or_else(|| ApiError::bad_request("missing authorization code"))?;
-    let state_token = query
-        .state
-        .as_deref()
-        .ok_or_else(|| ApiError::bad_request("missing state"))?;
-    let browser_nonce = cookie_value(headers, STATE_COOKIE)
-        .ok_or_else(|| ApiError::bad_request("the sign-in browser state is missing"))?;
-    let state_claims = verify_state(state, state_token, &browser_nonce)?;
 
     let config = load_config(state)?;
     if !config.is_active() {

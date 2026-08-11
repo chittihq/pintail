@@ -541,6 +541,36 @@ async function main() {
     }
   })
 
+  await check('a forged callback cannot cancel a sign-in in progress', async () => {
+    // Driven over HTTP rather than through a page: the property is about
+    // exactly which Set-Cookie headers two responses carry, and a browser
+    // hides that behind its cookie jar.
+    const started = await fetch(`${pintailUrl}/api/auth/google/start`, { redirect: 'manual' })
+    const issued = started.headers.get('set-cookie') ?? ''
+    if (!/pintail_oauth_state=[^;]+/.test(issued)) {
+      throw new Error(`starting a sign-in did not issue a state cookie: ${issued}`)
+    }
+    const cookie = issued.split(';')[0]!
+
+    // The forgery: a callback carrying only ?error=, which is what a
+    // cross-site top-level navigation can produce. It must be refused for
+    // failing to prove it belongs to this sign-in...
+    const forged = await fetch(`${pintailUrl}/api/auth/google/callback?error=access_denied`, {
+      redirect: 'manual',
+      headers: { cookie },
+    })
+    const location = forged.headers.get('location') ?? ''
+    if (!location.includes('auth_error=unverified_state')) {
+      throw new Error(`a forged callback was not rejected as unverified: ${location}`)
+    }
+    // ...and crucially must not expire the cookie the real sign-in is still
+    // relying on, which is how this cancelled a sign-in already in progress.
+    const cleared = forged.headers.get('set-cookie') ?? ''
+    if (/pintail_oauth_state=;|Max-Age=0/.test(cleared)) {
+      throw new Error(`a forged callback cleared the live sign-in state: ${cleared}`)
+    }
+  })
+
   await check('an unverified Google email cannot sign in', async () => {
     const { context, visitor } = await signInWithGoogle('/', {
       email: 'unverified@pintail.local',
