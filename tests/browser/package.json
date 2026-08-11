@@ -5,7 +5,8 @@
   "scripts": {
     "test": "bun test",
     "smoke": "bun run run.ts",
-    "gate": "bun test && bun run smoke"
+    "auth": "bun run auth.ts",
+    "gate": "bun test && bun run auth && bun run smoke"
   },
   "dependencies": {
     "mysql2": "^3.15.3",
