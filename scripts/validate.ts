@@ -169,10 +169,19 @@ async function run(
     /// silence is indistinguishable from progress until the whole budget is
     /// gone.
     stallMinutes?: number
+    /// Whether this stage runs on the shared Docker host, which is the only
+    /// case where a load probe is meaningful.
+    remote?: boolean
     /// Stage name, so heartbeats say which stage is alive.
     label?: string
   } = {},
-): Promise<{ code: number | null; output: string; timedOut: boolean; stalled: boolean }> {
+): Promise<{
+  code: number | null
+  output: string
+  timedOut: boolean
+  stalled: boolean
+  stallReason: string
+}> {
   return new Promise((resolvePromise) => {
     // Resolve Cargo explicitly so validation cannot accidentally use a shell
     // wrapper, and keep every build artifact under the repository target.
@@ -190,6 +199,7 @@ async function run(
     let output = ''
     let timedOut = false
     let stalled = false
+    let stallReason = ''
     let lastActivity = Date.now()
     let lastLine = ''
     let lastHeartbeat = Date.now()
@@ -201,19 +211,60 @@ async function run(
     }, budget)
     // Poll rather than reset a timer per chunk: a chatty stage would
     // otherwise rebuild the timer thousands of times a second.
+    // Load on the build host, sampled only while a remote stage is silent.
+    // Cached because the probe is an SSH round trip and the watchdog ticks
+    // every fifteen seconds.
+    let hostLoad: number | null = null
+    let idleSince: number | null = null
+    let probing = false
     const watchdog = setInterval(() => {
       const quiet = Date.now() - lastActivity
       if (quiet > stallBudget) {
         stalled = true
+        stallReason = `no output for ${Math.round(stallBudget / 60_000)} minutes`
+        child.kill('SIGKILL')
+        return
+      }
+      // A silent remote stage gets its host checked. Silence alone says
+      // nothing - a container build is legitimately quiet for minutes - but
+      // silence with an idle host is a wedged stage, and waiting out the full
+      // budget to say so wastes twenty minutes of a release.
+      if (options.remote && quiet > 90_000 && !probing) {
+        probing = true
+        void remoteLoadAverage()
+          .then((load) => {
+            hostLoad = load
+            if (load !== null && load < IDLE_LOAD) {
+              idleSince ??= Date.now()
+            } else {
+              idleSince = null
+            }
+          })
+          .finally(() => {
+            probing = false
+          })
+      }
+      if (
+        idleSince !== null
+        && Date.now() - idleSince > IDLE_STALL_MINUTES * 60_000
+        && child.exitCode === null
+      ) {
+        stalled = true
+        stallReason = `no output for ${Math.round(quiet / 60_000)} minutes while the build host sat idle `
+          + `(load ${hostLoad?.toFixed(2)}); the work never started`
         child.kill('SIGKILL')
         return
       }
       // Heartbeat so a long stage is visibly alive in the status log, and
-      // so a reader can see what it was doing when it stopped.
+      // so a reader can see what it was doing when it stopped. The host's load
+      // travels with it: "alive" meant only that a process existed.
       if (child.exitCode === null && Date.now() - lastHeartbeat >= 60_000) {
         lastHeartbeat = Date.now()
         const quietFor = Math.round(quiet / 1000)
-        status(`${options.label ?? 'stage'}: alive, ${quietFor}s since output — ${lastLine.slice(0, 120)}`)
+        const busy = hostLoad === null
+          ? ''
+          : ` — host load ${hostLoad.toFixed(2)}${hostLoad < IDLE_LOAD ? ' (IDLE)' : ''}`
+        status(`${options.label ?? 'stage'}: alive, ${quietFor}s since output${busy} — ${lastLine.slice(0, 120)}`)
       }
     }, 15_000)
     const capture = (chunk: Buffer) => {
@@ -229,7 +280,7 @@ async function run(
     const finish = (result: { code: number | null; output: string }) => {
       clearTimeout(timer)
       clearInterval(watchdog)
-      resolvePromise({ ...result, timedOut, stalled })
+      resolvePromise({ ...result, timedOut, stalled, stallReason })
     }
     child.on('close', (code) => finish({ code, output }))
     child.on('error', (error) =>
@@ -246,6 +297,33 @@ async function docker(args: string[], timeoutMinutes = 2) {
 /// within a hard deadline (a wedged bulk transfer makes every call hang),
 /// enough free disk for dataset loads, and no leftover harness containers
 /// from a crashed earlier run.
+/// The SSH target of the shared Docker host, once the preflight has resolved
+/// it. Null when Docker is local, where a busy-ness probe is meaningless.
+let remoteSshTarget: string | null = null
+
+/// One-minute load average on the build host, or null if it cannot be read.
+///
+/// This exists because "the stage has produced no output" and "the stage is
+/// wedged" are different claims, and the harness could not previously tell
+/// them apart. A Rust workspace build saturates every core; a host sitting at
+/// 0.07 while a stage claims to be building is not slow, it is stuck.
+async function remoteLoadAverage(): Promise<number | null> {
+  if (!remoteSshTarget) return null
+  const probe = await run([
+    'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+    remoteSshTarget, "cut -d' ' -f1 /proc/loadavg",
+  ], { timeoutMinutes: 1 })
+  const load = Number(probe.output.trim().split('\n').pop())
+  return Number.isFinite(load) ? load : null
+}
+
+/// Below this, a machine that is supposedly compiling is doing nothing.
+const IDLE_LOAD = 0.5
+
+/// How long a remote stage may be both silent and idle before it is called
+/// stalled, rather than waiting out the full stall budget.
+const IDLE_STALL_MINUTES = 6
+
 async function dockerHostPreflight(): Promise<string | null> {
   const ping = await docker(['version', '--format', '{{.Server.Version}}'])
   if (ping.timedOut || ping.code !== 0) {
@@ -266,6 +344,9 @@ async function dockerHostPreflight(): Promise<string | null> {
   const remote = endpoint.startsWith('ssh://')
   if (remote) {
     const sshTarget = endpoint.slice('ssh://'.length).replace(/\/.*$/, '').replace(/:\d+$/, '')
+    // Remembered so the liveness probe can reach the same machine without
+    // re-deriving it mid-stage.
+    remoteSshTarget = sshTarget
     const disk = await run([
       'ssh',
       '-o',
@@ -492,6 +573,7 @@ async function main() {
             env: stage.env,
             timeoutMinutes: stage.timeoutMinutes,
             stallMinutes: stage.stallMinutes,
+            remote: stage.remote,
             label: stage.name,
           })
           writeFileSync(join(reportDir, `${stage.name}-attempt${attempt}.log`), outcome.output)
@@ -500,8 +582,8 @@ async function main() {
             // making progress. Two hangs in one session looked like this —
             // a vanished container and a wedged docker link — and both spent
             // the whole budget in silence.
-            note = `stalled — no output for ${stage.stallMinutes ?? 20} minutes`
-            status(`${stage.name}: no output for ${stage.stallMinutes ?? 20} minutes — killing`)
+            note = `stalled — ${outcome.stallReason}`
+            status(`${stage.name}: ${outcome.stallReason} — killing`)
             await captureContainerEvidence(stage.name)
             break
           }
