@@ -1,9 +1,10 @@
 # The next 50 experiments: a biomimetic research program
 
-Status: **specified, not yet validated**. An experiment becomes validated only when its
-code, raw output, exact-answer checks, and verdict are present in this repository. A
-biological analogy is a source of mechanisms, not evidence that the mechanism works in
-a database.
+Status: **screening complete (34 rejected, 16 advanced)**. All fifty experiments now have
+code, deterministic output checks, recorded results, and a screening verdict. The sixteen
+advanced items remain simulation, model, or isolated-kernel evidence; none is validated for
+engine adoption until its stated real PTSEG or integration follow-up passes. A biological
+analogy is a source of mechanisms, not evidence that the mechanism works in a database.
 
 These are e30 through e79. They deliberately exclude the mechanisms already isolated in
 e01-e29: filter representations, aggregation-table shapes, guarded Top-K heaps, join-table
@@ -619,7 +620,7 @@ exercise the shared harness early:
 2. **Wave 2 — resource controllers:** e38, e46, e50, e55, e59, e63.
 3. **Wave 3 — optimizer learning:** e31, e35, e37, e40, e45, e57, e68, e79.
 4. **Wave 4 — cache and sharing:** e41, e48, e51, e65, e66, e70-e74.
-5. **Wave 5 — storage and integrity:** e30, e39, e42, e53, e54, e67, e75, e76, e78.
+5. **Wave 5 — storage and integrity:** e30, e36, e39, e42, e53, e54, e67, e75, e76, e78.
 6. **Wave 6 — scheduling and execution:** e44, e47, e49, e52, e56, e58, e60-e62, e64, e69.
 
 Wave order favors cheap falsification. A failed simulation stops an idea; a successful
@@ -638,4 +639,3 @@ enter the engine benchmark.
 - Giehl and von Wirén, [Root nutrient foraging](https://doi.org/10.1104/pp.114.245225), *Plant Physiology* 2014 — local architectural growth coupled to systemic resource status.
 - Pohl and Dikic, [Cellular quality control by the ubiquitin-proteasome system and autophagy](https://doi.org/10.1126/science.aax3769), *Science* 2019 — selective recycling under hard homeostatic constraints.
 - Wang et al., [Learning-based Progressive Cardinality Estimation](https://doi.org/10.1145/3588708), PACMMOD 2023, and Stillger et al., [LEO](https://www.vldb.org/conf/2001/P019.pdf), VLDB 2001 — actual-cardinality feedback and bounded reoptimization.
-
