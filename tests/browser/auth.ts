@@ -52,8 +52,32 @@ interface GoogleIdentity {
 const results: CheckResult[] = []
 const pageErrors: string[] = []
 let pintailProcess: ReturnType<typeof Bun.spawn> | undefined
-let pintailStdout: Promise<string> | undefined
-let pintailStderr: Promise<string> | undefined
+/// Everything the server has written so far, readable mid-run.
+const serverOutput: string[] = []
+
+async function drainInto(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  for (;;) {
+    const chunk = await reader.read()
+    if (chunk.done) return
+    serverOutput.push(decoder.decode(chunk.value, { stream: true }))
+  }
+}
+
+function serverLog(): string {
+  return serverOutput.join('')
+}
+
+/// Waits for a line the server has not necessarily written yet: the response
+/// reaches the browser before the log is flushed here.
+async function waitForServerLog(pattern: RegExp, timeoutMs = 10_000) {
+  for (let waited = 0; waited < timeoutMs; waited += 200) {
+    if (pattern.test(serverLog())) return
+    await Bun.sleep(200)
+  }
+  throw new Error(`the server never logged ${pattern}`)
+}
 let browser: Browser | undefined
 let page: Page | undefined
 let pintailDataDir = ''
@@ -248,8 +272,12 @@ async function main() {
       },
     },
   )
-  pintailStdout = new Response(pintailProcess.stdout).text()
-  pintailStderr = new Response(pintailProcess.stderr).text()
+  // Drained incrementally rather than awaited as one promise at exit: the
+  // server's own log is evidence a check needs *during* the run. A refusal
+  // that reaches the browser as a generic message is only diagnosable from
+  // the line the server wrote, so a check has to be able to read it.
+  void drainInto(pintailProcess.stdout as ReadableStream<Uint8Array>)
+  void drainInto(pintailProcess.stderr as ReadableStream<Uint8Array>)
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await fetch(`${pintailUrl}/health`)
@@ -395,7 +423,13 @@ async function main() {
       emailVerified: true,
     })
     try {
-      await visitor.getByText('has not been invited').waitFor({ timeout: 30_000 })
+      await visitor.getByText(/has not been invited/).waitFor({ timeout: 30_000 })
+      // The browser is told only that it was refused. Which address was
+      // refused - the thing that actually resolves the report - exists solely
+      // in the server log, so assert it is there and names the account.
+      await waitForServerLog(
+        new RegExp(`oauth refused ${GOOGLE_STRANGER_EMAIL}: no invite exists`),
+      )
     } finally {
       await context.close()
     }
@@ -411,6 +445,7 @@ async function main() {
     })
     try {
       await visitor.getByText('then link Google from Settings').waitFor({ timeout: 30_000 })
+      await waitForServerLog(new RegExp(`oauth refused ${OPERATOR.email}: an account already exists`))
     } finally {
       await context.close()
     }
@@ -442,11 +477,7 @@ async function cleanup() {
   pintailProcess?.kill()
   await pintailProcess?.exited.catch(() => {})
   if (process.exitCode) {
-    const [stdout, stderr] = await Promise.all([
-      pintailStdout ?? Promise.resolve(''),
-      pintailStderr ?? Promise.resolve(''),
-    ])
-    const captured = redactBootSecrets(`${stdout}${stderr}`).trim()
+    const captured = redactBootSecrets(serverLog()).trim()
     if (captured) console.error(captured)
   }
   if (pintailDataDir) rmSync(pintailDataDir, { recursive: true, force: true })

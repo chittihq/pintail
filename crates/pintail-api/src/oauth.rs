@@ -597,6 +597,9 @@ fn login_google_user(
         .map_err(ApiError::internal)?
         .is_some()
     {
+        pintail_log::log_error!(
+            "oauth refused {email}: an account already exists for it without a linked Google identity"
+        );
         return Err(ApiError::conflict(
             "an account with this email already exists; sign in with its existing method and link Google explicitly",
         ));
@@ -604,16 +607,51 @@ fn login_google_user(
 
     // Brand new identity: only admissible through a pending, unexpired
     // invite for this exact email.
-    let invite = metadata
+    let candidates = metadata
         .invites_by_email(email)
-        .map_err(ApiError::internal)?
-        .into_iter()
+        .map_err(ApiError::internal)?;
+    let invite = candidates
+        .iter()
         .find(|invite| {
             invite.accepted_at.is_none()
                 && invite.revoked_at.is_none()
                 && !is_expired(&invite.expires_at)
         })
         .ok_or_else(|| {
+            // Which of the four reasons it was matters enormously and is
+            // invisible from the browser, where all four render as "not
+            // invited". The common one is an address mismatch: the invite is
+            // bound to an exact email, Google asks the visitor which account
+            // to use, and a near-miss - a different domain, a personal
+            // account - looks identical to never having been invited.
+            //
+            // The address is logged because without it this is undiagnosable
+            // after the fact. It is already recorded in the audit trail on the
+            // paths that succeed, so this reveals nothing new about a user.
+            if candidates.is_empty() {
+                pintail_log::log_error!(
+                    "oauth refused {email}: no invite exists for this address; \
+                     it may differ from the address the invite was sent to"
+                );
+            } else {
+                let spent = candidates
+                    .iter()
+                    .map(|invite| {
+                        if invite.accepted_at.is_some() {
+                            "accepted"
+                        } else if invite.revoked_at.is_some() {
+                            "revoked"
+                        } else {
+                            "expired"
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                pintail_log::log_error!(
+                    "oauth refused {email}: {} invite(s) exist but none are claimable ({spent})",
+                    candidates.len()
+                );
+            }
             ApiError::forbidden("this Google account has not been invited to a workspace")
         })?;
 

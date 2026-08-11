@@ -58,7 +58,12 @@ const authForm = reactive({ email: '', password: '' })
 const googleEnabled = ref(false)
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
-  not_invited: 'That Google account has not been invited to a workspace.',
+  // Names the likeliest cause rather than only the verdict. An invite is bound
+  // to one exact address, and Google asks which account to continue with, so
+  // the common failure is choosing a different one - a personal account, or
+  // the same name on another domain - which is indistinguishable from never
+  // having been invited unless the message says so.
+  not_invited: 'That Google account has not been invited. Check you chose the exact address the invite was sent to — a different account or domain will be refused.',
   invalid_request: 'The sign-in attempt was invalid or expired. Try again.',
   account_disabled: 'This account is disabled.',
   link_required: 'Sign in with your existing method, then link Google from Settings.',

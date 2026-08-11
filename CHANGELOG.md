@@ -4,6 +4,24 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- A refused Google sign-in names the address it refused, in the server log.
+  Four different situations reach the browser as the single message "not
+  invited" — no invite for that address at all, or one that is already
+  accepted, revoked or expired — and none of them said which address Google
+  had returned, so a report of "the invite does not work" could not be
+  resolved without guessing. The log now distinguishes the four and records
+  the address; the case where an account already exists without a linked
+  Google identity is logged the same way. The browser message additionally
+  points at the likeliest cause, that the account chosen at the Google consent
+  screen is not the one the invite was addressed to.
+- The sign-in gate reads the server's log while the run is in progress, so the
+  two refusal checks assert the diagnostic line exists and names the account
+  rather than only that the browser was refused.
+
 ## [0.0.1-rc9] - 2026-08-11
 
 ### Fixed
