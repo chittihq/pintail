@@ -518,7 +518,7 @@ async function main() {
       // refused - the thing that actually resolves the report - exists solely
       // in the server log, so assert it is there and names the account.
       await waitForServerLog(
-        new RegExp(`oauth refused ${GOOGLE_STRANGER_EMAIL}: no invite exists`),
+        /oauth refused an address at pintail.local: no invite exists/,
       )
     } finally {
       await context.close()

@@ -536,13 +536,15 @@ pub(crate) async fn callback(
             }
         },
         Err(error) => {
-            let code = match error.status() {
+            // The refusal names itself where it can. Falling back to the
+            // status alone collapsed distinct outcomes onto one message.
+            let code = error.auth_code().unwrap_or(match error.status() {
                 StatusCode::FORBIDDEN => "not_invited",
                 StatusCode::BAD_REQUEST => "invalid_request",
                 StatusCode::UNAUTHORIZED => "account_disabled",
                 StatusCode::CONFLICT => "link_required",
                 _ => "sign_in_failed",
-            };
+            });
             // The reason travels with it. "not_invited" names the policy that
             // refused; the message says which check inside it did.
             pintail_log::log_error!("oauth callback rejected={code} reason={error}");
@@ -689,36 +691,47 @@ fn unambiguous_invite_for(
             .into_iter()
             .nth(claimable[0])
             .expect("the claimable position was just read from this list")),
-        0 => {
-            // Which of the four reasons it was matters enormously and is
-            // invisible from the browser, where they all render the same.
-            if candidates.is_empty() {
-                pintail_log::log_error!(
-                    "oauth refused {email}: no invite exists for this address; \
-                     it may differ from the address the invite was sent to"
-                );
-            } else {
-                let spent = candidates
-                    .iter()
-                    .map(|invite| {
-                        if invite.accepted_at.is_some() {
-                            "accepted"
-                        } else if invite.revoked_at.is_some() {
-                            "revoked"
-                        } else {
-                            "expired"
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                pintail_log::log_error!(
-                    "oauth refused {email}: {} invite(s) exist but none are claimable ({spent})",
-                    candidates.len()
-                );
-            }
+        0 if candidates.is_empty() => {
+            // Nothing here has any relationship to Pintail: no account, no
+            // invite, nobody who asked for them. Logging the full address
+            // would collect the mailbox of anyone who merely pressed the
+            // button, so only the domain is kept - enough to spot a whole
+            // organization pointed at the wrong node.
+            let domain = email.rsplit('@').next().unwrap_or("unknown");
+            pintail_log::log_error!(
+                "oauth refused an address at {domain}: no invite exists for it; \
+                 it may differ from the address the invite was sent to"
+            );
             Err(ApiError::forbidden(
                 "this Google account has not been invited to a workspace",
             ))
+        }
+        0 => {
+            // Invites exist, so this address is already known here and naming
+            // it costs nothing that the audit trail does not already record.
+            // Which state they are in is the whole answer to "my invite does
+            // not work", and it was previously visible nowhere at all.
+            let spent = candidates
+                .iter()
+                .map(|invite| {
+                    if invite.accepted_at.is_some() {
+                        "accepted"
+                    } else if invite.revoked_at.is_some() {
+                        "revoked"
+                    } else {
+                        "expired"
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            pintail_log::log_error!(
+                "oauth refused {email}: {} invite(s) exist but none are claimable ({spent})",
+                candidates.len()
+            );
+            Err(
+                ApiError::forbidden(format!("every invite for this address is {spent}"))
+                    .with_auth_code("invite_unusable"),
+            )
         }
         open => {
             pintail_log::log_error!(
@@ -726,7 +739,7 @@ fn unambiguous_invite_for(
             );
             Err(ApiError::forbidden(
                 "several invites are open for this address; open the invite link you were sent so the right one is used",
-            ))
+            ).with_auth_code("invite_ambiguous"))
         }
     }
 }

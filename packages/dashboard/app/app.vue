@@ -64,6 +64,12 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   // the same name on another domain - which is indistinguishable from never
   // having been invited unless the message says so.
   not_invited: 'That Google account has not been invited. Check you chose the exact address the invite was sent to — a different account or domain will be refused.',
+  // These three used to arrive as "not invited" too, which is actively
+  // misleading: the invite exists, the recipient can often see it, and each
+  // one needs a different action from them.
+  invite_unusable: 'Your invite is no longer usable — it has already been accepted, revoked, or has expired. Ask an admin to send a new one.',
+  invite_ambiguous: 'More than one invite is open for that address. Open the invite link you were sent so the right workspace is used.',
+  no_workspace: 'Your account is not in any workspace yet. Open the invite link you were sent, rather than signing in from this page.',
   invalid_request: 'The sign-in attempt was invalid or expired. Try again.',
   account_disabled: 'This account is disabled.',
   link_required: 'Sign in with your existing method, then link Google from Settings.',

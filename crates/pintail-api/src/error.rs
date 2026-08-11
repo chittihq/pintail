@@ -10,6 +10,16 @@ use serde::Serialize;
 pub(crate) struct ApiError {
     status: StatusCode,
     message: String,
+    /// A short, stable name for *which* refusal this is.
+    ///
+    /// The Google callback answers every outcome with the same 303, carrying
+    /// only a code in the URL, so without this the browser had to infer the
+    /// reason from the HTTP status. Several very different refusals share a
+    /// status - a spent invite, a revoked one, an account belonging to no
+    /// workspace - and all rendered as "you were not invited", which is
+    /// actively misleading when the invite exists and the user is looking
+    /// right at it.
+    auth_code: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -54,10 +64,21 @@ impl ApiError {
         self.status
     }
 
+    /// Names this refusal for the sign-in redirect.
+    pub(crate) const fn with_auth_code(mut self, code: &'static str) -> Self {
+        self.auth_code = Some(code);
+        self
+    }
+
+    pub(crate) const fn auth_code(&self) -> Option<&'static str> {
+        self.auth_code
+    }
+
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status,
             message: message.into(),
+            auth_code: None,
         }
     }
 }

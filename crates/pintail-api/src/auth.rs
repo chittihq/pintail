@@ -262,10 +262,13 @@ pub(crate) fn default_workspace_for_user(
     let memberships = metadata
         .workspaces_for_user(user_id)
         .map_err(ApiError::internal)?;
-    let (workspace, role) = memberships
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::forbidden("this account does not belong to a workspace yet"))?;
+    let (workspace, role) = memberships.into_iter().next().ok_or_else(|| {
+        // Named, because this is not "you were not invited" - it is "your
+        // account exists and belongs to nothing", which reads identically
+        // to the user while needing the opposite action from them.
+        ApiError::forbidden("this account does not belong to a workspace yet")
+            .with_auth_code("no_workspace")
+    })?;
     Ok((workspace.id, role))
 }
 
