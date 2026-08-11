@@ -124,3 +124,23 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     offset exploration tax against periodic probing in the single-reversal trace.
   - [x] **e79-echolocation-plans** — rejected: triggered probes are safe but improve
     uncertain plans by only 13-22%, below the 25% gate.
+  - [x] **e41-synaptic-cache** — rejected: graph reinforcement loses to
+    GreedyDual-size while doing more bookkeeping.
+  - [ ] **e48-flocking-reads** — simulation passes on both targets (94-97% fewer
+    overlapping reads and 29% lower modeled median); real cold-file trial required.
+  - [ ] **e51-mycelial-blocks** — simulation passes on both targets (27% less decode
+    work and 17% lower p95 than LRU); real decoded PTSEG exchange required.
+  - [x] **e65-predator-cache** — rejected: it fails to beat ARC by 15% consistently
+    and the modeled class populations oscillate beyond the gate.
+  - [x] **e66-cache-niches** — rejected: adaptive borders range from -8% to +5.5%
+    against global GreedyDual, far below the 20% gate.
+  - [x] **e70-forest-gap-auction** — rejected: spill falls 24-52% but makespan only
+    4-11%, auction overhead is excessive, and starvation is weakly bounded.
+  - [x] **e71-dormant-indexes** — rejected: multi-cue germination saves memory and
+    rebuild work but leaves seasonal p95 on the unindexed path.
+  - [x] **e72-seasonal-columns** — rejected: the detector never migrates the periodic
+    columns and loses badly to recency.
+  - [ ] **e73-symbiotic-intermediates** — simulation passes on both targets at one
+    shared 12-entry cap; real immutable/versioned intermediate trial required.
+  - [x] **e74-fire-cache-reset** — rejected: LRU recovers before the prolonged-low-hit
+    detector fires, so controlled reset provides no gain.

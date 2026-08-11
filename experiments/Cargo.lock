@@ -277,6 +277,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e41-synaptic-cache"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e43-lateral-predicates"
 version = "0.1.0"
 dependencies = [
@@ -298,7 +305,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "e48-flocking-reads"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e50-maintenance-ventilation"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e51-mycelial-blocks"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -333,7 +354,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "e65-predator-cache"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e66-cache-niches"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e68-biodiversity-reserve"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e70-forest-gap-auction"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e71-dormant-indexes"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e72-seasonal-columns"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e73-symbiotic-intermediates"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e74-fire-cache-reset"
 version = "0.1.0"
 dependencies = [
  "common",

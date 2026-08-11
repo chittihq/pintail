@@ -1621,3 +1621,108 @@ than periodic probing. It therefore misses the required 30% regret reduction.
 avoid control regressions and remove most wrong choices, but the uncertain
 workloads improve only 13-22%, below the 25% gate. The mechanism is a useful
 near miss, not validated optimizer policy.
+
+## 2026-08-12 biomimetic program — Wave 4
+
+Wave 4 executed ten cache-and-sharing experiments. Every policy consumed the
+same deterministic logical request stream and checksum. e48, e51, and e73
+survived simulation and reproduced on pinned Linux; seven mechanisms failed.
+
+### e41 — Synaptic plan-cache pruning
+
+Graph reinforcement saves 4.076-4.078M work units, slightly less than
+GreedyDual-size's 4.082-4.085M, while performing roughly 28% more maintenance
+operations. Both obey the 120-byte model cap.
+
+**Verdict: reject.** It misses the 20% value-density gate and loses to the
+simpler size-aware policy before real graph bookkeeping is charged.
+
+### e48 — Flocking read coalescence
+
+| Trace | Independent calls / median | Bounded flocking | Call delta / median delta |
+|---|---:|---:|---:|
+| identical | 16,384 / 5,120 | **512 / 3,608** | -96.9% / -29.5% |
+| overlapping | 10,240 / 3,200 | **568 / 2,264** | -94.5% / -29.3% |
+| diverging | 8,192 / 2,560 | 8,192 / 2,563 | tie / +0.1% |
+| short | 256 / 80 | 256 / 83 | tie / +3.8% |
+
+**Verdict: simulation gate passes; file-system claim remains unvalidated.** It
+clears sharing, latency, and hostile-trace gates on both targets, unlike global
+cooperative scanning, whose diverging p95 rises 31.8x. Advance to concurrent
+cold-file PTSEG reads with actual prefetch and cancellation.
+
+### e51 — Mycelial decoded-block exchange
+
+At a 96-unit cap, source/sink retention reduces decode work from LRU's 4.49M to
+3.26-3.27M (27%) and p95 from 319 to 264 (17%). Phase recovery occurs on the
+first post-shift hit. Linux reproduces all modeled counts.
+
+**Verdict: simulation gate passes; real decode CPU remains unvalidated.** The
+model has immutable blocks only and never shares WAL/mutable state. Advance to
+real projected PTSEG blocks and charge publication, lookup, and transfer.
+
+### e65 — Predator-prey cache control
+
+The candidate ties all policies on tight loops, beats the ARC-like control on a
+one-pass scan, improves burst saved value only 1.6%, and loses 3.9% to LRU after
+a phase change. Population amplitude reaches 13-15 entries in changing traces.
+
+**Verdict: reject.** It neither beats the strongest control by 15% consistently
+nor keeps oscillation below 10% of the 30-entry capacity.
+
+### e66 — Ecological cache niches
+
+Adaptive niches differ from global GreedyDual by +0.2% on mixed work, -8.3% on
+ETL, and +5.5% on ad-hoc work, with 3-4x higher measured loop time.
+
+**Verdict: reject.** Dynamic class borders do not clear the 20% saved-work gate;
+global value competition already expresses the useful marginal signal.
+
+### e70 — Forest-gap memory auctions
+
+Against equal redistribution, auctions lower spill 32%, 24%, and 52% across the
+three traces, but makespan falls only 11%, 4%, and 7%. Maximum waiting age reaches
+593 epochs and the bid loop is slower than the 0.5% budget permits.
+
+**Verdict: reject.** Exact marginal bids optimize spill but fail the makespan,
+overhead, and bounded-starvation conjunction.
+
+### e71 — Dormant auxiliary indexes
+
+Multi-cue seeds halve seasonal memory-area versus retain-hot and avoid false
+germination, but seasonal p95 remains 310 versus 12 for an awake index. It does
+not awaken early enough to meet the query SLO.
+
+**Verdict: reject.** The three-cue conjunction is too conservative; cheap
+dormancy is useful, but the transferred germination rule is not.
+
+### e72 — Seasonal decoded-column migration
+
+The seasonal detector performs no migrations on periodic or drifting traces,
+costing 1.41-1.50M versus recency's 0.27-0.28M. Random access remains safe, but
+that guardrail cannot compensate for failure on the target workload.
+
+**Verdict: reject decisively.** Repetition inside each season looks like short
+recency, not a periodic arrival, so the chosen seasonal statistic is wrong.
+
+### e73 — Host–microbiome intermediate exchange
+
+Result and intermediate entries share one 12-entry cap (six each for donation
+policies). Symbiotic admission raises saved work from result caching's 5.55M to
+12.56M on related dashboards, 1.41M to 3.55M on one-offs, and 4.04M to 9.51M
+across CDC versions. Producer work on the adversarial trace is 0.58% of total.
+Version keys prevent stale reuse; 78 old intermediates are invalidated, not read.
+Linux reproduces every work and lineage count.
+
+**Verdict: simulation gate passes; real intermediate costs remain unvalidated.**
+Advance to immutable aggregate/filter intermediates with PTSEG snapshot lineage
+and measured materialization cost. Do not expose cross-query sharing yet.
+
+### e74 — Fire-ecology cache reset
+
+LRU, TTL, flush detection, and partial-reset detection have identical miss cost
+and 669-request recovery on abrupt and gradual shifts. Neither reset fires: LRU
+turns the 32-entry working set over before low productivity persists long enough.
+
+**Verdict: reject.** The trigger correctly avoids false alarms but cannot recover
+30% faster than a capacity-sized LRU churn that has already completed.
