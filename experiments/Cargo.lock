@@ -221,6 +221,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e30-physarum-access"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e31-ant-join-paths"
 version = "0.1.0"
 dependencies = [
@@ -256,6 +263,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e36-negative-selection"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e37-immune-plan-memory"
 version = "0.1.0"
 dependencies = [
@@ -270,6 +284,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e39-granule-quarantine"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e40-hippocampal-replay"
 version = "0.1.0"
 dependencies = [
@@ -278,6 +299,13 @@ dependencies = [
 
 [[package]]
 name = "e41-synaptic-cache"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e42-predictive-columns"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -326,6 +354,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "e53-coral-views"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e54-ant-tombstones"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e55-stomatal-prefetch"
 version = "0.1.0"
 dependencies = [
@@ -362,6 +404,13 @@ dependencies = [
 
 [[package]]
 name = "e66-cache-niches"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e67-segment-succession"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -410,7 +459,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "e75-parity-regeneration"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e76-hierarchical-reconcile"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e77-retinal-granules"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e78-receptor-blooms"
 version = "0.1.0"
 dependencies = [
  "common",

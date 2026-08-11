@@ -1726,3 +1726,44 @@ turns the 32-entry working set over before low productivity persists long enough
 
 **Verdict: reject.** The trigger correctly avoids false alarms but cannot recover
 30% faster than a capacity-sized LRU churn that has already completed.
+
+## 2026-08-12 biomimetic program — Wave 5
+
+Wave 5 executed ten storage and integrity screens. e30, e39, e53, and e76
+advance conditionally and reproduce on Linux; six ideas are rejected.
+
+- **e30 Physarum bundles — conditional pass.** Flow+decay cuts modeled bytes
+  from 6.00M to 3.31M, keeps storage at +7%, charges 9,440 rewrite units, and
+  recovers in six queries. Frequency bundling ties it on stable/shifted traces,
+  so the real trial must justify adaptation on cold PTSEG files.
+- **e36 negative selection — reject.** All three detectors achieve 99% recall
+  and zero false quarantine because the exact invariant veto dominates. The
+  ensemble adds no value over fixed thresholds; ingest overhead is not earned.
+- **e39 quarantine membranes — simulation pass.** All 1,323 overlapping queries
+  fail loudly, unaffected availability is 100%, and verification falls from
+  5.12M to 149,672 units (97.1%). Real persisted corruption semantics remain.
+- **e42 predictive coding — reject.** Linear and product predictors do not shrink;
+  seasonal residuals save only 11.8%; reconstruction is exact but slower; random
+  data correctly falls back without expansion.
+- **e53 coral partials — conditional pass.** Charged work is 4.09M versus 200M
+  for clean scans and 20.08M versus 200M at 10% dirty overlap, with 4% modeled
+  storage. The simulator does not validate actual snapshot lineage or aggregates.
+- **e54 tombstone trails — reject.** Evaporation helps neither hotspot conjunction:
+  moving/scattered reads rise roughly 42-44% versus size-tier and write reduction
+  is only 14-15%. Append-only remains neutral.
+- **e67 succession — reject.** The state machine makes 1,714-4,810 transitions on
+  read/update traces and loses to heat-only tiers. The transferred lifecycle is
+  unstable even before real format-transition cost.
+- **e75 parity regeneration — reject.** XOR reconstructs a single 64 KiB loss
+  bit-exactly, fails closed on two losses, costs 6.67% storage, and adds about 5%
+  kernel time. But reading its 15-block stripe plus parity is 1.07x a modeled
+  15-block restore, nowhere near the required 10x recovery-byte win.
+- **e76 hierarchical reconciliation — conditional pass.** Exact sparse, clustered,
+  and dense difference sets match. Sparse transfer is 4,096 rows versus 131,072
+  for a full scan (32x); it equals flat 128-row chunks at every density. An initial
+  XOR-like digest silently cancelled periodic differences and was rejected by the
+  exact assertion; the replacement is order-sensitive, but a production digest
+  and persisted-tree overhead still need validation.
+- **e78 receptor Bloom ensemble — reject.** At equal bits and build probes, one PK
+  Bloom produces 8,972 false reads, the ensemble 9,221, and partitioned filters
+  29,564. All have zero false negatives; specialization does not beat one filter.

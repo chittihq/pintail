@@ -5,14 +5,18 @@ RUN cargo build --release \
     -p e32-bone-index \
     -p e33-leaf-venation \
     -p e34-root-index \
+    -p e30-physarum-access \
     -p e35-clonal-kernels \
+    -p e39-granule-quarantine \
     -p e43-lateral-predicates \
     -p e48-flocking-reads \
     -p e51-mycelial-blocks \
+    -p e53-coral-views \
     -p e57-atp-plans \
     -p e59-endocrine-spill \
     -p e63-glycogen-reserve \
     -p e73-symbiotic-intermediates \
+    -p e76-hierarchical-reconcile \
     -p e77-retinal-granules
 
 FROM debian:bookworm-slim
@@ -20,14 +24,18 @@ COPY --from=build \
     /lab/target/release/e32-bone-index \
     /lab/target/release/e33-leaf-venation \
     /lab/target/release/e34-root-index \
+    /lab/target/release/e30-physarum-access \
     /lab/target/release/e35-clonal-kernels \
+    /lab/target/release/e39-granule-quarantine \
     /lab/target/release/e43-lateral-predicates \
     /lab/target/release/e48-flocking-reads \
     /lab/target/release/e51-mycelial-blocks \
+    /lab/target/release/e53-coral-views \
     /lab/target/release/e57-atp-plans \
     /lab/target/release/e59-endocrine-spill \
     /lab/target/release/e63-glycogen-reserve \
     /lab/target/release/e73-symbiotic-intermediates \
+    /lab/target/release/e76-hierarchical-reconcile \
     /lab/target/release/e77-retinal-granules \
     /usr/local/bin/
 CMD ["/bin/sh", "-c", "for e in e32-bone-index e33-leaf-venation e34-root-index e43-lateral-predicates e77-retinal-granules; do $e; done"]

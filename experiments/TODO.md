@@ -144,3 +144,23 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     shared 12-entry cap; real immutable/versioned intermediate trial required.
   - [x] **e74-fire-cache-reset** — rejected: LRU recovers before the prolonged-low-hit
     detector fires, so controlled reset provides no gain.
+  - [ ] **e30-physarum-access** — simulation passes on both targets; real cold PTSEG
+    bundle/rewrite measurements required.
+  - [x] **e36-negative-selection** — rejected: it exactly matches fixed thresholds and
+    adds no measurable detection value.
+  - [ ] **e39-granule-quarantine** — simulation passes on both targets; real corruption
+    injection and persisted interval tests required.
+  - [x] **e42-predictive-columns** — rejected: only one shape shrinks (11.8%) and decode
+    is slower, missing both correlated-shape gates.
+  - [ ] **e53-coral-views** — conditional simulation passes; real lineage-aware aggregate
+    partials and invalidation costs required.
+  - [x] **e54-ant-tombstones** — rejected: evaporation increases moving/scattered read
+    work and fails the write-amplification margin.
+  - [x] **e67-segment-succession** — rejected: heat-only tiers dominate and the state
+    machine makes thousands of needless transitions.
+  - [x] **e75-parity-regeneration** — rejected: XOR repairs exactly within 8% storage,
+    but a small stripe reads more bytes than the modeled segment restore.
+  - [ ] **e76-hierarchical-reconcile** — conditional kernel pass: exact sparse transfer
+    is 32x below full scan and equal to flat chunks; persisted polling cost is unvalidated.
+  - [x] **e78-receptor-blooms** — rejected: the ensemble has 2.8% more false reads than
+    one PK Bloom at equal bits, while partitioning is 3.3x worse.
