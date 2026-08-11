@@ -8,6 +8,7 @@ mod controls;
 mod databases;
 mod error;
 mod events;
+mod vitals;
 mod invites;
 mod keys;
 mod metrics;
@@ -180,6 +181,7 @@ pub fn router_with_state(state: ApiState) -> Router {
             axum::routing::patch(patch_api_key).delete(delete_api_key),
         )
         .route("/events", get(sse))
+        .route("/vitals", get(crate::vitals::stream))
         .route("/ws", get(websocket))
         .route("/activity", get(activity))
         .route("/dlq", get(dead_letters))
