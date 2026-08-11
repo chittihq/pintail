@@ -108,7 +108,7 @@ function signOut() {
                   <span class="bg-primary text-primary-foreground grid size-7 shrink-0 place-items-center font-mono text-xs font-extrabold">PT</span>
                   <div class="grid flex-1 text-left text-sm leading-tight">
                     <span class="truncate text-base font-extrabold tracking-tight">Pintail</span>
-                    <span class="text-sidebar-foreground/60 truncate text-xs">{{ currentWorkspace?.name || 'Choose a workspace' }}</span>
+                    <span class="text-sidebar-foreground/60 truncate text-sm">{{ currentWorkspace?.name || 'Choose a workspace' }}</span>
                   </div>
                   <ChevronsUpDown class="ml-auto size-4" />
                 </SidebarMenuButton>
@@ -169,7 +169,7 @@ function signOut() {
                       <span class="size-2 shrink-0 rounded-full" :class="error ? 'bg-destructive' : 'bg-green'" />
                       {{ error ? 'Attention' : 'Node healthy' }}
                     </span>
-                    <span class="text-sidebar-foreground/60 truncate text-xs">{{ session.subject }}</span>
+                    <span class="text-sidebar-foreground/60 truncate text-sm">{{ session.subject }}</span>
                   </div>
                   <ChevronsUpDown class="ml-auto size-4" />
                 </SidebarMenuButton>

@@ -196,7 +196,7 @@ async function submitAuth() {
 <template>
   <Toaster position="top-right" />
 
-  <div v-if="booting" class="text-muted-foreground flex min-h-svh items-center justify-center gap-3 font-mono text-xs tracking-wide uppercase" aria-live="polite">
+  <div v-if="booting" class="text-muted-foreground flex min-h-svh items-center justify-center gap-3 font-mono text-sm tracking-wide uppercase" aria-live="polite">
     <div class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-xs font-extrabold">PT</div>
     <LoaderCircle class="animate-spin" :size="20" />
     <span>Opening control plane</span>
@@ -224,11 +224,11 @@ async function submitAuth() {
                 </p>
               </div>
               <div class="grid gap-1.5">
-                <Label for="auth-email">Email</Label>
-                <Input id="auth-email" v-model="authForm.email" type="email" autocomplete="email" required placeholder="operator@example.com" />
+                <Label for="auth-email" class="text-sm">Email</Label>
+                <Input id="auth-email" v-model="authForm.email" type="email" autocomplete="email" required placeholder="operator@example.com" class="text-sm placeholder:text-sm" />
               </div>
               <div class="grid gap-1.5">
-                <Label for="auth-password">Password</Label>
+                <Label for="auth-password" class="text-sm">Password</Label>
                 <Input
                   id="auth-password"
                   v-model="authForm.password"
@@ -237,22 +237,23 @@ async function submitAuth() {
                   minlength="12"
                   required
                   placeholder="At least 12 characters"
+                  class="text-sm placeholder:text-sm"
                 />
               </div>
-              <p v-if="error" class="text-destructive text-sm">{{ error }}</p>
-              <Button type="submit" class="w-full" :disabled="authenticating">
+              <p v-if="error" class="text-destructive text-base">{{ error }}</p>
+              <Button type="submit" class="w-full text-sm" :disabled="authenticating">
                 <LoaderCircle v-if="authenticating" class="animate-spin" />
                 {{ authMode === 'setup' ? 'Initialize Pintail' : 'Sign in' }}
                 <ArrowRight v-if="!authenticating" />
               </Button>
               <template v-if="googleEnabled && authMode === 'login'">
-                <div class="relative text-center text-xs after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t"><span class="bg-card text-muted-foreground relative z-10 px-2">or</span></div>
-                <Button type="button" variant="outline" class="w-full" @click="signInWithGoogle">
+                <div class="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t"><span class="bg-card text-muted-foreground relative z-10 px-2">or</span></div>
+                <Button type="button" variant="outline" class="w-full text-sm" @click="signInWithGoogle">
                   <svg viewBox="0 0 24 24" class="size-4"><path fill="#4285F4" d="M23.5 12.27c0-.82-.07-1.6-.2-2.36H12v4.47h6.47c-.28 1.5-1.13 2.77-2.4 3.62v3h3.87c2.27-2.09 3.56-5.17 3.56-8.73Z"/><path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.9l-3.87-3c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.27v3.1C3.24 21.3 7.3 24 12 24Z"/><path fill="#FBBC05" d="M5.27 14.29a7.2 7.2 0 0 1 0-4.58v-3.1H1.27a12 12 0 0 0 0 10.78l4-3.1Z"/><path fill="#EA4335" d="M12 4.75c1.76 0 3.34.6 4.58 1.79l3.44-3.44C17.95 1.19 15.24 0 12 0 7.3 0 3.24 2.7 1.27 6.61l4 3.1C6.22 6.86 8.87 4.75 12 4.75Z"/></svg>
                   Continue with Google
                 </Button>
               </template>
-              <p class="text-muted-foreground text-center text-xs">Credentials stay on this Pintail node · Argon2id protected</p>
+              <p class="text-muted-foreground text-center text-sm">Credentials stay on this Pintail node · Argon2id protected</p>
             </div>
           </form>
           <aside class="relative hidden min-h-[22rem] place-items-center overflow-hidden bg-neutral-950 text-neutral-300 md:grid" aria-hidden="true">
@@ -264,7 +265,7 @@ async function submitAuth() {
                 :class="{ 'border-neutral-100 bg-neutral-100': [7, 14, 21, 22].includes(index) }"
               />
             </div>
-            <div class="absolute bottom-8 left-8 flex items-center gap-3 font-mono text-xs tracking-wide">
+            <div class="absolute bottom-8 left-8 flex items-center gap-3 font-mono text-sm tracking-wide">
               <Radio :size="18" />
               <span>Source events become durable analytical blocks.</span>
             </div>
