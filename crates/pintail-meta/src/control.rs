@@ -697,49 +697,76 @@ impl MetaStore {
                 ),
             )
             .context("failed to add workspace member")?;
-        // A compare-and-set, not a best-effort update. The predicates that
-        // authorize this admission are re-checked here, inside the
-        // transaction, because the caller read them before it began: between
-        // that read and this write the invite can be revoked or accepted by
-        // someone else.
-        //
-        // Requiring exactly one affected row is the point. An earlier version
-        // guarded only on `accepted_at IS NULL` and ignored the count, so a
-        // missing or already-consumed invite updated nothing while the user
-        // and the membership committed anyway - admitting an account against
-        // an invite that no longer authorized it.
-        let claimed = transaction
-            .execute(
-                "UPDATE invites SET accepted_at = ?2 \
-                 WHERE id = ?1 \
-                   AND accepted_at IS NULL \
-                   AND revoked_at IS NULL \
-                   AND email = ?3 COLLATE NOCASE \
-                   AND workspace_id = ?4 \
-                   AND role = ?5",
-                (
-                    admission.invite_id,
-                    admission.now,
-                    admission.email,
-                    admission.workspace_id,
-                    admission.role,
-                ),
-            )
-            .context("failed to mark invite accepted")?;
-        if claimed != 1 {
-            bail!(
-                "invite {} was not claimable: it is missing, already accepted, revoked, or no longer matches this email, workspace and role",
-                admission.invite_id
-            );
-        }
+        claim_invite(&transaction, admission)?;
         transaction
             .commit()
             .context("failed to commit Google admission")?;
         Ok(())
     }
 
+    /// Admits an identity that already has a user row into the workspace its
+    /// invite names, consuming that invite in the same transaction.
+    ///
+    /// The sign-in path resolves an existing Google identity by subject and
+    /// returns immediately, so before this existed an invite could not reach
+    /// anyone who already had an account. Two very different people land in
+    /// that state: someone left with no membership at all by the pre-atomic
+    /// admission, for whom every later sign-in was refused for belonging to no
+    /// workspace and no fresh invite could help; and an ordinary member being
+    /// invited into a second workspace, whose invite simply stayed pending
+    /// forever while they signed into their existing one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid role or a storage failure, including an
+    /// invite that is no longer claimable. The transaction is rolled back on
+    /// any of them.
+    pub fn admit_existing_user_via_invite(&self, admission: &GoogleAdmission<'_>) -> Result<()> {
+        validate_role(admission.role)?;
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin invite admission")?;
+        transaction
+            .execute(
+                "INSERT INTO workspace_members (workspace_id, user_id, role, created_at) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role",
+                (
+                    admission.workspace_id,
+                    admission.user_id,
+                    admission.role,
+                    admission.now,
+                ),
+            )
+            .context("failed to add workspace member")?;
+        claim_invite(&transaction, admission)?;
+        transaction
+            .commit()
+            .context("failed to commit invite admission")?;
+        Ok(())
+    }
+
+    /// Reads one invite by id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the invite cannot be read or decoded.
+    pub fn invite_by_id(&self, id: &str) -> Result<Option<InviteRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(&format!("{} WHERE id = ?1", invite_select_sql()))
+            .context("failed to prepare invite query")?;
+        statement
+            .query_row([id], decode_invite)
+            .optional()
+            .context("failed to read invite")
+    }
+
     /// Creates a pending invite. The raw token is never stored; only its
     /// hash is, matching how API-key secrets are handled.
+    ///
+    /// (see `claim_invite` below for the shared compare-and-set)
     ///
     /// # Errors
     ///
@@ -1513,6 +1540,49 @@ fn invite_select_sql() -> &'static str {
     "SELECT id, workspace_id, email, role, created_by, created_at, expires_at, \
             accepted_at, revoked_at \
      FROM invites"
+}
+
+/// Consumes an invite as a compare-and-set, inside the caller's transaction.
+///
+/// Not a best-effort update. Every predicate that authorizes the admission is
+/// re-checked here because the caller read them before the transaction began,
+/// and between that read and this write the invite can be revoked or claimed
+/// by someone else.
+///
+/// Requiring exactly one affected row is the point. An earlier version guarded
+/// only on `accepted_at IS NULL` and discarded the count, so a missing or
+/// already-consumed invite updated nothing while the user and the membership
+/// committed anyway - admitting an account against an invite that no longer
+/// authorized it.
+fn claim_invite(
+    transaction: &rusqlite::Transaction<'_>,
+    admission: &GoogleAdmission<'_>,
+) -> Result<()> {
+    let claimed = transaction
+        .execute(
+            "UPDATE invites SET accepted_at = ?2 \
+             WHERE id = ?1 \
+               AND accepted_at IS NULL \
+               AND revoked_at IS NULL \
+               AND email = ?3 COLLATE NOCASE \
+               AND workspace_id = ?4 \
+               AND role = ?5",
+            (
+                admission.invite_id,
+                admission.now,
+                admission.email,
+                admission.workspace_id,
+                admission.role,
+            ),
+        )
+        .context("failed to mark invite accepted")?;
+    if claimed != 1 {
+        bail!(
+            "invite {} was not claimable: it is missing, already accepted, revoked, or no longer matches this email, workspace and role",
+            admission.invite_id
+        );
+    }
+    Ok(())
 }
 
 fn decode_invite(row: &rusqlite::Row<'_>) -> rusqlite::Result<InviteRecord> {

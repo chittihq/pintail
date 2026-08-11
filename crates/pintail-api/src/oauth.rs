@@ -20,6 +20,7 @@ use jsonwebtoken::{
     Algorithm as JwtAlgorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     ApiState, audit,
@@ -226,6 +227,15 @@ struct StateClaims {
     nonce: String,
     intent: StateIntent,
     user_id: Option<String>,
+    /// The invite this sign-in is redeeming, resolved from the token on the
+    /// link the visitor actually opened.
+    ///
+    /// Carried through Google in the signed state so the callback claims that
+    /// exact invite. Without it admission was resolved by searching every
+    /// invite for the address Google returned, which answers a different
+    /// question than "which invite did this person accept".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    invite_id: Option<String>,
     iss: String,
     iat: u64,
     exp: u64,
@@ -242,6 +252,7 @@ fn sign_state(
     state: &ApiState,
     intent: StateIntent,
     user_id: Option<String>,
+    invite_id: Option<String>,
 ) -> Result<(String, String), ApiError> {
     let issued_at = u64::try_from(Utc::now().timestamp()).map_err(ApiError::internal)?;
     let nonce = random_identifier("", 12);
@@ -249,6 +260,7 @@ fn sign_state(
         nonce: nonce.clone(),
         intent,
         user_id,
+        invite_id,
         iss: STATE_ISSUER.to_owned(),
         iat: issued_at,
         exp: issued_at + STATE_LIFETIME_SECS,
@@ -345,13 +357,47 @@ fn authorization_url(config: &GoogleConfig, state_token: &str) -> Result<String,
     Ok(url.into())
 }
 
-pub(crate) async fn start(State(state): State<ApiState>) -> Result<Response, ApiError> {
+#[derive(Deserialize)]
+pub(crate) struct StartQuery {
+    /// The raw invite token from the link the visitor opened, when they
+    /// arrived from one.
+    #[serde(default)]
+    invite: Option<String>,
+}
+
+pub(crate) async fn start(
+    State(state): State<ApiState>,
+    Query(query): Query<StartQuery>,
+) -> Result<Response, ApiError> {
     let config = load_config(&state)?;
     if !config.is_active() {
         return Err(ApiError::conflict("Google sign-in is not configured"));
     }
+    // Resolved here, before leaving for Google, so only an invite id travels
+    // in the state - never the token itself, which is the bearer credential
+    // for the invite and would otherwise pass through Google's URLs and any
+    // logs along the way.
+    //
+    // An unresolvable or unclaimable token is deliberately not an error. The
+    // visitor may be an existing member whose link has already been spent, and
+    // failing here would refuse a sign-in that is about to succeed on its own
+    // merits; the callback refuses anyone who actually needed the invite.
+    let invite_id = query
+        .invite
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .and_then(|token| {
+            let token_hash = Sha256::digest(token.as_bytes());
+            state
+                .metadata()
+                .ok()?
+                .invite_by_token_hash(&token_hash)
+                .ok()?
+                .map(|invite| invite.id)
+        });
     let callback_uri = redirect_uri(&config);
-    let (state_token, browser_nonce) = sign_state(&state, StateIntent::Login, None)?;
+    let (state_token, browser_nonce) = sign_state(&state, StateIntent::Login, None, invite_id)?;
     let authorization_url = authorization_url(&config, &state_token)?;
     let mut response = Redirect::to(&authorization_url).into_response();
     response.headers_mut().insert(
@@ -387,8 +433,12 @@ pub(crate) async fn link_start(
     if !config.is_active() {
         return Err(ApiError::conflict("Google sign-in is not configured"));
     }
-    let (state_token, browser_nonce) =
-        sign_state(&state, StateIntent::Link, Some(principal.subject.clone()))?;
+    let (state_token, browser_nonce) = sign_state(
+        &state,
+        StateIntent::Link,
+        Some(principal.subject.clone()),
+        None,
+    )?;
     let mut response = Json(LinkStartResponse {
         authorization_url: authorization_url(&config, &state_token)?,
     })
@@ -560,7 +610,14 @@ async fn callback_inner(
         });
     }
 
-    login_google_user(state, &metadata, &email, google_subject, &now)
+    login_google_user(
+        state,
+        &metadata,
+        &email,
+        google_subject,
+        &now,
+        state_claims.invite_id.as_deref(),
+    )
 }
 
 struct CallbackSuccess {
@@ -568,66 +625,73 @@ struct CallbackSuccess {
     outcome: &'static str,
 }
 
-fn login_google_user(
-    state: &ApiState,
+fn is_claimable(invite: &pintail_meta::InviteRecord) -> bool {
+    invite.accepted_at.is_none() && invite.revoked_at.is_none() && !is_expired(&invite.expires_at)
+}
+
+/// The invite named by the opened link, when it belongs to this address and
+/// is still usable.
+///
+/// A link that no longer resolves is not fatal here. The visitor may be an
+/// existing member re-opening a spent link, and refusing would break a
+/// sign-in that succeeds on its own merits; whoever actually needed the
+/// invite is refused further down. The email must match because the link is a
+/// bearer token: without this check, anyone who obtained someone else's invite
+/// link could redeem it with their own Google account.
+fn redeemable_invite(
+    metadata: &pintail_meta::MetaStore,
+    invite_id: &str,
+    email: &str,
+) -> Result<Option<pintail_meta::InviteRecord>, ApiError> {
+    let Some(invite) = metadata
+        .invite_by_id(invite_id)
+        .map_err(ApiError::internal)?
+    else {
+        pintail_log::log_error!("oauth invite {invite_id} on the opened link no longer exists");
+        return Ok(None);
+    };
+    if !invite.email.eq_ignore_ascii_case(email) {
+        pintail_log::log_error!(
+            "oauth invite {invite_id} was issued to a different address than the one signing in"
+        );
+        return Ok(None);
+    }
+    if !is_claimable(&invite) {
+        pintail_log::log_error!("oauth invite {invite_id} is spent, revoked or expired");
+        return Ok(None);
+    }
+    Ok(Some(invite))
+}
+
+/// The single claimable invite for an address, for visitors who signed in
+/// from the login page rather than an invite link.
+///
+/// Deliberately refuses when several are open. Selecting the newest across
+/// every workspace let an admin of any workspace on the node aim a newer,
+/// higher-privileged invite at an address and capture whoever followed a
+/// legitimate invite elsewhere - the link opened had no bearing on the
+/// workspace or role granted.
+fn unambiguous_invite_for(
     metadata: &pintail_meta::MetaStore,
     email: &str,
-    google_subject: &str,
-    now: &str,
-) -> Result<CallbackSuccess, ApiError> {
-    if let Some(user) = metadata
-        .user_by_google_subject(google_subject)
-        .map_err(ApiError::internal)?
-    {
-        if !user.enabled {
-            return Err(ApiError::unauthorized("this account is disabled"));
-        }
-        let (workspace_id, role) = default_workspace_for_user(metadata, &user.id)?;
-        metadata
-            .touch_user_login(&user.id, now)
-            .map_err(ApiError::internal)?;
-        return Ok(CallbackSuccess {
-            token: issue_token(state, &user.id, &role, &workspace_id)?,
-            outcome: "signed_in",
-        });
-    }
-
-    if metadata
-        .user_by_email(email)
-        .map_err(ApiError::internal)?
-        .is_some()
-    {
-        pintail_log::log_error!(
-            "oauth refused {email}: an account already exists for it without a linked Google identity"
-        );
-        return Err(ApiError::conflict(
-            "an account with this email already exists; sign in with its existing method and link Google explicitly",
-        ));
-    }
-
-    // Brand new identity: only admissible through a pending, unexpired
-    // invite for this exact email.
+) -> Result<pintail_meta::InviteRecord, ApiError> {
     let candidates = metadata
         .invites_by_email(email)
         .map_err(ApiError::internal)?;
-    let invite = candidates
+    let claimable: Vec<usize> = candidates
         .iter()
-        .find(|invite| {
-            invite.accepted_at.is_none()
-                && invite.revoked_at.is_none()
-                && !is_expired(&invite.expires_at)
-        })
-        .ok_or_else(|| {
+        .enumerate()
+        .filter(|(_, invite)| is_claimable(invite))
+        .map(|(position, _)| position)
+        .collect();
+    match claimable.len() {
+        1 => Ok(candidates
+            .into_iter()
+            .nth(claimable[0])
+            .expect("the claimable position was just read from this list")),
+        0 => {
             // Which of the four reasons it was matters enormously and is
-            // invisible from the browser, where all four render as "not
-            // invited". The common one is an address mismatch: the invite is
-            // bound to an exact email, Google asks the visitor which account
-            // to use, and a near-miss - a different domain, a personal
-            // account - looks identical to never having been invited.
-            //
-            // The address is logged because without it this is undiagnosable
-            // after the fact. It is already recorded in the audit trail on the
-            // paths that succeed, so this reveals nothing new about a user.
+            // invisible from the browser, where they all render the same.
             if candidates.is_empty() {
                 pintail_log::log_error!(
                     "oauth refused {email}: no invite exists for this address; \
@@ -652,8 +716,115 @@ fn login_google_user(
                     candidates.len()
                 );
             }
-            ApiError::forbidden("this Google account has not been invited to a workspace")
-        })?;
+            Err(ApiError::forbidden(
+                "this Google account has not been invited to a workspace",
+            ))
+        }
+        open => {
+            pintail_log::log_error!(
+                "oauth refused {email}: {open} invites are open and the sign-in did not name one"
+            );
+            Err(ApiError::forbidden(
+                "several invites are open for this address; open the invite link you were sent so the right one is used",
+            ))
+        }
+    }
+}
+
+fn login_google_user(
+    state: &ApiState,
+    metadata: &pintail_meta::MetaStore,
+    email: &str,
+    google_subject: &str,
+    now: &str,
+    invite_id: Option<&str>,
+) -> Result<CallbackSuccess, ApiError> {
+    // Resolved once, up front, because both branches below need it: the
+    // invite the visitor actually opened, when it is theirs and still usable.
+    let redeemed = match invite_id {
+        Some(id) => redeemable_invite(metadata, id, email)?,
+        None => None,
+    };
+
+    if let Some(user) = metadata
+        .user_by_google_subject(google_subject)
+        .map_err(ApiError::internal)?
+    {
+        if !user.enabled {
+            return Err(ApiError::unauthorized("this account is disabled"));
+        }
+        // An existing identity arriving through an invite redeems it. Without
+        // this the branch returned here immediately and the invite was never
+        // consulted, which stranded two groups of people: anyone the
+        // pre-atomic admission left with a user row and no membership, who was
+        // then refused for belonging to no workspace and could not be helped
+        // by any number of fresh invites; and any ordinary member invited into
+        // a second workspace, whose invite stayed pending forever while they
+        // signed into their existing one.
+        if let Some(invite) = redeemed {
+            metadata
+                .admit_existing_user_via_invite(&pintail_meta::GoogleAdmission {
+                    user_id: &user.id,
+                    email,
+                    google_subject,
+                    workspace_id: &invite.workspace_id,
+                    invite_id: &invite.id,
+                    role: &invite.role,
+                    now,
+                })
+                .map_err(ApiError::internal)?;
+            metadata
+                .touch_user_login(&user.id, now)
+                .map_err(ApiError::internal)?;
+            let member = AuthPrincipal {
+                subject: user.id.clone(),
+                role: invite.role.clone(),
+                database_id: None,
+                workspace_id: Some(invite.workspace_id.clone()),
+                scopes: vec!["*".to_owned()],
+            };
+            audit::record(
+                state,
+                &member,
+                "invite.accept",
+                Some(("invite", &invite.id)),
+                Some(serde_json::json!({"email": email})),
+            );
+            return Ok(CallbackSuccess {
+                token: issue_token(state, &user.id, &invite.role, &invite.workspace_id)?,
+                outcome: "signed_in",
+            });
+        }
+        let (workspace_id, role) = default_workspace_for_user(metadata, &user.id)?;
+        metadata
+            .touch_user_login(&user.id, now)
+            .map_err(ApiError::internal)?;
+        return Ok(CallbackSuccess {
+            token: issue_token(state, &user.id, &role, &workspace_id)?,
+            outcome: "signed_in",
+        });
+    }
+
+    if metadata
+        .user_by_email(email)
+        .map_err(ApiError::internal)?
+        .is_some()
+    {
+        pintail_log::log_error!(
+            "oauth refused {email}: an account already exists for it without a linked Google identity"
+        );
+        return Err(ApiError::conflict(
+            "an account with this email already exists; sign in with its existing method and link Google explicitly",
+        ));
+    }
+
+    // Brand new identity: only admissible through an invite. The one the
+    // visitor opened wins; the address search is a fallback for people who
+    // reached the login page directly, and it refuses rather than guesses.
+    let invite = match redeemed {
+        Some(invite) => invite,
+        None => unambiguous_invite_for(metadata, email)?,
+    };
 
     let user_id = random_identifier("usr_", 16);
     // One transaction. As three separate writes, a failure between creating
@@ -842,7 +1013,8 @@ mod tests {
             &"11".repeat(32),
         )
         .expect("API state");
-        let (token, nonce) = sign_state(&state, StateIntent::Login, None).expect("signed state");
+        let (token, nonce) =
+            sign_state(&state, StateIntent::Login, None, None).expect("signed state");
         let claims = verify_state(&state, &token, &nonce).expect("matching browser nonce");
         assert_eq!(claims.intent, StateIntent::Login);
         assert!(verify_state(&state, &token, "another-browser").is_err());

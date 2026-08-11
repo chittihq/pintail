@@ -35,6 +35,7 @@ const cargoTargetDir = join(repository, 'target')
 const OPERATOR = { email: 'auth@pintail.local', password: 'browser-auth-password' }
 const GOOGLE_INVITE_EMAIL = 'googler@pintail.local'
 const GOOGLE_STRANGER_EMAIL = 'stranger@pintail.local'
+const SECOND_WORKSPACE = 'Second workspace'
 const GOOGLE_CLIENT = { id: 'browser-gate-client', secret: 'browser-gate-client-secret' }
 
 interface CheckResult {
@@ -411,6 +412,55 @@ async function main() {
     })
     try {
       await visitor.getByText('Node healthy').waitFor({ timeout: 30_000 })
+    } finally {
+      await context.close()
+    }
+  })
+
+  await check('a second-workspace invite admits an account that already exists', async () => {
+    // The invitee already has a user row and a Google subject from the check
+    // above. Before the invite reached that branch, sign-in matched the
+    // subject and returned immediately, so this invite would have stayed
+    // pending forever while they landed back in their first workspace.
+    //
+    // This is the same code path that repairs an account left with no
+    // membership at all - the state that made a valid invite unusable and
+    // could not be fixed by re-sending it.
+    await page!.goto(pintailUrl)
+    await page!.getByRole('button', { name: 'Pintail' }).click()
+    await page!.getByRole('menuitem', { name: 'Create workspace' }).click()
+    const dialog = page!.getByRole('dialog')
+    await dialog.getByRole('heading', { name: 'Create a workspace' }).waitFor()
+    await dialog.getByLabel('Name').fill(SECOND_WORKSPACE)
+    await dialog.getByRole('button', { name: 'Create workspace' }).click()
+    await dialog.waitFor({ state: 'hidden', timeout: 15_000 })
+    // Creating it also switches to it, so the invite below is issued into the
+    // second workspace rather than the first.
+    await page!.getByText(SECOND_WORKSPACE).first().waitFor({ timeout: 20_000 })
+
+    await page!.goto(`${pintailUrl}/team`)
+    await page!.getByRole('heading', { name: 'Team' }).waitFor()
+    await page!.getByLabel('Email').fill(GOOGLE_INVITE_EMAIL)
+    await page!.getByRole('combobox').first().click()
+    await page!.getByRole('option', { name: 'Operator' }).click()
+    await page!.getByRole('button', { name: 'Invite', exact: true }).click()
+    const link = page!.getByTestId('invite-link')
+    await link.waitFor({ timeout: 20_000 })
+    const secondInvite = (await link.textContent())?.trim() || ''
+    const target = new URL(secondInvite)
+
+    const { context, visitor } = await signInWithGoogle(target.pathname + target.search, {
+      email: GOOGLE_INVITE_EMAIL,
+      sub: 'google-subject-invitee',
+      emailVerified: true,
+    })
+    try {
+      await visitor.getByText('Node healthy').waitFor({ timeout: 30_000 })
+      // The workspace they land in is the assertion. Merely signing in proves
+      // nothing here: the subject already exists, so the old behaviour also
+      // "succeeded" - it just dropped them back into their first workspace and
+      // left this invite pending forever.
+      await visitor.getByText(SECOND_WORKSPACE).first().waitFor({ timeout: 30_000 })
     } finally {
       await context.close()
     }

@@ -34,7 +34,12 @@ onMounted(async () => {
 })
 
 function signInWithGoogle() {
-  window.location.href = '/api/auth/google/start'
+  // The token travels with the sign-in so the server redeems *this* invite.
+  // Starting tokenless meant admission was resolved by searching every invite
+  // for whatever address Google returned, which answers a different question
+  // than "which invite did this person accept" - and answered it wrongly for
+  // anyone who already had an account, or who had more than one invite open.
+  window.location.href = `/api/auth/google/start?invite=${encodeURIComponent(token.value)}`
 }
 </script>
 
