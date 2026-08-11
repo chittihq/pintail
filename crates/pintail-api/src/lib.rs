@@ -127,6 +127,16 @@ async fn access_log(request: axum::extract::Request, next: middleware::Next) -> 
     response
 }
 
+/// The hostnames the wire certificate should cover.
+///
+/// Exported so the binary resolves them exactly as the settings API reports
+/// them: an operator reading one number and the certificate carrying another
+/// is the kind of disagreement nobody debugs quickly.
+#[must_use]
+pub fn wire_tls_hostnames(metadata: &pintail_meta::MetaStore) -> Vec<String> {
+    crate::wire_certificate::configured_hostnames(metadata)
+}
+
 pub fn router() -> Router {
     router_with_state(ApiState::unconfigured())
 }
@@ -184,6 +194,10 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/events", get(sse))
         .route("/vitals", get(crate::vitals::stream))
         .route("/wire/certificate", get(crate::wire_certificate::download))
+        .route(
+            "/settings/wire-tls",
+            get(crate::wire_certificate::get_settings).put(crate::wire_certificate::put_settings),
+        )
         .route("/ws", get(websocket))
         .route("/activity", get(activity))
         .route("/dlq", get(dead_letters))

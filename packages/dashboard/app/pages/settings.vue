@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { KeyRound, Link2, LoaderCircle, Moon, Server, Sun } from '@lucide/vue'
+import { KeyRound, Link2, LoaderCircle, Moon, Server, ShieldCheck, Sun } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { messageOf } from '@/lib/format'
 import type { GoogleOAuthSettings } from '@/types/pintail'
@@ -103,6 +103,45 @@ async function saveGoogleSettings() {
     googleSaving.value = false
   }
 }
+interface WireTlsSettings {
+  hostnames: string
+  active_names: string[]
+  restart_required: boolean
+}
+
+const wireTls = ref<WireTlsSettings | null>(null)
+const wireTlsForm = reactive({ hostnames: '' })
+const wireTlsSaving = ref(false)
+
+async function loadWireTls() {
+  if (!isAdmin.value) return
+  try {
+    wireTls.value = await request<WireTlsSettings>('/settings/wire-tls')
+    wireTlsForm.hostnames = wireTls.value.hostnames
+  } catch (failure) {
+    error.value = messageOf(failure)
+  }
+}
+
+async function saveWireTls() {
+  wireTlsSaving.value = true
+  try {
+    wireTls.value = await request<WireTlsSettings>('/settings/wire-tls', {
+      method: 'PUT',
+      body: JSON.stringify({ hostnames: wireTlsForm.hostnames }),
+    })
+    wireTlsForm.hostnames = wireTls.value.hostnames
+    toast(wireTls.value.restart_required
+      ? 'Saved. The certificate is reissued on the next restart.'
+      : 'Certificate hostnames saved')
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    wireTlsSaving.value = false
+  }
+}
+
+onMounted(loadWireTls)
 </script>
 
 <template>
@@ -132,6 +171,29 @@ async function saveGoogleSettings() {
           <span class="size-2 shrink-0 rounded-full" :class="nodeStatus?.wire.enabled ? 'bg-green' : 'bg-destructive'" />
           <code class="truncate text-sm">{{ nodeStatus?.wire.bind || 'Endpoint unavailable' }}</code>
         </div>
+        <!-- The certificate is read once at boot, so this deliberately does
+             not claim to take effect on save. -->
+        <div v-if="isAdmin" class="mb-3 grid gap-2 rounded-md border p-3">
+          <div class="grid gap-1.5">
+            <Label for="wire-hostnames">Certificate hostnames</Label>
+            <Input id="wire-hostnames" v-model="wireTlsForm.hostnames" placeholder="pintail.example.com" />
+            <small class="text-muted-foreground text-xs">
+              Comma-separated. Clients verifying with <code>VERIFY_IDENTITY</code> must dial one of these names.
+              <code>localhost</code>, <code>127.0.0.1</code> and <code>::1</code> are always included.
+            </small>
+          </div>
+          <div v-if="wireTls?.active_names?.length" class="text-muted-foreground text-xs">
+            The live certificate covers: <code>{{ wireTls.active_names.join(', ') }}</code>
+          </div>
+          <p v-if="wireTls?.restart_required" data-testid="wire-tls-restart" class="text-destructive text-xs">
+            Saved, but the running certificate does not cover these names yet. It is reissued on the next restart, which
+            invalidates the certificate anyone has already downloaded.
+          </p>
+          <Button size="sm" class="justify-self-start" :disabled="wireTlsSaving" @click="saveWireTls">
+            <LoaderCircle v-if="wireTlsSaving" class="animate-spin" /><ShieldCheck v-else /> Save hostnames
+          </Button>
+        </div>
+
         <dl class="grid grid-cols-2 gap-x-4">
           <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Mode</dt><dd class="mt-1 text-sm">Read-only</dd></div>
           <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Authentication</dt><dd class="mt-1 text-sm">Database API key</dd></div>

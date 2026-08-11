@@ -135,18 +135,9 @@ fn resolve_wire_tls(
     if let Some((certificate, key, required)) = config.wire_tls() {
         return Ok(Some(load_wire_tls(certificate, key, required)?));
     }
-    let hostnames = metadata
-        .setting("wire_tls_hostnames")
-        .ok()
-        .flatten()
-        .map(|value| {
-            value
-                .split(',')
-                .map(|name| name.trim().to_owned())
-                .filter(|name| !name.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    // Resolved by the same code the settings API reads, so what an operator
+    // sees on the page and what the certificate covers cannot drift apart.
+    let hostnames = pintail_api::wire_tls_hostnames(metadata);
     // Failure here is not fatal. A database that refuses to boot because it
     // could not write a certificate is worse than one serving without it, and
     // the operator can still supply their own.
