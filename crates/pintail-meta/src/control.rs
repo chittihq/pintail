@@ -714,7 +714,7 @@ impl MetaStore {
                  WHERE id = ?1 \
                    AND accepted_at IS NULL \
                    AND revoked_at IS NULL \
-                   AND email = ?3 \
+                   AND email = ?3 COLLATE NOCASE \
                    AND workspace_id = ?4 \
                    AND role = ?5",
                 (
@@ -814,7 +814,14 @@ impl MetaStore {
         let mut statement = self
             .connection
             .prepare(&format!(
-                "{} WHERE email = ?1 ORDER BY created_at DESC, id",
+                // NOCASE to match user_by_email, which has always compared
+                // this way. Addresses are lowercased before they are stored,
+                // so the two agree on anything written by this code - but a
+                // single row that ever escaped that normalization would be
+                // found by one lookup and missed by the other, and the
+                // symptom is an invite that visibly exists and still refuses
+                // its holder as "not invited".
+                "{} WHERE email = ?1 COLLATE NOCASE ORDER BY created_at DESC, id",
                 invite_select_sql()
             ))
             .context("failed to prepare invite query")?;

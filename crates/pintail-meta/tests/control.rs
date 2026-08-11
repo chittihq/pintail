@@ -580,3 +580,80 @@ fn a_revoked_invite_cannot_admit_a_user() {
         "the refused admission must leave no user"
     );
 }
+
+/// An invite stored with different capitalization is still found, and still
+/// claimable, by the lowercased address Google reports.
+///
+/// The lookup and the compare-and-set have to agree on collation. When only
+/// the lookup was case-insensitive, an invite could be found and then fail to
+/// claim, which aborts the admission entirely - and when neither was, an
+/// invite that is plainly visible in the UI refuses its holder as "not
+/// invited". Both are indistinguishable from never having been invited.
+#[test]
+fn an_invite_is_matched_and_claimed_regardless_of_address_case() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-10T00:00:00Z";
+
+    metadata
+        .create_workspace("ws-1", "Workspace", "workspace", now)
+        .expect("workspace");
+    metadata
+        .create_user(
+            "user-0",
+            "admin@example.com",
+            "$argon2id$test",
+            "admin",
+            now,
+        )
+        .expect("inviting user");
+    metadata
+        .create_invite(&NewInvite {
+            id: "inv-1",
+            token_hash: b"hash",
+            workspace_id: "ws-1",
+            email: "Jayashri_S@Example.COM",
+            role: "viewer",
+            created_by: "user-0",
+            created_at: now,
+            expires_at: "2026-09-10T00:00:00Z",
+        })
+        .expect("invite");
+
+    let found = metadata
+        .invites_by_email("jayashri_s@example.com")
+        .expect("invites");
+    assert_eq!(found.len(), 1, "a differently-cased invite must be found");
+
+    metadata
+        .admit_invited_google_user(&GoogleAdmission {
+            user_id: "usr-1",
+            email: "jayashri_s@example.com",
+            google_subject: "google-subject-1",
+            workspace_id: "ws-1",
+            invite_id: "inv-1",
+            role: "viewer",
+            now,
+        })
+        .expect("admission must survive a case difference");
+
+    assert_eq!(
+        metadata
+            .workspaces_for_user("usr-1")
+            .expect("memberships")
+            .len(),
+        1,
+    );
+    assert!(
+        metadata
+            .invites_by_email("jayashri_s@example.com")
+            .expect("invites")
+            .into_iter()
+            .find(|invite| invite.id == "inv-1")
+            .expect("invite present")
+            .accepted_at
+            .is_some(),
+        "the invite must be consumed, not merely matched",
+    );
+}
