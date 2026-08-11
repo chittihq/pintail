@@ -35,6 +35,7 @@ const cargoTargetDir = join(repository, 'target')
 const OPERATOR = { email: 'auth@pintail.local', password: 'browser-auth-password' }
 const GOOGLE_INVITE_EMAIL = 'googler@pintail.local'
 const GOOGLE_STRANGER_EMAIL = 'stranger@pintail.local'
+const FIRST_WORKSPACE = 'My workspace'
 const SECOND_WORKSPACE = 'Second workspace'
 const GOOGLE_CLIENT = { id: 'browser-gate-client', secret: 'browser-gate-client-secret' }
 
@@ -461,6 +462,45 @@ async function main() {
       // "succeeded" - it just dropped them back into their first workspace and
       // left this invite pending forever.
       await visitor.getByText(SECOND_WORKSPACE).first().waitFor({ timeout: 30_000 })
+    } finally {
+      await context.close()
+    }
+  })
+
+  await check('removing a member revokes their live session immediately', async () => {
+    // The invitee holds a valid, unexpired token for the second workspace.
+    // Authorization used to be read from that token, so removal changed
+    // nothing until it expired - up to twelve hours during which a removed
+    // admin could keep working, and issue fresh admin invites that renew the
+    // access indefinitely.
+    const { context, visitor } = await signInWithGoogle('/', {
+      email: GOOGLE_INVITE_EMAIL,
+      sub: 'google-subject-invitee',
+      emailVerified: true,
+    })
+    try {
+      await visitor.getByText('Node healthy').waitFor({ timeout: 30_000 })
+
+      // Remove them from the workspace their session is actually in. Their
+      // default is the first workspace, while the admin is still switched to
+      // the second from the check above, so removing without switching back
+      // would revoke a membership the live session never uses.
+      await page!.goto(pintailUrl)
+      await page!.getByRole('button', { name: 'Pintail' }).click()
+      await page!.getByRole('menuitem', { name: FIRST_WORKSPACE }).click()
+      await page!
+        .getByRole('button', { name: 'Pintail' })
+        .filter({ hasText: FIRST_WORKSPACE })
+        .waitFor({ timeout: 15_000 })
+
+      await page!.goto(`${pintailUrl}/team`)
+      await page!.getByRole('heading', { name: 'Team' }).waitFor()
+      const member = page!.getByRole('row').filter({ hasText: GOOGLE_INVITE_EMAIL })
+      await member.first().waitFor({ timeout: 20_000 })
+      await member.first().getByRole('button', { name: 'Remove member' }).click()
+
+      // Their next call must be refused, without waiting for expiry.
+      await waitForServerLog(/GET \/session 401|GET \/databases 401|GET \/activity 401/, 30_000)
     } finally {
       await context.close()
     }

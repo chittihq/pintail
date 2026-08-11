@@ -313,11 +313,38 @@ fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrincipal, ApiE
         &validation,
     )
     .map_err(|_| ApiError::unauthorized("session token is invalid or expired"))?;
+    // The claims describe what was true when the token was minted, which can
+    // be twelve hours ago. Authorization has to be what is true now.
+    //
+    // Trusting the embedded role and workspace meant removing a member, or
+    // demoting one, changed nothing until their token expired: a removed admin
+    // kept admin over the workspace they had been removed from, and could
+    // issue fresh admin invites to it, which renews the access indefinitely.
+    // Disabling an account had the same delay.
+    //
+    // Two local SQLite reads per request. The identity in the token is still
+    // authenticated by its signature; only the *authority* is re-read.
+    let subject = token.claims.sub;
+    let workspace_id = token.claims.workspace_id;
+    let metadata = state.metadata()?;
+    let user = metadata
+        .user_by_id(&subject)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::unauthorized("the session user no longer exists"))?;
+    if !user.enabled {
+        return Err(ApiError::unauthorized("this account is disabled"));
+    }
+    let role = metadata
+        .workspace_member_role(&workspace_id, &subject)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| {
+            ApiError::unauthorized("this account is no longer a member of that workspace")
+        })?;
     Ok(AuthPrincipal {
-        subject: token.claims.sub,
-        role: token.claims.role,
+        subject,
+        role,
         database_id: None,
-        workspace_id: Some(token.claims.workspace_id),
+        workspace_id: Some(workspace_id),
         scopes: vec!["*".to_owned()],
     })
 }
