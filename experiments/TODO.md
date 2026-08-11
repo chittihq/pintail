@@ -79,3 +79,10 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
 ## Pending (third wave)
 
 - [ ] **e15-ovc** — offset-value coding in a loser-tree merge vs e12's packed-u128 winner.
+
+## Specified (biomimetic research program)
+
+- [ ] **e30-e79** — fifty non-duplicate adaptive, resilient, and biomimetic
+  experiments specified in [`NEXT_50.md`](NEXT_50.md). Each item remains unchecked
+  until its competing implementations have run, produced exact-answer evidence, and
+  received a verdict in `RESULTS.md`.
