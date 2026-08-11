@@ -1505,3 +1505,119 @@ against per-task padding it admits batches of eight rather than four or five.
 The mechanism adds value beyond merely withholding memory, passes the easy
 control, and protects CDC explicitly. Advance to a real budget/spill harness
 with concurrent aggregate, join, sort, and oversized CDC transaction paths.
+
+## 2026-08-12 biomimetic program — Wave 3
+
+Wave 3 executed e31, e35, e37, e40, e45, e57, e68, and e79. All policies
+consumed identical deterministic traces and produced the same logical checksum.
+Only e35 and e57 survived screening; Linux reproduced their modeled metrics.
+
+### e31 — Ant-colony join-path learning
+
+| Trace | Static / oracle work | Discounted UCB | Pheromone | Pheromone recovery |
+|---|---:|---:|---:|---:|
+| stable | 3.60M / 3.60M | 3.62M | 3.91M | n/a |
+| two shifts | 7.32M / 3.60M | **3.61M** | 4.08M | 47 queries |
+| noisy costs | 7.30M / 3.60M | **3.61M** | 4.00M | 28 queries |
+
+**Verdict: reject.** Pheromone evaporation is 13.3% above oracle after two
+shifts and incurs 3-4.05x worst-query regret, missing the 10%, 2x, and recovery
+gates. Discounted UCB adapts in three queries and is both simpler and stronger.
+
+### e35 — Clonal kernel repertoire
+
+| Trace | Global / oracle | Epsilon / oracle | Clonal / oracle | Least-tested clone |
+|---|---:|---:|---:|---:|
+| stable | 156.08% | 102.85% | **101.70%** | 9 |
+| architecture reversal | 156.17% | 102.95% | **101.72%** | 9 |
+| rare contexts | 143.15% | 102.94% | **101.69%** | 1 |
+
+The repertoire validates every context, including rare ones, and remains within
+1.8% of the hindsight contextual oracle while cutting modeled work 29-35%
+against one global kernel. Linux reproduced all work and validation counts.
+
+**Verdict: simulation gate passes; dispatch remains unvalidated.** The model
+charges exploration but not real indirect-call, feature extraction, instruction
+cache, or code-size costs. Advance to safe filter and hash-probe kernel variants;
+do not add a runtime repertoire from this result alone.
+
+### e37 — Immune affinity plan memory
+
+| Trace | Exact-text LRU | Fixed parameter buckets | Affinity cache |
+|---|---:|---:|---:|
+| stable | 8.79M | **5.40M** | 5.50M |
+| selectivity shift | 8.46M | **5.33M** | 5.43M |
+| skewed reuse | 6.09M | **5.15M** | 5.26M |
+
+**Verdict: reject.** Affinity reuse beats exact SQL text, but loses 1.9-2.2%
+to fixed parameter buckets in every shape. Similarity matching adds no value
+over the simpler semantic partition.
+
+### e40 — Hippocampal weak-trace replay
+
+| Trace | Frequency work / p95 | Weak-trace work / p95 | Work / p95 delta |
+|---|---:|---:|---:|
+| stable | 11.19M / 299 | 9.00M / 262 | -19.6% / -12.4% |
+| periodic rare | 11.21M / 336 | 9.03M / 275 | -19.4% / -18.2% |
+| value drift | 12.15M / 338 | 10.04M / 314 | -17.4% / -7.1% |
+
+**Verdict: reject.** Weak-trace replay is directionally useful, but the gate
+requires at least 20% lower cumulative work *and* p95. It clears neither metric
+on any trace. Worst-error replay often does less total work, further weakening
+the biological prioritization claim.
+
+### e45 — Cardinality homeostasis
+
+| Trace | Static q50 / q95 | EWMA q50 / q95 | Homeostatic q50 / q95 |
+|---|---:|---:|---:|
+| stable | 5.80 / 8.80 | **1.00 / 1.00** | 4.14 / 16.55 |
+| reversal | 5.80 / 8.80 | **1.00 / 1.00** | 4.27 / 14.60 |
+| noisy | 5.27 / 9.07 | **1.08 / 1.17** | 4.28 / 15.12 |
+
+**Verdict: reject decisively.** The bounded feedback controller prevents the
+unbounded learner's numerical explosion, but is worse than static estimates and
+a simple EWMA in q-error and execution work. Stability is not accuracy.
+
+### e57 — ATP-priced physical plans
+
+| Regime | Row-count correct / violations | CPU-only | ATP currency |
+|---|---:|---:|---:|
+| warm cache | 60.88% / 4,117 | 87.68% / 0 | **100% / 0** |
+| cold I/O | 68.32% / 4,117 | 44.09% / 0 | **100% / 0** |
+| tight memory | 48.47% / 14,433 | 82.56% / 0 | **100% / 0** |
+
+Every generated query has a conservative feasible plan. The candidate enforces
+that budget and prices CPU, I/O, retained memory, and allocations in the same
+units as the simulated workload. Median modeled resource error is zero; Linux
+reproduced the correctness, work, and violation counts.
+
+**Verdict: conditional simulation pass; calibration remains unvalidated.** The
+result proves the policy given accurate resource facts, not that Pintail can
+measure those facts under 1% overhead or predict them within 15%. Advance to
+instrumented equivalent physical operators before considering optimizer use.
+
+### e68 — Biodiversity execution reserve
+
+| Trace | Periodic regret / detection | Diversity regret / detection |
+|---|---:|---:|
+| stable | 28,000 / n/a | 56,980 / n/a |
+| one reversal | **42,450 / 172** | 70,665 / **21** |
+| volatile | 248,570 / 2,900 | **78,455 / 190** |
+
+**Verdict: reject.** The reserve detects reversals quickly and its stable tax is
+only 0.71%, but continued exploration makes single-reversal regret 66% worse
+than periodic probing. It therefore misses the required 30% regret reduction.
+
+### e79 — Echolocation plan probes
+
+| Trace | Static work | Triggered probes | Oracle | Improvement |
+|---|---:|---:|---:|---:|
+| correlated uncertainty | 479.03M | **371.43M** | 349.41M | 22.5% |
+| accurate estimates | 349.65M | **349.65M** | 349.59M | no probes |
+| small queries | 54.69M | **54.69M** | 54.68M | no probes |
+| mixed | 414.47M | **361.10M** | 350.07M | 12.9% |
+
+**Verdict: reject at the preregistered margin.** Uncertainty-triggered probes
+avoid control regressions and remove most wrong choices, but the uncertain
+workloads improve only 13-22%, below the 25% gate. The mechanism is a useful
+near miss, not validated optimizer policy.

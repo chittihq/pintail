@@ -221,6 +221,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e31-ant-join-paths"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e32-bone-index"
 version = "0.1.0"
 dependencies = [
@@ -242,6 +249,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "e35-clonal-kernels"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e37-immune-plan-memory"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e38-fever-overload"
 version = "0.1.0"
 dependencies = [
@@ -249,7 +270,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "e40-hippocampal-replay"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e43-lateral-predicates"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e45-cardinality-homeostasis"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -277,6 +312,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e57-atp-plans"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e59-endocrine-spill"
 version = "0.1.0"
 dependencies = [
@@ -291,7 +333,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "e68-biodiversity-reserve"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e77-retinal-granules"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e79-echolocation-plans"
 version = "0.1.0"
 dependencies = [
  "common",

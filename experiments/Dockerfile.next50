@@ -5,7 +5,9 @@ RUN cargo build --release \
     -p e32-bone-index \
     -p e33-leaf-venation \
     -p e34-root-index \
+    -p e35-clonal-kernels \
     -p e43-lateral-predicates \
+    -p e57-atp-plans \
     -p e59-endocrine-spill \
     -p e63-glycogen-reserve \
     -p e77-retinal-granules
@@ -15,7 +17,9 @@ COPY --from=build \
     /lab/target/release/e32-bone-index \
     /lab/target/release/e33-leaf-venation \
     /lab/target/release/e34-root-index \
+    /lab/target/release/e35-clonal-kernels \
     /lab/target/release/e43-lateral-predicates \
+    /lab/target/release/e57-atp-plans \
     /lab/target/release/e59-endocrine-spill \
     /lab/target/release/e63-glycogen-reserve \
     /lab/target/release/e77-retinal-granules \

@@ -108,3 +108,19 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     modeled spill); real operator marginal-utility measurement is required.
   - [ ] **e63-glycogen-reserve** — simulation passes on both targets (zero protected
     spill and 15-32% lower makespan); real budget/spill integration is required.
+  - [x] **e31-ant-join-paths** — rejected: evaporation recovers much more slowly than
+    discounted UCB and misses the shift and worst-regret gates.
+  - [ ] **e35-clonal-kernels** — simulation passes on both targets (1.7-1.8% from the
+    contextual oracle and 29-35% below one global winner); real dispatch is required.
+  - [x] **e37-immune-plan-memory** — rejected: affinity matching loses to simpler fixed
+    parameter buckets in every workload.
+  - [x] **e40-hippocampal-replay** — rejected: weak-trace replay improves frequency
+    replay, but misses both preregistered 20% gates in every workload.
+  - [x] **e45-cardinality-homeostasis** — rejected: bounded homeostatic estimates are
+    less accurate and costlier than a simple EWMA.
+  - [ ] **e57-atp-plans** — conditional simulation passes on both targets (100% fastest
+    feasible, zero violations); real calibration accuracy and overhead are required.
+  - [x] **e68-biodiversity-reserve** — rejected: rapid reversal detection does not
+    offset exploration tax against periodic probing in the single-reversal trace.
+  - [x] **e79-echolocation-plans** — rejected: triggered probes are safe but improve
+    uncertain plans by only 13-22%, below the 25% gate.
