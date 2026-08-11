@@ -22,6 +22,34 @@ const {
 const route = useRoute()
 const router = useRouter()
 
+/// Reads one query parameter from whichever source has it.
+///
+/// The router and the address bar disagree briefly during hydration, and
+/// which one is authoritative depends on where in that sequence the caller
+/// runs. Consulting both removes the ordering assumption entirely.
+function readQueryParameter(name: string): string | null {
+  const fromRoute = route.query[name]
+  if (typeof fromRoute === 'string' && fromRoute) return fromRoute
+  return new URLSearchParams(window.location.search).get(name)
+}
+
+/// Removes the one-time sign-in parameters from the address bar, leaving any
+/// unrelated query intact. Both the router and the History API are told, so
+/// neither can restore what the other dropped.
+async function clearSignInParameters() {
+  const remaining = new URLSearchParams(window.location.search)
+  remaining.delete('auth_code')
+  remaining.delete('auth_error')
+  const rest = remaining.toString()
+  const { auth_code: _authCode, auth_error: _authError, ...query } = route.query
+  await router.replace({ path: route.path, query })
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${window.location.pathname}${rest ? `?${rest}` : ''}`,
+  )
+}
+
 const authMode = ref<'setup' | 'login'>('login')
 const authenticating = ref(false)
 const booting = ref(true)
@@ -59,12 +87,25 @@ function signInWithGoogle() {
 
 onMounted(async () => {
   restoreToken()
-  const authCode = typeof route.query.auth_code === 'string' ? route.query.auth_code : null
-  const authError = typeof route.query.auth_error === 'string' ? route.query.auth_error : null
-  if (authCode || authError) {
-    const { auth_code: _authCode, auth_error: _authError, ...rest } = route.query
-    await router.replace({ path: route.path, query: rest })
-  }
+  // Wait for the router before reading the sign-in result off the URL.
+  //
+  // The dashboard is prerendered, so a cold load of "/?auth_code=..." - which
+  // is exactly how Google sign-in comes back - hydrates against the payload
+  // for the query-less "/" route. While that resolves, the router rewrites the
+  // address bar to "/" and only restores the real URL once it settles.
+  // app.vue's onMounted fires inside that window, where BOTH route.query and
+  // window.location.search are empty.
+  //
+  // So the code was never exchanged: a user who had just been authenticated -
+  // and, for an invitee, whose account, workspace membership and consumed
+  // invite were already committed on the server - was dropped on the login
+  // form with no error at all. The same blind spot swallowed every refusal,
+  // since ?auth_error= was missed identically. Page components are unaffected
+  // because their setup runs after the route resolves, which is why
+  // /accept-invite reads its ?token= without trouble.
+  await router.isReady()
+  const authCode = readQueryParameter('auth_code')
+  const authError = readQueryParameter('auth_error')
   let googleSignedIn = false
   let googleLinked = false
   if (authCode) {
@@ -82,6 +123,11 @@ onMounted(async () => {
     }
   }
   if (authError) error.value = AUTH_ERROR_MESSAGES[authError] || 'Google sign-in failed. Try again.'
+  // Cleared only now, once the exchange has been made and the router has
+  // finished restoring the address bar it rewrote during hydration. Stripping
+  // any earlier is undone by that restore, which would leave a spent one-time
+  // code in the URL to be replayed - and refused - on the next reload.
+  if (authCode || authError) clearSignInParameters()
 
   dark.value = window.localStorage.getItem('pintail.theme') === 'dark'
   applyTheme()
