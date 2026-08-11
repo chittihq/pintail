@@ -8,11 +8,12 @@ mod controls;
 mod databases;
 mod error;
 mod events;
-mod vitals;
 mod invites;
 mod keys;
 mod metrics;
 mod oauth;
+mod vitals;
+mod wire_certificate;
 
 /// Milliseconds from process start until the API began accepting
 /// connections — manifest load, WAL replay and control-plane open. A
@@ -182,6 +183,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         )
         .route("/events", get(sse))
         .route("/vitals", get(crate::vitals::stream))
+        .route("/wire/certificate", get(crate::wire_certificate::download))
         .route("/ws", get(websocket))
         .route("/activity", get(activity))
         .route("/dlq", get(dead_letters))

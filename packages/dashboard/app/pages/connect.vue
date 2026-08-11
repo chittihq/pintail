@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ArrowRight, CircleHelp, Copy, Radio } from '@lucide/vue'
+import { ArrowRight, CircleHelp, Copy, Download, Radio, ShieldCheck } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import { shellQuote } from '@/lib/format'
+import { messageOf, shellQuote } from '@/lib/format'
 
 const route = useRoute()
 const router = useRouter()
 const { databases, nodeStatus } = useControlPlane()
+const { token } = usePintailApi()
 
 const keyDatabaseId = computed({
   get: () => (typeof route.query.db === 'string' ? route.query.db : databases.value[0]?.id || ''),
@@ -29,6 +30,7 @@ function connectSnippet(kind: 'mysql' | 'node' | 'python') {
   const port = Math.min(65_535, Math.max(1, Number.parseInt(connectPort.value, 10) || 3306))
   if (kind === 'node') {
     return `// bun add mysql2
+import { readFileSync } from 'node:fs'
 import mysql from 'mysql2/promise'
 
 const db = await mysql.createConnection({
@@ -37,6 +39,9 @@ const db = await mysql.createConnection({
   user: ${JSON.stringify(database)},
   password: ${JSON.stringify(connectKey.value)},
   database: ${JSON.stringify(database)},
+  // mysql2 verifies by default and will reject the node's self-signed
+  // certificate without this. Download it from the card above.
+  ssl: { ca: readFileSync('pintail-ca.pem') },
 })
 const [rows] = await db.query('SELECT * FROM events LIMIT 10')
 console.table(rows)
@@ -52,6 +57,7 @@ db = pymysql.connect(
     user=${JSON.stringify(database)},
     password=${JSON.stringify(connectKey.value)},
     database=${JSON.stringify(database)},
+    ssl={"ca": "pintail-ca.pem"},
 )
 with db.cursor() as cursor:
     cursor.execute("SELECT * FROM events LIMIT 10")
@@ -63,7 +69,24 @@ db.close()`
   --host=${shellQuote(host)} \\
   --port=${port} \\
   --user=${shellQuote(database)} \\
-  --database=${shellQuote(database)}`
+  --database=${shellQuote(database)} \\
+  --ssl-mode=VERIFY_CA --ssl-ca=pintail-ca.pem`
+}
+async function downloadCertificate() {
+  try {
+    const response = await fetch('/api/wire/certificate', {
+      headers: { Authorization: `Bearer ${token.value}` },
+    })
+    if (!response.ok) throw new Error(await response.text())
+    const url = URL.createObjectURL(await response.blob())
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'pintail-ca.pem'
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (failure) {
+    toast(messageOf(failure))
+  }
 }
 </script>
 
@@ -89,6 +112,20 @@ db.close()`
       <div class="grid gap-0.5"><strong class="text-sm">Native challenge, no stored plaintext.</strong><span class="text-muted-foreground text-xs">Use MySQL 8.4, mysql2, PyMySQL, DBeaver, or Metabase. Oracle's MySQL 9.x CLI removed its native-password client plugin.</span></div>
       <Button variant="link" size="sm" class="max-sm:col-span-2 max-sm:justify-self-start" as-child><NuxtLink to="/keys">Create or rotate key <ArrowRight /></NuxtLink></Button>
     </Card>
+    <!-- The certificate is the public half; the private key never leaves the
+         node. Downloading it is what turns an encrypted connection into a
+         verified one. -->
+    <Card class="mb-4 grid grid-cols-[auto_1fr_auto] items-center gap-3 p-4 max-sm:grid-cols-[auto_1fr]">
+      <ShieldCheck :size="17" class="text-muted-foreground" />
+      <div class="grid gap-0.5">
+        <strong class="text-sm">TLS certificate</strong>
+        <span class="text-muted-foreground text-xs">This node issues its own. Connections are encrypted without it; download it to also verify you are talking to this node and not something in between.</span>
+      </div>
+      <Button variant="outline" size="sm" class="max-sm:col-span-2 max-sm:justify-self-start" @click="downloadCertificate">
+        <Download /> Download certificate
+      </Button>
+    </Card>
+
     <div class="grid gap-4 sm:grid-cols-2">
       <Card v-for="kind in (['mysql', 'node', 'python'] as const)" :key="kind" class="overflow-hidden p-0">
         <div class="flex items-center justify-between gap-3 p-4 pb-3"><h2 class="text-base font-semibold">{{ kind === 'mysql' ? 'MySQL CLI' : kind === 'node' ? 'Node.js' : 'Python' }}</h2><Button variant="ghost" size="icon" @click="copy(connectSnippet(kind))"><Copy /></Button></div>
