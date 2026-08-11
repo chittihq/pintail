@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rcgen.workspace = true
 pintail-log.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
@@ -35,6 +36,5 @@ workspace = true
 
 [dev-dependencies]
 mysql_async.workspace = true
-rcgen.workspace = true
 rustls.workspace = true
 tempfile.workspace = true

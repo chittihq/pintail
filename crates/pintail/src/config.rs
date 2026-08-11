@@ -448,9 +448,10 @@ impl AppConfig {
             .transpose()?
             .or(file.wire.require_tls)
             .unwrap_or(false);
-        if wire_require_tls && wire_tls_certificate.is_none() {
-            bail!("PINTAIL_WIRE_REQUIRE_TLS needs a configured certificate and key");
-        }
+        // No longer requires a configured certificate: the node generates and
+        // manages one when none is supplied, so requiring TLS is now a
+        // standalone choice rather than something only reachable by operators
+        // who had already obtained a certificate elsewhere.
 
         Ok(Self {
             data_dir,
@@ -473,6 +474,15 @@ impl AppConfig {
     #[must_use]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// Whether a client that will not negotiate TLS is refused.
+    ///
+    /// Separate from having a certificate: the node always has one now, so
+    /// this is the difference between offering TLS and insisting on it.
+    #[must_use]
+    pub const fn wire_require_tls(&self) -> bool {
+        self.wire_require_tls
     }
 
     /// PEM certificate chain and key for wire TLS, when configured.

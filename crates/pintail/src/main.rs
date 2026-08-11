@@ -101,10 +101,7 @@ async fn main() -> Result<()> {
             let _ = http_shutdown.recv().await;
         },
     );
-    let wire_tls = config
-        .wire_tls()
-        .map(|(certificate, key, required)| load_wire_tls(certificate, key, required))
-        .transpose()?;
+    let wire_tls = resolve_wire_tls(&config, &metadata)?;
     let wire = serve_until_with_options(
         wire_listener,
         config.data_dir(),
@@ -121,6 +118,60 @@ async fn main() -> Result<()> {
     })?;
     supervisor.await.context("replication supervisor failed")?;
     Ok(())
+}
+
+/// The certificate the wire listener serves.
+///
+/// An explicitly configured one always wins. Otherwise the node issues its
+/// own, because with no certificate the server never advertises `CLIENT_SSL`:
+/// a client that would have preferred TLS gets plaintext and has no way to ask
+/// for better. Generating one moves the default from cleartext to TLS without
+/// the operator configuring anything, which is how a managed database service
+/// behaves.
+fn resolve_wire_tls(
+    config: &AppConfig,
+    metadata: &MetaStore,
+) -> Result<Option<pintail_wire::WireTls>> {
+    if let Some((certificate, key, required)) = config.wire_tls() {
+        return Ok(Some(load_wire_tls(certificate, key, required)?));
+    }
+    let hostnames = metadata
+        .setting("wire_tls_hostnames")
+        .ok()
+        .flatten()
+        .map(|value| {
+            value
+                .split(',')
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    // Failure here is not fatal. A database that refuses to boot because it
+    // could not write a certificate is worse than one serving without it, and
+    // the operator can still supply their own.
+    match pintail_wire::managed_tls::ensure(config.data_dir(), &hostnames) {
+        Ok(managed) => {
+            if managed.generated {
+                pintail_log::log_info!(
+                    "wire tls: generated a node certificate covering {} name(s)",
+                    hostnames.len() + 3
+                );
+            }
+            Ok(load_wire_tls(
+                &managed.certificate_path,
+                &managed.key_path,
+                config.wire_require_tls(),
+            )
+            .ok())
+        }
+        Err(error) => {
+            pintail_log::log_error!(
+                "wire tls: could not prepare a node certificate, serving without TLS: {error}"
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn display_first_boot_secret(loaded: &LoadedBootSecrets, data_dir: &Path) {

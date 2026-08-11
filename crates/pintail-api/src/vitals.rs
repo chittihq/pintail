@@ -65,7 +65,9 @@ pub(crate) fn sample(state: &ApiState) -> Vitals {
     let cpu_seconds = process_cpu_seconds();
     let now = Instant::now();
 
-    let mut guard = PREVIOUS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = PREVIOUS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (cpu_percent, queries_per_second) = guard.as_ref().map_or((0.0, 0.0), |previous| {
         let elapsed = now.duration_since(previous.at).as_secs_f64();
         if elapsed <= 0.0 {
@@ -136,7 +138,7 @@ fn process_cpu_seconds() -> f64 {
                 .filter_map(|part| part.trim().parse::<f64>().ok())
                 .fold(0.0, |total, part| total * 60.0 + part)
         })
-        .unwrap_or(0.0)
+        .map_or(0.0, |seconds| seconds)
 }
 
 /// Cores this process may use: the cgroup quota when one is set, otherwise
@@ -153,7 +155,10 @@ fn available_cores() -> f64 {
             return (limit / period).max(1.0);
         }
     }
-    std::thread::available_parallelism().map_or(1.0, |cores| cores.get() as f64)
+    // A core count never approaches the mantissa limit; the cast is exact.
+    std::thread::available_parallelism().map_or(1.0, |cores| {
+        f64::from(u32::try_from(cores.get()).unwrap_or(1))
+    })
 }
 
 #[cfg(target_os = "linux")]
