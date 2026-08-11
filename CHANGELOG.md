@@ -4,6 +4,44 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Signing in with Google works. The dashboard is prerendered, so the cold load
+  of `/?auth_code=...` that Google redirects back to hydrates against the
+  payload for the query-less `/` route; while that resolves the router rewrites
+  the address bar and restores it only afterwards. `app.vue` read the code
+  inside that window, where both `route.query` and `window.location.search` are
+  empty, so the code was never exchanged. Anyone who had just authenticated —
+  including an invitee whose account, workspace membership and consumed invite
+  were already committed on the server — was returned to the login form with no
+  error shown. The same blind spot swallowed `?auth_error=`, so every refusal
+  was silent too: `not_invited`, `link_required` and a disabled account all
+  looked identical to nothing happening. The result is read once the router has
+  settled, and the spent code is stripped from the address bar afterwards so a
+  reload cannot replay it.
+
+### Added
+
+- A sign-in gate (`tests/browser/auth.ts`, 11 checks) drives the invite and
+  "Continue with Google" paths end to end in a real browser, against a
+  stand-in for Google's authorize, token and userinfo endpoints with
+  single-use codes. It covers an invitee joining, the membership granted and
+  the invite spent, a returning identity matching on its Google subject, and
+  refusal of an uninvited account, an address that already has a password
+  account, and an unverified Google email. It needs neither MySQL nor an
+  object store, so it runs without Docker in seconds; the smoke suite keeps
+  the replication coverage. This path had no browser coverage at all despite
+  being the only way anyone joins a workspace, which is why three consecutive
+  releases shipped it broken.
+- The three Google OAuth endpoints can be pointed at another origin through
+  `PINTAIL_GOOGLE_AUTH_URL`, `PINTAIL_GOOGLE_TOKEN_URL` and
+  `PINTAIL_GOOGLE_USERINFO_URL`, which is what makes the gate above possible.
+  They are read from the process environment rather than stored settings, so
+  nothing reachable through the dashboard or the settings API can redirect
+  sign-in elsewhere.
+
 ## [0.0.1-rc8] - 2026-08-11
 
 ### Fixed
