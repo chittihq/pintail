@@ -35,6 +35,8 @@ const cargoTargetDir = join(repository, 'target')
 const OPERATOR = { email: 'auth@pintail.local', password: 'browser-auth-password' }
 const GOOGLE_INVITE_EMAIL = 'googler@pintail.local'
 const GOOGLE_STRANGER_EMAIL = 'stranger@pintail.local'
+const CONTESTED_EMAIL = 'contested@pintail.local'
+const REVOKED_EMAIL = 'revoked@pintail.local'
 const FIRST_WORKSPACE = 'My workspace'
 const SECOND_WORKSPACE = 'Second workspace'
 const GOOGLE_CLIENT = { id: 'browser-gate-client', secret: 'browser-gate-client-secret' }
@@ -501,6 +503,80 @@ async function main() {
 
       // Their next call must be refused, without waiting for expiry.
       await waitForServerLog(/GET \/session 401|GET \/databases 401|GET \/activity 401/, 30_000)
+    } finally {
+      await context.close()
+    }
+  })
+
+  await check('the opened invite decides the workspace, not the newest one', async () => {
+    // The confused-deputy case. Two invites are open for one address, in
+    // different workspaces and with different roles; the visitor follows the
+    // OLDER one. Selecting the newest claimable invite across the node - which
+    // is what an address search does - let an admin of any workspace aim a
+    // newer, higher-privileged invite at someone and capture them when they
+    // followed a legitimate invite elsewhere.
+    async function inviteTo(workspace: string, role: string) {
+      await page!.goto(pintailUrl)
+      await page!.getByRole('button', { name: 'Pintail' }).click()
+      await page!.getByRole('menuitem', { name: workspace }).click()
+      await page!
+        .getByRole('button', { name: 'Pintail' })
+        .filter({ hasText: workspace })
+        .waitFor({ timeout: 15_000 })
+      await page!.goto(`${pintailUrl}/team`)
+      await page!.getByRole('heading', { name: 'Team' }).waitFor()
+      await page!.getByLabel('Email').fill(CONTESTED_EMAIL)
+      await page!.getByRole('combobox').first().click()
+      await page!.getByRole('option', { name: role }).click()
+      await page!.getByRole('button', { name: 'Invite', exact: true }).click()
+      const link = page!.getByTestId('invite-link')
+      await link.waitFor({ timeout: 20_000 })
+      return (await link.textContent())?.trim() || ''
+    }
+
+    const wanted = await inviteTo(FIRST_WORKSPACE, 'Viewer')
+    await inviteTo(SECOND_WORKSPACE, 'Admin')
+
+    const target = new URL(wanted)
+    const { context, visitor } = await signInWithGoogle(target.pathname + target.search, {
+      email: CONTESTED_EMAIL,
+      sub: 'google-subject-contested',
+      emailVerified: true,
+    })
+    try {
+      await visitor.getByText('Node healthy').waitFor({ timeout: 30_000 })
+      await visitor.getByText(FIRST_WORKSPACE).first().waitFor({ timeout: 30_000 })
+      if ((await visitor.getByText(SECOND_WORKSPACE).count()) > 0) {
+        throw new Error('the newer invite captured a visitor who followed an older one')
+      }
+    } finally {
+      await context.close()
+    }
+  })
+
+  await check('a revoked invite is refused as spent, not as never sent', async () => {
+    await page!.goto(`${pintailUrl}/team`)
+    await page!.getByRole('heading', { name: 'Team' }).waitFor()
+    await page!.getByLabel('Email').fill(REVOKED_EMAIL)
+    await page!.getByRole('combobox').first().click()
+    await page!.getByRole('option', { name: 'Viewer' }).click()
+    await page!.getByRole('button', { name: 'Invite', exact: true }).click()
+    const row = page!.getByRole('row').filter({ hasText: REVOKED_EMAIL })
+    await row.first().waitFor({ timeout: 20_000 })
+    await row.first().getByRole('button', { name: 'Revoke invite' }).click()
+    await page!.getByText('Invite revoked').waitFor({ timeout: 20_000 })
+
+    const { context, visitor } = await signInWithGoogle('/', {
+      email: REVOKED_EMAIL,
+      sub: 'google-subject-revoked',
+      emailVerified: true,
+    })
+    try {
+      // "Not invited" would be wrong and unhelpful here: the invite existed,
+      // an admin revoked it, and the recipient needs a new one rather than to
+      // go re-checking which Google account they picked.
+      await visitor.getByText(/no longer usable/).waitFor({ timeout: 30_000 })
+      await waitForServerLog(new RegExp(`oauth refused ${REVOKED_EMAIL}: .*revoked`))
     } finally {
       await context.close()
     }
