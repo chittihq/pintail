@@ -242,7 +242,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "e38-fever-overload"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e43-lateral-predicates"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e46-quorum-compaction"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e50-maintenance-ventilation"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e55-stomatal-prefetch"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e59-endocrine-spill"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e63-glycogen-reserve"
 version = "0.1.0"
 dependencies = [
  "common",

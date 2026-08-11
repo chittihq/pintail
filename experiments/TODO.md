@@ -96,3 +96,15 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     work saved under blockwise drift); real unequal-cost typed kernel is required.
   - [ ] **e77-retinal-granules** — simulation passes on both targets (28% fewer rows
     touched on moving/stationary hotspots); real PTSEG A/B is required.
+  - [x] **e38-fever-overload** — rejected: CDC is protected, but query p99 is
+    20-157% worse and the result barely differs from a fixed conservative limit.
+  - [x] **e46-quorum-compaction** — rejected: neighborhood reinforcement misses the
+    exact painful interval and makes total work 4.9-48x worse.
+  - [x] **e50-maintenance-ventilation** — rejected: no qualifying improvement over
+    the simpler debt-only controller.
+  - [x] **e55-stomatal-prefetch** — rejected: mixed pressure triggers 1,389
+    reversals and 6.8x the offline-best cost.
+  - [ ] **e59-endocrine-spill** — simulation passes on both targets (45-72% less
+    modeled spill); real operator marginal-utility measurement is required.
+  - [ ] **e63-glycogen-reserve** — simulation passes on both targets (zero protected
+    spill and 15-32% lower makespan); real budget/spill integration is required.

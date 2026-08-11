@@ -1378,3 +1378,130 @@ equal-metadata and hostile-work gates pass on both targets, but this model does
 not measure PTSEG write throughput, metadata search, decompression, or the cost
 of producing variable blocks during immutable writes. Advance to a real PTSEG
 reader/writer A/B test. Do not change the 16,384-row format default yet.
+
+## 2026-08-12 biomimetic program — Wave 2
+
+Wave 2 executed e38, e46, e50, e55, e59, and e63. Every policy drained or
+completed the identical deterministic workload and compared a sorted exact
+completion set or logical query checksum. e59 and e63 cleared their local gates
+and reproduced on the pinned Linux target; the four local failures did not
+consume shared-host time.
+
+### e38 — Fever-mode overload control
+
+The controller entered a hysteretic conservative mode when CDC lag or the query
+queue crossed a high watermark and exited only below separate low watermarks.
+
+| Trace | Policy | Query p99 | Max CDC lag | Overflow ticks | Makespan |
+|---|---|---:|---:|---:|---:|
+| mild | unconstrained / fixed / fever | 1 / 1 / 1 | 0 / 0 / 0 | 0 / 0 / 0 | 12,000 each |
+| sustained | unconstrained | **1,365** | 51,497 | 12,782 | **13,092** |
+| sustained | fixed / fever | 3,587 / 3,511 | 0 / 15 | 0 / 0 | 13,921 / 13,878 |
+| spike | unconstrained | **4,064** | 35,002 | 7,333 | **12,000** |
+| spike | fixed / fever | 4,893 / 4,887 | 2 / 217 | 0 / 0 | 12,314 / 12,308 |
+
+**Verdict: reject.** Fever protects CDC, but query p99 is 157% worse during
+sustained overload and 20% worse during the spike than unconstrained execution.
+Against the safe fixed policy it improves p99 by only 0.1-2.1%, far below the
+15% rule. Two mode changes show hysteresis prevented flapping; stability alone
+does not make the policy useful.
+
+### e46 — Quorum-sensing compaction
+
+The table model had 128 key intervals. Updates added overlapping physical
+fragments, queries paid all fragments, and maintenance could compact two
+intervals per 100 operations. Append-only fragments were provably disjoint.
+
+| Trace | Fixed count total bytes / p99 | Global pain score | Local quorum |
+|---|---:|---:|---:|
+| recent-hot | **34.8B / 1.5M** | 36.0B / 2.6M | 1,683.3B / 153.0M |
+| moving-hot | **34.6B / 1.5M** | 35.9B / 2.5M | 418.4B / 38.4M |
+| scattered | **34.8B / 1.4M** | 36.2B / 1.8M | 169.9B / 15.1M |
+| append-only | 2.88B / 65K | 2.88B / 65K | 2.88B / 65K |
+
+**Verdict: reject decisively.** The local quorum reinforces a busy neighborhood
+but repeatedly selects the wrong member of that neighborhood; the exact painful
+interval accumulates fragments. Read work becomes 4.9-48x worse than fixed-count
+compaction. This is a causal failure of the transferred mechanism, not a
+threshold miss. Compaction needs exact interval benefit, not bacterial consensus.
+
+### e50 — Termite-mound maintenance ventilation
+
+The coupled aperture observed maintenance debt, query backlog, CDC lag, and
+noisy capacity. It was compared with fixed 15% maintenance and a debt-only PID.
+
+| Trace | Fixed debt / queue area | Debt PID | Coupled ventilation |
+|---|---:|---:|---:|
+| periodic | 468,590 / 0 | 468,590 / 0 | 468,590 / 0 |
+| spike | 468,590 / 214.8M | 2,661,032 / **88.9M** | **468,590** / 107.0M |
+| noisy capacity | 452,898 / 0 | 452,877 / 21 | 452,887 / 11 |
+
+**Verdict: reject.** Coupling protects debt during the spike and halves the
+fixed controller's query backlog, but the simpler PID has 17% less queue area
+and nearly identical SLO violations. Periodic and noisy controls are ties. The
+extra multi-signal controller has no qualifying win.
+
+### e55 — Stomatal prefetch gates
+
+Fixed depths 1/4/16/64 and a hysteretic adaptive aperture paid request latency,
+fetched blocks, wasted blocks, and pressure-dependent resident-memory cost.
+
+| Trace | Offline-best fixed cost | Stomatal cost | Delta | Reversals |
+|---|---:|---:|---:|---:|
+| sequential | 5,606,432 | 5,608,296 | +0.03% | 0 |
+| aggressively pruned | **635,492** | 938,564 | +47.7% | 153 |
+| alternating phases | 3,433,144 | **3,304,462** | -3.7% | 70 |
+| mixed pressure | **2,789,016** | 18,859,865 | +576% | 1,389 |
+
+**Verdict: reject decisively.** Local waste feedback confuses transient memory
+pressure with a changed scan topology, closes too far, and then pays request
+latency while reopening. Hysteresis does not prevent 1,389 direction reversals.
+A future prefetch controller needs separate pressure and usefulness states;
+this transferred stomatal rule is not retained.
+
+### e59 — Endocrine spill coordination
+
+Four concurrent operators shared a hard 1,000-unit cap. Missing ideal memory
+was priced by an operator-specific marginal spill curve. The candidate grants a
+64-unit correctness floor, broadcasts global pressure, allocates remaining
+tokens in marginal-utility order, and enforces the cap with a fast reflex.
+
+| Trace | Best non-candidate spill / p99 | Hormone+reflex spill / p99 | Spill delta |
+|---|---:|---:|---:|
+| balanced | 0 / 100 | 0 / 100 | tie |
+| heterogeneous | 27,080,976 / 289 | **7,480,000 / 162** | **-72.4%** |
+| synchronized bursts | 18,355,777 / 476 | **10,140,000 / 344** | **-44.8%** |
+| utility reversal | 19,184,286 / 417 | **9,593,654 / 218** | **-50.0%** |
+
+Linux reproduced every modeled metric and exact checksum. No policy exceeded
+the cap; the candidate created no synchronized spill storm and left no memory
+unused under pressure.
+
+**Verdict: simulation gate passes; utility measurement remains unvalidated.**
+The win is large and stable, but this model gives the allocator correct marginal
+utility. The next experiment must measure real sort/aggregate/join spill curves,
+including the cost and noise of online probing. Do not replace Pintail's current
+budget allocator from this simulation alone.
+
+### e63 — Glycogen completion reserve
+
+The candidate keeps 140/1,000 memory units outside normal admission. It reserves
+extra burst bytes only for protected CDC work, completes any fitting task that
+releases the most base memory, and rolls that released memory into the next
+completion. A global reserve without ordered release is the strong baseline.
+
+| Trace | Global reserve spill / cascades / makespan | Completion reserve | Makespan delta |
+|---|---:|---:|---:|
+| small bursts | 0 / 0 / 92,965 | 0 / 0 / 92,965 | tie |
+| synchronized | 8,073 / 593 / 109,111 | **14 / 2 / 92,993** | **-14.8%** |
+| protected CDC | 25,243 / 174 / 143,451 | **0 / 0 / 98,002** | **-31.7%** |
+| mixed | 14,803 / 174 / 122,571 | **0 / 0 / 96,508** | **-21.3%** |
+
+Linux reproduced the same metrics and exact task set. Against full utilization,
+the candidate removes over 99.9% of synchronized spill and all protected spill;
+against per-task padding it admits batches of eight rather than four or five.
+
+**Verdict: simulation gate passes; scheduler integration remains unvalidated.**
+The mechanism adds value beyond merely withholding memory, passes the easy
+control, and protects CDC explicitly. Advance to a real budget/spill harness
+with concurrent aggregate, join, sort, and oversized CDC transaction paths.

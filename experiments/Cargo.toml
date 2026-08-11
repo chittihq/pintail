@@ -28,7 +28,13 @@ members = [
     "e32-bone-index",
     "e33-leaf-venation",
     "e34-root-index",
+    "e38-fever-overload",
     "e43-lateral-predicates",
+    "e46-quorum-compaction",
+    "e50-maintenance-ventilation",
+    "e55-stomatal-prefetch",
+    "e59-endocrine-spill",
+    "e63-glycogen-reserve",
     "e77-retinal-granules",
 ]
 
