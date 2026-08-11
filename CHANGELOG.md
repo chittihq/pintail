@@ -22,6 +22,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   two refusal checks assert the diagnostic line exists and names the account
   rather than only that the browser was refused.
 
+## [Unreleased]
+
+### Added
+
+- Remote diagnostics: crashes and errors to Sentry, every log line to Logtail
+  (Better Stack). Both are spoken directly over their HTTP APIs rather than
+  through an SDK, for the same reason `pintail-log` has no dependencies at all.
+  A panic captures a backtrace — with `force_capture`, since `RUST_BACKTRACE`
+  is unset in production and a crash report without a stack is the reason this
+  exists — parses it into Sentry frames, and blocks the panicking thread until
+  it has been delivered or five seconds pass. Logging never blocks: lines go
+  into a bounded queue and are dropped and counted when it is full, because a
+  replication loop stalling behind a slow log endpoint is worse than a missing
+  line. Configured by `PINTAIL_SENTRY_DSN`, `PINTAIL_LOGTAIL_ENDPOINT`,
+  `PINTAIL_LOGTAIL_TOKEN`, and optionally `PINTAIL_ENVIRONMENT` and
+  `PINTAIL_RELEASE`. Entirely inert when unset.
+
 ## [0.0.1-rc10] - 2026-08-11
 
 ### Fixed
