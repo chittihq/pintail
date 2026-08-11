@@ -105,7 +105,7 @@ function signOut() {
             <DropdownMenu>
               <DropdownMenuTrigger as-child>
                 <SidebarMenuButton size="lg" class="data-[slot=sidebar-menu-button]:!p-1.5 data-[state=open]:bg-sidebar-accent">
-                  <span class="bg-primary text-primary-foreground grid size-7 shrink-0 place-items-center font-mono text-[0.6rem] font-extrabold">PT</span>
+                  <span class="bg-primary text-primary-foreground grid size-7 shrink-0 place-items-center font-mono text-xs font-extrabold">PT</span>
                   <div class="grid flex-1 text-left text-sm leading-tight">
                     <span class="truncate text-base font-extrabold tracking-tight">Pintail</span>
                     <span class="text-sidebar-foreground/60 truncate text-xs">{{ currentWorkspace?.name || 'Choose a workspace' }}</span>
@@ -114,13 +114,13 @@ function signOut() {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent class="w-(--reka-dropdown-menu-trigger-width) min-w-56 rounded-lg" side="bottom" align="start" :side-offset="4">
-                <DropdownMenuLabel class="text-muted-foreground font-mono text-[0.63rem] tracking-[0.1em] uppercase">Workspaces</DropdownMenuLabel>
+                <DropdownMenuLabel class="text-muted-foreground font-mono text-xs tracking-[0.1em] uppercase">Workspaces</DropdownMenuLabel>
                 <DropdownMenuItem
                   v-for="workspace in workspaces"
                   :key="workspace.id"
                   @click="onSwitchWorkspace(workspace.id)"
                 >
-                  <span class="bg-accent text-accent-foreground grid size-6 shrink-0 place-items-center rounded font-mono text-[0.55rem] font-bold uppercase">{{ workspace.name.slice(0, 2) }}</span>
+                  <span class="bg-accent text-accent-foreground grid size-6 shrink-0 place-items-center rounded font-mono text-xs font-bold uppercase">{{ workspace.name.slice(0, 2) }}</span>
                   <span class="flex-1 truncate">{{ workspace.name }}</span>
                   <Check v-if="workspace.id === session?.workspace_id" class="text-foreground" />
                 </DropdownMenuItem>
@@ -146,7 +146,7 @@ function signOut() {
                 </SidebarMenuButton>
                 <SidebarMenuBadge
                   v-if="item.to === '/activity' && alertCount"
-                  class="bg-red rounded-full font-mono text-[0.6rem] text-white"
+                  class="bg-red rounded-full font-mono text-xs text-white"
                 >
                   {{ alertCount }}
                 </SidebarMenuBadge>

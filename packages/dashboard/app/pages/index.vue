@@ -9,7 +9,7 @@ const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, al
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
     <header class="mb-7 flex flex-wrap items-start justify-between gap-4">
       <div>
-        <p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Live mirror fleet</p>
+        <p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Live mirror fleet</p>
         <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Operations at a glance</h1>
         <p class="text-muted-foreground mt-1.5">Durable source progress, query visibility, and faults on this node.</p>
       </div>
@@ -80,15 +80,15 @@ const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, al
 
     <Card class="my-4 p-5">
       <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Signature path</p><h2 class="text-base font-semibold">Source → snapshot → stream</h2></div>
+        <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Signature path</p><h2 class="text-base font-semibold">Source → snapshot → stream</h2></div>
         <Badge variant="outline">Durable boundaries only</Badge>
       </div>
       <div class="grid grid-cols-[minmax(7rem,auto)_minmax(3rem,1fr)_minmax(7rem,auto)_minmax(3rem,1fr)_minmax(7rem,auto)] items-center gap-3 max-sm:grid-cols-1">
-        <div class="text-muted-foreground grid justify-items-center gap-1 text-center"><Server :size="19" /><strong class="text-foreground text-sm">Source</strong><span class="font-mono text-[0.6rem]">{{ databases.length }} configured</span></div>
+        <div class="text-muted-foreground grid justify-items-center gap-1 text-center"><Server :size="19" /><strong class="text-foreground text-sm">Source</strong><span class="font-mono text-xs">{{ databases.length }} configured</span></div>
         <div class="bg-border h-px overflow-hidden max-sm:mx-auto max-sm:h-8 max-sm:w-px"><span class="bg-foreground block h-full transition-[width]" :style="{ width: databases.length ? '100%' : '0%' }" /></div>
-        <div class="text-muted-foreground grid justify-items-center gap-1 text-center"><HardDrive :size="19" /><strong class="text-foreground text-sm">Snapshot</strong><span class="font-mono text-[0.6rem]">{{ databases.filter((item) => item.state === 'snapshotting').length }} running</span></div>
+        <div class="text-muted-foreground grid justify-items-center gap-1 text-center"><HardDrive :size="19" /><strong class="text-foreground text-sm">Snapshot</strong><span class="font-mono text-xs">{{ databases.filter((item) => item.state === 'snapshotting').length }} running</span></div>
         <div class="bg-border h-px overflow-hidden max-sm:mx-auto max-sm:h-8 max-sm:w-px"><span class="bg-foreground block h-full transition-[width]" :style="{ width: activeMirrors ? '100%' : '0%' }" /></div>
-        <div class="text-muted-foreground grid justify-items-center gap-1 text-center"><Radio :size="19" /><strong class="text-foreground text-sm">Stream</strong><span class="font-mono text-[0.6rem]">{{ activeMirrors }} live</span></div>
+        <div class="text-muted-foreground grid justify-items-center gap-1 text-center"><Radio :size="19" /><strong class="text-foreground text-sm">Stream</strong><span class="font-mono text-xs">{{ activeMirrors }} live</span></div>
       </div>
     </Card>
 
@@ -101,7 +101,7 @@ const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, al
         </div>
         <div v-else class="divide-y">
           <NuxtLink v-for="database in databases" :key="database.id" :to="`/databases/${database.id}`" class="hover:bg-accent flex w-full items-center gap-3 py-2.5 text-left">
-            <span class="bg-accent text-accent-foreground grid size-8 shrink-0 place-items-center rounded-md border font-mono text-[0.58rem] font-bold">{{ database.name.slice(0, 2).toUpperCase() }}</span>
+            <span class="bg-accent text-accent-foreground grid size-8 shrink-0 place-items-center rounded-md border font-mono text-xs font-bold">{{ database.name.slice(0, 2).toUpperCase() }}</span>
             <span class="grid min-w-0 flex-1"><strong class="truncate">{{ database.name }}</strong><small class="text-muted-foreground text-xs">{{ statuses[database.id]?.rows.toLocaleString() || 0 }} rows</small></span>
             <Badge :class="`tone-${stateTone(database.state)}`">{{ modeOf(database) }}</Badge>
             <ChevronRight :size="15" class="text-muted-foreground shrink-0" />

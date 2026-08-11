@@ -114,7 +114,7 @@ html {
   border: 1px solid transparent !important;
   border-radius: 0.2rem !important;
   font-family: var(--mono);
-  font-size: 0.57rem !important;
+  font-size: 0.75rem !important;
   font-weight: 750;
   text-transform: uppercase;
 }

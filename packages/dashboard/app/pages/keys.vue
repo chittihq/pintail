@@ -87,7 +87,7 @@ async function copy(value: string) {
 <template>
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
     <header class="mb-7 flex flex-wrap items-start justify-between gap-4">
-      <div><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Database-scoped access</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">API Keys</h1><p class="text-muted-foreground mt-1.5">Secrets are SHA-256 hash-only and shown once.</p></div>
+      <div><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Database-scoped access</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">API Keys</h1><p class="text-muted-foreground mt-1.5">Secrets are SHA-256 hash-only and shown once.</p></div>
       <Select v-model="keyDatabaseId">
         <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="Choose database" /></SelectTrigger>
         <SelectContent>

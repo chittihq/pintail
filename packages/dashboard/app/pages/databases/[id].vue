@@ -144,7 +144,7 @@ function describeTable(table: TableSummary) {
       <TabsContent value="snapshot">
         <div class="grid gap-4">
           <Card class="grid grid-cols-[1fr_auto] items-center gap-8 p-5 max-sm:grid-cols-1">
-            <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Durable publication</p><h2 class="text-base font-semibold capitalize">{{ snapshot?.state || database.state }}</h2><p class="text-muted-foreground mt-1.5 text-sm">Progress advances only after a chunk and its control-plane checkpoint are durable.</p></div>
+            <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Durable publication</p><h2 class="text-base font-semibold capitalize">{{ snapshot?.state || database.state }}</h2><p class="text-muted-foreground mt-1.5 text-sm">Progress advances only after a chunk and its control-plane checkpoint are durable.</p></div>
             <div class="grid min-w-44 justify-items-end"><strong class="text-3xl font-bold tracking-tight">{{ snapshot?.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString() || 0 }}</strong><span class="text-muted-foreground text-xs">rows published</span></div>
           </Card>
           <Card class="p-4">
@@ -163,12 +163,12 @@ function describeTable(table: TableSummary) {
       <TabsContent value="replication">
         <div class="grid gap-4 md:grid-cols-2">
           <Card class="p-4">
-            <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Checkpoint</p><h2 class="text-base font-semibold capitalize">{{ modeOf(database) }}</h2></div><Radio :size="20" class="text-muted-foreground" /></div>
+            <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Checkpoint</p><h2 class="text-base font-semibold capitalize">{{ modeOf(database) }}</h2></div><Radio :size="20" class="text-muted-foreground" /></div>
             <dl class="grid grid-cols-2 gap-x-4">
-              <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">State</dt><dd class="mt-1 text-sm">{{ database.state }}</dd></div>
-              <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Poll cadence</dt><dd class="mt-1 text-sm">{{ database.poll_interval_seconds }}s</dd></div>
-              <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Reconcile</dt><dd class="mt-1 text-sm">{{ database.reconcile_interval_seconds }}s</dd></div>
-              <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Updated</dt><dd class="mt-1 text-sm">{{ formatDate(database.updated_at) }}</dd></div>
+              <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">State</dt><dd class="mt-1 text-sm">{{ database.state }}</dd></div>
+              <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Poll cadence</dt><dd class="mt-1 text-sm">{{ database.poll_interval_seconds }}s</dd></div>
+              <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Reconcile</dt><dd class="mt-1 text-sm">{{ database.reconcile_interval_seconds }}s</dd></div>
+              <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Updated</dt><dd class="mt-1 text-sm">{{ formatDate(database.updated_at) }}</dd></div>
             </dl>
           </Card>
           <Card class="p-4">
@@ -188,7 +188,7 @@ function describeTable(table: TableSummary) {
 
       <TabsContent value="schema">
         <Card class="p-4">
-          <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Replica catalog</p><h2 class="text-base font-semibold">Schema generations</h2></div><Badge variant="outline">{{ tables.length }} tables</Badge></div>
+          <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Replica catalog</p><h2 class="text-base font-semibold">Schema generations</h2></div><Badge variant="outline">{{ tables.length }} tables</Badge></div>
           <div class="grid grid-cols-3 gap-2 max-sm:grid-cols-1">
             <button v-for="table in tables" :key="table.name" class="hover:border-foreground/30 hover:bg-accent grid grid-cols-[auto_1fr_auto] items-center gap-2.5 rounded-md border p-3 text-left" @click="describeTable(table)">
               <Table2 :size="16" class="text-muted-foreground" /><span class="grid min-w-0"><strong class="truncate text-sm">{{ table.name }}</strong><small class="text-muted-foreground text-xs">Generation {{ table.schema_version }}</small></span><ChevronRight :size="15" class="text-muted-foreground" />
@@ -199,7 +199,7 @@ function describeTable(table: TableSummary) {
 
       <TabsContent value="storage">
         <Card class="p-4">
-          <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Columnar footprint</p><h2 class="text-base font-semibold">Storage posture</h2></div><HardDrive :size="20" class="text-muted-foreground" /></div>
+          <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Columnar footprint</p><h2 class="text-base font-semibold">Storage posture</h2></div><HardDrive :size="20" class="text-muted-foreground" /></div>
           <div class="grid grid-cols-3 gap-3 max-sm:grid-cols-1">
             <div class="rounded-md border p-4"><span class="text-muted-foreground text-xs">Visible rows</span><strong class="mt-1 block text-2xl font-semibold tracking-tight">{{ formatNumber(statuses[database.id]?.rows || 0) }}</strong><small class="text-muted-foreground text-xs">Merge-on-read deduplicated</small></div>
             <div class="rounded-md border p-4"><span class="text-muted-foreground text-xs">Schema generations</span><strong class="mt-1 block text-2xl font-semibold tracking-tight">{{ tables.reduce((sum, table) => sum + table.schema_version, 0) }}</strong><small class="text-muted-foreground text-xs">Stable column IDs</small></div>
@@ -211,7 +211,7 @@ function describeTable(table: TableSummary) {
 
       <TabsContent value="settings">
         <Card class="grid gap-4 p-4">
-          <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Replication controls</p><h2 class="text-base font-semibold">Database settings</h2></div>
+          <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Replication controls</p><h2 class="text-base font-semibold">Database settings</h2></div>
           <div class="grid max-w-xs gap-1.5">
             <Label>Requested mode</Label>
             <Select :model-value="database.mode" @update:model-value="(value) => setMode(database!, value as typeof database.mode)">
@@ -225,10 +225,10 @@ function describeTable(table: TableSummary) {
             </Select>
           </div>
           <dl class="grid grid-cols-2 gap-x-4">
-            <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Poll cadence</dt><dd class="mt-1 text-sm">{{ database.poll_interval_seconds }} seconds</dd></div>
-            <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Reconciliation</dt><dd class="mt-1 text-sm">{{ database.reconcile_interval_seconds }} seconds</dd></div>
-            <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Included</dt><dd class="mt-1 text-sm">{{ database.include_tables.length || 'All tables' }}</dd></div>
-            <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Excluded</dt><dd class="mt-1 text-sm">{{ database.exclude_tables.length || 'None' }}</dd></div>
+            <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Poll cadence</dt><dd class="mt-1 text-sm">{{ database.poll_interval_seconds }} seconds</dd></div>
+            <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Reconciliation</dt><dd class="mt-1 text-sm">{{ database.reconcile_interval_seconds }} seconds</dd></div>
+            <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Included</dt><dd class="mt-1 text-sm">{{ database.include_tables.length || 'All tables' }}</dd></div>
+            <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Excluded</dt><dd class="mt-1 text-sm">{{ database.exclude_tables.length || 'None' }}</dd></div>
           </dl>
         </Card>
       </TabsContent>

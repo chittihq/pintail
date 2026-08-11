@@ -53,7 +53,7 @@ function auditDetail(event: AuditEvent) {
 <template>
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
     <header class="mb-7 flex flex-wrap items-start justify-between gap-4">
-      <div><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Durable work log</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Activity</h1><p class="text-muted-foreground mt-1.5">Snapshot, stream, poll, and repair outcomes from control-plane records.</p></div>
+      <div><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Durable work log</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Activity</h1><p class="text-muted-foreground mt-1.5">Snapshot, stream, poll, and repair outcomes from control-plane records.</p></div>
       <Select
         :model-value="activityDatabase || 'all'"
         @update:model-value="(value) => activityDatabase = value === 'all' ? '' : String(value)"
@@ -66,7 +66,7 @@ function auditDetail(event: AuditEvent) {
       </Select>
     </header>
     <Card v-if="deadLetters.length" class="mb-4 p-4">
-      <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Requires judgment</p><h2 class="text-base font-semibold">Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div>
+      <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Requires judgment</p><h2 class="text-base font-semibold">Dead-letter queue</h2></div><Badge class="tone-negative">{{ deadLetters.length }}</Badge></div>
       <div class="grid gap-3 sm:grid-cols-2">
         <div v-for="record in deadLetters" :key="record.id" data-testid="dead-letter" class="rounded-md border p-3">
           <div class="flex justify-between gap-3"><strong class="text-sm">{{ record.table || 'Database event' }}</strong><span class="text-muted-foreground text-xs">{{ formatDate(record.created_at) }}</span></div>
@@ -107,7 +107,7 @@ function auditDetail(event: AuditEvent) {
       </TabsContent>
       <TabsContent v-if="isAdmin" value="audit">
         <Card class="overflow-hidden p-0">
-      <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Every user, every workspace action</p><h2 class="text-base font-semibold">Audit trail</h2></div><Button variant="ghost" size="icon" :disabled="auditLoading" aria-label="Refresh audit trail" @click="loadAuditLog"><RefreshCw /></Button></div>
+      <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Every user, every workspace action</p><h2 class="text-base font-semibold">Audit trail</h2></div><Button variant="ghost" size="icon" :disabled="auditLoading" aria-label="Refresh audit trail" @click="loadAuditLog"><RefreshCw /></Button></div>
       <div v-if="!auditEvents.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><ShieldCheck :size="26" /><strong class="text-foreground">No audit events yet</strong><span class="max-w-sm text-sm">Queries, configuration changes, and workspace management appear here.</span></div>
       <Table v-else>
         <TableHeader>

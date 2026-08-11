@@ -30,7 +30,7 @@ async function confirmRemove() {
 <template>
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
     <header class="mb-7 flex flex-wrap items-start justify-between gap-4">
-      <div><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Source registry</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Databases</h1><p class="text-muted-foreground mt-1.5">Every mirror has its own state, checkpoint, and failure boundary.</p></div>
+      <div><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Source registry</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Databases</h1><p class="text-muted-foreground mt-1.5">Every mirror has its own state, checkpoint, and failure boundary.</p></div>
       <Button as-child><NuxtLink to="/databases/new"><Plus /> Add database</NuxtLink></Button>
     </header>
     <Card class="overflow-hidden p-0">
@@ -53,7 +53,7 @@ async function confirmRemove() {
           <TableRow v-for="database in databases" :key="database.id">
             <TableCell>
               <NuxtLink :to="`/databases/${database.id}`" class="flex items-center gap-2.5">
-                <span class="bg-accent text-accent-foreground grid size-8 place-items-center rounded-md border font-mono text-[0.58rem] font-bold">{{ database.name.slice(0, 2).toUpperCase() }}</span><strong>{{ database.name }}</strong>
+                <span class="bg-accent text-accent-foreground grid size-8 place-items-center rounded-md border font-mono text-xs font-bold">{{ database.name.slice(0, 2).toUpperCase() }}</span><strong>{{ database.name }}</strong>
               </NuxtLink>
             </TableCell>
             <TableCell><Badge :class="`tone-${modeOf(database) === 'cdc' ? 'positive' : modeOf(database) === 'polling' ? 'warning' : 'neutral'}`">{{ modeOf(database) }}</Badge></TableCell>

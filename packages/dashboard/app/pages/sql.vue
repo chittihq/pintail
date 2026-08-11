@@ -83,7 +83,7 @@ async function runSql() {
 <template>
   <section class="mx-auto flex w-full max-w-[88rem] flex-col px-4 py-10 sm:px-6">
     <header class="mb-7 flex flex-wrap items-start justify-between gap-4">
-      <div><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Native query engine</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">SQL Console</h1><p class="text-muted-foreground mt-1.5">MySQL dialect over reader-pinned columnar snapshots.</p></div>
+      <div><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Native query engine</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">SQL Console</h1><p class="text-muted-foreground mt-1.5">MySQL dialect over reader-pinned columnar snapshots.</p></div>
       <Select v-model="sqlDatabaseId">
         <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="Choose database" /></SelectTrigger>
         <SelectContent>
@@ -97,7 +97,7 @@ async function runSql() {
         <div class="text-muted-foreground flex min-h-11 items-center justify-between border-b px-3 font-mono text-xs">
           <span>query.sql</span>
           <div class="flex items-center gap-3">
-            <span class="bg-muted rounded border px-1.5 py-0.5 text-[0.58rem]">⌘ Enter</span>
+            <span class="bg-muted rounded border px-1.5 py-0.5 text-xs">⌘ Enter</span>
             <Button variant="ghost" size="sm" data-testid="format-sql" title="Format (⇧⌥F)" @click="formatRequest += 1"><WandSparkles /> Format</Button>
             <Button size="sm" :disabled="sqlRunning" @click="runSql"><LoaderCircle v-if="sqlRunning" class="animate-spin" /><Play v-else /> Run</Button>
           </div>

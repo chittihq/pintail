@@ -105,7 +105,7 @@ function toggleInclude(name: string, on: boolean) {
 
 <template>
   <section class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6">
-    <header class="mb-6"><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Add database</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Build a live mirror</h1><p class="text-muted-foreground mt-1.5">Connection, capability proof, table selection, then durable handoff.</p></header>
+    <header class="mb-6"><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Add database</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Build a live mirror</h1><p class="text-muted-foreground mt-1.5">Connection, capability proof, table selection, then durable handoff.</p></header>
     <ol class="mb-4 grid grid-cols-4 gap-0">
       <li
         v-for="(label, index) in ['Connection', 'Probe', 'Tables', 'Start']"
@@ -114,14 +114,14 @@ function toggleInclude(name: string, on: boolean) {
         :class="wizard.step === index + 1 || wizard.step > index + 1 ? 'text-foreground font-semibold' : 'text-muted-foreground'"
       >
         <span
-          class="z-10 grid size-6 shrink-0 place-items-center rounded-full border font-mono text-[0.6rem]"
+          class="z-10 grid size-6 shrink-0 place-items-center rounded-full border font-mono text-xs"
           :class="wizard.step > index + 1 ? 'border-green text-green bg-green-soft' : wizard.step === index + 1 ? 'bg-foreground text-background border-foreground' : 'bg-background'"
         >{{ wizard.step > index + 1 ? '✓' : index + 1 }}</span>{{ label }}
       </li>
     </ol>
     <Card class="p-6 sm:p-8">
       <form v-if="wizard.step === 1" class="grid gap-6" @submit.prevent="wizardConnection">
-        <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">01 / Connection</p><h2 class="text-xl font-semibold">Where is MySQL?</h2><p class="text-muted-foreground mt-1.5">The DSN is encrypted before it enters the control-plane database.</p></div>
+        <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">01 / Connection</p><h2 class="text-xl font-semibold">Where is MySQL?</h2><p class="text-muted-foreground mt-1.5">The DSN is encrypted before it enters the control-plane database.</p></div>
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="grid content-start gap-1.5">
             <Label for="wizard-name">MySQL schema</Label>
@@ -140,7 +140,7 @@ function toggleInclude(name: string, on: boolean) {
         </div>
       </form>
       <div v-else-if="wizard.step === 2" class="grid gap-6">
-        <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">02 / Capability probe</p><h2 class="text-xl font-semibold">{{ wizard.serverVersion }}</h2><p class="text-muted-foreground mt-1.5">Pintail checks every invariant required for safe snapshot and stream ownership.</p></div>
+        <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">02 / Capability probe</p><h2 class="text-xl font-semibold">{{ wizard.serverVersion }}</h2><p class="text-muted-foreground mt-1.5">Pintail checks every invariant required for safe snapshot and stream ownership.</p></div>
         <div v-if="wizard.probe" class="grid grid-cols-2 rounded-md border max-sm:grid-cols-1">
           <div v-for="(value, key) in wizard.probe.capabilities" v-show="typeof value === 'boolean'" :key="key" class="grid min-h-14 grid-cols-[auto_1fr] items-center gap-2 border-b p-3 odd:border-r max-sm:odd:border-r-0">
             <span class="grid size-6 place-items-center rounded-full" :class="value ? 'bg-green-soft text-green' : 'bg-red-soft text-red'"><Check v-if="value" :size="14" /><X v-else :size="14" /></span>
@@ -161,7 +161,7 @@ function toggleInclude(name: string, on: boolean) {
         <div class="flex justify-end gap-2"><Button variant="outline" @click="wizard.step = 1">Back</Button><Button @click="wizard.step = 3">Choose tables <ArrowRight /></Button></div>
       </div>
       <div v-else-if="wizard.step === 3 && wizard.probe" class="grid gap-6">
-        <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">03 / Table selection</p><h2 class="text-xl font-semibold">Choose the analytical surface</h2><p class="text-muted-foreground mt-1.5">PK-less append tables preserve rows but cannot model source updates or deletes.</p></div>
+        <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">03 / Table selection</p><h2 class="text-xl font-semibold">Choose the analytical surface</h2><p class="text-muted-foreground mt-1.5">PK-less append tables preserve rows but cannot model source updates or deletes.</p></div>
         <div
           v-if="!wizard.probe.tables.length"
           class="grid gap-2 rounded-md border p-4"

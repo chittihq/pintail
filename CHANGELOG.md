@@ -24,6 +24,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The dashboard has a 12px floor on type. Seventy declarations rendered below
+  10.5px — nine arbitrary sizes between 8.8px and 10.1px, which is drift rather
+  than a scale — and the worst of them were mono, uppercase and letter-spaced,
+  each of which costs legibility on top of the size. They sat on operational
+  data: driver, host and port, database and user, session subject. Every status
+  badge was 9.1px, set with `!important` in one rule. All of it now sits at
+  `text-xs` or above, which is the floor iOS and Material both put body text at
+  and above what any of these were. Badge and small-button heights grew from
+  20px to 24px so the larger text is not clipped.
+
 ### Added
 
 - Remote diagnostics: crashes and errors to Sentry, every log line to Logtail

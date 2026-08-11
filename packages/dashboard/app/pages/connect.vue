@@ -69,7 +69,7 @@ db.close()`
 
 <template>
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
-    <header class="mb-7"><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Client handoff</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Connect to Pintail</h1><p class="text-muted-foreground mt-1.5">The database name is the username; its scoped API key is the password.</p></header>
+    <header class="mb-7"><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Client handoff</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Connect to Pintail</h1><p class="text-muted-foreground mt-1.5">The database name is the username; its scoped API key is the password.</p></header>
     <form class="bg-card text-card-foreground ring-foreground/10 mb-4 grid gap-4 rounded-lg p-4 ring-1 sm:grid-cols-4" @submit.prevent>
       <div class="grid content-start gap-1.5">
         <Label>Database</Label>
@@ -97,10 +97,10 @@ db.close()`
       <Card class="p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><h2 class="text-base font-semibold">DBeaver / Metabase</h2><CircleHelp :size="17" class="text-muted-foreground" /></div>
         <dl class="mb-4 grid grid-cols-2 gap-x-4">
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Driver</dt><dd class="mt-1 text-sm">MySQL 8</dd></div>
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Host / port</dt><dd class="mt-1 text-sm">{{ connectHost }}:{{ connectPort }}</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Database / user</dt><dd class="mt-1 text-sm">{{ selectedConnectDatabase?.name || 'analytics' }}</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Password</dt><dd class="mt-1 text-sm">Query-scoped API key</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Driver</dt><dd class="mt-1 text-sm">MySQL 8</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Host / port</dt><dd class="mt-1 text-sm">{{ connectHost }}:{{ connectPort }}</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Database / user</dt><dd class="mt-1 text-sm">{{ selectedConnectDatabase?.name || 'analytics' }}</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Password</dt><dd class="mt-1 text-sm">Query-scoped API key</dd></div>
         </dl>
         <p class="text-muted-foreground text-xs leading-relaxed">Keep SSL disabled for a loopback endpoint. Terminate TLS at your private ingress when clients connect across a network.</p>
       </Card>

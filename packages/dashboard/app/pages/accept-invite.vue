@@ -60,7 +60,7 @@ function signInWithGoogle() {
 
       <div v-else class="grid gap-5 text-center">
         <div class="grid place-items-center gap-2">
-          <span class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-[0.65rem] font-extrabold">PT</span>
+          <span class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-xs font-extrabold">PT</span>
           <h1 class="text-xl font-bold">You're invited to {{ status.workspace_name }}</h1>
           <p class="text-muted-foreground text-balance text-sm">
             Sign in with the Google account for <strong class="text-foreground">{{ status.email }}</strong> to join as

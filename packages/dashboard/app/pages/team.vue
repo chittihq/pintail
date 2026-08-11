@@ -89,7 +89,7 @@ async function copy(value: string) {
 <template>
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
     <header class="mb-7">
-      <p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Workspace access</p>
+      <p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Workspace access</p>
       <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Team</h1>
       <p class="text-muted-foreground mt-1.5">Invite teammates by email; they sign in with Google once the invite is accepted.</p>
     </header>
@@ -127,7 +127,7 @@ async function copy(value: string) {
 
     <div class="grid gap-4 md:grid-cols-2">
       <Card class="overflow-hidden p-0">
-        <div class="p-4 pb-0"><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Active</p><h2 class="text-base font-semibold">Members</h2></div>
+        <div class="p-4 pb-0"><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Active</p><h2 class="text-base font-semibold">Members</h2></div>
         <div v-if="!members.length" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center gap-2 p-6 text-center"><Users :size="24" /><span class="text-sm">No members yet</span></div>
         <Table v-else>
           <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead><span class="sr-only">Actions</span></TableHead></TableRow></TableHeader>
@@ -150,7 +150,7 @@ async function copy(value: string) {
       </Card>
 
       <Card class="overflow-hidden p-0">
-        <div class="p-4 pb-0"><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Pending and past</p><h2 class="text-base font-semibold">Invites</h2></div>
+        <div class="p-4 pb-0"><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Pending and past</p><h2 class="text-base font-semibold">Invites</h2></div>
         <div v-if="!invites.length" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center gap-2 p-6 text-center"><Mail :size="24" /><span class="text-sm">No invites sent</span></div>
         <Table v-else>
           <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead><TableHead>Expires</TableHead><TableHead><span class="sr-only">Actions</span></TableHead></TableRow></TableHeader>

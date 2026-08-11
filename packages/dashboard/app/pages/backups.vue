@@ -128,7 +128,7 @@ async function restoreSelectedBackup() {
 <template>
   <section class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
     <header class="mb-7 flex flex-wrap items-start justify-between gap-4">
-      <div><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Recovery plane</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Backups</h1><p class="text-muted-foreground mt-1.5">Checksum-verified manifests, immutable segments, and control-plane state restore side-by-side.</p></div>
+      <div><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Recovery plane</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Backups</h1><p class="text-muted-foreground mt-1.5">Checksum-verified manifests, immutable segments, and control-plane state restore side-by-side.</p></div>
       <Select v-model="backupDatabaseId">
         <SelectTrigger class="min-w-52"><Database :size="15" /><SelectValue placeholder="Choose database" /></SelectTrigger>
         <SelectContent>
@@ -138,7 +138,7 @@ async function restoreSelectedBackup() {
     </header>
     <div class="grid gap-4 md:grid-cols-2">
       <Card class="grid gap-4 p-4">
-        <div class="flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">S3-compatible destination</p><h2 class="text-base font-semibold">Backup configuration</h2></div><Badge :class="backupConfigLoaded ? 'tone-positive' : 'tone-neutral'">{{ backupConfigLoaded ? 'Configured' : 'Not configured' }}</Badge></div>
+        <div class="flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">S3-compatible destination</p><h2 class="text-base font-semibold">Backup configuration</h2></div><Badge :class="backupConfigLoaded ? 'tone-positive' : 'tone-neutral'">{{ backupConfigLoaded ? 'Configured' : 'Not configured' }}</Badge></div>
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="grid content-start gap-1.5"><Label for="backup-bucket">Bucket</Label><Input id="backup-bucket" v-model="backupForm.bucket" autocomplete="off" placeholder="analytics-backups" /></div>
           <div class="grid content-start gap-1.5"><Label for="backup-prefix">Object prefix</Label><Input id="backup-prefix" v-model="backupForm.prefix" autocomplete="off" placeholder="pintail/production" /></div>
@@ -167,14 +167,14 @@ async function restoreSelectedBackup() {
         <p class="text-muted-foreground text-xs leading-relaxed">Prefix validation prevents accidental broad writes; it is not a tenant-isolation boundary. Use bucket IAM for isolation.</p>
       </Card>
       <Card class="grid content-start gap-4 p-4">
-        <div class="flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Manual recovery point</p><h2 class="text-base font-semibold">Backup now</h2></div><Archive :size="19" class="text-muted-foreground" /></div>
+        <div class="flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Manual recovery point</p><h2 class="text-base font-semibold">Backup now</h2></div><Archive :size="19" class="text-muted-foreground" /></div>
         <p class="text-muted-foreground text-sm">The first run is full. Later runs reuse unchanged immutable segment objects unless you force a new full chain.</p>
         <div class="flex items-center gap-2">
           <Button :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(false)"><Play /> Backup now</Button>
           <Button variant="outline" :disabled="backupLoading || !backupConfigLoaded" @click="runBackup(true)"><RefreshCw /> Force full</Button>
         </div>
         <Separator />
-        <div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Side-by-side restore</p><h2 class="text-base font-semibold">Restore as new database</h2></div>
+        <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Side-by-side restore</p><h2 class="text-base font-semibold">Restore as new database</h2></div>
         <div class="grid gap-1.5">
           <Label>Completed backup</Label>
           <Select v-model="restoreBackupId">
@@ -193,7 +193,7 @@ async function restoreSelectedBackup() {
       </Card>
     </div>
     <Card class="mt-4 overflow-hidden p-0">
-      <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Durable audit</p><h2 class="text-base font-semibold">Backup history</h2></div><Button variant="ghost" size="icon" :disabled="backupLoading" aria-label="Refresh backup history" @click="loadBackups()"><RefreshCw /></Button></div>
+      <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Durable audit</p><h2 class="text-base font-semibold">Backup history</h2></div><Button variant="ghost" size="icon" :disabled="backupLoading" aria-label="Refresh backup history" @click="loadBackups()"><RefreshCw /></Button></div>
       <div v-if="!backups.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><Archive :size="26" /><strong class="text-foreground">No backup artifacts</strong><span class="max-w-sm text-sm">Save a destination, then create the first full recovery point.</span></div>
       <Table v-else>
         <TableHeader>

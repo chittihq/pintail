@@ -197,7 +197,7 @@ async function submitAuth() {
   <Toaster position="top-right" />
 
   <div v-if="booting" class="text-muted-foreground flex min-h-svh items-center justify-center gap-3 font-mono text-xs tracking-wide uppercase" aria-live="polite">
-    <div class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-[0.65rem] font-extrabold">PT</div>
+    <div class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-xs font-extrabold">PT</div>
     <LoaderCircle class="animate-spin" :size="20" />
     <span>Opening control plane</span>
   </div>
@@ -213,7 +213,7 @@ async function submitAuth() {
           <form class="p-6 md:p-8" @submit.prevent="submitAuth">
             <div class="flex flex-col gap-6">
               <div class="flex flex-col items-center gap-2 text-center">
-                <span class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-[0.65rem] font-extrabold">PT</span>
+                <span class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-xs font-extrabold">PT</span>
                 <h1 class="text-xl font-bold">{{ authMode === 'setup' ? 'Create the operator' : 'Welcome back' }}</h1>
                 <p class="text-muted-foreground text-balance">
                   {{

@@ -107,40 +107,40 @@ async function saveGoogleSettings() {
 
 <template>
   <section v-if="session" class="mx-auto w-full max-w-[88rem] px-4 py-10 sm:px-6">
-    <header class="mb-7"><p class="text-muted-foreground mb-1.5 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Node policy</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Settings</h1><p class="text-muted-foreground mt-1.5">Operator identity, network surfaces, and local presentation.</p></header>
+    <header class="mb-7"><p class="text-muted-foreground mb-1.5 font-mono text-xs font-bold tracking-[0.12em] uppercase">Node policy</p><h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Settings</h1><p class="text-muted-foreground mt-1.5">Operator identity, network surfaces, and local presentation.</p></header>
     <div class="grid items-start gap-4 sm:grid-cols-2">
       <Card class="p-4">
-        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Operator</p><h2 class="text-base font-semibold">Current session</h2></div><Server :size="19" class="text-muted-foreground" /></div>
+        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Operator</p><h2 class="text-base font-semibold">Current session</h2></div><Server :size="19" class="text-muted-foreground" /></div>
         <dl class="grid grid-cols-2 gap-x-4">
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Subject</dt><dd class="mt-1 font-mono text-sm">{{ session.subject }}</dd></div>
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Role</dt><dd class="mt-1 text-sm">{{ session.role }}</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Scopes</dt><dd class="mt-1 text-sm">{{ session.scopes.join(', ') }}</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Session</dt><dd class="mt-1 text-sm">12-hour signed JWT</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Subject</dt><dd class="mt-1 font-mono text-sm">{{ session.subject }}</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Role</dt><dd class="mt-1 text-sm">{{ session.role }}</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Scopes</dt><dd class="mt-1 text-sm">{{ session.scopes.join(', ') }}</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Session</dt><dd class="mt-1 text-sm">12-hour signed JWT</dd></div>
         </dl>
         <Button v-if="googleEnabled" class="mt-4" variant="outline" :disabled="googleLinking" @click="linkGoogle"><LoaderCircle v-if="googleLinking" class="animate-spin" /><Link2 v-else /> Link Google account</Button>
       </Card>
       <Card class="p-4">
-        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Appearance</p><h2 class="text-base font-semibold">Interface</h2></div><Button variant="ghost" size="icon" @click="toggleTheme"><Sun v-if="dark" /><Moon v-else /></Button></div>
+        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Appearance</p><h2 class="text-base font-semibold">Interface</h2></div><Button variant="ghost" size="icon" @click="toggleTheme"><Sun v-if="dark" /><Moon v-else /></Button></div>
         <div class="flex w-full items-center justify-between py-1">
           <span><strong class="block text-sm">Dark instrument panel</strong><small class="text-muted-foreground text-xs">Stored only in this browser.</small></span>
           <Switch :model-value="dark" @update:model-value="() => toggleTheme()" />
         </div>
       </Card>
       <Card class="overflow-hidden p-4">
-        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">MySQL wire</p><h2 class="text-base font-semibold">Client endpoint</h2></div><Badge :class="nodeStatus?.wire.enabled ? 'tone-positive' : 'tone-negative'">{{ nodeStatus?.wire.enabled ? 'Live' : 'Unavailable' }}</Badge></div>
+        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">MySQL wire</p><h2 class="text-base font-semibold">Client endpoint</h2></div><Badge :class="nodeStatus?.wire.enabled ? 'tone-positive' : 'tone-negative'">{{ nodeStatus?.wire.enabled ? 'Live' : 'Unavailable' }}</Badge></div>
         <div class="bg-muted mb-3 flex items-center gap-2.5 rounded-md border p-3">
           <span class="size-2 shrink-0 rounded-full" :class="nodeStatus?.wire.enabled ? 'bg-green' : 'bg-destructive'" />
           <code class="truncate text-sm">{{ nodeStatus?.wire.bind || 'Endpoint unavailable' }}</code>
         </div>
         <dl class="grid grid-cols-2 gap-x-4">
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Mode</dt><dd class="mt-1 text-sm">Read-only</dd></div>
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Authentication</dt><dd class="mt-1 text-sm">Database API key</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Username</dt><dd class="mt-1 text-sm">Database name</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Protocol</dt><dd class="mt-1 text-sm">MySQL native</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Mode</dt><dd class="mt-1 text-sm">Read-only</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Authentication</dt><dd class="mt-1 text-sm">Database API key</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Username</dt><dd class="mt-1 text-sm">Database name</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Protocol</dt><dd class="mt-1 text-sm">MySQL native</dd></div>
         </dl>
       </Card>
       <Card v-if="isAdmin" class="grid gap-4 p-4">
-        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Node-wide, one OAuth client covers every workspace</p><h2 class="text-base font-semibold">Google sign-in</h2></div><Badge :class="googleConfigured ? 'tone-positive' : 'tone-neutral'">{{ googleConfigured ? 'Configured' : 'Not configured' }}</Badge></div>
+        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Node-wide, one OAuth client covers every workspace</p><h2 class="text-base font-semibold">Google sign-in</h2></div><Badge :class="googleConfigured ? 'tone-positive' : 'tone-neutral'">{{ googleConfigured ? 'Configured' : 'Not configured' }}</Badge></div>
         <div class="grid gap-3">
           <div class="grid content-start gap-1.5"><Label for="google-public-url">Public URL</Label><Input id="google-public-url" v-model="googleForm.publicUrl" inputmode="url" autocomplete="url" placeholder="https://pintail.example.com" :aria-invalid="Boolean(domainUrlError)" /><small v-if="domainUrlError" data-testid="domain-url-error" class="text-destructive text-xs">{{ domainUrlError }}</small><small v-else class="text-muted-foreground text-xs">The fixed origin registered for the Google callback; forwarded host headers are ignored.</small></div>
           <div class="grid content-start gap-1.5"><Label for="google-client-id">Client ID</Label><Input id="google-client-id" v-model="googleForm.clientId" autocomplete="off" placeholder="123456789-abc.apps.googleusercontent.com" /></div>
@@ -153,12 +153,12 @@ async function saveGoogleSettings() {
         <Button :disabled="googleSaving || !googleLoaded || Boolean(domainUrlError)" @click="saveGoogleSettings"><LoaderCircle v-if="googleSaving" class="animate-spin" /><KeyRound v-else /> Save Google settings</Button>
       </Card>
       <Card class="p-4">
-        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-[0.63rem] font-bold tracking-[0.12em] uppercase">Telemetry</p><h2 class="text-base font-semibold">Operations</h2></div><Badge class="tone-positive">Live</Badge></div>
+        <div class="mb-4 flex items-center justify-between gap-3"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Telemetry</p><h2 class="text-base font-semibold">Operations</h2></div><Badge class="tone-positive">Live</Badge></div>
         <dl class="grid grid-cols-2 gap-x-4">
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Metrics</dt><dd class="mt-1 text-sm"><a href="/metrics" target="_blank" class="underline underline-offset-2">/metrics</a></dd></div>
-          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Format</dt><dd class="mt-1 text-sm">Prometheus text</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Supervisor</dt><dd class="mt-1 text-sm">Isolated per database</dd></div>
-          <div class="py-3"><dt class="text-muted-foreground font-mono text-[0.57rem] uppercase">Recovery</dt><dd class="mt-1 text-sm">Scheduled + manual</dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Metrics</dt><dd class="mt-1 text-sm"><a href="/metrics" target="_blank" class="underline underline-offset-2">/metrics</a></dd></div>
+          <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Format</dt><dd class="mt-1 text-sm">Prometheus text</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Supervisor</dt><dd class="mt-1 text-sm">Isolated per database</dd></div>
+          <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Recovery</dt><dd class="mt-1 text-sm">Scheduled + manual</dd></div>
         </dl>
       </Card>
     </div>
