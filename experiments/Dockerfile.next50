@@ -1,0 +1,19 @@
+FROM rust:1.94-slim AS build
+WORKDIR /lab
+COPY . .
+RUN cargo build --release \
+    -p e32-bone-index \
+    -p e33-leaf-venation \
+    -p e34-root-index \
+    -p e43-lateral-predicates \
+    -p e77-retinal-granules
+
+FROM debian:bookworm-slim
+COPY --from=build \
+    /lab/target/release/e32-bone-index \
+    /lab/target/release/e33-leaf-venation \
+    /lab/target/release/e34-root-index \
+    /lab/target/release/e43-lateral-predicates \
+    /lab/target/release/e77-retinal-granules \
+    /usr/local/bin/
+CMD ["/bin/sh", "-c", "for e in e32-bone-index e33-leaf-venation e34-root-index e43-lateral-predicates e77-retinal-granules; do $e; done"]

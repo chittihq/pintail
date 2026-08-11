@@ -1247,3 +1247,134 @@ This is local evidence only, but no production path is selected: the experiment
 defines demand gates rather than an ISA-sensitive kernel winner. Persistent
 per-segment SMAs, zone-map pruning, and the generation-keyed memo remain the
 smaller mechanisms for the workloads Pintail currently has.
+
+## 2026-08-12 biomimetic program — Wave 1
+
+Wave 1 executed the five adaptive-metadata simulations selected in
+`NEXT_50.md`: e32, e33, e34, e43, and e77. All returned identical exact
+answers across policies. Policy metrics are deterministic and reproduced on
+Apple M2 Pro and the pinned 8-CPU/8-GiB Linux target for the two candidates
+that cleared their local advancement gate. Elapsed simulator timings are
+reported only where the simulated loop actually represents the proposed work;
+modeled avoided I/O or unequal predicate costs are not mislabeled as elapsed
+speedups.
+
+### e32 — Bone-remodelled sparse indexes
+
+All policies spent exactly 4,096 pivots over 16,777,216 rows. Stress allocation
+used decayed rows-inspected feedback and hysteresis; frequency allocation used
+undecayed observations.
+
+| Trace | Fixed decoded / p95 | Frequency decoded / p95 | Remodeling decoded / p95 |
+|---|---:|---:|---:|
+| uniform points | 81,920,000 / 4,096 | 89,164,872 / 5,462 | 88,286,160 / 5,462 |
+| stationary 80/20 hotspot | 81,920,000 / 4,096 | **49,231,311** / 6,554 | 57,717,077 / 6,554 |
+| moving hotspot | 327,680,000 / 4,096 | 239,861,379 / 7,282 | **218,259,835** / 6,554 |
+| 10% full scans | 33,527,521,280 / 16,777,216 | 33,535,306,309 / 16,777,216 | 33,534,209,502 / 16,777,216 |
+
+**Verdict: reject.** Remodeling cuts cumulative point work 33% for the moving
+hotspot, but its fixed byte budget funds hot pivots by making cold gaps wider.
+The 20% cold tail therefore raises point p95 by 60%, directly failing e32's
+primary gate. It also moves 161,692 pivots over the moving trace versus 33,696
+for the simpler frequency policy. This is not a tuning miss: improving tail
+seeks under an unchanged pivot count requires a different objective, such as a
+hard maximum-gap constraint, which sharply limits hotspot gains.
+
+### e33 — Leaf-venation metadata
+
+The real isolated kernel evaluated 160 range predicates over 1,024 blocks and
+then counted exact matching rows from every candidate block.
+
+| Shape | Fixed probes / median | Complete hierarchy | Selective venation |
+|---|---:|---:|---:|
+| clustered | 163,840 / 0.367 ms | 5,076 / 0.422 ms | **6,072 / 0.327 ms** |
+| partly clustered | 163,840 / **2.242 ms** | 246,014 / 3.229 ms | 175,360 / 2.314 ms |
+| scattered | 163,840 / **7.596 ms** | 327,518 / 8.653 ms | 175,360 / 7.708 ms |
+
+Selective venation used 1,096 summaries versus 1,024 leaf maps; the complete
+tree used 2,047. Candidate blocks and 218k exact matches agreed in every arm.
+
+**Verdict: reject.** The selective hierarchy eliminates 96% of metadata probes
+on clustered data, but transfers to only a 10.9% elapsed win, below the 15%
+rule. Once scattered blocks make coarse bounds unselective, the hierarchy adds
+probes and loses. No Linux run is needed to reject a candidate already below
+the required local margin.
+
+### e34 — Root-foraging micro-indexes
+
+Twenty of 256 value patches could own a rootlet. Work includes rows scanned by
+queries and rows read to build every index. An exact histogram supplied the
+same equality count to all policies.
+
+| Trace | Scan work | Global index | Frequency rootlets | Local+systemic rootlets |
+|---|---:|---:|---:|---:|
+| stationary | 32.00B | **4.48M** | 5.72B | 5.74B |
+| moving | 128.00B | **5.96M** | 23.83B | 23.76B |
+| decoy then stable | 128.00B | **5.94M** | 18.94B | 19.05B |
+
+The first root-controller run exposed an incumbent-feedback bug: it scored
+only realized savings, so an absent rootlet could never demonstrate value.
+After correction to counterfactual savings, its query work matched frequency
+allocation but its faster decay caused 4.7-5.9x as much build work on shifting
+traces (29-31M build rows versus 5-6M).
+
+**Verdict: reject this controller.** Rootlets do beat scans under a strict
+auxiliary-byte cap, but the biological local+systemic rule adds churn without
+beating simple decayed frequency. A full index is the performance ceiling and
+repays its one 4M-row build almost immediately in these repeated traces; future
+work would need a real storage budget and low-reuse trace where the full index
+is infeasible.
+
+### e43 — Lateral-inhibition predicate ordering
+
+Four exact predicate truth columns carried calibrated evaluation costs
+`[1, 4, 13, 3]`. The candidate samples 64 rows per 4,096-row block (1.57% of
+rows), then greedily chooses marginal newly-rejected rows per cost. “Hindsight”
+enumerates all 24 static orders and does not charge enumeration to the reported
+work, making it a deliberately strong baseline.
+
+| Shape | Best static work | Per-block marginal work | Delta |
+|---|---:|---:|---:|
+| independent | **4,704,825** | 4,896,916 | +4.1% |
+| correlated rejects | **6,925,765** | 7,013,902 | +1.3% |
+| anti-correlated rejects | **6,695,676** | 6,834,100 | +2.1% |
+| blockwise regime reversals | 4,972,925 | **3,743,805** | **-24.7%** |
+
+The modeled work and exact result are identical across architectures. The
+simulator's reversal-shape elapsed loop improved from 1.003 to 0.543 ms locally
+and 0.913 to 0.600 ms on Linux. Other elapsed ratios are not evidence for the
+calibrated cost model because reading a precomputed Boolean costs the same for
+all four simulated predicates.
+
+**Verdict: simulation gate passes; engine claim remains unvalidated.** It clears
+the 20% heterogeneous-data win, 2% sample cap, and 5% stable-shape guardrail on
+calibrated work on both targets. Advance to a real typed-kernel experiment with
+cheap comparisons, JSON/string predicates, and actual cycle accounting. Do not
+add per-block reordering to Pintail from this simulation alone.
+
+### e77 — Retinal variable-resolution granules
+
+Every layout used exactly 64 granules over 1,048,576 rows. The candidate learned
+decayed query heat plus update-overlap signals and bounded boundaries around the
+fixed layout. Reported work is rows in every granule touched by an exact range;
+the simulator does not pretend those modeled rows were physically decoded.
+
+| Trace | Fixed decoded | Static entropy | Heat only | Bounded foveation |
+|---|---:|---:|---:|---:|
+| stationary hotspot | 82,853,888 | **35,012,608** | 35,345,408 | 59,003,904 |
+| moving hotspot | 331,808,768 | 431,145,984 | **155,657,216** | 237,814,784 |
+| uniform wide scans | **409,600,000** | 445,338,624 | 410,920,960 | 409,790,464 |
+| random narrow probes | **83,116,032** | 120,266,752 | 84,077,568 | 83,990,528 |
+
+Linux reproduced every modeled count. Bounded foveation cuts decoded rows 28.8%
+on the stationary hotspot and 28.3% on the moving hotspot; hostile wide scans
+rise 0.05% and random probes 1.05%. Static entropy wins the known stationary
+case but becomes 30% worse than fixed when the hotspot moves. The candidate's
+p95 touched granule grows from 16K to 20-21K on hotspot traces, an explicit
+tail tradeoff.
+
+**Verdict: simulation byte gate passes; format claim remains unvalidated.** The
+equal-metadata and hostile-work gates pass on both targets, but this model does
+not measure PTSEG write throughput, metadata search, decompression, or the cost
+of producing variable blocks during immutable writes. Advance to a real PTSEG
+reader/writer A/B test. Do not change the 16,384-row format default yet.

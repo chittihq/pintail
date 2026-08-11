@@ -25,6 +25,11 @@ members = [
     "e21-fastlanes-layout",
     "e22-encoding-settled",
     "e27-adaptive-compression",
+    "e32-bone-index",
+    "e33-leaf-venation",
+    "e34-root-index",
+    "e43-lateral-predicates",
+    "e77-retinal-granules",
 ]
 
 [workspace.dependencies]

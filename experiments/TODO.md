@@ -86,3 +86,13 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   experiments specified in [`NEXT_50.md`](NEXT_50.md). Each item remains unchecked
   until its competing implementations have run, produced exact-answer evidence, and
   received a verdict in `RESULTS.md`.
+  - [x] **e32-bone-index** — rejected: cumulative hotspot work improves by moving
+    pivots out of the cold tail, but p95 seeks worsen 60% under the fixed byte budget.
+  - [x] **e33-leaf-venation** — rejected: 96% fewer clustered metadata probes becomes
+    only 10.9% elapsed and scattered data regresses.
+  - [x] **e34-root-index** — rejected: corrected local/systemic feedback matches
+    frequency allocation but causes 4.7-5.9x more rebuild work under drift.
+  - [ ] **e43-lateral-predicates** — simulation passes on both targets (24.7% modeled
+    work saved under blockwise drift); real unequal-cost typed kernel is required.
+  - [ ] **e77-retinal-granules** — simulation passes on both targets (28% fewer rows
+    touched on moving/stationary hotspots); real PTSEG A/B is required.

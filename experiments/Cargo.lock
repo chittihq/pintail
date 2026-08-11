@@ -221,6 +221,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "e32-bone-index"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e33-leaf-venation"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e34-root-index"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e43-lateral-predicates"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e77-retinal-granules"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
