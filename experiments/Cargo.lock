@@ -319,6 +319,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "e44-foveated-topk"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e45-cardinality-homeostasis"
 version = "0.1.0"
 dependencies = [
@@ -333,7 +340,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "e47-waggle-morsels"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e48-flocking-reads"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e49-schooling-control"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -348,6 +369,13 @@ dependencies = [
 
 [[package]]
 name = "e51-mycelial-blocks"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e52-join-fibers"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -375,7 +403,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "e56-vascular-memory"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e57-atp-plans"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e58-enzyme-batches"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -389,7 +431,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "e60-autophagic-buffers"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e61-apoptotic-queries"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e62-operator-fission"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "e63-glycogen-reserve"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e64-circadian-maintenance"
 version = "0.1.0"
 dependencies = [
  "common",
@@ -418,6 +488,13 @@ dependencies = [
 
 [[package]]
 name = "e68-biodiversity-reserve"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
+name = "e69-invasive-defense"
 version = "0.1.0"
 dependencies = [
  "common",

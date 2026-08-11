@@ -1767,3 +1767,27 @@ advance conditionally and reproduce on Linux; six ideas are rejected.
 - **e78 receptor Bloom ensemble — reject.** At equal bits and build probes, one PK
   Bloom produces 8,972 false reads, the ensemble 9,221, and partitioned filters
   29,564. All have zero false negatives; specialization does not beat one filter.
+
+## 2026-08-12 biomimetic program — Wave 6
+
+The final eleven necessary-condition models ran with deterministic exact-result
+checksums. e44, e52, and e61 advance to executable kernel/integration trials;
+the other eight fail at least one preregistered conjunction.
+
+| ID | Candidate result | Verdict |
+|---|---|---|
+| e44 | 39-61% fewer payload bytes on wide shapes; +3.5% uncorrelated | conditional pass |
+| e47 | clustered -27%, moving cluster only -11%, uniform +2.4% | reject |
+| e49 | p95 -23/-23/-17%; throughput 97%, fairness 0.90+ | reject |
+| e52 | join input -31/-26/-82%; no-FK neutral; metadata 1% | conditional pass |
+| e56 | spill -28/-17/-25%; reversal recovery 44 epochs | reject |
+| e58 | strings +8.4% runtime; aggregate +12% memory | reject |
+| e60 | churn allocations -14.5%, resident slack 14% | reject |
+| e61 | 92.4% doomed work stopped at 24%; false abort 0.007%; p99 -31% | conditional pass |
+| e62 | within 5% fixed modes, but shifts -16.2% and transitions 6% | reject |
+| e64 | periodic maintenance +36%, drifting +21%, p99 -12% | reject |
+| e69 | non-invasive p99 -36/-38%; flash misclassification 4% | reject |
+
+These are model-tier results, not engine benchmarks. The three survivors prove
+only that the mechanism can clear its numeric gates under the declared cost and
+classification assumptions; those assumptions must now be measured in Pintail.

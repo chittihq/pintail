@@ -9,11 +9,14 @@ RUN cargo build --release \
     -p e35-clonal-kernels \
     -p e39-granule-quarantine \
     -p e43-lateral-predicates \
+    -p e44-foveated-topk \
     -p e48-flocking-reads \
     -p e51-mycelial-blocks \
+    -p e52-join-fibers \
     -p e53-coral-views \
     -p e57-atp-plans \
     -p e59-endocrine-spill \
+    -p e61-apoptotic-queries \
     -p e63-glycogen-reserve \
     -p e73-symbiotic-intermediates \
     -p e76-hierarchical-reconcile \
@@ -28,11 +31,14 @@ COPY --from=build \
     /lab/target/release/e35-clonal-kernels \
     /lab/target/release/e39-granule-quarantine \
     /lab/target/release/e43-lateral-predicates \
+    /lab/target/release/e44-foveated-topk \
     /lab/target/release/e48-flocking-reads \
     /lab/target/release/e51-mycelial-blocks \
+    /lab/target/release/e52-join-fibers \
     /lab/target/release/e53-coral-views \
     /lab/target/release/e57-atp-plans \
     /lab/target/release/e59-endocrine-spill \
+    /lab/target/release/e61-apoptotic-queries \
     /lab/target/release/e63-glycogen-reserve \
     /lab/target/release/e73-symbiotic-intermediates \
     /lab/target/release/e76-hierarchical-reconcile \

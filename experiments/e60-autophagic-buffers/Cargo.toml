@@ -1,0 +1,6 @@
+[package]
+name="e60-autophagic-buffers"
+version="0.1.0"
+edition="2024"
+[dependencies]
+common.workspace=true

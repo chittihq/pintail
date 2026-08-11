@@ -164,3 +164,14 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     is 32x below full scan and equal to flat chunks; persisted polling cost is unvalidated.
   - [x] **e78-receptor-blooms** — rejected: the ensemble has 2.8% more false reads than
     one PK Bloom at equal bits, while partitioning is 3.3x worse.
+  - [ ] **e44-foveated-topk** — model gate passes; real proof-carrying Top-K decoding required.
+  - [x] **e47-waggle-morsels** — rejected: moving-cluster completion improves only 11%.
+  - [x] **e49-schooling-control** — rejected: burst p95 improves 17%, below the 20% gate.
+  - [ ] **e52-join-fibers** — model gate passes; real fingerprint joins required.
+  - [x] **e56-vascular-memory** — rejected: reversal recovery takes 44 epochs.
+  - [x] **e58-enzyme-batches** — rejected: strings miss runtime and aggregate misses memory.
+  - [x] **e60-autophagic-buffers** — rejected: churn misses allocation and slack gates.
+  - [ ] **e61-apoptotic-queries** — model gate passes; real containment policy required.
+  - [x] **e62-operator-fission** — rejected: shift gain is 16% and transition cost 6%.
+  - [x] **e64-circadian-maintenance** — rejected: drifting maintenance improves only 21%.
+  - [x] **e69-invasive-defense** — rejected: flash-crowd misclassification is 4%.
