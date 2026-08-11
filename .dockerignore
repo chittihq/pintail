@@ -5,6 +5,7 @@ data
 packages/dashboard/node_modules
 packages/dashboard/.nuxt
 packages/dashboard/.data
+packages/dashboard/app/target
 *.db
 *.db-shm
 *.db-wal
