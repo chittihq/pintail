@@ -437,9 +437,25 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers'],
   },
   {
+    // Counts only. Which SPELLING a case-insensitive group reports is the
+    // separate case below; this one asserts that the join matches the right
+    // rows, which is what the collation decides.
     name: 'general_ci: joining on a collated column',
-    sql: 'SELECT c.legacy_label, COUNT(*) AS n FROM customers c JOIN customers d ON c.legacy_label = d.legacy_label GROUP BY c.legacy_label ORDER BY c.legacy_label',
+    sql: 'SELECT COUNT(*) AS n FROM customers c JOIN customers d ON c.legacy_label = d.legacy_label',
     tables: ['customers'],
+  },
+  {
+    // 'Active' and 'active' are one group under general_ci, and both engines
+    // agree on its size - the counts match exactly. They disagree on which of
+    // the two spellings represents it, because each reports the first one its
+    // own scan happened to reach, and the scans do not share an order. MySQL
+    // does not define this either; matching it would mean matching its row
+    // order, which is not something a different storage engine can promise.
+    name: 'general_ci: representative spelling of a collated group',
+    sql: 'SELECT legacy_label, COUNT(*) AS n FROM customers GROUP BY legacy_label ORDER BY n, legacy_label',
+    tables: ['customers'],
+    documentedGap:
+      'the spelling reported for a case-insensitively equal group follows scan order, which differs from MySQL (#10)',
   },
   {
     // Every comparison here is internally consistent - the join compares two

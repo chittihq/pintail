@@ -265,6 +265,11 @@ worth refusing.
   identities or use collision-prone row fingerprints.
 - A source charset outside utf8mb4/utf8mb3, ASCII and latin1 (cp1252) is
   quarantined through the DLQ.
+- Grouping by a case- or accent-insensitive column reports one of the equal
+  spellings, not necessarily the one MySQL reports. Both engines agree on the
+  grouping and on the counts; each returns the spelling its own scan reached
+  first, and the scans do not share an order. MySQL does not define which it
+  returns either.
 - One text collation per query. `utf8mb4_0900_ai_ci` and `utf8mb4_general_ci`
   are both executable, but a query that compares text in both is refused even
   when each comparison is internally consistent - a join on `general_ci`

@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-12T23:09:23.351Z.
+Measured 2026-08-12T23:19:44.085Z.
 
-**714 passed, 0 failed, 13 documented-gap warnings.**
+**714 passed, 11 failed, 13 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -66,7 +66,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | snapshot | query:general_ci: grouping partitions by collated equality | PASS |  |
 | snapshot | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | snapshot | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| snapshot | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| snapshot | query:general_ci: joining on a collated column | FAIL | row 0: |
+| snapshot | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -151,7 +152,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | orm-compat | query:general_ci: grouping partitions by collated equality | PASS |  |
 | orm-compat | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | orm-compat | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| orm-compat | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| orm-compat | query:general_ci: joining on a collated column | FAIL | row 0: |
+| orm-compat | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -212,7 +214,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | crud | query:general_ci: grouping partitions by collated equality | PASS |  |
 | crud | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | crud | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| crud | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| crud | query:general_ci: joining on a collated column | FAIL | row 0: |
+| crud | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -273,7 +276,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | type-edges | query:general_ci: grouping partitions by collated equality | PASS |  |
 | type-edges | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | type-edges | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| type-edges | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| type-edges | query:general_ci: joining on a collated column | FAIL | row 0: |
+| type-edges | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
@@ -335,7 +339,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | ddl | query:general_ci: grouping partitions by collated equality | PASS |  |
 | ddl | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | ddl | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| ddl | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| ddl | query:general_ci: joining on a collated column | FAIL | row 0: |
+| ddl | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
@@ -403,7 +408,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | churn | query:general_ci: grouping partitions by collated equality | PASS |  |
 | churn | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | churn | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| churn | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| churn | query:general_ci: joining on a collated column | FAIL | row 0: |
+| churn | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -469,7 +475,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | spill | query:general_ci: grouping partitions by collated equality | PASS |  |
 | spill | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | spill | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| spill | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| spill | query:general_ci: joining on a collated column | FAIL | row 0: |
+| spill | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -534,7 +541,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | pooling | query:general_ci: grouping partitions by collated equality | PASS |  |
 | pooling | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | pooling | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| pooling | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| pooling | query:general_ci: joining on a collated column | FAIL | row 0: |
+| pooling | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
@@ -596,7 +604,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | restart | query:general_ci: grouping partitions by collated equality | PASS |  |
 | restart | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | restart | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| restart | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| restart | query:general_ci: joining on a collated column | FAIL | row 0: |
+| restart | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -672,7 +681,8 @@ Measured 2026-08-12T23:09:23.351Z.
 | control-plane | query:general_ci: grouping partitions by collated equality | PASS |  |
 | control-plane | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | control-plane | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| control-plane | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| control-plane | query:general_ci: joining on a collated column | FAIL | row 0: |
+| control-plane | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
@@ -735,4 +745,5 @@ Measured 2026-08-12T23:09:23.351Z.
 | ddl-documented-gaps | query:general_ci: grouping partitions by collated equality | PASS |  |
 | ddl-documented-gaps | query:general_ci: ordering follows the collation, not code points | PASS |  |
 | ddl-documented-gaps | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
-| ddl-documented-gaps | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| ddl-documented-gaps | query:general_ci: joining on a collated column | FAIL | row 0: |
+| ddl-documented-gaps | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
