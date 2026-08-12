@@ -2,6 +2,7 @@
 
 pub mod array;
 mod batch;
+pub mod collation;
 mod execution;
 mod explain;
 mod expression;

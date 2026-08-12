@@ -552,6 +552,22 @@ async fn probe_table(
         if let Some(warning) = mapping.warning {
             warnings.push(format!("column {}: {warning}", raw.name));
         }
+        // Named here because the alternative is discovering it months later.
+        // A column whose collation the executor cannot compare still snapshots,
+        // still replicates and still reads back, so nothing looks wrong until
+        // the first WHERE, JOIN, GROUP BY or ORDER BY touches it - by which
+        // point the source is in production and the report is "a filter that
+        // works in MySQL returns an error here".
+        if let Some(collation) = raw.collation.as_deref()
+            && !is_supported_collation(collation)
+        {
+            warnings.push(format!(
+                "column {}: text collation {collation} cannot be compared; the column \
+                 replicates and reads back, but WHERE, JOIN, GROUP BY and ORDER BY on it \
+                 are refused",
+                raw.name
+            ));
+        }
         let auto_increment = raw.extra.to_ascii_lowercase().contains("auto_increment");
         let default_generated = raw.extra.to_ascii_lowercase().contains("default_generated");
         columns.push(SourceColumn {
@@ -761,6 +777,18 @@ fn usable_unique_keys(columns: &[RawColumn], parts: &[RawIndexPart]) -> Vec<Vec<
             index.iter().map(|part| part.column.clone()).collect()
         })
         .collect()
+}
+
+/// Collations the executor can compare.
+///
+/// Kept beside the probe rather than imported from the SQL crate so a source
+/// can be assessed without the executor: the wizard runs this before anything
+/// is snapshotted. It must be updated when the executor gains a collation.
+fn is_supported_collation(collation: &str) -> bool {
+    matches!(
+        collation.to_ascii_lowercase().as_str(),
+        "utf8mb4_0900_ai_ci" | "utf8mb4_general_ci" | "binary"
+    )
 }
 
 fn invisible_fk_rule(rule: &str) -> bool {
