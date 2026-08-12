@@ -723,9 +723,17 @@ fn member_roles_change_without_creating_memberships() {
         MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
     let now = "2026-08-12T00:00:00Z";
     metadata
-        .create_user("user-1", "member@example.com", "$argon2id$test", "viewer", now)
+        .create_user(
+            "user-1",
+            "member@example.com",
+            "$argon2id$test",
+            "viewer",
+            now,
+        )
         .unwrap();
-    metadata.create_workspace("ws-1", "Analytics", "analytics", now).unwrap();
+    metadata
+        .create_workspace("ws-1", "Analytics", "analytics", now)
+        .unwrap();
     metadata
         .add_workspace_member("ws-1", "user-1", "viewer", now)
         .unwrap();

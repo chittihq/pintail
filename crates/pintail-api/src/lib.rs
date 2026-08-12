@@ -82,10 +82,9 @@ use crate::oauth::{
 use crate::query::{list_tables, query, table_columns, table_count, table_data, table_schema};
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 use crate::workspaces::{
-    audit_log as workspace_audit_log, create as create_workspace, list as list_workspaces,
-    change_member_role as change_workspace_member_role, members as workspace_members,
-    remove_member as remove_workspace_member,
-    switch as switch_workspace,
+    audit_log as workspace_audit_log, change_member_role as change_workspace_member_role,
+    create as create_workspace, list as list_workspaces, members as workspace_members,
+    remove_member as remove_workspace_member, switch as switch_workspace,
 };
 
 /// Builds the public HTTP application without configured control-plane API

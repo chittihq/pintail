@@ -37,7 +37,10 @@ pub(crate) enum DdlAction {
 /// rejects, so it cannot help here. Handles the optional `IF EXISTS`, the
 /// schema qualifier, and backtick quoting.
 fn alter_table_target(statement: &str) -> Option<String> {
-    let rest = statement.trim_start().get("ALTER TABLE".len()..)?.trim_start();
+    let rest = statement
+        .trim_start()
+        .get("ALTER TABLE".len()..)?
+        .trim_start();
     let rest = rest
         .strip_prefix("IF EXISTS")
         .or_else(|| rest.strip_prefix("if exists"))
@@ -286,10 +289,11 @@ mod convert_charset_tests {
             .expect("ordinary DDL still parses");
         assert!(
             !actions.is_empty()
-                && actions != vec![DdlAction::Alter {
-                    table: "orders".to_owned(),
-                    kind: AlterKind::IndexOnly,
-                }],
+                && actions
+                    != vec![DdlAction::Alter {
+                        table: "orders".to_owned(),
+                        kind: AlterKind::IndexOnly,
+                    }],
         );
     }
 }
