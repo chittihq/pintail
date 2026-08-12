@@ -81,7 +81,13 @@ const STAGES: Stage[] = [
     command: [
       'bash',
       '-c',
-      '"$CARGO" fmt --all --check && "$CARGO" clippy --workspace --all-targets -- -D warnings',
+      // The README's benchmark table is generated from the result artifact.
+      // Checking it here means a hand-edit, or a banked run nobody regenerated
+      // against, fails the gate instead of leaving the published numbers
+      // describing a run that cannot be identified - which is how they drifted
+      // to advertising 152ms where the artifact recorded 10ms.
+      '"$CARGO" fmt --all --check && "$CARGO" clippy --workspace --all-targets -- -D warnings' +
+        ' && bun run benchmark/render-readme-table.ts --check',
     ],
   },
   {

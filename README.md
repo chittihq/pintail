@@ -86,18 +86,19 @@ streaming in. If you want the internals, they are written up in
 
 ## Benchmarks
 
-Eight reporting queries over 20 million rows, with MySQL, Pintail and
+<!-- benchmark:begin -->
+
+Eight reporting queries over 20,000,000 rows, with MySQL, Pintail and
 ClickHouse each in identical containers (8 CPUs, 8 GB). A result only counts
 if it exactly matches MySQL's answer. Two numbers matter here and they say
 different things, so they are reported separately rather than averaged into
 one headline.
 
 **Repeated queries.** Pintail keeps an exact-result memo for aggregates over
-a settled snapshot, keyed by the manifest generation and the scan signature,
-and invalidated by any ingest. Re-running the same query on an unchanged
-replica is served from it. ClickHouse's own query cache is off, so this
-compares Pintail's cache against ClickHouse's execution — a fair measure of
-what a dashboard refresh costs, and not a measure of engine speed.
+a settled snapshot, invalidated by any ingest, so re-running the same query
+on an unchanged replica is served from it. ClickHouse's query cache is off,
+so this compares Pintail's cache against ClickHouse's execution — a fair
+measure of what a dashboard refresh costs, and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
@@ -105,20 +106,20 @@ what a dashboard refresh costs, and not a measure of engine speed.
 | Filtered count | 593 ms | 8 ms | 30 ms |
 | Group by status | 35,774 ms | 10 ms | 66 ms |
 | Region × status breakdown | 13,301 ms | 10 ms | 233 ms |
-| Monthly revenue | 5,638 ms | 10 ms | 47 ms |
+| Monthly revenue (2023) | 5,638 ms | 10 ms | 47 ms |
 | Top 10 spenders | 814,794 ms | 69 ms | 238 ms |
 | Regional analytics | 56,956 ms | 10 ms | 165 ms |
 | Join users + orders | 826,572 ms | 9 ms | 190 ms |
 
 **Novel queries — raw engine speed.** The same shapes with constants the memo
-has never seen, so both engines actually execute. **ClickHouse is faster here,
-by 6× to 14×.** This is the honest measure of execution performance, and
-Pintail does not yet win it.
+has never seen, so both engines actually execute. **ClickHouse is faster here.**
+This is the honest measure of execution performance, and Pintail does not yet
+win it.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
 | Filtered count, novel constant | 1,081 ms | 615 ms | 49 ms | 0.08× |
-| Group by region, novel column | 13,995 ms | 1,165 ms | 84 ms | 0.07× |
+| Group by region (novel group column) | 13,995 ms | 1,165 ms | 84 ms | 0.07× |
 | Monthly revenue, novel year | 9,160 ms | 481 ms | 46 ms | 0.10× |
 | Regional analytics, novel range | 58,019 ms | 1,019 ms | 172 ms | 0.17× |
 
@@ -133,12 +134,17 @@ them with:
 (cd benchmark && bun install --frozen-lockfile && bun run benchmark)
 ```
 
-Caveats worth stating plainly: this is one synthetic 20M-row dataset and
-eight query shapes, measured as the median of five warm runs after one
-warmup, on a shared host. That is enough to characterise these queries and
-not enough to support a general claim about either engine. MySQL runs with a
-1 GB buffer pool, so the MySQL column is a baseline being escaped rather than
-a tuned competitor.
+Caveats worth stating plainly: one synthetic dataset and eight query shapes,
+on a shared host, measured as
+`warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants`. Enough to characterise these
+queries and not enough to support a general claim about either engine. MySQL
+runs with a 1 GB buffer pool, so its column is a baseline being escaped
+rather than a tuned competitor.
+
+<sub>Generated from `benchmark/results.json` (2026-08-12T13:24:53.875Z) by
+`benchmark/render-readme-table.ts` — do not edit by hand.</sub>
+
+<!-- benchmark:end -->
 
 There is also a 30-minute stress test that streams 5,500 changes per
 second while continuously checking the copy stays identical, recorded in
