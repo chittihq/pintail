@@ -845,7 +845,7 @@ function publishResults(allResults: QueryResult[]) {
         : 'warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants',
       references: {
         clickhouse: 'plain MergeTree (raw-speed ceiling)',
-        clickhouseFinal: 'ReplacingMergeTree, final=1 (apples-to-apples merge-on-read duty)',
+        clickhouseFinal: 'ReplacingMergeTree, final=1 (merge-on-read duty, query cache off)',
       },
       pintailSettledMemo:
         'bare full-table aggregates on a settled replica (empty memtable) are served ' +
@@ -881,9 +881,17 @@ function publishResults(allResults: QueryResult[]) {
       ? `Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured ${baselineProvenance}.`
       : 'Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants.',
     'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
-    "pintail's always-correct merge-on-read duty; the apples-to-apples reference.",
+    "pintail's always-correct merge-on-read duty.",
     '',
-    '| Query | MySQL | Pintail | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |',
+    'NOT like for like: the canonical table is served from pintail\'s settled',
+    "aggregate memo, while ClickHouse's query cache is off and it executes every",
+    'run. It measures what a repeated dashboard query costs, not engine speed.',
+    'The novel-query table below is the engine-speed comparison - both engines',
+    'execute there, and ClickHouse is currently faster.',
+    '',
+    '## Repeated queries (memo-served — dashboard refresh cost, not engine speed)',
+    '',
+    '| Query | MySQL | Pintail (memo) | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |',
     '|---|---:|---:|---:|---:|---:|---:|:--|',
     ...results.map(
       (row) =>
@@ -904,7 +912,10 @@ function publishResults(allResults: QueryResult[]) {
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
     '',
-    '## Novel queries (median of 5 memo-cold variants — raw engine speed)',
+    '## Novel queries (median of 5 memo-cold variants — RAW ENGINE SPEED)',
+    '',
+    'Both engines execute every run here. This is the comparison that speaks\n'
+      + 'to execution performance.',
     '',
     'Each row is the median of five distinct predicate variants, each run once',
     'per engine with no warmup. Pintail therefore cannot replay an exact-result',

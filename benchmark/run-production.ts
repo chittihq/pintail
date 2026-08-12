@@ -314,6 +314,10 @@ interface QueryRun {
   id: string
   engine: string
   status: 'ok' | 'unsupported' | 'error' | 'mismatch'
+  /// A gap the workload declares in advance, so the gate can tell one apart
+  /// from a query the engine simply failed to answer. Recorded on the run
+  /// rather than looked up later, so the artifact says which it was.
+  declaredGap?: boolean
   medianMs?: number
   p95Ms?: number
   runs?: number[]
@@ -405,6 +409,7 @@ async function runQuerySuite(
         id: query.id,
         engine: 'pintail',
         status: unsupported ? 'unsupported' : 'error',
+        declaredGap: query.requiresWindowFunctions === true,
         error: message.slice(0, 500),
       })
       log(`${query.id}: pintail ${unsupported ? 'UNSUPPORTED' : 'ERROR'}${query.requiresWindowFunctions ? ' (window functions — v1 forcing function)' : ''}`)
@@ -557,6 +562,36 @@ async function main() {
   writeFileSync(join(resultsDir, 'latest.json'), JSON.stringify(report, null, 2))
   writeFileSync(join(resultsDir, 'latest.md'), renderMarkdown(report))
   log(`results written to ${join(resultsDir, 'latest.{json,md}')}`)
+
+  // The gate. Every failing outcome above records itself in the report and
+  // carries on, so that one broken query still produces evidence for the
+  // others - useful while developing, and wrong as an acceptance signal. A
+  // run where queries errored, were unsupported, or disagreed with MySQL was
+  // still exiting zero, which meant CI could report success for a workload
+  // that never ran. Nothing downstream can tell that apart from a real pass,
+  // so the check belongs here rather than in the reader of the artifact.
+  const failures: string[] = []
+  for (const [phaseId, data] of Object.entries(report.phases as Record<string, unknown>)) {
+    if (!Array.isArray(data)) continue
+    for (const run of data as QueryRun[]) {
+      if (run.status === 'ok') continue
+      // An unsupported query counts as a declared gap only where the workload
+      // said so ahead of the run - window functions are v1's known hole. Any
+      // other refusal is a query the engine could not answer, which is the
+      // thing being measured, not an exemption from it.
+      const declared = run.status === 'unsupported' && run.declaredGap === true
+      if (declared) {
+        log(`declared gap: ${phaseId}/${run.id} (${run.engine}) unsupported`)
+        continue
+      }
+      failures.push(`${phaseId}/${run.id} (${run.engine}): ${run.status}`)
+    }
+  }
+  if (failures.length > 0) {
+    log(`GATE FAILED - ${failures.length} query outcome(s) not ok:`)
+    for (const failure of failures) log(`  ${failure}`)
+    process.exitCode = 1
+  }
 }
 
 function renderMarkdown(report: Record<string, unknown>): string {
