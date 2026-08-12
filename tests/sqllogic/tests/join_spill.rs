@@ -5,6 +5,7 @@
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
+use pintail_exec::collation::Collation;
 use pintail_exec::{Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider};
 use pintail_sql::{Binder, parse_statement};
 use pintail_store::{StoreOptions, TableStore};
@@ -117,8 +118,9 @@ fn run_query(memory_limit: usize, sql: &str) -> Vec<Vec<Value>> {
         .bind(&statement)
         .expect("bind");
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-    let physical = PhysicalPlanner::plan(logical).expect("plan");
-    let mut execution = Execution::start(physical, &provider, memory_limit).expect("start");
+    let physical = PhysicalPlanner::plan(logical, Collation::default()).expect("plan");
+    let mut execution =
+        Execution::start(physical, &provider, memory_limit, Collation::default()).expect("start");
     let mut rows = Vec::new();
     while let Some(batch) = execution.next_batch().expect("execute") {
         for index in batch.selection().selected_rows() {

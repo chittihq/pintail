@@ -4,6 +4,8 @@ use std::{
 };
 
 use pintail_catalog::CatalogSnapshot;
+
+use crate::collation::Collation;
 use pintail_sql::{BindError, Binder, BoundJoinKind, Statement};
 
 use crate::{
@@ -35,8 +37,11 @@ pub fn explain_statement(
         return Err(ExplainError::Unsupported(statement.to_string()));
     };
     let bound = Binder::new(catalog, current_database).bind(statement)?;
+    // The collation the binder resolved for this query travels with the plan
+    // from here on, so every operator compares text the same way.
+    let collation = Collation::from_mysql_name(bound.text_collation).unwrap_or_default();
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-    let physical = PhysicalPlanner::plan(logical)?;
+    let physical = PhysicalPlanner::plan(logical, collation)?;
     Ok(format_physical_plan(&physical))
 }
 
@@ -92,10 +97,18 @@ pub fn explain_analyze_statement_with_deadline(
         return Err(ExplainError::Unsupported(statement.to_string()));
     };
     let bound = Binder::new(catalog, current_database).bind(statement)?;
+    // The collation the binder resolved for this query travels with the plan
+    // from here on, so every operator compares text the same way.
+    let collation = Collation::from_mysql_name(bound.text_collation).unwrap_or_default();
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-    let physical = PhysicalPlanner::plan(logical)?;
-    let mut execution =
-        Execution::start_with_deadline(physical.clone(), provider, memory_limit, deadline)?;
+    let physical = PhysicalPlanner::plan(logical, collation)?;
+    let mut execution = Execution::start_with_deadline(
+        physical.clone(),
+        provider,
+        memory_limit,
+        deadline,
+        collation,
+    )?;
     while execution.next_batch()?.is_some() {}
     let spill = execution.spill_metrics();
     let mut output = format_physical_plan_with_stats(&physical, provider);

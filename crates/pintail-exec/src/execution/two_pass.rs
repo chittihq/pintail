@@ -18,6 +18,8 @@ use super::{
 };
 use rayon::prelude::*;
 
+use crate::collation::Collation;
+
 use crate::{RecordBatch, expression::mysql_f64};
 
 /// Per-aggregate scatter payload for the two-pass partitioned aggregate.
@@ -239,6 +241,7 @@ pub(super) fn build_streaming_two_pass_aggregate(
     lanes: &[TwoPassLane],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<MaterializedRows, ExecError> {
     let partitions = std::thread::available_parallelism().map_or(8, usize::from);
     let lane_count = lanes.len();
@@ -257,7 +260,11 @@ pub(super) fn build_streaming_two_pass_aggregate(
         keys,
         TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. }
     )
-    .then(StringIntern::default);
+    .then(|| StringIntern {
+        index: HashMap::new(),
+        values: Vec::new(),
+        collation,
+    });
     // Distinct lanes stay on the classic path: dense per-worker partials
     // would replicate each group's distinct set per thread and pay a
     // drain-and-reinsert merge that costs more than the scatter it saves
@@ -894,16 +901,20 @@ fn scatter_two_pass_row(
 struct StringIntern {
     index: HashMap<Vec<u8>, u64>,
     values: Vec<String>,
+    /// The plan's collation. Held here because the table IS the equivalence
+    /// relation - two spellings share an id exactly when the collation says
+    /// they are equal - so it cannot be decided per call.
+    collation: Collation,
 }
 
 impl StringIntern {
     fn intern(&mut self, bytes: &[u8], memory: &MemoryTracker) -> Result<u64, ExecError> {
-        // Group keys unify through the same ICU primary sort key used by
-        // comparison, hashing, DISTINCT, and joins. Keep the first-seen
-        // spelling separately for MySQL-compatible GROUP BY output.
+        // Group keys unify through the same sort key used by comparison,
+        // hashing, DISTINCT, and joins. Keep the first-seen spelling
+        // separately for MySQL-compatible GROUP BY output.
         let value = std::str::from_utf8(bytes)
             .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?;
-        let folded = normalized_collation_text(value).into_bytes();
+        let folded = normalized_collation_text(value, self.collation).into_bytes();
         if let Some(id) = self.index.get(&folded) {
             return Ok(*id);
         }

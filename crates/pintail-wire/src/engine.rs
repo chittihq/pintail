@@ -336,12 +336,21 @@ impl ReplicaEngine {
                     })
             })
             .collect::<Vec<_>>();
+        // Carried from binding: the binder resolved one collation for this
+        // query, and every operator below compares text with it.
+        let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
+            .unwrap_or_default();
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-        let physical = PhysicalPlanner::plan(logical)
+        let physical = PhysicalPlanner::plan(logical, collation)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
-        let mut execution =
-            Execution::start_with_deadline(physical, provider, self.memory_limit, deadline)
-                .map_err(query_execution_error)?;
+        let mut execution = Execution::start_with_deadline(
+            physical,
+            provider,
+            self.memory_limit,
+            deadline,
+            collation,
+        )
+        .map_err(query_execution_error)?;
         let fields = execution
             .output_fields()
             .iter()

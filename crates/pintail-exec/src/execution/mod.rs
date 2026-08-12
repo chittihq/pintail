@@ -46,6 +46,8 @@ use pintail_sql::{
 };
 use pintail_types::{DataType, Value};
 
+use crate::collation::Collation;
+
 use crate::{
     ColumnVector, DEFAULT_BATCH_ROWS, LogicalPlan, LogicalPlanner, Optimizer, RecordBatch, Scan,
     expression::{CompiledExpr, bound_regex_memory_upper_bound, predicate_truth},
@@ -415,17 +417,17 @@ impl PhysicalPlanner {
     /// Returns [`ExecError::UnsupportedOperator`] for logical operators whose
     /// physical implementation is not available yet.
     #[allow(clippy::too_many_lines)]
-    pub fn plan(logical: LogicalPlan) -> Result<PhysicalPlan, ExecError> {
+    pub fn plan(logical: LogicalPlan, collation: Collation) -> Result<PhysicalPlan, ExecError> {
         match logical {
             LogicalPlan::Empty => Ok(PhysicalPlan::Empty),
             LogicalPlan::OneRow => Ok(PhysicalPlan::OneRow),
             LogicalPlan::Scan(scan) => Ok(PhysicalPlan::Scan(scan)),
             LogicalPlan::Derived { input, columns } => Ok(PhysicalPlan::Derived {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
                 columns,
             }),
             LogicalPlan::Filter { input, predicate } => Ok(PhysicalPlan::Filter {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
                 predicate,
             }),
             LogicalPlan::Aggregate {
@@ -433,15 +435,17 @@ impl PhysicalPlanner {
                 group_by,
                 aggregates,
             } => Ok(PhysicalPlan::HashAggregate {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
                 group_by,
                 aggregates,
             }),
             LogicalPlan::Project { input, expressions } => Ok(PhysicalPlan::Project {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
                 expressions,
             }),
-            LogicalPlan::Limit { input, limit } => plan_limit(*input, limit.offset, limit.count),
+            LogicalPlan::Limit { input, limit } => {
+                plan_limit(*input, limit.offset, limit.count, collation)
+            }
             LogicalPlan::CrossJoin { inputs } => {
                 let estimated_rows = inputs
                     .iter()
@@ -458,7 +462,7 @@ impl PhysicalPlanner {
                 Ok(PhysicalPlan::CrossJoin {
                     inputs: inputs
                         .into_iter()
-                        .map(Self::plan)
+                        .map(|input| Self::plan(input, collation))
                         .collect::<Result<Vec<_>, _>>()?,
                     estimated_rows,
                 })
@@ -471,8 +475,8 @@ impl PhysicalPlanner {
             } => Ok(PhysicalPlan::SetOp {
                 keep_matching,
                 all,
-                left: Box::new(Self::plan(*left)?),
-                right: Box::new(Self::plan(*right)?),
+                left: Box::new(Self::plan(*left, collation)?),
+                right: Box::new(Self::plan(*right, collation)?),
             }),
             LogicalPlan::Recursive {
                 working_database,
@@ -483,29 +487,29 @@ impl PhysicalPlanner {
             } => Ok(PhysicalPlan::Recursive {
                 working: (working_database, working_table),
                 distinct,
-                anchor: Box::new(Self::plan(*anchor)?),
-                member: Box::new(Self::plan(*member)?),
+                anchor: Box::new(Self::plan(*anchor, collation)?),
+                member: Box::new(Self::plan(*member, collation)?),
             }),
             LogicalPlan::UnionAll { inputs } => Ok(PhysicalPlan::UnionAll {
                 inputs: inputs
                     .into_iter()
-                    .map(Self::plan)
+                    .map(|input| Self::plan(input, collation))
                     .collect::<Result<Vec<_>, _>>()?,
             }),
             LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
             }),
             LogicalPlan::Window {
                 input,
                 windows,
                 outputs,
             } => Ok(PhysicalPlan::Window {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
                 windows,
                 outputs,
             }),
             LogicalPlan::Sort { input, keys, trim } => Ok(PhysicalPlan::Sort {
-                input: Box::new(Self::plan(*input)?),
+                input: Box::new(Self::plan(*input, collation)?),
                 keys,
                 top_k: None,
                 trim,
@@ -530,15 +534,18 @@ impl PhysicalPlanner {
                         });
                     }
                     return Ok(PhysicalPlan::CrossJoin {
-                        inputs: vec![Self::plan(*left)?, Self::plan(*right)?],
+                        inputs: vec![
+                            Self::plan(*left, collation)?,
+                            Self::plan(*right, collation)?,
+                        ],
                         estimated_rows,
                     });
                 }
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
                 if expression_has_subquery(&condition) {
                     return Ok(PhysicalPlan::NestedLoopJoin {
-                        left: Box::new(Self::plan(*left)?),
-                        right: Box::new(Self::plan(*right)?),
+                        left: Box::new(Self::plan(*left, collation)?),
+                        right: Box::new(Self::plan(*right, collation)?),
                         kind,
                         condition,
                     });
@@ -549,11 +556,11 @@ impl PhysicalPlanner {
                 let (condition, left_filter, right_filter) =
                     split_join_condition(condition, &left, &right, kind);
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
-                let mut pairs = equi_join_key_pairs(&condition, &left, &right)
+                let mut pairs = equi_join_key_pairs(&condition, &left, &right, collation)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
-                let left_input = filtered(Self::plan(*left)?, left_filter);
-                let right_input = filtered(Self::plan(*right)?, right_filter);
+                let left_input = filtered(Self::plan(*left, collation)?, left_filter);
+                let right_input = filtered(Self::plan(*right, collation)?, right_filter);
                 Ok(PhysicalPlan::HashJoin {
                     left: Box::new(left_input),
                     right: Box::new(right_input),
@@ -567,15 +574,20 @@ impl PhysicalPlanner {
     }
 }
 
-fn plan_limit(input: LogicalPlan, offset: u64, count: u64) -> Result<PhysicalPlan, ExecError> {
+fn plan_limit(
+    input: LogicalPlan,
+    offset: u64,
+    count: u64,
+    collation: Collation,
+) -> Result<PhysicalPlan, ExecError> {
     let input = match input {
         LogicalPlan::Sort { input, keys, trim } => PhysicalPlan::Sort {
-            input: Box::new(PhysicalPlanner::plan(*input)?),
+            input: Box::new(PhysicalPlanner::plan(*input, collation)?),
             keys,
             top_k: usize::try_from(offset.saturating_add(count)).ok(),
             trim,
         },
-        input => PhysicalPlanner::plan(input)?,
+        input => PhysicalPlanner::plan(input, collation)?,
     };
     Ok(PhysicalPlan::Limit {
         input: Box::new(input),
@@ -673,6 +685,7 @@ fn equi_join_key_pairs(
     condition: &BoundExpr,
     left: &LogicalPlan,
     right: &LogicalPlan,
+    collation: Collation,
 ) -> Option<Vec<(BoundExpr, BoundExpr)>> {
     let conjuncts_of = and_conjuncts;
     let left_tables = logical_tables(left);
@@ -689,7 +702,7 @@ fn equi_join_key_pairs(
         else {
             return None;
         };
-        hash_join_key_mode(first.data_type, second.data_type)?;
+        hash_join_key_mode(first.data_type, second.data_type, collation)?;
         if expression_belongs_to(first, &left_tables)
             && expression_belongs_to(second, &right_tables)
         {
@@ -707,16 +720,24 @@ fn equi_join_key_pairs(
 
 #[derive(Clone, Copy, Debug)]
 enum JoinKeyMode {
-    CollatedText,
+    /// Text keys, carrying the collation the plan resolved. Held here rather
+    /// than passed alongside because this enum already travels to every site
+    /// that builds or probes a key, and a second parameter could go out of
+    /// step with it.
+    CollatedText(Collation),
     Binary,
     Boolean,
     Integer,
     MysqlNumber,
 }
 
-fn hash_join_key_mode(left: Option<DataType>, right: Option<DataType>) -> Option<JoinKeyMode> {
+fn hash_join_key_mode(
+    left: Option<DataType>,
+    right: Option<DataType>,
+    collation: Collation,
+) -> Option<JoinKeyMode> {
     match (left?.storage_type(), right?.storage_type()) {
-        (DataType::Utf8, DataType::Utf8) => Some(JoinKeyMode::CollatedText),
+        (DataType::Utf8, DataType::Utf8) => Some(JoinKeyMode::CollatedText(collation)),
         (DataType::Binary, DataType::Binary) => Some(JoinKeyMode::Binary),
         (DataType::Boolean, DataType::Boolean) => Some(JoinKeyMode::Boolean),
         (DataType::Int64 | DataType::UInt64, DataType::Int64 | DataType::UInt64) => {
@@ -1255,8 +1276,9 @@ impl Execution {
         plan: PhysicalPlan,
         provider: &dyn ScanProvider,
         memory_limit: usize,
+        collation: Collation,
     ) -> Result<Self, ExecError> {
-        Self::start_with_deadline(plan, provider, memory_limit, None)
+        Self::start_with_deadline(plan, provider, memory_limit, None, collation)
     }
 
     /// Opens a physical plan with an optional monotonic execution deadline.
@@ -1272,6 +1294,7 @@ impl Execution {
         provider: &dyn ScanProvider,
         memory_limit: usize,
         deadline: Option<Instant>,
+        collation: Collation,
     ) -> Result<Self, ExecError> {
         let mut subquery_bytes = 0;
         resolve_plan_subqueries(
@@ -1280,12 +1303,13 @@ impl Execution {
             memory_limit,
             deadline,
             &mut subquery_bytes,
+            collation,
         )?;
         let output_fields = plan.output_fields();
         let memory = MemoryTracker::with_deadline(memory_limit, deadline);
         memory.check_interruption()?;
         memory.reserve(subquery_bytes.saturating_add(plan_regex_memory_upper_bound(&plan)))?;
-        let (root, _) = build_operator(plan, provider, &memory)?;
+        let (root, _) = build_operator(plan, provider, &memory, collation)?;
         Ok(Self {
             root,
             memory,
@@ -1328,11 +1352,26 @@ fn resolve_plan_subqueries(
     memory_limit: usize,
     deadline: Option<Instant>,
     retained_bytes: &mut usize,
+    collation: Collation,
 ) -> Result<(), ExecError> {
     match plan {
         PhysicalPlan::Recursive { anchor, member, .. } => {
-            resolve_plan_subqueries(anchor, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_plan_subqueries(member, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                anchor,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_plan_subqueries(
+                member,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         PhysicalPlan::Scan(scan) => {
             for predicate in &mut scan.predicates {
@@ -1342,6 +1381,7 @@ fn resolve_plan_subqueries(
                     memory_limit,
                     deadline,
                     retained_bytes,
+                    collation,
                 )?;
             }
         }
@@ -1349,11 +1389,32 @@ fn resolve_plan_subqueries(
         | PhysicalPlan::Distinct { input }
         | PhysicalPlan::Sort { input, .. }
         | PhysicalPlan::Limit { input, .. } => {
-            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                input,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         PhysicalPlan::SetOp { left, right, .. } => {
-            resolve_plan_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_plan_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                left,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_plan_subqueries(
+                right,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         PhysicalPlan::Window { input, windows, .. } => {
             for window in windows {
@@ -1366,6 +1427,7 @@ fn resolve_plan_subqueries(
                         memory_limit,
                         deadline,
                         retained_bytes,
+                        collation,
                     )?;
                 }
                 for expr in &mut window.partition_by {
@@ -1375,6 +1437,7 @@ fn resolve_plan_subqueries(
                         memory_limit,
                         deadline,
                         retained_bytes,
+                        collation,
                     )?;
                 }
                 for key in &mut window.order_by {
@@ -1384,14 +1447,29 @@ fn resolve_plan_subqueries(
                         memory_limit,
                         deadline,
                         retained_bytes,
+                        collation,
                     )?;
                 }
             }
-            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                input,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => {
             for input in inputs {
-                resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
+                resolve_plan_subqueries(
+                    input,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                    collation,
+                )?;
             }
         }
         PhysicalPlan::HashJoin {
@@ -1402,10 +1480,38 @@ fn resolve_plan_subqueries(
             extra_keys,
             ..
         } => {
-            resolve_plan_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_plan_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_expr_subqueries(left_key, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_expr_subqueries(right_key, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                left,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_plan_subqueries(
+                right,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_expr_subqueries(
+                left_key,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_expr_subqueries(
+                right_key,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
             for (extra_left, extra_right) in extra_keys {
                 resolve_expr_subqueries(
                     extra_left,
@@ -1413,6 +1519,7 @@ fn resolve_plan_subqueries(
                     memory_limit,
                     deadline,
                     retained_bytes,
+                    collation,
                 )?;
                 resolve_expr_subqueries(
                     extra_right,
@@ -1420,6 +1527,7 @@ fn resolve_plan_subqueries(
                     memory_limit,
                     deadline,
                     retained_bytes,
+                    collation,
                 )?;
             }
         }
@@ -1429,20 +1537,62 @@ fn resolve_plan_subqueries(
             condition,
             ..
         } => {
-            resolve_plan_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_plan_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_expr_subqueries(condition, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                left,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_plan_subqueries(
+                right,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_expr_subqueries(
+                condition,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         PhysicalPlan::Filter { input, predicate } => {
-            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_expr_subqueries(predicate, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                input,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_expr_subqueries(
+                predicate,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         PhysicalPlan::HashAggregate {
             input,
             group_by,
             aggregates,
         } => {
-            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                input,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
             for expression in group_by {
                 resolve_expr_subqueries(
                     expression,
@@ -1450,6 +1600,7 @@ fn resolve_plan_subqueries(
                     memory_limit,
                     deadline,
                     retained_bytes,
+                    collation,
                 )?;
             }
             for aggregate in aggregates {
@@ -1460,15 +1611,30 @@ fn resolve_plan_subqueries(
                         memory_limit,
                         deadline,
                         retained_bytes,
+                        collation,
                     )?;
                 }
                 for (key, _) in &mut aggregate.order_within {
-                    resolve_expr_subqueries(key, provider, memory_limit, deadline, retained_bytes)?;
+                    resolve_expr_subqueries(
+                        key,
+                        provider,
+                        memory_limit,
+                        deadline,
+                        retained_bytes,
+                        collation,
+                    )?;
                 }
             }
         }
         PhysicalPlan::Project { input, expressions } => {
-            resolve_plan_subqueries(input, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_plan_subqueries(
+                input,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
             for projection in expressions {
                 resolve_expr_subqueries(
                     &mut projection.expr,
@@ -1476,6 +1642,7 @@ fn resolve_plan_subqueries(
                     memory_limit,
                     deadline,
                     retained_bytes,
+                    collation,
                 )?;
             }
         }
@@ -1484,12 +1651,16 @@ fn resolve_plan_subqueries(
     Ok(())
 }
 
+// One arm per expression kind that can hold a subquery; splitting it would
+// scatter the walk without making any arm clearer.
+#[allow(clippy::too_many_lines)]
 fn resolve_expr_subqueries(
     expression: &mut BoundExpr,
     provider: &dyn ScanProvider,
     memory_limit: usize,
     deadline: Option<Instant>,
     retained_bytes: &mut usize,
+    collation: Collation,
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) if bound_query_has_outer_refs(query) => {}
@@ -1500,6 +1671,7 @@ fn resolve_expr_subqueries(
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
                 Some(2),
+                collation,
             )?;
             let value = match values.as_slice() {
                 [] => Value::Null,
@@ -1519,6 +1691,7 @@ fn resolve_expr_subqueries(
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
                 Some(1),
+                collation,
             )?;
             let exists = !values.is_empty();
             expression.kind = BoundExprKind::Literal(Value::Boolean(exists != *negated));
@@ -1528,7 +1701,14 @@ fn resolve_expr_subqueries(
             query,
             negated,
         } => {
-            resolve_expr_subqueries(expr, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(
+                expr,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
             if bound_query_has_outer_refs(query) {
                 return Ok(());
             }
@@ -1542,6 +1722,7 @@ fn resolve_expr_subqueries(
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
                 None,
+                collation,
             )?;
             reserve_subquery_values(&values, memory_limit, retained_bytes)?;
             let mut args = Vec::with_capacity(values.len() + 1);
@@ -1557,11 +1738,32 @@ fn resolve_expr_subqueries(
             };
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            resolve_expr_subqueries(expr, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(
+                expr,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         BoundExprKind::Binary { left, right, .. } => {
-            resolve_expr_subqueries(left, provider, memory_limit, deadline, retained_bytes)?;
-            resolve_expr_subqueries(right, provider, memory_limit, deadline, retained_bytes)?;
+            resolve_expr_subqueries(
+                left,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
+            resolve_expr_subqueries(
+                right,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+            )?;
         }
         BoundExprKind::Scalar { args, .. } => {
             for argument in args {
@@ -1571,6 +1773,7 @@ fn resolve_expr_subqueries(
                     memory_limit,
                     deadline,
                     retained_bytes,
+                    collation,
                 )?;
             }
         }
@@ -1862,6 +2065,7 @@ fn resolve_dependent_expr_subqueries(
     columns: &[BoundColumn],
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<(), ExecError> {
     memory.check_interruption()?;
     match &mut expression.kind {
@@ -1874,6 +2078,7 @@ fn resolve_dependent_expr_subqueries(
                 dependent_subquery_memory_limit(memory, batch)?,
                 memory.deadline,
                 Some(2),
+                collation,
             )?;
             let value = match values.as_slice() {
                 [] => Value::Null,
@@ -1892,6 +2097,7 @@ fn resolve_dependent_expr_subqueries(
                 dependent_subquery_memory_limit(memory, batch)?,
                 memory.deadline,
                 Some(1),
+                collation,
             )?;
             expression.kind = BoundExprKind::Literal(Value::Boolean(values.is_empty() == *negated));
             expression.nullable = false;
@@ -1901,7 +2107,9 @@ fn resolve_dependent_expr_subqueries(
             query,
             negated,
         } => {
-            resolve_dependent_expr_subqueries(expr, batch, row, columns, provider, memory)?;
+            resolve_dependent_expr_subqueries(
+                expr, batch, row, columns, provider, memory, collation,
+            )?;
             let projection_type = query
                 .projection
                 .first()
@@ -1914,6 +2122,7 @@ fn resolve_dependent_expr_subqueries(
                 dependent_subquery_memory_limit(memory, batch)?,
                 memory.deadline,
                 None,
+                collation,
             )?;
             let mut args = Vec::with_capacity(values.len().saturating_add(1));
             args.push((**expr).clone());
@@ -1928,14 +2137,22 @@ fn resolve_dependent_expr_subqueries(
             };
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            resolve_dependent_expr_subqueries(expr, batch, row, columns, provider, memory)?;
+            resolve_dependent_expr_subqueries(
+                expr, batch, row, columns, provider, memory, collation,
+            )?;
         }
         BoundExprKind::Binary { left, right, .. } => {
-            resolve_dependent_expr_subqueries(left, batch, row, columns, provider, memory)?;
-            resolve_dependent_expr_subqueries(right, batch, row, columns, provider, memory)?;
+            resolve_dependent_expr_subqueries(
+                left, batch, row, columns, provider, memory, collation,
+            )?;
+            resolve_dependent_expr_subqueries(
+                right, batch, row, columns, provider, memory, collation,
+            )?;
         }
         BoundExprKind::Scalar { function, args } => {
-            resolve_dependent_scalar_args(*function, args, batch, row, columns, provider, memory)?;
+            resolve_dependent_scalar_args(
+                *function, args, batch, row, columns, provider, memory, collation,
+            )?;
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -1946,6 +2163,10 @@ fn resolve_dependent_expr_subqueries(
     Ok(())
 }
 
+// The row context a dependent subquery needs: where it sits, what it can see,
+// and how text compares. Bundling them into a struct would move the same
+// values behind one more indirection.
+#[allow(clippy::too_many_arguments)]
 fn resolve_dependent_scalar_args(
     function: ScalarFunction,
     args: &mut [BoundExpr],
@@ -1954,10 +2175,19 @@ fn resolve_dependent_scalar_args(
     columns: &[BoundColumn],
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<(), ExecError> {
     match function {
         ScalarFunction::If if args.len() == 3 => {
-            resolve_dependent_expr_subqueries(&mut args[0], batch, row, columns, provider, memory)?;
+            resolve_dependent_expr_subqueries(
+                &mut args[0],
+                batch,
+                row,
+                columns,
+                provider,
+                memory,
+                collation,
+            )?;
             let condition = evaluate_and_literalize(&mut args[0], batch, row, columns)?;
             let selected = if predicate_truth(&condition)? { 1 } else { 2 };
             let skipped = if selected == 1 { 2 } else { 1 };
@@ -1968,6 +2198,7 @@ fn resolve_dependent_scalar_args(
                 columns,
                 provider,
                 memory,
+                collation,
             )?;
             args[skipped].nullable = true;
             args[skipped].kind = BoundExprKind::Literal(Value::Null);
@@ -1981,6 +2212,7 @@ fn resolve_dependent_scalar_args(
                     columns,
                     provider,
                     memory,
+                    collation,
                 )?;
                 let value = evaluate_and_literalize(&mut args[index], batch, row, columns)?;
                 if !matches!(value, Value::Null) {
@@ -1994,7 +2226,9 @@ fn resolve_dependent_scalar_args(
         }
         _ => {
             for argument in args {
-                resolve_dependent_expr_subqueries(argument, batch, row, columns, provider, memory)?;
+                resolve_dependent_expr_subqueries(
+                    argument, batch, row, columns, provider, memory, collation,
+                )?;
             }
         }
     }
@@ -2028,15 +2262,17 @@ fn materialize_subquery(
     memory_limit: usize,
     deadline: Option<Instant>,
     maximum_rows: Option<usize>,
+    collation: Collation,
 ) -> Result<Vec<Value>, ExecError> {
     let logical = Optimizer::optimize(LogicalPlanner::plan(query));
-    let physical = PhysicalPlanner::plan(logical)?;
+    let physical = PhysicalPlanner::plan(logical, collation)?;
     if physical.output_fields().len() != 1 {
         return Err(ExecError::InvalidPhysicalPlan(
             "scalar or IN subquery must produce exactly one column",
         ));
     }
-    let mut execution = Execution::start_with_deadline(physical, provider, memory_limit, deadline)?;
+    let mut execution =
+        Execution::start_with_deadline(physical, provider, memory_limit, deadline, collation)?;
     let mut values = Vec::new();
     let mut used = size_of::<Vec<Value>>();
     while let Some(batch) = execution.next_batch()? {
@@ -2135,6 +2371,10 @@ enum PullOperator {
         aggregates: Vec<CompiledAggregate>,
         column_types: Vec<DataType>,
         state: Option<MaterializedRows>,
+        /// The plan's collation, fixed when the operator was built. Grouping
+        /// is an equivalence relation over text, so it has to be decided once
+        /// for the operator rather than per batch.
+        collation: Collation,
     },
     Project {
         input: Box<Self>,
@@ -2354,9 +2594,12 @@ impl PullOperator {
                 aggregates,
                 column_types,
                 state,
+                collation,
             } => {
                 if state.is_none() {
-                    *state = Some(build_hash_aggregate(input, group_by, aggregates, memory)?);
+                    *state = Some(build_hash_aggregate(
+                        input, group_by, aggregates, memory, *collation,
+                    )?);
                 }
                 next_materialized_batch(
                     state.as_mut().expect("initialized above"),
@@ -2552,6 +2795,7 @@ fn build_operator(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
     match plan {
         PhysicalPlan::Empty => Ok((PullOperator::Empty, Vec::new())),
@@ -2603,7 +2847,7 @@ fn build_operator(
                     "derived input layout does not match its bound columns",
                 ));
             }
-            let (input, _) = build_operator(*input, provider, memory)?;
+            let (input, _) = build_operator(*input, provider, memory, collation)?;
             Ok((input, columns))
         }
         PhysicalPlan::CrossJoin {
@@ -2612,7 +2856,7 @@ fn build_operator(
         } => {
             let mut built = Vec::with_capacity(inputs.len());
             for input in inputs {
-                built.push(build_operator(input, provider, memory)?);
+                built.push(build_operator(input, provider, memory, collation)?);
             }
             let mut operators = Vec::with_capacity(built.len());
             let mut columns = Vec::new();
@@ -2638,7 +2882,7 @@ fn build_operator(
             validate_union_fields(&layouts)?;
             let mut built = Vec::with_capacity(inputs.len());
             for input in inputs {
-                built.push(build_operator(input, provider, memory)?);
+                built.push(build_operator(input, provider, memory, collation)?);
             }
             let (operators, columns): (Vec<_>, Vec<_>) = built.into_iter().unzip();
             let columns = columns.into_iter().next().unwrap_or_default();
@@ -2658,18 +2902,20 @@ fn build_operator(
             right_key,
             extra_keys,
         } => {
-            let (left, left_columns) = build_operator(*left, provider, memory)?;
-            let (right, right_columns) = build_operator(*right, provider, memory)?;
-            let key_mode = hash_join_key_mode(left_key.data_type, right_key.data_type).ok_or(
-                ExecError::InvalidPhysicalPlan("hash join keys have incompatible scalar types"),
-            )?;
+            let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
+            let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
+            let key_mode = hash_join_key_mode(left_key.data_type, right_key.data_type, collation)
+                .ok_or(ExecError::InvalidPhysicalPlan(
+                "hash join keys have incompatible scalar types",
+            ))?;
             let extra_keys = extra_keys
                 .into_iter()
                 .map(|(extra_left, extra_right)| {
-                    let mode = hash_join_key_mode(extra_left.data_type, extra_right.data_type)
-                        .ok_or(ExecError::InvalidPhysicalPlan(
-                            "hash join keys have incompatible scalar types",
-                        ))?;
+                    let mode =
+                        hash_join_key_mode(extra_left.data_type, extra_right.data_type, collation)
+                            .ok_or(ExecError::InvalidPhysicalPlan(
+                                "hash join keys have incompatible scalar types",
+                            ))?;
                     Ok((
                         CompiledExpr::compile(&extra_left, &left_columns)?,
                         CompiledExpr::compile(&extra_right, &right_columns)?,
@@ -2710,8 +2956,8 @@ fn build_operator(
             kind,
             condition,
         } => {
-            let (mut left, left_columns) = build_operator(*left, provider, memory)?;
-            let (mut right, right_columns) = build_operator(*right, provider, memory)?;
+            let (mut left, left_columns) = build_operator(*left, provider, memory, collation)?;
+            let (mut right, right_columns) = build_operator(*right, provider, memory, collation)?;
             let left_rows = materialize(&mut left, memory)?;
             let right_rows = materialize(&mut right, memory)?;
             let mut output_columns = left_columns.clone();
@@ -2731,6 +2977,7 @@ fn build_operator(
                 &condition,
                 provider,
                 memory,
+                collation,
             )?;
             Ok((
                 PullOperator::Rows {
@@ -2743,7 +2990,7 @@ fn build_operator(
         }
         PhysicalPlan::Filter { input, predicate } => {
             let dependent = expression_has_dependent_subquery(&predicate);
-            let (mut input, columns) = build_operator(*input, provider, memory)?;
+            let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
             if dependent {
                 let column_types = columns
                     .iter()
@@ -2761,6 +3008,7 @@ fn build_operator(
                             &columns,
                             provider,
                             memory,
+                            collation,
                         )?;
                         let compiled = CompiledExpr::compile(&expression, &columns)?;
                         if !predicate_truth(&compiled.evaluate(&batch, row)?)? {
@@ -2796,7 +3044,7 @@ fn build_operator(
             group_by,
             aggregates,
         } => {
-            let (input, columns) = build_operator(*input, provider, memory)?;
+            let (input, columns) = build_operator(*input, provider, memory, collation)?;
             let column_types = group_by
                 .iter()
                 .map(|expression| expression.data_type.unwrap_or(DataType::Utf8))
@@ -2851,7 +3099,7 @@ fn build_operator(
                 .collect::<Result<Vec<_>, _>>()?;
             let aggregates = aggregates
                 .iter()
-                .map(|aggregate| CompiledAggregate::compile(aggregate, &columns))
+                .map(|aggregate| CompiledAggregate::compile(aggregate, &columns, collation))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok((
                 PullOperator::HashAggregate {
@@ -2860,6 +3108,7 @@ fn build_operator(
                     aggregates,
                     column_types,
                     state: None,
+                    collation,
                 },
                 output_columns,
             ))
@@ -2868,7 +3117,7 @@ fn build_operator(
             let dependent = expressions
                 .iter()
                 .any(|projection| expression_has_dependent_subquery(&projection.expr));
-            let (mut input, columns) = build_operator(*input, provider, memory)?;
+            let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
             let output_columns = expressions
                 .iter()
                 .enumerate()
@@ -2912,6 +3161,7 @@ fn build_operator(
                                 &columns,
                                 provider,
                                 memory,
+                                collation,
                             )?;
                             let compiled = CompiledExpr::compile(&expression, &columns)?;
                             values.push(compiled.evaluate(&batch, row)?);
@@ -2961,11 +3211,17 @@ fn build_operator(
                 .iter()
                 .map(|field| field.data_type.unwrap_or(DataType::Utf8))
                 .collect();
-            let (mut anchor_op, columns) = build_operator(*anchor, provider, memory)?;
+            let (mut anchor_op, columns) = build_operator(*anchor, provider, memory, collation)?;
             let mut seen: HashSet<Vec<Value>> = HashSet::new();
             let mut rows: Vec<Vec<Value>> = Vec::new();
-            let mut delta =
-                drain_recursive_rows(&mut anchor_op, distinct, &mut seen, &mut rows, memory)?;
+            let mut delta = drain_recursive_rows(
+                &mut anchor_op,
+                distinct,
+                &mut seen,
+                &mut rows,
+                memory,
+                collation,
+            )?;
             let recursion_limit = SESSION_CTE_MAX_RECURSION_DEPTH.get();
             let mut iterations: u64 = 0;
             while !delta.is_empty() {
@@ -2981,9 +3237,16 @@ fn build_operator(
                     column_types: &column_types,
                     delta: &delta,
                 };
-                let (mut member_op, _) = build_operator((*member).clone(), &overlay, memory)?;
-                delta =
-                    drain_recursive_rows(&mut member_op, distinct, &mut seen, &mut rows, memory)?;
+                let (mut member_op, _) =
+                    build_operator((*member).clone(), &overlay, memory, collation)?;
+                delta = drain_recursive_rows(
+                    &mut member_op,
+                    distinct,
+                    &mut seen,
+                    &mut rows,
+                    memory,
+                    collation,
+                )?;
             }
             Ok((
                 PullOperator::Rows {
@@ -3000,8 +3263,8 @@ fn build_operator(
             left,
             right,
         } => {
-            let (left, columns) = build_operator(*left, provider, memory)?;
-            let (right, _) = build_operator(*right, provider, memory)?;
+            let (left, columns) = build_operator(*left, provider, memory, collation)?;
+            let (right, _) = build_operator(*right, provider, memory, collation)?;
             let column_types = columns
                 .iter()
                 .map(|column| column.data_type)
@@ -3024,7 +3287,7 @@ fn build_operator(
                 .into_iter()
                 .map(|field| field.data_type.unwrap_or(DataType::Utf8))
                 .collect();
-            let (input, columns) = build_operator(*input, provider, memory)?;
+            let (input, columns) = build_operator(*input, provider, memory, collation)?;
             Ok((
                 PullOperator::Distinct {
                     input: Box::new(input),
@@ -3039,10 +3302,10 @@ fn build_operator(
             windows,
             outputs,
         } => {
-            let (input_op, mut columns) = build_operator(*input, provider, memory)?;
+            let (input_op, mut columns) = build_operator(*input, provider, memory, collation)?;
             let compiled = windows
                 .iter()
-                .map(|window| CompiledWindow::compile(window, &columns))
+                .map(|window| CompiledWindow::compile(window, &columns, collation))
                 .collect::<Result<Vec<_>, _>>()?;
             let mut column_types = columns
                 .iter()
@@ -3078,7 +3341,7 @@ fn build_operator(
             }
             let visible = column_types.len().saturating_sub(trim);
             column_types.truncate(visible);
-            let (input, mut columns) = build_operator(*input, provider, memory)?;
+            let (input, mut columns) = build_operator(*input, provider, memory, collation)?;
             columns.truncate(visible);
             Ok((
                 PullOperator::Sort {
@@ -3097,7 +3360,7 @@ fn build_operator(
             offset,
             count,
         } => {
-            let (input, columns) = build_operator(*input, provider, memory)?;
+            let (input, columns) = build_operator(*input, provider, memory, collation)?;
             Ok((
                 PullOperator::Limit {
                     input: Box::new(input),
@@ -3383,6 +3646,7 @@ fn drain_recursive_rows(
     seen: &mut HashSet<Vec<Value>>,
     rows: &mut Vec<Vec<Value>>,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     let mut delta = Vec::new();
     while let Some(batch) = operator.next_batch(memory)? {
@@ -3395,7 +3659,7 @@ fn drain_recursive_rows(
                 let key: Vec<Value> = values
                     .iter()
                     .cloned()
-                    .map(normalized_collation_value)
+                    .map(|value| normalized_collation_value(value, collation))
                     .collect();
                 if seen.contains(&key) {
                     continue;
@@ -3658,6 +3922,7 @@ fn validate_scan_batch(batch: &RecordBatch, expected_types: &[DataType]) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use crate::collation::Collation;
     use std::{
         collections::{HashMap, VecDeque},
         mem::size_of,
@@ -3704,7 +3969,8 @@ mod tests {
         };
         let plan =
             physical("SELECT name, COUNT(id) AS rows FROM events GROUP BY name ORDER BY name");
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
 
         assert_eq!(batch.visible_row_count(), 2);
@@ -3781,7 +4047,11 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound))).expect("physical")
+        PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical")
     }
 
     fn catalog_table(id: u64, name: &str, rows: u64) -> TableEntry {
@@ -3830,7 +4100,8 @@ mod tests {
             batches: Mutex::new(vec![source_batch()]),
         };
         let plan = physical("SELECT name FROM events WHERE id > 1 LIMIT 1");
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
 
         assert_eq!(execution.output_fields()[0].name, "name");
         let batch = execution.next_batch().expect("pull").expect("result batch");
@@ -3872,8 +4143,8 @@ mod tests {
              CAST('1.00' AS DECIMAL(3,2)) = CAST('1.0' AS DECIMAL(2,1)), \
              CAST('9007199254740993' AS DECIMAL(16,0)) > 9007199254740992",
         );
-        let mut execution =
-            Execution::start(plan, &provider, 4 * 1024).expect("decimal comparison execution");
+        let mut execution = Execution::start(plan, &provider, 4 * 1024, Collation::default())
+            .expect("decimal comparison execution");
         let batch = execution.next_batch().expect("pull").expect("batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -3900,8 +4171,8 @@ mod tests {
                  IN (9007199254740992), \
              CAST('9007199254740993' AS DECIMAL(16,0)) % 2",
         );
-        let mut execution =
-            Execution::start(plan, &provider, 4 * 1024).expect("decimal set execution");
+        let mut execution = Execution::start(plan, &provider, 4 * 1024, Collation::default())
+            .expect("decimal set execution");
         let batch = execution.next_batch().expect("pull").expect("batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -3922,8 +4193,8 @@ mod tests {
             "SELECT (14620 / 9432456) / (24250 / 9432456), \
              (1 / 3) * 3, 1 / 3 / 3",
         );
-        let mut execution =
-            Execution::start(plan, &provider, 4 * 1024).expect("decimal chain execution");
+        let mut execution = Execution::start(plan, &provider, 4 * 1024, Collation::default())
+            .expect("decimal chain execution");
         let batch = execution.next_batch().expect("pull").expect("batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -3967,8 +4238,11 @@ mod tests {
             let bound = Binder::new(&catalog, Some("app"))
                 .bind(&statement)
                 .expect("bind");
-            PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-                .expect("physical")
+            PhysicalPlanner::plan(
+                Optimizer::optimize(LogicalPlanner::plan(bound)),
+                Collation::default(),
+            )
+            .expect("physical")
         };
         let amounts = || {
             ColumnVector::new(
@@ -3993,6 +4267,7 @@ mod tests {
             plan("SELECT COUNT(DISTINCT amount), MIN(amount), MAX(amount) FROM payments"),
             &provider,
             64 * 1024,
+            Collation::default(),
         )
         .expect("aggregate execution");
         let batch = aggregate.next_batch().expect("pull").expect("batch");
@@ -4016,6 +4291,7 @@ mod tests {
             plan("SELECT amount, COUNT(*) FROM payments GROUP BY amount ORDER BY amount"),
             &provider,
             64 * 1024,
+            Collation::default(),
         )
         .expect("grouped execution");
         let batch = grouped.next_batch().expect("pull").expect("batch");
@@ -4049,8 +4325,11 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind temporal range");
-        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical");
+        let plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical");
         let dates = ColumnVector::new(
             DataType::Date32,
             ["2024-01-01", "2024-01-02", "2024-01-10"]
@@ -4061,7 +4340,8 @@ mod tests {
         let provider = StaticProvider {
             batches: Mutex::new(vec![RecordBatch::new(3, vec![dates]).expect("batch")]),
         };
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("batch");
         assert_eq!(
             batch.column(0).expect("counts").values(),
@@ -4096,8 +4376,11 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical JSON constructors");
+        let plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical JSON constructors");
         let json_text = Value::Utf8(r#"{"x":1}"#.to_owned());
         let provider = StaticProvider {
             batches: Mutex::new(vec![
@@ -4112,7 +4395,8 @@ mod tests {
                 .expect("batch"),
             ]),
         };
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("JSON execution");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024, Collation::default())
+            .expect("JSON execution");
         assert_eq!(execution.output_fields()[0].data_type, Some(DataType::Json));
         assert_eq!(execution.output_fields()[1].data_type, Some(DataType::Json));
         let batch = execution.next_batch().expect("pull").expect("result batch");
@@ -4152,8 +4436,11 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical JSON aggregates");
+        let plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical JSON aggregates");
         let json_text = Value::Utf8(r#"{"x":1}"#.to_owned());
         let provider = StaticProvider {
             batches: Mutex::new(vec![
@@ -4169,7 +4456,8 @@ mod tests {
                 .expect("batch"),
             ]),
         };
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("JSON execution");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024, Collation::default())
+            .expect("JSON execution");
         assert_eq!(execution.output_fields()[0].data_type, Some(DataType::Json));
         assert_eq!(execution.output_fields()[1].data_type, Some(DataType::Json));
         let batch = execution.next_batch().expect("pull").expect("result batch");
@@ -4189,7 +4477,8 @@ mod tests {
             batches: Mutex::new(Vec::new()),
         };
         let plan = physical("SELECT 1 + 2 AS answer, NULL AS absent, '12x' + 1 AS coerced");
-        let mut execution = Execution::start(plan, &provider, 4 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 4 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -4219,7 +4508,8 @@ mod tests {
              CAST('12x' AS SIGNED), CONVERT('34x', SIGNED), \
              CONVERT('MiXeD' USING utf8mb4), ROUND(12.345, 2), ROUND(149, -2)",
         );
-        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 32 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
             .columns()
@@ -4262,7 +4552,8 @@ mod tests {
              NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740993), \
              IF(1, 'selected', CAST('not-a-date' AS DATE))",
         );
-        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 32 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
             .columns()
@@ -4294,7 +4585,8 @@ mod tests {
              3 NOT IN (SELECT 1 UNION ALL SELECT NULL), \
              (SELECT 9 LIMIT 0)",
         );
-        let mut execution = Execution::start(plan, &provider, 16 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 16 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
             .columns()
@@ -4327,7 +4619,8 @@ mod tests {
              DATEDIFF('2024-03-05', '2024-03-01'), \
              FROM_UNIXTIME(UNIX_TIMESTAMP('2024-02-29 12:34:56'))",
         );
-        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 32 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
             .columns()
@@ -4365,7 +4658,8 @@ mod tests {
              CAST('2026-08-06 07:08:09.987654' AS TIME(3)), \
              CAST('850:00:00' AS TIME), CAST('not-a-time' AS TIME)",
         );
-        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 32 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
             .columns()
@@ -4395,7 +4689,8 @@ mod tests {
             r#"SELECT CAST('{"aa":1,"b":[true,null]}' AS JSON),
                JSON_TYPE(CAST('[1,2]' AS JSON))"#,
         );
-        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 32 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -4407,7 +4702,8 @@ mod tests {
         );
 
         let invalid = physical("SELECT CAST('not-json' AS JSON)");
-        let mut execution = Execution::start(invalid, &provider, 32 * 1024).expect("execution");
+        let mut execution = Execution::start(invalid, &provider, 32 * 1024, Collation::default())
+            .expect("execution");
         assert!(matches!(
             execution.next_batch(),
             Err(ExecError::InvalidExpressionType)
@@ -4427,7 +4723,8 @@ mod tests {
              CAST('11:35:00' AS YEAR), CAST('1979aaa' AS YEAR), \
              CAST('not-a-year' AS YEAR)",
         );
-        let mut execution = Execution::start(plan, &provider, 32 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 32 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
             .columns()
@@ -4459,7 +4756,8 @@ mod tests {
             batches: Mutex::new(vec![source_batch()]),
         };
         let plan = physical("SELECT id, name FROM events");
-        let mut execution = Execution::start(plan, &provider, 1).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 1, Collation::default()).expect("execution");
         assert!(matches!(
             execution.next_batch(),
             Err(ExecError::MemoryLimitExceeded { limit: 1, .. })
@@ -4474,11 +4772,17 @@ mod tests {
         let plan = physical("SELECT REGEXP_REPLACE(REPEAT('a', 1000), 'a', 'replacement')");
         let program_memory = crate::expression::REGEX_PROGRAM_MEMORY_UPPER_BOUND;
         assert!(matches!(
-            Execution::start(plan.clone(), &provider, program_memory - 1),
+            Execution::start(
+                plan.clone(),
+                &provider,
+                program_memory - 1,
+                Collation::default()
+            ),
             Err(ExecError::MemoryLimitExceeded { .. })
         ));
         let limit = program_memory + 4 * 1024;
-        let mut execution = Execution::start(plan, &provider, limit).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, limit, Collation::default()).expect("execution");
         assert!(matches!(
             execution.next_batch(),
             Err(ExecError::MemoryLimitExceeded {
@@ -4518,6 +4822,7 @@ mod tests {
                 &provider,
                 64 * 1024,
                 Some(deadline),
+                Collation::default(),
             ),
             Err(ExecError::QueryTimedOut)
         ));
@@ -4535,7 +4840,7 @@ mod tests {
         };
         let plan = physical("SELECT 'needle' IN (SELECT name FROM events)");
         assert!(matches!(
-            Execution::start(plan, &provider, 800),
+            Execution::start(plan, &provider, 800, Collation::default()),
             Err(ExecError::MemoryLimitExceeded { limit: 800, .. })
         ));
     }
@@ -4577,6 +4882,7 @@ mod tests {
             physical("SELECT EXISTS (SELECT name FROM events)"),
             &exists_provider,
             8 * 1024,
+            Collation::default(),
         )
         .expect("EXISTS stops after one row");
         let batch = exists.next_batch().expect("pull").expect("batch");
@@ -4609,6 +4915,7 @@ mod tests {
                 physical("SELECT (SELECT name FROM events)"),
                 &scalar_provider,
                 8 * 1024,
+                Collation::default(),
             ),
             Err(ExecError::ScalarSubqueryRows { rows: 2 })
         ));
@@ -4620,7 +4927,8 @@ mod tests {
             batches: Mutex::new(vec![RecordBatch::new(1, Vec::new()).expect("empty batch")]),
         };
         let plan = physical("SELECT name FROM events");
-        let mut execution = Execution::start(plan, &provider, 4 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 4 * 1024, Collation::default()).expect("execution");
         assert_eq!(
             execution.next_batch(),
             Err(ExecError::InvalidBatch(
@@ -4644,7 +4952,8 @@ mod tests {
             batches: Mutex::new(vec![RecordBatch::new(3, vec![names]).expect("batch")]),
         };
         let plan = physical("SELECT DISTINCT name FROM events");
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let names = batch
             .selection()
@@ -4693,6 +5002,7 @@ mod tests {
                 physical("SELECT DISTINCT name FROM events"),
                 &provider,
                 memory_limit,
+                Collation::default(),
             )
             .expect("execution");
             let mut values = Vec::new();
@@ -4747,7 +5057,8 @@ mod tests {
                 batches: Mutex::new(batches.clone()),
             };
             let mut execution =
-                Execution::start(physical(sql), &provider, memory_limit).expect("execution");
+                Execution::start(physical(sql), &provider, memory_limit, Collation::default())
+                    .expect("execution");
             let mut counts = HashMap::<Vec<Value>, usize>::new();
             while let Some(batch) = execution.next_batch().expect("pull") {
                 for row in batch.selection().selected_rows() {
@@ -4796,8 +5107,8 @@ mod tests {
                  FROM events e INNER JOIN events u ON {key} = u.id \
                  ORDER BY event_id"
             ));
-            let mut execution =
-                Execution::start(plan, &provider, 64 * 1024).expect("mixed-key execution");
+            let mut execution = Execution::start(plan, &provider, 64 * 1024, Collation::default())
+                .expect("mixed-key execution");
             let batch = execution.next_batch().expect("pull").expect("result batch");
             assert_eq!(
                 batch.column(0).expect("left ids").values(),
@@ -4841,8 +5152,11 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        let plan = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical decimal equi-join");
+        let plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical decimal equi-join");
         let amounts = ColumnVector::new(
             DataType::Decimal {
                 precision: 20,
@@ -4857,8 +5171,8 @@ mod tests {
         let provider = StaticProvider {
             batches: Mutex::new(vec![RecordBatch::new(2, vec![amounts]).expect("batch")]),
         };
-        let mut execution =
-            Execution::start(plan, &provider, 64 * 1024).expect("decimal-key execution");
+        let mut execution = Execution::start(plan, &provider, 64 * 1024, Collation::default())
+            .expect("decimal-key execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).expect("amounts").values(),
@@ -4900,7 +5214,8 @@ mod tests {
              FROM events e INNER JOIN events u ON e.id = u.id \
              GROUP BY u.name ORDER BY u.name",
         );
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
 
         assert_eq!(batch.visible_row_count(), 2);
@@ -4961,7 +5276,8 @@ mod tests {
              GROUP_CONCAT(DISTINCT id) AS ids, MIN(name), MAX(name) \
              FROM events GROUP BY name HAVING COUNT(*) > 1",
         );
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
 
         assert_eq!(batch.visible_row_count(), 1);
@@ -5030,7 +5346,8 @@ mod tests {
         };
         super::set_session_group_concat_max_len(Some(5));
         let plan = physical("SELECT GROUP_CONCAT(name SEPARATOR '') FROM events");
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -5076,7 +5393,8 @@ mod tests {
             "SELECT COUNT(DISTINCT id, name), \
              GROUP_CONCAT(id, ':', name ORDER BY id SEPARATOR '|') FROM events",
         );
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -5094,7 +5412,8 @@ mod tests {
             batches: Mutex::new(Vec::new()),
         };
         let plan = physical("SELECT COUNT(*) AS rows, SUM(id) AS total FROM events");
-        let mut execution = Execution::start(plan, &provider, 16 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 16 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
 
         assert_eq!(batch.row_count(), 1);
@@ -5114,7 +5433,8 @@ mod tests {
             batches: Mutex::new(Vec::new()),
         };
         let plan = physical("SELECT COUNT(*) AS rows FROM events");
-        let mut execution = Execution::start(plan, &provider, 4 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 4 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).and_then(|column| column.value(0)),
@@ -5145,7 +5465,8 @@ mod tests {
             crate::PhysicalPlan::Sort { top_k: Some(2), .. }
         ));
 
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).expect("label").values(),
@@ -5171,8 +5492,8 @@ mod tests {
             batches: Mutex::new(batches),
         };
         let plan = physical("SELECT name FROM events ORDER BY name LIMIT 2");
-        let mut execution =
-            Execution::start(plan, &provider, 2 * 1024).expect("bounded top-K execution");
+        let mut execution = Execution::start(plan, &provider, 2 * 1024, Collation::default())
+            .expect("bounded top-K execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let prefixes = batch
             .column(0)
@@ -5201,7 +5522,8 @@ mod tests {
             batches: Mutex::new(vec![RecordBatch::new(2, vec![names]).expect("batch")]),
         };
         let plan = physical("SELECT name FROM events ORDER BY name LIMIT 18446744073709551615");
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).expect("names").values(),
@@ -5227,7 +5549,8 @@ mod tests {
             batches: Mutex::new(vec![RecordBatch::new(3, vec![names]).expect("batch")]),
         };
         let plan = physical("SELECT name FROM events ORDER BY name");
-        let mut execution = Execution::start(plan, &provider, 64 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 64 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).expect("name").values(),
@@ -5247,7 +5570,8 @@ mod tests {
         let plan = physical(
             "SELECT 3 AS value UNION ALL SELECT 1 UNION ALL SELECT 2 ORDER BY value LIMIT 2",
         );
-        let mut execution = Execution::start(plan, &provider, 16 * 1024).expect("execution");
+        let mut execution =
+            Execution::start(plan, &provider, 16 * 1024, Collation::default()).expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(
             batch.column(0).expect("value").values(),
@@ -5275,7 +5599,7 @@ mod tests {
             .expect("bind query");
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
         assert_eq!(
-            PhysicalPlanner::plan(logical),
+            PhysicalPlanner::plan(logical, Collation::default()),
             Err(ExecError::CrossJoinGuardExceeded {
                 estimated_rows: 4_000_000,
                 limit: crate::MAX_CROSS_JOIN_ROWS

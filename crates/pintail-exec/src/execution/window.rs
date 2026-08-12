@@ -2,6 +2,8 @@
 
 use std::cmp::Ordering;
 
+use crate::collation::Collation;
+
 use pintail_sql::{
     BoundColumn, BoundExpr, BoundExprKind, BoundOrderKey, BoundWindow, WindowFunction,
 };
@@ -49,6 +51,7 @@ impl CompiledWindow {
     pub(super) fn compile(
         window: &BoundWindow,
         columns: &[BoundColumn],
+        collation: Collation,
     ) -> Result<Self, ExecError> {
         let function = match &window.function {
             WindowFunction::Offset {
@@ -86,7 +89,7 @@ impl CompiledWindow {
                     )?,
                 };
                 CompiledWindowFunction::Aggregate(
-                    CompiledAggregate::compile(aggregate, columns)?,
+                    CompiledAggregate::compile(aggregate, columns, collation)?,
                     argument,
                 )
             }

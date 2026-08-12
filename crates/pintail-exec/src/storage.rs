@@ -1741,6 +1741,7 @@ fn batch_memory_upper_bound(types: &[pintail_types::DataType], row_count: usize)
 
 #[cfg(test)]
 mod tests {
+    use crate::collation::Collation;
     use pintail_catalog::{
         CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
     };
@@ -1771,10 +1772,14 @@ mod tests {
         let bound = Binder::new(catalog, Some("app"))
             .bind(&statement)
             .expect("bind query");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical plan");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical plan");
         let mut execution =
-            Execution::start(physical, provider, memory_limit).expect("start execution");
+            Execution::start(physical, provider, memory_limit, Collation::default())
+                .expect("start execution");
         let mut values = Vec::new();
         while let Some(batch) = execution
             .next_batch()
@@ -2418,8 +2423,9 @@ mod tests {
             .bind(&statement)
             .expect("bind query");
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-        let physical = PhysicalPlanner::plan(logical).expect("physical plan");
-        let mut execution = Execution::start(physical, &provider, 64 * 1024).expect("execution");
+        let physical = PhysicalPlanner::plan(logical, Collation::default()).expect("physical plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("execution");
 
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let values = batch
@@ -2452,10 +2458,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind CTE");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("CTE physical plan");
-        let mut execution =
-            Execution::start(physical, &provider, 64 * 1024).expect("CTE execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("CTE physical plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("CTE execution");
         let batch = execution
             .next_batch()
             .expect("CTE pull")
@@ -2552,9 +2561,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind query");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical plan");
-        let mut execution = Execution::start(physical, &provider, 64 * 1024).expect("execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         assert_eq!(batch.visible_row_count(), 2);
         assert_eq!(
@@ -2605,9 +2618,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        let physical =
-            PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound))).expect("plan");
-        let mut execution = Execution::start(physical, &provider, 64 * 1024).expect("execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("execution");
         let batch = execution.next_batch().expect("pull").expect("batch");
         assert_eq!(
             batch.column(0).expect("names").values(),
@@ -2891,10 +2908,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind guarded scalar lookup");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("scalar lookup plan");
-        let mut execution =
-            Execution::start(physical, &provider, 64 * 1024).expect("scalar lookup execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("scalar lookup plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("scalar lookup execution");
         assert!(matches!(
             execution.next_batch(),
             Err(ExecError::ScalarSubqueryRows { rows: 2 })
@@ -2970,9 +2990,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind query");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical plan");
-        let mut execution = Execution::start(physical, &provider, 64 * 1024).expect("execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("execution");
         let batch = execution.next_batch().expect("pull").expect("result batch");
         let rows = batch
             .selection()
@@ -3019,10 +3043,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind hash join");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("hash plan");
-        let mut execution =
-            Execution::start(physical, &provider, 64 * 1024).expect("hash execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("hash plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("hash execution");
         let batch = execution
             .next_batch()
             .expect("hash pull")
@@ -3153,10 +3180,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind CTE join");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("CTE join plan");
-        let mut execution =
-            Execution::start(physical, &provider, 64 * 1024).expect("CTE join execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("CTE join plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("CTE join execution");
         let batch = execution
             .next_batch()
             .expect("CTE join pull")
@@ -3185,9 +3215,12 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind correlated scalar lookup");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("correlated scalar lookup plan");
-        let mut execution = Execution::start(physical, &provider, 64 * 1024)
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("correlated scalar lookup plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
             .expect("correlated scalar lookup execution");
         let batch = execution
             .next_batch()
@@ -3327,10 +3360,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind dependent scalar cardinality query");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("plan dependent scalar cardinality query");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("plan dependent scalar cardinality query");
         assert!(matches!(
-            Execution::start(physical, &provider, 64 * 1024),
+            Execution::start(physical, &provider, 64 * 1024, Collation::default()),
             Err(ExecError::ScalarSubqueryRows { rows: 2 })
         ));
 
@@ -3368,10 +3404,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind relational subqueries");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("relational subquery plan");
-        let mut execution =
-            Execution::start(physical, &provider, 64 * 1024).expect("subquery execution");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("relational subquery plan");
+        let mut execution = Execution::start(physical, &provider, 64 * 1024, Collation::default())
+            .expect("subquery execution");
         let batch = execution
             .next_batch()
             .expect("subquery pull")
@@ -3394,10 +3433,13 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind multi-row subquery");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("multi-row subquery plan");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("multi-row subquery plan");
         assert!(matches!(
-            Execution::start(physical, &provider, 64 * 1024),
+            Execution::start(physical, &provider, 64 * 1024, Collation::default()),
             Err(ExecError::ScalarSubqueryRows { rows: 2 })
         ));
     }
@@ -3460,10 +3502,14 @@ mod tests {
         let bound = Binder::new(catalog, Some("app"))
             .bind(&statement)
             .expect("bind query");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical plan");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical plan");
         let mut execution =
-            Execution::start(physical, provider, memory_limit).expect("start execution");
+            Execution::start(physical, provider, memory_limit, Collation::default())
+                .expect("start execution");
         let mut rows = Vec::new();
         while let Some(batch) = execution.next_batch().expect("pull batch") {
             for row in batch.selection().selected_rows() {
@@ -3721,8 +3767,11 @@ mod tests {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical plan");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical plan");
         let crate::PhysicalPlan::Project { input, .. } = physical else {
             panic!("expected projection over scan");
         };

@@ -6,6 +6,7 @@
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
+use pintail_exec::collation::Collation;
 use pintail_exec::{Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider};
 use pintail_sql::{Binder, parse_statement};
 use pintail_store::{StoreOptions, TableStore};
@@ -79,8 +80,9 @@ fn run_aggregated(memory_limit: usize) -> Result<Vec<Vec<Value>>, String> {
         .bind(&statement)
         .map_err(|error| format!("bind: {error}"))?;
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-    let physical = PhysicalPlanner::plan(logical).map_err(|error| format!("plan: {error}"))?;
-    let mut execution = Execution::start(physical, &provider, memory_limit)
+    let physical = PhysicalPlanner::plan(logical, Collation::default())
+        .map_err(|error| format!("plan: {error}"))?;
+    let mut execution = Execution::start(physical, &provider, memory_limit, Collation::default())
         .map_err(|error| format!("start: {error}"))?;
     let mut rows = Vec::new();
     while let Some(batch) = execution

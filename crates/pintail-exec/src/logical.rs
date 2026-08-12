@@ -211,6 +211,7 @@ impl LogicalPlanner {
         let BoundQuery {
             from,
             tables: _,
+            text_collation: _,
             mut projection,
             filter,
             group_by,

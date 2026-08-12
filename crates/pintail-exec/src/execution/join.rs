@@ -6,6 +6,8 @@ use std::{cmp::Ordering, collections::HashMap};
 use pintail_sql::{BoundColumn, BoundExpr, BoundJoinKind, BoundOrderKey};
 use pintail_types::{DataType, Value};
 
+use crate::collation::Collation;
+
 use super::{
     ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MemoryTracker, PullOperator, ScanProvider,
     batch_row, compare_sort_values, estimated_batch_row_bytes, estimated_record_batch_bytes,
@@ -33,6 +35,7 @@ pub(super) struct JoinGroupPlan {
 pub(super) fn resolve_join_group_plan(
     build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
     right_group_columns: &[usize],
+    collation: Collation,
 ) -> Result<JoinGroupPlan, ExecError> {
     let mut values = Vec::new();
     let mut index = HashMap::<Vec<Value>, usize>::new();
@@ -53,7 +56,7 @@ pub(super) fn resolve_join_group_plan(
             let key = group_values
                 .iter()
                 .cloned()
-                .map(normalized_collation_value)
+                .map(|value| normalized_collation_value(value, collation))
                 .collect::<Vec<_>>();
             let position = *index.entry(key).or_insert_with(|| {
                 values.push(group_values);
@@ -812,8 +815,8 @@ fn prepare_hash_join_left(
     }
 }
 
-pub(super) fn normalized_hash_key(value: Value) -> Option<Value> {
-    (!matches!(value, Value::Null)).then(|| normalized_collation_value(value))
+pub(super) fn normalized_hash_key(value: Value, collation: Collation) -> Option<Value> {
+    (!matches!(value, Value::Null)).then(|| normalized_collation_value(value, collation))
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -881,7 +884,9 @@ pub(super) fn normalized_join_key(
         return Ok(None);
     }
     let key = match mode {
-        JoinKeyMode::CollatedText => JoinHashKey::Scalar(normalized_collation_value(value)),
+        JoinKeyMode::CollatedText(collation) => {
+            JoinHashKey::Scalar(normalized_collation_value(value, collation))
+        }
         JoinKeyMode::Binary | JoinKeyMode::Boolean => JoinHashKey::Scalar(value),
         JoinKeyMode::Integer => match value {
             Value::Int64(value) if value < 0 => JoinHashKey::NegativeInteger(value),
@@ -903,9 +908,9 @@ pub(super) fn normalized_join_key(
     Ok(Some(key))
 }
 
-pub(super) fn normalized_collation_value(value: Value) -> Value {
+pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> Value {
     match value {
-        Value::Utf8(value) => Value::Utf8(normalized_collation_text(&value)),
+        Value::Utf8(value) => Value::Utf8(normalized_collation_text(&value, collation)),
         value => value,
     }
 }
@@ -914,14 +919,20 @@ pub(super) fn normalized_collation_value(value: Value) -> Value {
 /// The returned hexadecimal ICU primary sort key compares bytewise in the
 /// same order as [`compare_collated_text`], so every hash-based and ordered
 /// operator shares one case- and accent-insensitive equivalence relation.
-pub(crate) fn normalized_collation_text(text: &str) -> String {
+pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    // general_ci has its own flat weight table, and crucially its own PAD
+    // SPACE rule; running it through the ICU collator would silently answer
+    // with the other collation's semantics.
     let mut key = Vec::new();
-    MYSQL_DEFAULT_COLLATOR.with(|collator| {
-        collator
-            .write_sort_key_to(text, &mut key)
-            .expect("Vec-backed collation keys cannot fail");
-    });
+    match collation {
+        Collation::Utf8mb4GeneralCi => key = crate::collation::general_ci_sort_key(text),
+        Collation::Utf8mb40900AiCi => MYSQL_DEFAULT_COLLATOR.with(|collator| {
+            collator
+                .write_sort_key_to(text, &mut key)
+                .expect("Vec-backed collation keys cannot fail");
+        }),
+    }
     let mut encoded = String::with_capacity(key.len().saturating_mul(2));
     for byte in key {
         encoded.push(char::from(HEX[usize::from(byte >> 4)]));
@@ -930,9 +941,18 @@ pub(crate) fn normalized_collation_text(text: &str) -> String {
     encoded
 }
 
-/// Compares text with the initial `utf8mb4_0900_ai_ci` compatibility profile.
-pub(crate) fn compare_collated_text(left: &str, right: &str) -> std::cmp::Ordering {
-    MYSQL_DEFAULT_COLLATOR.with(|collator| collator.compare(left, right))
+/// Compares text under the collation the plan resolved at bind time.
+pub(crate) fn compare_collated_text(
+    left: &str,
+    right: &str,
+    collation: Collation,
+) -> std::cmp::Ordering {
+    match collation {
+        Collation::Utf8mb4GeneralCi => crate::collation::compare_general_ci(left, right),
+        Collation::Utf8mb40900AiCi => {
+            MYSQL_DEFAULT_COLLATOR.with(|collator| collator.compare(left, right))
+        }
+    }
 }
 
 thread_local! {
@@ -954,6 +974,7 @@ pub(super) fn execute_nested_loop_join(
     condition: &BoundExpr,
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     let mut columns = left_columns.to_vec();
     columns.extend_from_slice(right_columns);
@@ -982,6 +1003,7 @@ pub(super) fn execute_nested_loop_join(
                 &columns,
                 provider,
                 memory,
+                collation,
             )?;
             let predicate = CompiledExpr::compile(&predicate, &columns)?;
             if !predicate_truth(&predicate.evaluate(&batch, 0)?)? {
@@ -1043,6 +1065,7 @@ fn push_nested_join_row(
 
 #[cfg(test)]
 mod tests {
+    use crate::collation::Collation;
 
     fn drain_partitions(runs: &mut [super::GraceRun]) -> Vec<u64> {
         let mut ids = Vec::new();
@@ -1140,26 +1163,33 @@ mod tests {
             ("Straße", "STRASSE"),
             ("Ａ", "a"),
         ] {
-            assert_eq!(super::compare_collated_text(left, right), Ordering::Equal);
             assert_eq!(
-                super::normalized_collation_text(left),
-                super::normalized_collation_text(right)
+                super::compare_collated_text(left, right, Collation::Utf8mb40900AiCi),
+                Ordering::Equal
+            );
+            assert_eq!(
+                super::normalized_collation_text(left, Collation::Utf8mb40900AiCi),
+                super::normalized_collation_text(right, Collation::Utf8mb40900AiCi)
             );
         }
         assert_eq!(
-            super::compare_collated_text("Émile", "Ernie"),
+            super::compare_collated_text("Émile", "Ernie", Collation::Utf8mb40900AiCi),
             Ordering::Less
         );
         assert!(
-            super::normalized_collation_text("Émile") < super::normalized_collation_text("Ernie")
+            super::normalized_collation_text("Émile", Collation::Utf8mb40900AiCi)
+                < super::normalized_collation_text("Ernie", Collation::Utf8mb40900AiCi)
         );
 
         // utf8mb4_0900_ai_ci is a NO PAD collation: unlike older PAD SPACE
         // collations, a trailing space participates in comparison and keys.
-        assert_ne!(super::compare_collated_text("a", "a "), Ordering::Equal);
         assert_ne!(
-            super::normalized_collation_text("a"),
-            super::normalized_collation_text("a ")
+            super::compare_collated_text("a", "a ", Collation::Utf8mb40900AiCi),
+            Ordering::Equal
+        );
+        assert_ne!(
+            super::normalized_collation_text("a", Collation::Utf8mb40900AiCi),
+            super::normalized_collation_text("a ", Collation::Utf8mb40900AiCi)
         );
     }
 }

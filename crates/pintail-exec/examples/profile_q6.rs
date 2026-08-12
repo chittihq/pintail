@@ -14,6 +14,7 @@
 //! The data directory (`target/profile_q6_data`/<rows>) persists across runs;
 //! delete it to force a re-ingest.
 
+use pintail_exec::collation::Collation;
 use std::time::Instant;
 
 use pintail_catalog::TableStatistics;
@@ -249,10 +250,18 @@ fn main() {
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&statement)
             .expect("bind");
-        let physical = PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)))
-            .expect("physical plan");
-        let mut execution =
-            Execution::start(physical, &provider, 4 * 1024 * 1024 * 1024).expect("start");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("physical plan");
+        let mut execution = Execution::start(
+            physical,
+            &provider,
+            4 * 1024 * 1024 * 1024,
+            Collation::default(),
+        )
+        .expect("start");
         let mut rows = Vec::new();
         while let Some(batch) = execution.next_batch().expect("batch") {
             for row in batch.selection().selected_rows() {

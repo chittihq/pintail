@@ -12,6 +12,8 @@ use pintail_sql::{
     ScalarFunction,
 };
 use pintail_types::{DataType, Value};
+
+use crate::collation::Collation;
 use rayon::prelude::*;
 
 use super::join::{
@@ -45,18 +47,25 @@ pub(super) struct CompiledAggregate {
     pub(super) separator: String,
     /// `GROUP_CONCAT ... ORDER BY` keys as `(expr, ascending, decimal)`.
     pub(super) order_within: Vec<(CompiledExpr, bool, bool)>,
+    /// The collation this plan compares text with, resolved once at bind
+    /// time. Carried on the compiled aggregate because every operator that
+    /// touches a text value already holds one, which keeps it from having to
+    /// travel as a parameter beside the data it describes.
+    pub(super) collation: Collation,
 }
 
 impl CompiledAggregate {
     pub(super) fn compile(
         aggregate: &BoundAggregate,
         columns: &[BoundColumn],
+        collation: Collation,
     ) -> Result<Self, ExecError> {
         let input_type = aggregate
             .expr
             .as_ref()
             .and_then(|expression| expression.data_type);
         Ok(Self {
+            collation,
             function: aggregate.function,
             expr: aggregate
                 .expr
@@ -167,17 +176,22 @@ fn int_key_value(key: i128) -> Value {
 impl DistinctSeen {
     /// Returns whether the key is new. `false` means the caller must skip
     /// the aggregate update (already counted).
-    fn insert_value(&mut self, value: &Value, memory: &MemoryTracker) -> Result<bool, ExecError> {
+    fn insert_value(
+        &mut self,
+        value: &Value,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<bool, ExecError> {
         if let Some(key) = int_distinct_key(value) {
-            return self.insert_int(key, memory);
+            return self.insert_int(key, memory, collation);
         }
         if let Self::Ints(_) = self {
-            self.migrate_to_values(memory)?;
+            self.migrate_to_values(memory, collation)?;
         }
         let Self::Values(set) = self else {
             unreachable!()
         };
-        let key = normalized_hash_key(value.clone()).unwrap_or(Value::Null);
+        let key = normalized_hash_key(value.clone(), collation).unwrap_or(Value::Null);
         reserve_hash_set_entries(
             set,
             1,
@@ -193,7 +207,12 @@ impl DistinctSeen {
         Ok(true)
     }
 
-    fn insert_int(&mut self, key: i128, memory: &MemoryTracker) -> Result<bool, ExecError> {
+    fn insert_int(
+        &mut self,
+        key: i128,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<bool, ExecError> {
         match self {
             Self::Ints(set) => {
                 reserve_hash_set_entries(
@@ -205,11 +224,15 @@ impl DistinctSeen {
                 )?;
                 Ok(set.insert(key))
             }
-            Self::Values(_) => self.insert_value(&int_key_value(key), memory),
+            Self::Values(_) => self.insert_value(&int_key_value(key), memory, collation),
         }
     }
 
-    fn migrate_to_values(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+    fn migrate_to_values(
+        &mut self,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<(), ExecError> {
         if let Self::Ints(ints) = self {
             let ints = std::mem::take(ints);
             let mut set = HashSet::with_capacity(ints.len());
@@ -218,7 +241,7 @@ impl DistinctSeen {
                     .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
             )?;
             for key in ints {
-                if let Some(key) = normalized_hash_key(int_key_value(key)) {
+                if let Some(key) = normalized_hash_key(int_key_value(key), collation) {
                     set.insert(key);
                 }
             }
@@ -239,6 +262,9 @@ impl DistinctSeen {
 pub(super) struct AggregateState {
     value: AggregateValue,
     seen: Option<DistinctSeen>,
+    /// Copied from the aggregate this state accumulates, so the distinct set
+    /// and the extreme comparison use the collation the plan resolved.
+    collation: Collation,
     /// f64 of the current Minimum/Maximum extreme when known (typed path).
     /// Guides comparisons: strict f64 inequality between correctly-rounded
     /// values transfers to the exact ordering (rounding is monotone), so only
@@ -376,6 +402,7 @@ impl AggregateState {
             },
         };
         Self {
+            collation: aggregate.collation,
             value,
             seen: aggregate
                 .distinct
@@ -440,7 +467,7 @@ impl AggregateState {
             return Ok(());
         }
         if let Some(seen) = &mut self.seen
-            && !seen.insert_value(value, memory)?
+            && !seen.insert_value(value, memory, self.collation)?
         {
             return Ok(());
         }
@@ -866,7 +893,7 @@ impl AggregateState {
             return Ok(());
         }
         if let Some(seen) = &mut self.seen
-            && !seen.insert_value(value, memory)?
+            && !seen.insert_value(value, memory, self.collation)?
         {
             return Ok(());
         }
@@ -912,12 +939,13 @@ impl AggregateState {
         key: i128,
         memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
+        let collation = self.collation;
         let Some(seen) = &mut self.seen else {
             return Err(ExecError::InvalidPhysicalPlan(
                 "distinct update on a non-distinct aggregate state",
             ));
         };
-        if !seen.insert_int(key, memory)? {
+        if !seen.insert_int(key, memory, collation)? {
             return Ok(());
         }
         match &mut self.value {
@@ -1184,13 +1212,14 @@ fn merge_finished_aggregate_rows(
     delta: Vec<Vec<Value>>,
     group_len: usize,
     aggregates: &[CompiledAggregate],
+    collation: Collation,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     let mut index = HashMap::<Vec<Value>, usize>::new();
     for (position, row) in base.iter().enumerate() {
         let key = row[..group_len]
             .iter()
             .cloned()
-            .map(normalized_collation_value)
+            .map(|value| normalized_collation_value(value, collation))
             .collect::<Vec<_>>();
         index.insert(key, position);
     }
@@ -1198,7 +1227,7 @@ fn merge_finished_aggregate_rows(
         let key = row[..group_len]
             .iter()
             .cloned()
-            .map(normalized_collation_value)
+            .map(|value| normalized_collation_value(value, collation))
             .collect::<Vec<_>>();
         if let Some(position) = index.get(&key) {
             for (offset, aggregate) in aggregates.iter().enumerate() {
@@ -1284,6 +1313,7 @@ pub(super) fn build_hash_aggregate(
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<MaterializedRows, ExecError> {
     // Storage predicates are ALSO compiled into Filter operators above the
     // scan (belt and braces), so a filtered plan is Filter(..(Scan)). Those
@@ -1300,6 +1330,10 @@ pub(super) fn build_hash_aggregate(
     /// filters transparently (their predicates ARE the scan signature),
     /// and fresh inner joins when BOTH sides are settled — either table's
     /// ingest or flush changes its component of the key.
+    ///
+    /// No collation here: a scan signature already fixes the columns, and the
+    /// collation is a property of those columns, so two scans that share a
+    /// signature necessarily share a collation.
     fn settled_plan_key(operator: &PullOperator) -> Option<(std::path::PathBuf, u64, String)> {
         match operator {
             PullOperator::Scan { stream, .. } => stream.settled_identity(),
@@ -1424,9 +1458,14 @@ pub(super) fn build_hash_aggregate(
                 expected_types: delta.types.clone(),
             };
             let delta_rows =
-                build_hash_aggregate_scan(&mut one_shot, group_by, aggregates, memory)?;
-            let merged =
-                merge_finished_aggregate_rows(base, delta_rows.rows, group_by.len(), aggregates)?;
+                build_hash_aggregate_scan(&mut one_shot, group_by, aggregates, memory, collation)?;
+            let merged = merge_finished_aggregate_rows(
+                base,
+                delta_rows.rows,
+                group_by.len(),
+                aggregates,
+                collation,
+            )?;
             let payload: usize = merged
                 .iter()
                 .map(|row| estimated_row_payload_bytes(row))
@@ -1451,7 +1490,7 @@ pub(super) fn build_hash_aggregate(
         }
         return Ok(MaterializedRows { rows, position: 0 });
     }
-    let result = build_hash_aggregate_scan(input, group_by, aggregates, memory)?;
+    let result = build_hash_aggregate_scan(input, group_by, aggregates, memory, collation)?;
     if let Some(key) = memo_key
         && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
     {
@@ -1789,6 +1828,7 @@ fn try_sma_fold(
                 AggregateState {
                     value,
                     seen: None,
+                    collation: aggregate.collation,
                     extreme_number: None,
                     extreme_units: None,
                 },
@@ -1835,6 +1875,7 @@ fn build_hash_aggregate_scan(
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<MaterializedRows, ExecError> {
     if group_by.is_empty()
         && !aggregates.is_empty()
@@ -1866,8 +1907,13 @@ fn build_hash_aggregate_scan(
             .map(CompiledExpr::column_index)
             .collect::<Option<Vec<_>>>();
         if let Some(group_columns) = direct_columns.as_deref()
-            && let Some(rows) =
-                build_fused_inner_join_aggregate(input, group_columns, aggregates, memory)?
+            && let Some(rows) = build_fused_inner_join_aggregate(
+                input,
+                group_columns,
+                aggregates,
+                memory,
+                collation,
+            )?
         {
             return Ok(rows);
         }
@@ -1883,10 +1929,18 @@ fn build_hash_aggregate_scan(
                 direct_columns.as_deref(),
                 aggregates,
                 memory,
+                collation,
             );
         }
         if let Some(group_columns) = direct_columns {
-            return build_direct_column_aggregate(input, None, &group_columns, aggregates, memory);
+            return build_direct_column_aggregate(
+                input,
+                None,
+                &group_columns,
+                aggregates,
+                memory,
+                collation,
+            );
         }
     }
 
@@ -1946,7 +2000,7 @@ fn build_hash_aggregate_scan(
             let key = values
                 .iter()
                 .cloned()
-                .map(|value| normalized_hash_key(value).unwrap_or(Value::Null))
+                .map(|value| normalized_hash_key(value, collation).unwrap_or(Value::Null))
                 .collect::<Vec<_>>();
             if groups.len() == groups.capacity() {
                 let growth = groups.capacity().max(1);
@@ -2048,6 +2102,7 @@ fn build_buffered_hash_aggregate(
     direct_columns: Option<&[usize]>,
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<MaterializedRows, ExecError> {
     let Some(first_batch) = input.next_batch(memory)? else {
         return Ok(MaterializedRows {
@@ -2068,6 +2123,7 @@ fn build_buffered_hash_aggregate(
             &lanes,
             aggregates,
             memory,
+            collation,
         );
     }
     let utf8_column = |column: &usize| {
@@ -2105,6 +2161,7 @@ fn build_buffered_hash_aggregate(
             direct_columns.expect("matched direct columns"),
             aggregates,
             memory,
+            collation,
         );
     }
 
@@ -2170,8 +2227,14 @@ fn build_buffered_hash_aggregate(
             .par_iter()
             .map(|batch| {
                 direct_columns.map_or_else(
-                    || build_local_expression_groups(batch, group_by, aggregates, memory),
-                    |columns| build_local_direct_groups(batch, columns, aggregates, memory),
+                    || {
+                        build_local_expression_groups(
+                            batch, group_by, aggregates, memory, collation,
+                        )
+                    },
+                    |columns| {
+                        build_local_direct_groups(batch, columns, aggregates, memory, collation)
+                    },
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -2795,6 +2858,7 @@ fn build_fused_inner_join_aggregate(
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<Option<MaterializedRows>, ExecError> {
     let PullOperator::HashJoin {
         left,
@@ -2888,7 +2952,7 @@ fn build_fused_inner_join_aggregate(
         } else {
             None
         };
-    let plan = resolve_join_group_plan(&join.build, &right_group_columns)?;
+    let plan = resolve_join_group_plan(&join.build, &right_group_columns, collation)?;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     loop {
         let mut batches = Vec::with_capacity(8);
@@ -2927,6 +2991,7 @@ fn build_fused_inner_join_aggregate(
                     batch,
                     left_key,
                     *key_mode,
+                    collation,
                     left_width,
                     aggregates,
                     &join.build,
@@ -2989,6 +3054,7 @@ fn build_local_fused_join_groups(
     batch: &RecordBatch,
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
+    collation: Collation,
     left_width: usize,
     aggregates: &[CompiledAggregate],
     build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
@@ -3105,7 +3171,7 @@ fn build_local_fused_join_groups(
                 .values
                 .iter()
                 .cloned()
-                .map(normalized_collation_value)
+                .map(|value| normalized_collation_value(value, collation))
                 .collect();
             (key, group)
         })
@@ -3124,6 +3190,7 @@ fn build_local_dictionary_groups(
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<Option<HashMap<Vec<Value>, AggregateGroup>>, ExecError> {
     struct DictAggregate {
         function: AggregateFunction,
@@ -3343,7 +3410,7 @@ fn build_local_dictionary_groups(
         let key = values
             .iter()
             .cloned()
-            .map(normalized_collation_value)
+            .map(|value| normalized_collation_value(value, collation))
             .collect();
         let group = AggregateGroup {
             values,
@@ -3374,9 +3441,10 @@ fn build_local_direct_groups(
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     if let Some(groups) =
-        build_local_dictionary_groups(batch, group_columns, aggregates, parent_memory)?
+        build_local_dictionary_groups(batch, group_columns, aggregates, parent_memory, collation)?
     {
         return Ok(groups);
     }
@@ -3433,7 +3501,7 @@ fn build_local_direct_groups(
                 .values
                 .iter()
                 .cloned()
-                .map(normalized_collation_value)
+                .map(|value| normalized_collation_value(value, collation))
                 .collect();
             (key, group)
         })
@@ -3445,6 +3513,7 @@ fn build_local_expression_groups(
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     let memory = parent_memory.unbounded_worker();
@@ -3460,7 +3529,7 @@ fn build_local_expression_groups(
         let key = values
             .iter()
             .cloned()
-            .map(normalized_collation_value)
+            .map(|value| normalized_collation_value(value, collation))
             .collect::<Vec<_>>();
         let group = groups.entry(key).or_insert_with(|| AggregateGroup {
             values,
@@ -3503,6 +3572,7 @@ fn build_direct_column_aggregate(
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<MaterializedRows, ExecError> {
     // Single-int-column inputs with eligible lanes take the streaming
     // two-pass partitioned path (e13: 4.2-8.9x); ineligible aggregate
@@ -3576,7 +3646,7 @@ fn build_direct_column_aggregate(
             // (key bits, lane bits) as batches arrive costs the exact
             // 8*(1+lanes)+1 bytes/row and never falls back.
             return build_streaming_two_pass_aggregate(
-                input, head, keys, &lanes, aggregates, memory,
+                input, head, keys, &lanes, aggregates, memory, collation,
             );
         }
         pending.push_front(head);

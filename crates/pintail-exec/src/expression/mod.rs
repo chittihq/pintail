@@ -8,6 +8,8 @@ use temporal::{
 
 use std::{cmp::Ordering, sync::Arc};
 
+use crate::collation::Collation;
+
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
 use md5::{Digest as _, Md5};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
@@ -4102,8 +4104,20 @@ pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, Exe
     }
 }
 
+/// Scalar text comparison: equality, inequality, `IN`, and sorting.
+///
+/// Still fixed to `utf8mb4_0900_ai_ci`. The grouping, join, DISTINCT and
+/// interning paths take the plan's collation, but `CompiledExpr` is an enum
+/// evaluated through free helpers, so reaching this one means threading the
+/// collation through the whole scalar evaluator - a second refactor the size
+/// of the first.
+///
+/// This is why `SUPPORTED_TEXT_COLLATIONS` still admits only the default: a
+/// binder that accepted `general_ci` while this compared with ICU would answer
+/// `WHERE role = 'student'` with the wrong collation's rules instead of
+/// refusing, and a wrong answer is worse than an error.
 pub(crate) fn compare_utf8_mysql(left: &str, right: &str) -> Ordering {
-    crate::execution::compare_collated_text(left, right)
+    crate::execution::compare_collated_text(left, right, Collation::Utf8mb40900AiCi)
 }
 
 fn evaluate_arithmetic(

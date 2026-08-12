@@ -9,6 +9,7 @@ use std::{
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
+use pintail_exec::collation::Collation;
 use pintail_exec::{Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider};
 use pintail_sql::{Binder, parse_statement};
 use pintail_store::{StoreOptions, TableStore};
@@ -376,9 +377,9 @@ fn execute_pintail(
         .bind(&statement)
         .map_err(|error| format!("bind: {error}"))?;
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-    let physical =
-        PhysicalPlanner::plan(logical).map_err(|error| format!("physical plan: {error}"))?;
-    let mut execution = Execution::start(physical, provider, MEMORY_LIMIT)
+    let physical = PhysicalPlanner::plan(logical, Collation::default())
+        .map_err(|error| format!("physical plan: {error}"))?;
+    let mut execution = Execution::start(physical, provider, MEMORY_LIMIT, Collation::default())
         .map_err(|error| format!("start execution: {error}"))?;
     let mut rows = Vec::new();
     while let Some(batch) = execution
