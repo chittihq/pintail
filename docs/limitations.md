@@ -265,6 +265,12 @@ worth refusing.
   identities or use collision-prone row fingerprints.
 - A source charset outside utf8mb4/utf8mb3, ASCII and latin1 (cp1252) is
   quarantined through the DLQ.
+- `ALTER TABLE ... CONVERT TO CHARACTER SET` is treated as metadata-only.
+  Stored values are decoded characters rather than source bytes, so a
+  conversion that preserves them changes only the collation. A conversion
+  MySQL cannot represent losslessly - narrowing utf8mb4 to a charset without
+  those characters - does change values, and the replica keeps the originals
+  until the table is resnapshotted.
 - `binlog_row_metadata` may be MINIMAL or absent (MySQL 5.7, MariaDB): column
   identity is then ordinal against the probed schema, enum/set labels and
   charsets come from probed declarations, and unsigned integers are

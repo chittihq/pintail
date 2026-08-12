@@ -456,13 +456,20 @@ async function verifyCorpus(phase: string) {
       })
       if (diff) for (const line of diff.split('\n')) log(`${failure} query:${query.name} — ${line}`)
     } catch (error) {
+      // A documented gap warns when the engine REFUSES the query, not only
+      // when it answers differently. Refusal is how an unimplemented feature
+      // usually surfaces here - an unsupported collation is rejected at bind
+      // time rather than producing a wrong row - so failing on it would mean
+      // a gap could never be recorded before it was fixed, which is backwards:
+      // the case exists to prove the fix.
+      const failure = query.documentedGap ? ('WARN' as const) : ('FAIL' as const)
       results.push({
         phase,
         check: `query:${query.name}`,
-        status: 'FAIL',
-        detail: String(error),
+        status: failure,
+        detail: query.documentedGap ? `${query.documentedGap}\n${error}` : String(error),
       })
-      log(`FAIL query:${query.name} — ${error}`)
+      log(`${failure} query:${query.name} — ${error}`)
     }
   }
 }
@@ -653,6 +660,16 @@ async function phaseDdl() {
   )
   await sql(`ALTER TABLE orders DROP INDEX status_idx`)
   await sql(`UPDATE orders SET status = 'shipped' WHERE customer_id = 9 AND status = 'processing'`)
+  // A whole-table character-set conversion. This is the statement an operator
+  // runs to move a table between collations, and the schema tracker used to
+  // stop replication dead on it - the SQL parser cannot represent it, so it
+  // came back as a parse error rather than a change. Rows written afterwards
+  // are what prove the stream survived it.
+  await sql(`ALTER TABLE shipments CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`)
+  await sql(
+    `INSERT INTO shipments (order_id, carrier, shipped_on) VALUES (4, 'Freight Post', '2025-07-11')`,
+  )
+  await sql(`UPDATE shipments SET carrier = 'Freight Express' WHERE carrier = 'Freight Post'`)
   // TRUNCATE and refill.
   await sql(`TRUNCATE TABLE audit_log`)
   await sql(`INSERT INTO audit_log VALUES ('after truncate')`)

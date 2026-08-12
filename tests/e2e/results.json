@@ -265,6 +265,54 @@
     "status": "PASS"
   },
   {
+    "phase": "snapshot",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "orm-compat",
     "check": "sequelize:metadata:result",
     "status": "PASS"
@@ -650,6 +698,54 @@
     "status": "PASS"
   },
   {
+    "phase": "orm-compat",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "crud",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -915,6 +1011,54 @@
     "status": "PASS"
   },
   {
+    "phase": "crud",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "type-edges",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -1178,6 +1322,54 @@
     "phase": "type-edges",
     "check": "query:derived table status revenue share",
     "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
   },
   {
     "phase": "ddl",
@@ -1448,6 +1640,54 @@
     "phase": "ddl",
     "check": "query:derived table status revenue share",
     "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
   },
   {
     "phase": "churn-live",
@@ -1750,6 +1990,54 @@
     "status": "PASS"
   },
   {
+    "phase": "churn",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "spill",
     "check": "forced-spill:sort",
     "status": "PASS"
@@ -2040,6 +2328,54 @@
     "status": "PASS"
   },
   {
+    "phase": "spill",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "pooling",
     "check": "pool:concurrent-borrows(40 over 4)",
     "status": "PASS"
@@ -2325,6 +2661,54 @@
     "status": "PASS"
   },
   {
+    "phase": "pooling",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "restart",
     "check": "converge:audit_log",
     "status": "PASS"
@@ -2593,6 +2977,54 @@
     "phase": "restart",
     "check": "query:derived table status revenue share",
     "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
   },
   {
     "phase": "control-plane",
@@ -2935,6 +3367,54 @@
     "status": "PASS"
   },
   {
+    "phase": "control-plane",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
     "phase": "ddl-documented-gaps",
     "check": "converge:audit_history",
     "status": "WARN",
@@ -3210,5 +3690,53 @@
     "phase": "ddl-documented-gaps",
     "check": "query:derived table status revenue share",
     "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "FAIL",
+    "detail": "Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci"
   }
 ]

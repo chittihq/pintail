@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-11T20:23:37.172Z.
+Measured 2026-08-12T11:36:40.107Z.
 
-**637 passed, 0 failed, 2 documented-gap warnings.**
+**637 passed, 88 failed, 2 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -59,6 +59,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | snapshot | query:between and null-safe coalesce on balance | PASS |  |
 | snapshot | query:intersect all-style customer buyers | PASS |  |
 | snapshot | query:derived table status revenue share | PASS |  |
+| snapshot | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| snapshot | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -136,6 +144,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | orm-compat | query:between and null-safe coalesce on balance | PASS |  |
 | orm-compat | query:intersect all-style customer buyers | PASS |  |
 | orm-compat | query:derived table status revenue share | PASS |  |
+| orm-compat | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| orm-compat | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -189,6 +205,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | crud | query:between and null-safe coalesce on balance | PASS |  |
 | crud | query:intersect all-style customer buyers | PASS |  |
 | crud | query:derived table status revenue share | PASS |  |
+| crud | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| crud | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -242,6 +266,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | type-edges | query:between and null-safe coalesce on balance | PASS |  |
 | type-edges | query:intersect all-style customer buyers | PASS |  |
 | type-edges | query:derived table status revenue share | PASS |  |
+| type-edges | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| type-edges | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
@@ -296,6 +328,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | ddl | query:between and null-safe coalesce on balance | PASS |  |
 | ddl | query:intersect all-style customer buyers | PASS |  |
 | ddl | query:derived table status revenue share | PASS |  |
+| ddl | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
@@ -356,6 +396,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | churn | query:between and null-safe coalesce on balance | PASS |  |
 | churn | query:intersect all-style customer buyers | PASS |  |
 | churn | query:derived table status revenue share | PASS |  |
+| churn | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| churn | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -414,6 +462,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | spill | query:between and null-safe coalesce on balance | PASS |  |
 | spill | query:intersect all-style customer buyers | PASS |  |
 | spill | query:derived table status revenue share | PASS |  |
+| spill | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| spill | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -471,6 +527,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | pooling | query:between and null-safe coalesce on balance | PASS |  |
 | pooling | query:intersect all-style customer buyers | PASS |  |
 | pooling | query:derived table status revenue share | PASS |  |
+| pooling | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| pooling | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
@@ -525,6 +589,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | restart | query:between and null-safe coalesce on balance | PASS |  |
 | restart | query:intersect all-style customer buyers | PASS |  |
 | restart | query:derived table status revenue share | PASS |  |
+| restart | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| restart | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -593,6 +665,14 @@ Measured 2026-08-11T20:23:37.172Z.
 | control-plane | query:between and null-safe coalesce on balance | PASS |  |
 | control-plane | query:intersect all-style customer buyers | PASS |  |
 | control-plane | query:derived table status revenue share | PASS |  |
+| control-plane | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| control-plane | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
@@ -648,3 +728,11 @@ Measured 2026-08-11T20:23:37.172Z.
 | ddl-documented-gaps | query:between and null-safe coalesce on balance | PASS |  |
 | ddl-documented-gaps | query:intersect all-style customer buyers | PASS |  |
 | ddl-documented-gaps | query:derived table status revenue share | PASS |  |
+| ddl-documented-gaps | query:general_ci: equality folds ASCII case | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: equality folds Latin-1 accents onto the base letter | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: trailing spaces are insignificant (PAD SPACE) | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: every supplementary character compares equal | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: grouping partitions by collated equality | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: ordering follows the collation, not code points | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: DISTINCT collapses collation-equal values | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |
+| ddl-documented-gaps | query:general_ci: joining on a collated column | FAIL | Error: unsupported expression: text collation utf8mb4_general_ci is unsupported; the initial executable profile is utf8mb4_0900_ai_ci |

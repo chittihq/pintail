@@ -31,6 +31,37 @@ pub(crate) enum DdlAction {
     Create { table: String },
 }
 
+/// The table an `ALTER TABLE` names, read lexically.
+///
+/// The statements this is used for are precisely the ones the SQL parser
+/// rejects, so it cannot help here. Handles the optional `IF EXISTS`, the
+/// schema qualifier, and backtick quoting.
+fn alter_table_target(statement: &str) -> Option<String> {
+    let rest = statement.trim_start().get("ALTER TABLE".len()..)?.trim_start();
+    let rest = rest
+        .strip_prefix("IF EXISTS")
+        .or_else(|| rest.strip_prefix("if exists"))
+        .map_or(rest, str::trim_start);
+    let mut name = String::new();
+    let mut chars = rest.chars().peekable();
+    let mut quoted = false;
+    while let Some(character) = chars.next() {
+        match character {
+            '`' => {
+                quoted = !quoted;
+                if !quoted && chars.peek() != Some(&'.') {
+                    break;
+                }
+            }
+            // A qualifier means what came before was the schema, not the table.
+            '.' if !quoted => name.clear(),
+            c if !quoted && (c.is_whitespace() || c == '(') => break,
+            c => name.push(c),
+        }
+    }
+    (!name.is_empty()).then_some(name)
+}
+
 #[allow(clippy::too_many_lines)] // linear DDL-statement classification table
 pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
     let normalized = statement.trim_start().to_ascii_uppercase();
@@ -46,6 +77,33 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
     .any(|prefix| normalized.starts_with(prefix))
     {
         return Ok(Vec::new());
+    }
+    // `ALTER TABLE ... CONVERT TO CHARACTER SET ...` is valid MySQL that
+    // sqlparser 0.62 cannot parse, so it arrived here as a hard error and
+    // stopped schema tracking outright - replication failing on a statement
+    // the source accepted. It is also exactly what an operator runs to move a
+    // table onto a collation this engine can compare, so the fix for one
+    // collation problem was triggering another.
+    //
+    // Classified as metadata-only. Pintail stores decoded values rather than
+    // source bytes, so re-encoding a column between character sets leaves the
+    // logical value identical; what changes is the collation, and that is
+    // metadata the re-probe adopts. A narrowing conversion that MySQL cannot
+    // represent losslessly would change values, and needs an operator resync -
+    // recorded in docs/limitations.md rather than guessed at here, because the
+    // statement alone does not say which kind it is.
+    if normalized.starts_with("ALTER TABLE")
+        && (normalized.contains(" CONVERT TO CHARACTER SET")
+            || normalized.contains(" CONVERT TO CHARSET"))
+    {
+        return Ok(alter_table_target(statement)
+            .map(|table| {
+                vec![DdlAction::Alter {
+                    table,
+                    kind: AlterKind::IndexOnly,
+                }]
+            })
+            .unwrap_or_default());
     }
     let statements = Parser::parse_sql(&MySqlDialect {}, statement)
         .map_err(|error| CdcError::Ddl(format!("cannot parse DDL `{statement}`: {error}")))?;
@@ -176,6 +234,64 @@ fn table_name(name: &ObjectName) -> Result<String, CdcError> {
                 "DDL object name `{name}` is not a table identifier"
             ))
         })
+}
+
+#[cfg(test)]
+mod convert_charset_tests {
+    use super::{AlterKind, DdlAction, parse_ddl};
+
+    /// The statement that stopped schema tracking on a live deployment.
+    #[test]
+    fn whole_table_conversion_is_metadata_only() {
+        let actions = parse_ddl(
+            "ALTER TABLE `chitti_lms`.`AIGeneratedFeed` \
+             CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
+        )
+        .expect("a statement MySQL accepts must not fail schema tracking");
+        assert_eq!(
+            actions,
+            vec![DdlAction::Alter {
+                table: "AIGeneratedFeed".to_owned(),
+                kind: AlterKind::IndexOnly,
+            }],
+        );
+    }
+
+    #[test]
+    fn the_table_is_read_through_its_quoting_and_qualifier() {
+        for statement in [
+            "ALTER TABLE orders CONVERT TO CHARACTER SET utf8mb4",
+            "ALTER TABLE `orders` CONVERT TO CHARACTER SET utf8mb4",
+            "ALTER TABLE shop.orders CONVERT TO CHARACTER SET utf8mb4",
+            "ALTER TABLE `shop`.`orders` CONVERT TO CHARSET utf8mb4",
+            "alter table orders convert to character set utf8mb4",
+        ] {
+            let actions = parse_ddl(statement).expect(statement);
+            assert_eq!(
+                actions,
+                vec![DdlAction::Alter {
+                    table: "orders".to_owned(),
+                    kind: AlterKind::IndexOnly,
+                }],
+                "{statement}",
+            );
+        }
+    }
+
+    /// The prefix match must not swallow statements that merely mention the
+    /// words, or a real column change would be classified as metadata.
+    #[test]
+    fn an_ordinary_alter_still_takes_the_parser() {
+        let actions = parse_ddl("ALTER TABLE orders ADD COLUMN coupon VARCHAR(24) NULL")
+            .expect("ordinary DDL still parses");
+        assert!(
+            !actions.is_empty()
+                && actions != vec![DdlAction::Alter {
+                    table: "orders".to_owned(),
+                    kind: AlterKind::IndexOnly,
+                }],
+        );
+    }
 }
 
 #[cfg(test)]
