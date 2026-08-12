@@ -211,53 +211,56 @@ async function run(
     }, budget)
     // Poll rather than reset a timer per chunk: a chatty stage would
     // otherwise rebuild the timer thousands of times a second.
-    // Load on the build host, sampled only while a remote stage is silent.
-    // Cached because the probe is an SSH round trip and the watchdog ticks
-    // every fifteen seconds.
+    // Load on the build host, sampled while a remote stage is silent.
+    //
+    // Reported, never acted on. An earlier version killed a stage that was
+    // silent while the host was idle, on the theory that the work had never
+    // started - but every remote stage begins with a LOCAL cargo build
+    // (tests/e2e/run.ts, tests/browser/run.ts, benchmark/run.ts all build the
+    // release binary first) whose output is fully buffered. During a cold
+    // build there is legitimately no output and the remote host is
+    // legitimately at zero, so that rule killed healthy stages. The
+    // distinction is real and worth showing; it is not safe to automate.
     let hostLoad: number | null = null
-    let idleSince: number | null = null
+    let lastProbe = 0
     let probing = false
     const watchdog = setInterval(() => {
       const quiet = Date.now() - lastActivity
       if (quiet > stallBudget) {
         stalled = true
+        const idle = hostLoad !== null && hostLoad < IDLE_LOAD
         stallReason = `no output for ${Math.round(stallBudget / 60_000)} minutes`
+          + (hostLoad === null
+            ? ''
+            : idle
+              ? ` while the build host sat idle (load ${hostLoad.toFixed(2)}) — the work never started`
+              : ` while the build host was busy (load ${hostLoad.toFixed(2)}) — work was in progress`)
         child.kill('SIGKILL')
         return
       }
-      // A silent remote stage gets its host checked. Silence alone says
-      // nothing - a container build is legitimately quiet for minutes - but
-      // silence with an idle host is a wedged stage, and waiting out the full
-      // budget to say so wastes twenty minutes of a release.
-      if (options.remote && quiet > 90_000 && !probing) {
+      // Throttled to once a minute. The previous comment claimed a cache and
+      // had none, so a long silence opened an SSH connection every fifteen
+      // seconds to the host it already suspected of being wedged.
+      if (
+        options.remote
+        && quiet > 90_000
+        && !probing
+        && Date.now() - lastProbe >= 60_000
+      ) {
         probing = true
+        lastProbe = Date.now()
         void remoteLoadAverage()
           .then((load) => {
             hostLoad = load
-            if (load !== null && load < IDLE_LOAD) {
-              idleSince ??= Date.now()
-            } else {
-              idleSince = null
-            }
           })
           .finally(() => {
             probing = false
           })
       }
-      if (
-        idleSince !== null
-        && Date.now() - idleSince > IDLE_STALL_MINUTES * 60_000
-        && child.exitCode === null
-      ) {
-        stalled = true
-        stallReason = `no output for ${Math.round(quiet / 60_000)} minutes while the build host sat idle `
-          + `(load ${hostLoad?.toFixed(2)}); the work never started`
-        child.kill('SIGKILL')
-        return
-      }
-      // Heartbeat so a long stage is visibly alive in the status log, and
-      // so a reader can see what it was doing when it stopped. The host's load
-      // travels with it: "alive" meant only that a process existed.
+      // Heartbeat so a long stage is visibly alive in the status log, and so a
+      // reader can see what it was doing when it stopped. The host's load
+      // travels with it: "alive" previously meant only that a process existed,
+      // which is exactly what made a wedged stage look like a slow one.
       if (child.exitCode === null && Date.now() - lastHeartbeat >= 60_000) {
         lastHeartbeat = Date.now()
         const quietFor = Math.round(quiet / 1000)
@@ -272,6 +275,7 @@ async function run(
       output += text
       if (output.length > 4_000_000) output = output.slice(-2_000_000)
       lastActivity = Date.now()
+      hostLoad = null
       const lines = text.split('\n').filter((line) => line.trim().length > 0)
       if (lines.length > 0) lastLine = lines[lines.length - 1]
     }
@@ -319,10 +323,6 @@ async function remoteLoadAverage(): Promise<number | null> {
 
 /// Below this, a machine that is supposedly compiling is doing nothing.
 const IDLE_LOAD = 0.5
-
-/// How long a remote stage may be both silent and idle before it is called
-/// stalled, rather than waiting out the full stall budget.
-const IDLE_STALL_MINUTES = 6
 
 async function dockerHostPreflight(): Promise<string | null> {
   const ping = await docker(['version', '--format', '{{.Server.Version}}'])
