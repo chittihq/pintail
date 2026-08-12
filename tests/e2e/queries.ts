@@ -21,6 +21,12 @@ export interface DifferentialQuery {
   documentedGap?: string
 }
 
+/// Why every general_ci case below is a documented gap rather than a
+/// failure: the divergence is known and recorded, so a regression stays
+/// visible while the gate stays green until the fix lands.
+const GENERAL_CI_GAP =
+  "text collation utf8mb4_general_ci is not yet comparable in the executor (#10)"
+
 export const differentialQueries: DifferentialQuery[] = [
   {
     name: 'point lookup by key',
@@ -393,5 +399,60 @@ export const differentialQueries: DifferentialQuery[] = [
       '  SELECT CAST(status AS CHAR) AS status, SUM(total) AS revenue FROM orders GROUP BY status' +
       ') s ORDER BY revenue DESC, status',
     tables: ['orders'],
+  },
+  // --- utf8mb4_general_ci ---
+  //
+  // The executor compares one collation, utf8mb4_0900_ai_ci, and refuses the
+  // rest at bind time. general_ci is MySQL 5.x's default and most existing
+  // schemas still carry it, so these run against a column declared with it.
+  // They WARN until the executor can compare it, then flip to PASS - which is
+  // what makes the fix verifiable rather than asserted.
+  {
+    name: 'general_ci: equality folds ASCII case',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'active'",
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: equality folds Latin-1 accents onto the base letter',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'arger'",
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: trailing spaces are insignificant (PAD SPACE)',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'pending'",
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: every supplementary character compares equal',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = '\u{1f600}'",
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: grouping partitions by collated equality',
+    sql: 'SELECT legacy_label, COUNT(*) AS n FROM customers GROUP BY legacy_label ORDER BY n DESC, legacy_label',
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: ordering follows the collation, not code points',
+    sql: 'SELECT legacy_label FROM customers WHERE legacy_label IS NOT NULL ORDER BY legacy_label, id LIMIT 25',
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: DISTINCT collapses collation-equal values',
+    sql: 'SELECT DISTINCT legacy_label FROM customers ORDER BY legacy_label',
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
+  },
+  {
+    name: 'general_ci: joining on a collated column',
+    sql: 'SELECT c.tier, COUNT(*) AS n FROM customers c JOIN customers d ON c.legacy_label = d.legacy_label GROUP BY c.tier ORDER BY c.tier',
+    tables: ['customers'],
+    documentedGap: GENERAL_CI_GAP,
   },
 ]

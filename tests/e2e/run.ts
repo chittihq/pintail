@@ -496,6 +496,11 @@ async function phaseSeed() {
     meta JSON NULL,
     avatar VARBINARY(16) NULL,
     latin_note VARCHAR(32) CHARACTER SET latin1 NULL,
+    -- MySQL 5.x's default collation, which most existing schemas still carry
+    -- because a table keeps whatever it was created with. The engine's own
+    -- default is utf8mb4_0900_ai_ci, so without a column like this the gate
+    -- never exercises a second collation at all.
+    legacy_label VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
   ) DEFAULT CHARACTER SET utf8mb4`)
   await sql(`CREATE TABLE orders (
@@ -538,8 +543,13 @@ async function phaseSeed() {
       id % 5 === 0 ? 'NULL' : `'{"lang":"en","score":${Math.floor(random() * 100)}}'`
     const avatar = id % 6 === 0 ? 'NULL' : `X'${id.toString(16).padStart(4, '0')}beef'`
     await sql(
-      `INSERT INTO customers (name, email, tier, tags, balance, meta, avatar, latin_note) VALUES ` +
-        `('${name}', ${email}, '${tier}', '${tag}', ${balance}, ${meta}, ${avatar}, _latin1 0x636166E9)`,
+      `INSERT INTO customers (name, email, tier, tags, balance, meta, avatar, latin_note, legacy_label) VALUES ` +
+        `('${name}', ${email}, '${tier}', '${tag}', ${balance}, ${meta}, ${avatar}, _latin1 0x636166E9, ` +
+        // Values chosen to exercise what general_ci actually does differently:
+        // ASCII case folding, Latin-1 accent folding onto the base letter,
+        // PAD SPACE trailing spaces, and the supplementary-plane collapse
+        // where every character above the BMP weighs the same.
+        `${['\'Active\'', '\'active\'', '\'ACTIVE\'', '\'Ärger\'', '\'arger\'', '\'pending  \'', '\'pending\'', '\'😀\'', '\'𠀀\'', 'NULL'][id % 10]})`,
     )
   }
   const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
