@@ -405,6 +405,32 @@ async function main() {
     await page!.getByText('accepted', { exact: true }).first().waitFor({ timeout: 20_000 })
   })
 
+  await check('an admin changes a teammate\'s role and it survives a reload', async () => {
+    const member = page!.getByRole('row').filter({ hasText: GOOGLE_INVITE_EMAIL }).first()
+    await member.getByRole('combobox').click()
+    await page!.getByRole('option', { name: 'Admin' }).click()
+    // Reload rather than trusting the control: the row updates optimistically,
+    // so reading it back straight away would pass even if the request failed.
+    await page!.reload()
+    await page!.getByRole('heading', { name: 'Team' }).waitFor()
+    const reloaded = page!.getByRole('row').filter({ hasText: GOOGLE_INVITE_EMAIL }).first()
+    await reloaded.getByRole('combobox').waitFor({ timeout: 20_000 })
+    if (!(await reloaded.getByText('Admin').first().isVisible())) {
+      throw new Error('the role change did not persist')
+    }
+  })
+
+  await check('nobody can change their own role', async () => {
+    // The last admin demoting themselves would leave the workspace with no
+    // one able to administer it, so the row offers no control at all - the
+    // server refuses it too, which is what actually enforces this.
+    const own = page!.getByRole('row').filter({ hasText: OPERATOR.email }).first()
+    await own.waitFor({ timeout: 20_000 })
+    if (await own.getByRole('combobox').count()) {
+      throw new Error('an admin was offered a control to change their own role')
+    }
+  })
+
   await check('a returning Google teammate signs straight back in', async () => {
     // No invite is left to redeem, so this covers the branch that matches an
     // existing Google subject instead of the invite branch.

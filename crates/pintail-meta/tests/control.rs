@@ -714,3 +714,52 @@ fn an_expired_invite_cannot_be_claimed_inside_the_transaction() {
         "a refused admission must leave no user behind",
     );
 }
+
+/// A role change updates a membership and refuses to invent one.
+#[test]
+fn member_roles_change_without_creating_memberships() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let now = "2026-08-12T00:00:00Z";
+    metadata
+        .create_user("user-1", "member@example.com", "$argon2id$test", "viewer", now)
+        .unwrap();
+    metadata.create_workspace("ws-1", "Analytics", "analytics", now).unwrap();
+    metadata
+        .add_workspace_member("ws-1", "user-1", "viewer", now)
+        .unwrap();
+
+    assert!(
+        metadata
+            .update_workspace_member_role("ws-1", "user-1", "admin")
+            .unwrap(),
+    );
+    assert_eq!(
+        metadata.workspace_member_role("ws-1", "user-1").unwrap(),
+        Some("admin".to_owned()),
+    );
+
+    // A non-member is reported as missing rather than granted membership,
+    // which the upsert in add_workspace_member would have done.
+    assert!(
+        !metadata
+            .update_workspace_member_role("ws-1", "user-2", "admin")
+            .unwrap(),
+    );
+    assert_eq!(
+        metadata.workspace_member_role("ws-1", "user-2").unwrap(),
+        None,
+    );
+
+    // An unknown role never reaches storage.
+    assert!(
+        metadata
+            .update_workspace_member_role("ws-1", "user-1", "superuser")
+            .is_err(),
+    );
+    assert_eq!(
+        metadata.workspace_member_role("ws-1", "user-1").unwrap(),
+        Some("admin".to_owned()),
+    );
+}

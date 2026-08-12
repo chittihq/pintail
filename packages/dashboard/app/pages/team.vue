@@ -80,6 +80,30 @@ async function removeMember(member: WorkspaceMember) {
   }
 }
 
+// The server enforces this; the check here only decides what to draw. A
+// non-admin who calls the endpoint directly is refused there, which is where
+// it counts - a disabled control is a courtesy, not a permission.
+const canChangeRoles = computed(() => session.value?.role === 'admin')
+
+async function changeRole(member: WorkspaceMember, role: string) {
+  if (role === member.role) return
+  const previous = member.role
+  // Optimistic, then reconciled by the reload: the select would otherwise
+  // snap back to the old value until the round trip finished.
+  member.role = role
+  try {
+    await request(`/workspaces/members/${member.user_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    })
+    toast(`${member.email} is now ${role}`)
+    await loadTeam()
+  } catch (failure) {
+    member.role = previous
+    error.value = messageOf(failure)
+  }
+}
+
 async function copy(value: string) {
   await navigator.clipboard.writeText(value)
   toast('Invite link copied')
@@ -134,7 +158,24 @@ async function copy(value: string) {
           <TableBody>
             <TableRow v-for="member in members" :key="member.user_id">
               <TableCell><strong>{{ member.email }}</strong></TableCell>
-              <TableCell><Badge variant="outline">{{ member.role }}</Badge></TableCell>
+              <TableCell>
+                <!-- Changing your own role is refused by the server, so that
+                     the last admin cannot demote themselves and leave the
+                     workspace with nobody able to administer it. -->
+                <Select
+                  v-if="canChangeRoles && member.user_id !== session?.subject"
+                  :model-value="member.role"
+                  @update:model-value="(role) => changeRole(member, String(role))"
+                >
+                  <SelectTrigger class="w-32" aria-label="Member role"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="operator">Operator</SelectItem>
+                    <SelectItem value="viewer">Viewer</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Badge v-else variant="outline">{{ member.role }}</Badge>
+              </TableCell>
               <TableCell>
                 <Button
                   v-if="member.user_id !== session?.subject"

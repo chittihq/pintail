@@ -39,6 +39,11 @@ pub(crate) struct MemberResponse {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct ChangeMemberRoleRequest {
+    role: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct AuditLogQuery {
     #[serde(default = "default_audit_limit")]
     limit: u64,
@@ -225,6 +230,45 @@ pub(crate) async fn remove_member(
             "workspace.remove_member",
             Some(("user", &user_id)),
             None,
+        );
+        Ok(axum::http::StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("member does not exist"))
+    }
+}
+
+/// Changes one member's role in the caller's current workspace. Admin only;
+/// the caller cannot change their own.
+///
+/// That self-exclusion is what keeps a workspace administrable. Only an admin
+/// reaches this, and an admin cannot demote themselves here, so no sequence of
+/// calls can leave a workspace with nobody able to make the next change - a
+/// property worth more than the convenience of stepping down through the same
+/// route, which can be done by another admin.
+pub(crate) async fn change_member_role(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(user_id): Path<String>,
+    Json(request): Json<ChangeMemberRoleRequest>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    principal.require_admin()?;
+    let workspace_id = principal.require_workspace()?;
+    if user_id == principal.subject {
+        return Err(ApiError::bad_request("you cannot change your own role"));
+    }
+    let changed = state
+        .metadata()?
+        .update_workspace_member_role(workspace_id, &user_id, &request.role)
+        // The store rejects an unknown role name, which is the caller's
+        // mistake to fix rather than an internal fault to hide.
+        .map_err(|failure| ApiError::bad_request(failure.to_string()))?;
+    if changed {
+        audit::record(
+            &state,
+            &principal,
+            "workspace.change_member_role",
+            Some(("user", &user_id)),
+            Some(serde_json::json!({ "role": request.role })),
         );
         Ok(axum::http::StatusCode::NO_CONTENT)
     } else {

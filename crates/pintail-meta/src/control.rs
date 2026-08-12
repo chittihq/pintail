@@ -622,6 +622,33 @@ impl MetaStore {
             .context("failed to remove workspace member")
     }
 
+    /// Changes an existing member's role, reporting whether one was changed.
+    ///
+    /// Deliberately an UPDATE rather than the upsert `add_workspace_member`
+    /// performs: a role change addressed to somebody who is not a member is a
+    /// mistake worth reporting, and an upsert would answer it by granting them
+    /// membership instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid role or a storage failure.
+    pub fn update_workspace_member_role(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<bool> {
+        validate_role(role)?;
+        self.connection
+            .execute(
+                "UPDATE workspace_members SET role = ?3 \
+                 WHERE workspace_id = ?1 AND user_id = ?2",
+                (workspace_id, user_id, role),
+            )
+            .map(|changed| changed == 1)
+            .context("failed to update workspace member role")
+    }
+
     /// Creates a user with no password, for an identity that will only ever
     /// sign in with Google (invite acceptance).
     ///

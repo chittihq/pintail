@@ -83,7 +83,8 @@ use crate::query::{list_tables, query, table_columns, table_count, table_data, t
 use crate::snapshot::{start as start_snapshot, status as snapshot_status};
 use crate::workspaces::{
     audit_log as workspace_audit_log, create as create_workspace, list as list_workspaces,
-    members as workspace_members, remove_member as remove_workspace_member,
+    change_member_role as change_workspace_member_role, members as workspace_members,
+    remove_member as remove_workspace_member,
     switch as switch_workspace,
 };
 
@@ -150,7 +151,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/workspaces/members", get(workspace_members))
         .route(
             "/workspaces/members/{user_id}",
-            axum::routing::delete(remove_workspace_member),
+            axum::routing::delete(remove_workspace_member).patch(change_workspace_member_role),
         )
         .route("/workspaces/invites", get(list_invites).post(create_invite))
         .route(
