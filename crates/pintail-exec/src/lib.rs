@@ -14,6 +14,7 @@ mod storage;
 pub use batch::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SelectedRows, SelectionMask,
 };
+pub use execution::compare_collated_text;
 pub use execution::{
     BatchStream, DEFAULT_CTE_MAX_RECURSION_DEPTH, ExecError, Execution, ExecutionCancellation,
     MAX_CROSS_JOIN_ROWS, MemoryTracker, OutputField, PhysicalPlan, PhysicalPlanner, ScanProvider,

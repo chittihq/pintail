@@ -40,6 +40,7 @@ fn typed_comparison_mask(
     logical_type: DataType,
     op: BinaryOp,
     literal: &pintail_types::Value,
+    collation: Collation,
 ) -> Option<SelectionMask> {
     fn fill<T: Copy>(
         values: &[T],
@@ -147,7 +148,7 @@ fn typed_comparison_mask(
             if let Some((codes, values)) = column.dictionary() {
                 let matching: Vec<bool> = values
                     .iter()
-                    .map(|value| compare_utf8_mysql(value, text) == Ordering::Equal)
+                    .map(|value| compare_utf8_mysql(value, text, collation) == Ordering::Equal)
                     .collect();
                 let want = op == BinaryOp::Equal;
                 let mut mask = SelectionMask::none(codes.len());
@@ -181,7 +182,7 @@ fn typed_comparison_mask(
                 .filter(|view| {
                     view.with_bytes(heap, |bytes| {
                         std::str::from_utf8(bytes).is_ok_and(|candidate| {
-                            compare_utf8_mysql(candidate, text) == Ordering::Equal
+                            compare_utf8_mysql(candidate, text, collation) == Ordering::Equal
                         })
                     })
                 })
@@ -242,6 +243,10 @@ pub(crate) enum CompiledExpr {
         left: Box<Self>,
         right: Box<Self>,
         data_type: Option<DataType>,
+        /// The plan's collation, attached when the node was compiled.
+        /// Comparison is the one operation here whose answer depends on it,
+        /// and the node is the smallest thing that knows it needs one.
+        collation: Collation,
     },
     IsNull {
         expr: Box<Self>,
@@ -253,6 +258,8 @@ pub(crate) enum CompiledExpr {
         argument_types: Vec<Option<DataType>>,
         literal_regex: Option<CompiledRegex>,
         data_type: Option<DataType>,
+        /// Needed by `IN`, which compares its needle against every element.
+        collation: Collation,
     },
 }
 
@@ -456,6 +463,7 @@ impl CompiledExpr {
                     | BinaryOp::GreaterOrEqual),
                 left,
                 right,
+                collation,
                 ..
             } => {
                 let Some((left, right)) = left
@@ -465,12 +473,13 @@ impl CompiledExpr {
                     return Ok(None);
                 };
                 Ok(Some(predicate_truth(&evaluate_comparison(
-                    *op, left, right,
+                    *op, left, right, *collation,
                 )?)?))
             }
             Self::Scalar {
                 function: ScalarFunction::Between { negated },
                 args,
+                collation,
                 ..
             } if args.len() == 3 => {
                 let Some((value, lower, upper)) = args[0]
@@ -491,10 +500,12 @@ impl CompiledExpr {
                     BinaryOp::GreaterOrEqual,
                     value,
                     lower,
+                    *collation,
                 )?)? && predicate_truth(&evaluate_comparison(
                     BinaryOp::LessOrEqual,
                     value,
                     upper,
+                    *collation,
                 )?)?;
                 Ok(Some(if *negated { !in_range } else { in_range }))
             }
@@ -544,6 +555,7 @@ impl CompiledExpr {
                     | BinaryOp::GreaterOrEqual),
                 left,
                 right,
+                collation,
                 ..
             } => {
                 let (column, literal, op) = match (left.as_ref(), right.as_ref()) {
@@ -565,11 +577,13 @@ impl CompiledExpr {
                     vector.data_type(),
                     op,
                     literal,
+                    *collation,
                 ))
             }
             Self::Scalar {
                 function: ScalarFunction::Between { negated: false },
                 args,
+                collation,
                 ..
             } if args.len() == 3 => {
                 let (Self::Column(column), Self::Literal(lower), Self::Literal(upper)) =
@@ -590,6 +604,7 @@ impl CompiledExpr {
                         vector.data_type(),
                         BinaryOp::GreaterOrEqual,
                         lower,
+                        *collation,
                     ),
                     typed_comparison_mask(
                         typed,
@@ -597,6 +612,7 @@ impl CompiledExpr {
                         vector.data_type(),
                         BinaryOp::LessOrEqual,
                         upper,
+                        *collation,
                     ),
                 ) else {
                     return Ok(None);
@@ -611,6 +627,7 @@ impl CompiledExpr {
     pub(crate) fn compile(
         expr: &BoundExpr,
         columns: &[pintail_sql::BoundColumn],
+        collation: Collation,
     ) -> Result<Self, ExecError> {
         match &expr.kind {
             BoundExprKind::Window(_) => Err(ExecError::InvalidPhysicalPlan(
@@ -636,20 +653,21 @@ impl CompiledExpr {
             BoundExprKind::Literal(value) => Ok(Self::Literal(value.clone())),
             BoundExprKind::Unary { op, expr: child } => Ok(Self::Unary {
                 op: *op,
-                expr: Box::new(Self::compile(child, columns)?),
+                expr: Box::new(Self::compile(child, columns, collation)?),
                 data_type: expr.data_type,
             }),
             BoundExprKind::Binary { op, left, right } => Ok(Self::Binary {
                 op: *op,
-                left: Box::new(Self::compile(left, columns)?),
-                right: Box::new(Self::compile(right, columns)?),
+                left: Box::new(Self::compile(left, columns, collation)?),
+                right: Box::new(Self::compile(right, columns, collation)?),
                 data_type: expr.data_type,
+                collation,
             }),
             BoundExprKind::IsNull {
                 expr: child,
                 negated,
             } => Ok(Self::IsNull {
-                expr: Box::new(Self::compile(child, columns)?),
+                expr: Box::new(Self::compile(child, columns, collation)?),
                 negated: *negated,
             }),
             BoundExprKind::Scalar { function, args } => {
@@ -659,10 +677,11 @@ impl CompiledExpr {
                     argument_types: args.iter().map(|argument| argument.data_type).collect(),
                     args: args
                         .iter()
-                        .map(|argument| Self::compile(argument, columns))
+                        .map(|argument| Self::compile(argument, columns, collation))
                         .collect::<Result<Vec<_>, _>>()?,
                     literal_regex,
                     data_type: expr.data_type,
+                    collation,
                 })
             }
             BoundExprKind::ScalarSubquery(_)
@@ -694,6 +713,7 @@ impl CompiledExpr {
                 left,
                 right,
                 data_type,
+                collation: _,
             } => Some(format!(
                 "b{op:?}({},{}){data_type:?}",
                 left.deterministic_signature()?,
@@ -708,6 +728,7 @@ impl CompiledExpr {
                 argument_types,
                 literal_regex: _,
                 data_type,
+                collation: _,
             } => {
                 if matches!(
                     function,
@@ -753,6 +774,7 @@ impl CompiledExpr {
                 left,
                 right,
                 data_type,
+                collation,
             } => {
                 if let Some(DataType::Decimal { scale, .. }) = data_type
                     && matches!(
@@ -768,7 +790,7 @@ impl CompiledExpr {
                 }
                 let left = left.evaluate(batch, row)?;
                 let right = right.evaluate(batch, row)?;
-                evaluate_binary(*op, &left, &right, *data_type)
+                evaluate_binary(*op, &left, &right, *data_type, *collation)
             }
             Self::IsNull { expr, negated } => {
                 let is_null = matches!(expr.evaluate(batch, row)?, Value::Null);
@@ -780,6 +802,7 @@ impl CompiledExpr {
                 argument_types,
                 literal_regex,
                 data_type,
+                collation,
             } => {
                 if let ScalarFunction::DatePart(part) = function
                     && let [argument] = args.as_slice()
@@ -807,6 +830,7 @@ impl CompiledExpr {
                     *data_type,
                     batch,
                     row,
+                    *collation,
                 )
             }
         }
@@ -862,6 +886,7 @@ impl CompiledExpr {
                 left,
                 right,
                 data_type: Some(DataType::Decimal { scale, .. }),
+                collation: _,
             } if matches!(
                 op,
                 BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
@@ -945,6 +970,7 @@ impl CompiledExpr {
                 data_type: _,
                 argument_types: _,
                 literal_regex,
+                collation: _,
             } => {
                 let string_arguments = args
                     .iter()
@@ -1388,6 +1414,9 @@ fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
     })
 }
 
+// A scalar call carries its function, arguments and their types, any compiled
+// regex, its result type, the row it evaluates against, and how text compares.
+#[allow(clippy::too_many_arguments)]
 fn evaluate_scalar(
     function: ScalarFunction,
     args: &[CompiledExpr],
@@ -1396,6 +1425,7 @@ fn evaluate_scalar(
     data_type: Option<DataType>,
     batch: &RecordBatch,
     row: usize,
+    collation: Collation,
 ) -> Result<Value, ExecError> {
     match function {
         ScalarFunction::If => {
@@ -1447,7 +1477,7 @@ fn evaluate_scalar(
                 compare_decimal_values(&left, &right)? == Ordering::Equal
             } else {
                 matches!(
-                    evaluate_comparison(BinaryOp::Equal, &left, &right)?,
+                    evaluate_comparison(BinaryOp::Equal, &left, &right, collation)?,
                     Value::Boolean(true)
                 )
             };
@@ -1462,7 +1492,14 @@ fn evaluate_scalar(
                 .iter()
                 .map(|argument| argument.evaluate(batch, row))
                 .collect::<Result<Vec<_>, _>>()?;
-            evaluate_eager_scalar_typed(function, &values, argument_types, literal_regex, data_type)
+            evaluate_eager_scalar_typed(
+                function,
+                &values,
+                argument_types,
+                literal_regex,
+                data_type,
+                collation,
+            )
         }
     }
 }
@@ -1474,7 +1511,14 @@ fn evaluate_eager_scalar(
     data_type: Option<DataType>,
 ) -> Result<Value, ExecError> {
     let argument_types = vec![None; values.len()];
-    evaluate_eager_scalar_typed(function, values, &argument_types, None, data_type)
+    evaluate_eager_scalar_typed(
+        function,
+        values,
+        &argument_types,
+        None,
+        data_type,
+        Collation::default(),
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1484,6 +1528,7 @@ fn evaluate_eager_scalar_typed(
     argument_types: &[Option<DataType>],
     literal_regex: Option<&CompiledRegex>,
     data_type: Option<DataType>,
+    collation: Collation,
 ) -> Result<Value, ExecError> {
     if values.iter().any(|value| matches!(value, Value::Null))
         && !matches!(
@@ -1580,7 +1625,7 @@ fn evaluate_eager_scalar_typed(
             let binary = binary_operand(&values[0..2]);
             let value = scalar_string(&values[0])?;
             let pattern = scalar_string(&values[1])?;
-            let matched = like_matches(&value, &pattern, escape, binary);
+            let matched = like_matches(&value, &pattern, escape, binary, collation);
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
         ScalarFunction::InList { negated } => evaluate_in_list(
@@ -1608,8 +1653,9 @@ fn evaluate_eager_scalar_typed(
                 && argument_types
                     .iter()
                     .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. }))),
+            collation,
         ),
-        ScalarFunction::Between { negated } => evaluate_between(values, negated),
+        ScalarFunction::Between { negated } => evaluate_between(values, negated, collation),
         ScalarFunction::DecimalComparison { op } => {
             let ordering = compare_decimal_values(&values[0], &values[1])?;
             Ok(Value::Boolean(match op {
@@ -1750,7 +1796,7 @@ fn evaluate_eager_scalar_typed(
                         let ordering = if decimal {
                             compare_decimal_values(value, current)?
                         } else {
-                            compare_mysql(value, current)?
+                            compare_mysql(value, current, collation)?
                         };
                         if (ordering == Ordering::Greater) == greatest {
                             value
@@ -1817,7 +1863,7 @@ fn evaluate_eager_scalar_typed(
             }
             let position = list
                 .split(',')
-                .position(|entry| compare_utf8_mysql(entry, &needle) == Ordering::Equal)
+                .position(|entry| compare_utf8_mysql(entry, &needle, collation) == Ordering::Equal)
                 .map_or(0, |index| index as u64 + 1);
             Ok(Value::UInt64(if list.is_empty() { 0 } else { position }))
         }
@@ -1873,7 +1919,8 @@ fn evaluate_eager_scalar_typed(
             let needle = scalar_string(&values[0])?;
             for (index, value) in values[1..].iter().enumerate() {
                 if !matches!(value, Value::Null)
-                    && compare_utf8_mysql(&scalar_string(value)?, &needle) == Ordering::Equal
+                    && compare_utf8_mysql(&scalar_string(value)?, &needle, collation)
+                        == Ordering::Equal
                 {
                     return Ok(Value::UInt64(index as u64 + 1));
                 }
@@ -2331,7 +2378,7 @@ fn evaluate_eager_scalar_typed(
                 Some(value) => scalar_string(value)?.chars().next().or(Some('\\')),
             };
             let mut found = Vec::new();
-            json_search(&document, &pattern, escape, all, "$", &mut found);
+            json_search(&document, &pattern, escape, all, "$", &mut found, collation);
             Ok(match found.len() {
                 // MySQL answers NULL when nothing matches, one bare path for
                 // a single hit, and an array once there are several.
@@ -3685,13 +3732,14 @@ fn json_search(
     all: bool,
     here: &str,
     found: &mut Vec<String>,
+    collation: Collation,
 ) {
     if !all && !found.is_empty() {
         return;
     }
     match document {
         serde_json::Value::String(text) => {
-            if like_matches(text, pattern, escape, false) {
+            if like_matches(text, pattern, escape, false, collation) {
                 found.push(here.to_owned());
             }
         }
@@ -3704,6 +3752,7 @@ fn json_search(
                     all,
                     &format!("{here}[{index}]"),
                     found,
+                    collation,
                 );
                 if !all && !found.is_empty() {
                     return;
@@ -3719,7 +3768,7 @@ fn json_search(
                 } else {
                     format!("{here}.\"{key}\"")
                 };
-                json_search(value, pattern, escape, all, &step, found);
+                json_search(value, pattern, escape, all, &step, found, collation);
                 if !all && !found.is_empty() {
                     return;
                 }
@@ -3852,7 +3901,13 @@ fn locate(needle: &str, haystack: &str, start: i64) -> u64 {
     u64::try_from(start.saturating_add(character_position).saturating_add(1)).unwrap_or(u64::MAX)
 }
 
-fn like_matches(value: &str, pattern: &str, escape: Option<char>, binary: bool) -> bool {
+fn like_matches(
+    value: &str,
+    pattern: &str,
+    escape: Option<char>,
+    binary: bool,
+    collation: Collation,
+) -> bool {
     let value = value.chars().collect::<Vec<_>>();
     let mut tokens = Vec::with_capacity(pattern.chars().count());
     let mut pattern = pattern.chars();
@@ -3878,7 +3933,7 @@ fn like_matches(value: &str, pattern: &str, escape: Option<char>, binary: bool) 
     while value_index < value.len() {
         match tokens.get(token_index) {
             Some(LikeToken::Literal(literal))
-                if like_literal_matches(value[value_index], *literal, binary) =>
+                if like_literal_matches(value[value_index], *literal, binary, collation) =>
             {
                 value_index += 1;
                 token_index += 1;
@@ -3908,7 +3963,7 @@ fn like_matches(value: &str, pattern: &str, escape: Option<char>, binary: bool) 
     token_index == tokens.len()
 }
 
-fn like_literal_matches(value: char, literal: char, binary: bool) -> bool {
+fn like_literal_matches(value: char, literal: char, binary: bool, collation: Collation) -> bool {
     if binary {
         return value == literal;
     }
@@ -3917,6 +3972,7 @@ fn like_literal_matches(value: char, literal: char, binary: bool) -> bool {
     compare_utf8_mysql(
         value.encode_utf8(&mut value_bytes),
         literal.encode_utf8(&mut literal_bytes),
+        collation,
     ) == Ordering::Equal
 }
 
@@ -3931,6 +3987,7 @@ fn evaluate_in_list(
     values: &[Value],
     negated: bool,
     exact_decimal: bool,
+    collation: Collation,
 ) -> Result<Value, ExecError> {
     if matches!(values[0], Value::Null) {
         return Ok(Value::Null);
@@ -3940,7 +3997,7 @@ fn evaluate_in_list(
         let comparison = if exact_decimal && !matches!(candidate, Value::Null) {
             Value::Boolean(compare_decimal_values(&values[0], candidate)? == Ordering::Equal)
         } else {
-            evaluate_comparison(BinaryOp::Equal, &values[0], candidate)?
+            evaluate_comparison(BinaryOp::Equal, &values[0], candidate, collation)?
         };
         match comparison {
             Value::Boolean(true) => return Ok(Value::Boolean(!negated)),
@@ -3956,9 +4013,13 @@ fn evaluate_in_list(
     }
 }
 
-fn evaluate_between(values: &[Value], negated: bool) -> Result<Value, ExecError> {
-    let lower = evaluate_comparison(BinaryOp::GreaterOrEqual, &values[0], &values[1])?;
-    let upper = evaluate_comparison(BinaryOp::LessOrEqual, &values[0], &values[2])?;
+fn evaluate_between(
+    values: &[Value],
+    negated: bool,
+    collation: Collation,
+) -> Result<Value, ExecError> {
+    let lower = evaluate_comparison(BinaryOp::GreaterOrEqual, &values[0], &values[1], collation)?;
+    let upper = evaluate_comparison(BinaryOp::LessOrEqual, &values[0], &values[2], collation)?;
     let result = evaluate_logic(BinaryOp::And, &lower, &upper)?;
     match result {
         Value::Boolean(value) => Ok(Value::Boolean(if negated { !value } else { value })),
@@ -4015,6 +4076,7 @@ pub(crate) fn evaluate_binary(
     left: &Value,
     right: &Value,
     data_type: Option<DataType>,
+    collation: Collation,
 ) -> Result<Value, ExecError> {
     match op {
         BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => evaluate_logic(op, left, right),
@@ -4023,7 +4085,7 @@ pub(crate) fn evaluate_binary(
         | BinaryOp::Less
         | BinaryOp::LessOrEqual
         | BinaryOp::Greater
-        | BinaryOp::GreaterOrEqual => evaluate_comparison(op, left, right),
+        | BinaryOp::GreaterOrEqual => evaluate_comparison(op, left, right, collation),
         BinaryOp::Add
         | BinaryOp::Subtract
         | BinaryOp::Multiply
@@ -4053,12 +4115,17 @@ fn evaluate_logic(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, Ex
     Ok(result.map_or(Value::Null, Value::Boolean))
 }
 
-fn evaluate_comparison(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, ExecError> {
+fn evaluate_comparison(
+    op: BinaryOp,
+    left: &Value,
+    right: &Value,
+    collation: Collation,
+) -> Result<Value, ExecError> {
     if matches!(left, Value::Null) || matches!(right, Value::Null) {
         return Ok(Value::Null);
     }
 
-    let ordering = compare_mysql(left, right)?;
+    let ordering = compare_mysql(left, right, collation)?;
     let result = match op {
         BinaryOp::Equal => ordering == Ordering::Equal,
         BinaryOp::NotEqual => ordering != Ordering::Equal,
@@ -4071,9 +4138,13 @@ fn evaluate_comparison(op: BinaryOp, left: &Value, right: &Value) -> Result<Valu
     Ok(Value::Boolean(result))
 }
 
-pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, ExecError> {
+pub(crate) fn compare_mysql(
+    left: &Value,
+    right: &Value,
+    collation: Collation,
+) -> Result<Ordering, ExecError> {
     match (left, right) {
-        (Value::Utf8(left), Value::Utf8(right)) => Ok(compare_utf8_mysql(left, right)),
+        (Value::Utf8(left), Value::Utf8(right)) => Ok(compare_utf8_mysql(left, right, collation)),
         (Value::Binary(left), Value::Binary(right)) => Ok(left.cmp(right)),
         (Value::Boolean(left), Value::Boolean(right)) => Ok(left.cmp(right)),
         (Value::Int64(left), Value::Int64(right)) => Ok(left.cmp(right)),
@@ -4106,18 +4177,10 @@ pub(crate) fn compare_mysql(left: &Value, right: &Value) -> Result<Ordering, Exe
 
 /// Scalar text comparison: equality, inequality, `IN`, and sorting.
 ///
-/// Still fixed to `utf8mb4_0900_ai_ci`. The grouping, join, DISTINCT and
-/// interning paths take the plan's collation, but `CompiledExpr` is an enum
-/// evaluated through free helpers, so reaching this one means threading the
-/// collation through the whole scalar evaluator - a second refactor the size
-/// of the first.
-///
-/// This is why `SUPPORTED_TEXT_COLLATIONS` still admits only the default: a
-/// binder that accepted `general_ci` while this compared with ICU would answer
-/// `WHERE role = 'student'` with the wrong collation's rules instead of
-/// refusing, and a wrong answer is worse than an error.
-pub(crate) fn compare_utf8_mysql(left: &str, right: &str) -> Ordering {
-    crate::execution::compare_collated_text(left, right, Collation::Utf8mb40900AiCi)
+/// The collation arrives from the comparison node, which was given it when the
+/// expression was compiled.
+pub(crate) fn compare_utf8_mysql(left: &str, right: &str, collation: Collation) -> Ordering {
+    crate::execution::compare_collated_text(left, right, collation)
 }
 
 fn evaluate_arithmetic(
@@ -4362,6 +4425,7 @@ fn parse_mysql_number(value: &str) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::collation::Collation;
     // Expression behavior is exercised through physical operator tests. Keep
     // the MySQL numeric-prefix parser covered directly because its edge cases
     // do not require a catalog.
@@ -4628,6 +4692,7 @@ mod tests {
             ],
             None,
             Some(DataType::Json),
+            Collation::default(),
         )
         .expect("JSON_OBJECT evaluates");
         assert_eq!(object, Value::Utf8(r#"{"d": 10.50}"#.to_owned()));
@@ -4639,6 +4704,7 @@ mod tests {
             &[Some(DataType::Utf8), Some(DataType::Utf8)],
             None,
             Some(DataType::Json),
+            Collation::default(),
         )
         .expect("JSON_OBJECT evaluates");
         assert_eq!(text, Value::Utf8(r#"{"d": "10.50"}"#.to_owned()));
@@ -4888,11 +4954,12 @@ mod tests {
             compare_mysql(
                 &Value::UInt64(9_007_199_254_740_993),
                 &Value::Int64(9_007_199_254_740_992),
+                Collation::default(),
             ),
             Ok(Ordering::Greater)
         );
         assert_eq!(
-            compare_mysql(&Value::Int64(-1), &Value::UInt64(0)),
+            compare_mysql(&Value::Int64(-1), &Value::UInt64(0), Collation::default()),
             Ok(Ordering::Less)
         );
     }
@@ -4919,6 +4986,7 @@ mod tests {
             left: Box::new(CompiledExpr::Column(0)),
             right: Box::new(CompiledExpr::Literal(Value::Utf8("2024-01-01".to_owned()))),
             data_type: Some(DataType::Boolean),
+            collation: Collation::default(),
         };
         let between = CompiledExpr::Scalar {
             function: ScalarFunction::Between { negated: false },
@@ -4934,6 +5002,7 @@ mod tests {
                 Some(DataType::Utf8),
             ],
             literal_regex: None,
+            collation: Collation::default(),
         };
 
         assert_eq!(

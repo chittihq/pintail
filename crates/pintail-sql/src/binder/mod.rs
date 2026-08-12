@@ -4461,6 +4461,8 @@ mod tests {
                 vec![
                     Column::new(1, "name", DataType::Utf8, false)
                         .with_collation(Some("latin1_swedish_ci".to_owned())),
+                    Column::new(2, "label", DataType::Utf8, false)
+                        .with_collation(Some("utf8mb4_general_ci".to_owned())),
                 ],
             )
             .expect("schema"),
@@ -4480,6 +4482,41 @@ mod tests {
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         Binder::new(&catalog, Some("analytics")).bind(&statement)
+    }
+
+    /// A schema on `MySQL` 5.x's default is now queryable, not just readable.
+    #[test]
+    fn a_general_ci_column_resolves_to_general_ci() {
+        for sql in [
+            "SELECT label FROM legacy WHERE label = 'a'",
+            "SELECT label, COUNT(*) FROM legacy GROUP BY label",
+            "SELECT DISTINCT label FROM legacy",
+            "SELECT label FROM legacy ORDER BY label",
+            "SELECT MIN(label) FROM legacy",
+        ] {
+            let bound = bind(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+            assert_eq!(bound.text_collation, "utf8mb4_general_ci", "{sql}");
+        }
+    }
+
+    /// Both halves are supported and they still cannot meet: `general_ci` and
+    /// `0900_ai_ci` disagree about trailing spaces and about every character
+    /// above the BMP, so the comparison has no single right answer.
+    #[test]
+    fn two_supported_collations_still_cannot_be_compared_together() {
+        let error = bind("SELECT l.label FROM legacy l JOIN Events e ON l.label = e.Name")
+            .expect_err("a cross-collation join must be refused");
+        // Caught by the per-expression gate, which sees both collations meet
+        // inside the join condition before the query-level check runs.
+        assert!(error.to_string().contains("across collations"), "{error}");
+    }
+
+    /// A query that reads no text still resolves to something, so operators
+    /// never carry an Option they cannot act on.
+    #[test]
+    fn a_query_without_text_takes_the_default() {
+        let bound = bind("SELECT 1 FROM legacy").expect("bind");
+        assert_eq!(bound.text_collation, crate::DEFAULT_TEXT_COLLATION);
     }
 
     #[test]

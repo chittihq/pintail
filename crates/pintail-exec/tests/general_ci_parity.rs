@@ -180,3 +180,43 @@ fn sort_keys_agree_with_equality() {
         }
     }
 }
+
+/// The executor's dispatch, not just the collation module.
+///
+/// `compare_collated_text` is what every operator funnels through, so this
+/// checks the switch itself: the same pair of strings must answer differently
+/// under the two collations. Trailing spaces are the sharpest case -
+/// `general_ci` is PAD SPACE and `0900_ai_ci` is not - so a dispatch that fell
+/// back silently
+/// to the default would fail here rather than pass by coincidence.
+#[test]
+fn the_executor_dispatches_on_the_collation_it_was_given() {
+    use pintail_exec::collation::Collation;
+    use std::cmp::Ordering;
+
+    for (left, right) in [("student", "student   "), ("", " "), ("a", "a  ")] {
+        assert_eq!(
+            pintail_exec::compare_collated_text(left, right, Collation::Utf8mb4GeneralCi),
+            Ordering::Equal,
+            "general_ci pads: {left:?} vs {right:?}",
+        );
+        assert_ne!(
+            pintail_exec::compare_collated_text(left, right, Collation::Utf8mb40900AiCi),
+            Ordering::Equal,
+            "0900_ai_ci does not pad: {left:?} vs {right:?}",
+        );
+    }
+
+    // Case and accent folding agree between the two, so they cannot be used to
+    // tell the dispatch apart - asserted so a future change that breaks one
+    // does not look like a dispatch failure.
+    for (left, right) in [("student", "STUDENT"), ("Ärger", "arger")] {
+        for collation in [Collation::Utf8mb4GeneralCi, Collation::Utf8mb40900AiCi] {
+            assert_eq!(
+                pintail_exec::compare_collated_text(left, right, collation),
+                Ordering::Equal,
+                "{left:?} vs {right:?} under {collation:?}",
+            );
+        }
+    }
+}

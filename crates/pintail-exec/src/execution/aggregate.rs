@@ -70,7 +70,7 @@ impl CompiledAggregate {
             expr: aggregate
                 .expr
                 .as_ref()
-                .map(|expression| CompiledExpr::compile(expression, columns))
+                .map(|expression| CompiledExpr::compile(expression, columns, collation))
                 .transpose()?,
             input_type,
             distinct: aggregate.distinct,
@@ -84,7 +84,7 @@ impl CompiledAggregate {
                 .iter()
                 .map(|(expression, ascending)| {
                     Ok::<_, ExecError>((
-                        CompiledExpr::compile(expression, columns)?,
+                        CompiledExpr::compile(expression, columns, collation)?,
                         *ascending,
                         matches!(expression.data_type, Some(DataType::Decimal { .. })),
                     ))
@@ -595,8 +595,12 @@ impl AggregateState {
                         (Some(candidate), Some(extreme)) if candidate < extreme => true,
                         (Some(candidate), Some(extreme)) if candidate > extreme => false,
                         _ => {
-                            compare_aggregate_values(value, current, aggregate.data_type)?
-                                == Ordering::Less
+                            compare_aggregate_values(
+                                value,
+                                current,
+                                aggregate.data_type,
+                                self.collation,
+                            )? == Ordering::Less
                         }
                     },
                     None => true,
@@ -612,8 +616,12 @@ impl AggregateState {
                         (Some(candidate), Some(extreme)) if candidate > extreme => true,
                         (Some(candidate), Some(extreme)) if candidate < extreme => false,
                         _ => {
-                            compare_aggregate_values(value, current, aggregate.data_type)?
-                                == Ordering::Greater
+                            compare_aggregate_values(
+                                value,
+                                current,
+                                aggregate.data_type,
+                                self.collation,
+                            )? == Ordering::Greater
                         }
                     },
                     None => true,
@@ -757,8 +765,12 @@ impl AggregateState {
             (AggregateValue::Minimum(left), AggregateValue::Minimum(Some(right))) => {
                 let replace = match left.as_ref() {
                     Some(current) => {
-                        compare_aggregate_values(&right, current, aggregate.data_type)?
-                            == Ordering::Less
+                        compare_aggregate_values(
+                            &right,
+                            current,
+                            aggregate.data_type,
+                            self.collation,
+                        )? == Ordering::Less
                     }
                     None => true,
                 };
@@ -769,8 +781,12 @@ impl AggregateState {
             (AggregateValue::Maximum(left), AggregateValue::Maximum(Some(right))) => {
                 let replace = match left.as_ref() {
                     Some(current) => {
-                        compare_aggregate_values(&right, current, aggregate.data_type)?
-                            == Ordering::Greater
+                        compare_aggregate_values(
+                            &right,
+                            current,
+                            aggregate.data_type,
+                            self.collation,
+                        )? == Ordering::Greater
                     }
                     None => true,
                 };
@@ -995,7 +1011,12 @@ impl AggregateState {
             ),
             (None, Some(current)) => {
                 let candidate = Value::Utf8(format().ok_or(ExecError::NumericOverflow)?);
-                let ordering = compare_aggregate_values(&candidate, current, aggregate.data_type)?;
+                let ordering = compare_aggregate_values(
+                    &candidate,
+                    current,
+                    aggregate.data_type,
+                    self.collation,
+                )?;
                 let replace = if keep_less {
                     ordering == Ordering::Less
                 } else {
@@ -1107,6 +1128,7 @@ impl AggregateState {
                                     nulls_first: *ascending,
                                     decimal: *decimal,
                                 },
+                                self.collation,
                             );
                             if ordering != Ordering::Equal {
                                 return ordering;
@@ -1285,14 +1307,17 @@ fn merge_finished_value(
         }
         AggregateFunction::Sum => add_aggregate_value(Some(current), delta, aggregate.data_type),
         AggregateFunction::Minimum => Ok(
-            if compare_aggregate_values(delta, &current, aggregate.data_type)? == Ordering::Less {
+            if compare_aggregate_values(delta, &current, aggregate.data_type, aggregate.collation)?
+                == Ordering::Less
+            {
                 delta.clone()
             } else {
                 current
             },
         ),
         AggregateFunction::Maximum => Ok(
-            if compare_aggregate_values(delta, &current, aggregate.data_type)? == Ordering::Greater
+            if compare_aggregate_values(delta, &current, aggregate.data_type, aggregate.collation)?
+                == Ordering::Greater
             {
                 delta.clone()
             } else {
@@ -2871,6 +2896,7 @@ fn build_fused_inner_join_aggregate(
         column_types,
         right_width,
         state,
+        collation: _,
     } = input
     else {
         return Ok(None);
@@ -2907,7 +2933,7 @@ fn build_fused_inner_join_aggregate(
         .map(|column| column - left_width)
         .collect::<Vec<_>>();
     let build_start = memory.used();
-    let join = build_hash_join_state(right, right_key, *key_mode, extra_keys, memory)?;
+    let join = build_hash_join_state(right, right_key, *key_mode, extra_keys, memory, collation)?;
     let build_reserved = memory.used().saturating_sub(build_start);
     // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
     // Integer-mode build keys occupying a small dense range trade the
@@ -3465,7 +3491,7 @@ fn build_local_direct_groups(
             })
             .or_else(|| {
                 groups.iter().position(|group| {
-                    direct_group_matches(&group.values, batch, row, group_columns)
+                    direct_group_matches(&group.values, batch, row, group_columns, collation)
                 })
             });
         let group_index = existing.unwrap_or_else(|| {
@@ -3693,7 +3719,13 @@ fn build_direct_column_aggregate(
                     })
                     .or_else(|| {
                         groups.iter().position(|group| {
-                            direct_group_matches(&group.values, &batch, row, group_columns)
+                            direct_group_matches(
+                                &group.values,
+                                &batch,
+                                row,
+                                group_columns,
+                                collation,
+                            )
                         })
                     })
             };
@@ -3791,6 +3823,7 @@ pub(super) fn direct_group_matches(
     batch: &RecordBatch,
     row: usize,
     columns: &[usize],
+    collation: Collation,
 ) -> bool {
     values.iter().zip(columns).all(|(grouped, column)| {
         direct_group_value(batch, row, *column).is_ok_and(|candidate| match (grouped, candidate) {
@@ -3798,7 +3831,7 @@ pub(super) fn direct_group_matches(
                 if left.is_ascii() && right.is_ascii() {
                     left.eq_ignore_ascii_case(right)
                 } else {
-                    compare_utf8_mysql(left, right) == Ordering::Equal
+                    compare_utf8_mysql(left, right, collation) == Ordering::Equal
                 }
             }
             _ => grouped == candidate,
@@ -4128,6 +4161,7 @@ pub(super) fn compare_aggregate_values(
     left: &Value,
     right: &Value,
     data_type: Option<DataType>,
+    collation: Collation,
 ) -> Result<Ordering, ExecError> {
     if matches!(data_type, Some(DataType::Decimal { .. })) {
         let (Value::Utf8(left), Value::Utf8(right)) = (left, right) else {
@@ -4135,7 +4169,7 @@ pub(super) fn compare_aggregate_values(
         };
         return compare_decimal_text(left, right);
     }
-    compare_mysql(left, right)
+    compare_mysql(left, right, collation)
 }
 
 pub(crate) fn compare_decimal_text(left: &str, right: &str) -> Result<Ordering, ExecError> {

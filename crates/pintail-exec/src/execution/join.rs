@@ -113,6 +113,7 @@ pub(super) fn build_hash_join_state(
     key_mode: JoinKeyMode,
     extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<HashJoinState, ExecError> {
     let mut build: HashMap<JoinHashKey, Vec<Vec<Value>>> = HashMap::new();
     let mut grace: Option<GraceJoin> = None;
@@ -156,10 +157,14 @@ pub(super) fn build_hash_join_state(
                         key_bounds = Some((value.clone(), value.clone()));
                     }
                     Some((minimum, maximum)) => {
-                        if compare_sort_values(&value, minimum, bound_order) == Ordering::Less {
+                        if compare_sort_values(&value, minimum, bound_order, collation)
+                            == Ordering::Less
+                        {
                             *minimum = value.clone();
                         }
-                        if compare_sort_values(&value, maximum, bound_order) == Ordering::Greater {
+                        if compare_sort_values(&value, maximum, bound_order, collation)
+                            == Ordering::Greater
+                        {
                             *maximum = value.clone();
                         }
                     }
@@ -942,11 +947,8 @@ pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> Str
 }
 
 /// Compares text under the collation the plan resolved at bind time.
-pub(crate) fn compare_collated_text(
-    left: &str,
-    right: &str,
-    collation: Collation,
-) -> std::cmp::Ordering {
+#[must_use]
+pub fn compare_collated_text(left: &str, right: &str, collation: Collation) -> std::cmp::Ordering {
     match collation {
         Collation::Utf8mb4GeneralCi => crate::collation::compare_general_ci(left, right),
         Collation::Utf8mb40900AiCi => {
@@ -1005,7 +1007,7 @@ pub(super) fn execute_nested_loop_join(
                 memory,
                 collation,
             )?;
-            let predicate = CompiledExpr::compile(&predicate, &columns)?;
+            let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
             if !predicate_truth(&predicate.evaluate(&batch, 0)?)? {
                 continue;
             }

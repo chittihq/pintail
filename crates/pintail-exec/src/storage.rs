@@ -7,6 +7,8 @@ use std::{
 };
 
 use pintail_catalog::{DatabaseId, TableId};
+
+use crate::collation::Collation;
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction};
 use pintail_store::{
     DecodedColumn, ProjectedColumnChunk, ProjectedRow, ProjectedScanStream, ScanStats, StoreError,
@@ -24,6 +26,10 @@ use crate::{
 
 /// Storage scan provider backed by reader-pinned table snapshots.
 pub struct SnapshotScanProvider<'snapshot> {
+    /// The plan's collation, used by prewhere: pushing a text predicate into
+    /// the scan must decide equality the same way the operators above it do,
+    /// or a row filtered here would have survived there.
+    collation: Collation,
     snapshots: BTreeMap<(DatabaseId, TableId), &'snapshot TableSnapshot>,
     unique_visibility: BTreeMap<(DatabaseId, TableId), Vec<Vec<u32>>>,
     stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
@@ -79,6 +85,14 @@ impl From<ScanStats> for PhysicalScanStats {
 }
 
 impl<'snapshot> SnapshotScanProvider<'snapshot> {
+    /// Sets the collation the plan resolved, so a predicate pushed into the
+    /// scan decides equality the way the operators above it do.
+    #[must_use]
+    pub fn with_collation(mut self, collation: Collation) -> Self {
+        self.collation = collation;
+        self
+    }
+
     /// Indexes pinned snapshots by stable catalog identity.
     ///
     /// # Errors
@@ -98,6 +112,7 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
             }
         }
         Ok(Self {
+            collation: Collation::default(),
             snapshots: indexed,
             unique_visibility: BTreeMap::new(),
             stats: Arc::new(Mutex::new(BTreeMap::new())),
@@ -347,7 +362,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 ready: VecDeque::new(),
                 prefetched: VecDeque::new(),
                 stream: Some(stream),
-                prewhere: build_prewhere_spec(scan, snapshot),
+                prewhere: build_prewhere_spec(scan, snapshot, self.collation),
                 key_position,
                 started: false,
                 types,
@@ -1249,7 +1264,11 @@ fn projected_columns_retained_bytes(outer_capacity: usize, columns: &[DecodedCol
 
 /// Builds the filter-first spec for a scan: every predicate must reference
 /// only projected columns and compile against the predicate-subset layout.
-fn build_prewhere_spec(scan: &Scan, snapshot: &TableSnapshot) -> Option<PrewhereSpec> {
+fn build_prewhere_spec(
+    scan: &Scan,
+    snapshot: &TableSnapshot,
+    collation: Collation,
+) -> Option<PrewhereSpec> {
     if scan.predicates.is_empty() {
         return None;
     }
@@ -1296,7 +1315,7 @@ fn build_prewhere_spec(scan: &Scan, snapshot: &TableSnapshot) -> Option<Prewhere
     let predicates = scan
         .predicates
         .iter()
-        .map(|predicate| crate::expression::CompiledExpr::compile(predicate, &layout))
+        .map(|predicate| crate::expression::CompiledExpr::compile(predicate, &layout, collation))
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     Some(PrewhereSpec {

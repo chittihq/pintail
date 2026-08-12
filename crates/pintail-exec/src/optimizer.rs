@@ -611,7 +611,16 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
         BoundExprKind::Binary { op, left, right } => {
             let left = evaluate_constant(left)?;
             let right = evaluate_constant(right)?;
-            evaluate_runtime_binary(*op, &left, &right, expr.data_type).ok()
+            // Constant folding sees only literals, never a column, so no column
+            // collation can reach it; the default is the only reachable answer.
+            evaluate_runtime_binary(
+                *op,
+                &left,
+                &right,
+                expr.data_type,
+                crate::collation::Collation::default(),
+            )
+            .ok()
         }
         BoundExprKind::IsNull { expr, negated } => {
             let is_null = matches!(evaluate_constant(expr)?, Value::Null);

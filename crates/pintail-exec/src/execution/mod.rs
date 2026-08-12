@@ -13,7 +13,7 @@ pub(crate) use aggregate::sma_fold_hits;
 use budget::MemoryBudget;
 pub use budget::MemoryScope;
 pub use error::ExecError;
-pub(crate) use join::compare_collated_text;
+pub use join::compare_collated_text;
 
 use aggregate::{AggregateState, CompiledAggregate, build_hash_aggregate};
 use join::{
@@ -2188,7 +2188,7 @@ fn resolve_dependent_scalar_args(
                 memory,
                 collation,
             )?;
-            let condition = evaluate_and_literalize(&mut args[0], batch, row, columns)?;
+            let condition = evaluate_and_literalize(&mut args[0], batch, row, columns, collation)?;
             let selected = if predicate_truth(&condition)? { 1 } else { 2 };
             let skipped = if selected == 1 { 2 } else { 1 };
             resolve_dependent_expr_subqueries(
@@ -2214,7 +2214,8 @@ fn resolve_dependent_scalar_args(
                     memory,
                     collation,
                 )?;
-                let value = evaluate_and_literalize(&mut args[index], batch, row, columns)?;
+                let value =
+                    evaluate_and_literalize(&mut args[index], batch, row, columns, collation)?;
                 if !matches!(value, Value::Null) {
                     for skipped in &mut args[index + 1..] {
                         skipped.nullable = true;
@@ -2240,8 +2241,9 @@ fn evaluate_and_literalize(
     batch: &RecordBatch,
     row: usize,
     columns: &[BoundColumn],
+    collation: Collation,
 ) -> Result<Value, ExecError> {
-    let value = CompiledExpr::compile(expression, columns)?.evaluate(batch, row)?;
+    let value = CompiledExpr::compile(expression, columns, collation)?.evaluate(batch, row)?;
     expression.nullable = matches!(value, Value::Null);
     expression.kind = BoundExprKind::Literal(value.clone());
     Ok(value)
@@ -2360,6 +2362,9 @@ enum PullOperator {
         column_types: Vec<DataType>,
         right_width: usize,
         state: Option<Box<HashJoinState>>,
+        /// The plan's collation. The key mode carries it for hashing; this is
+        /// for the row-level work either side of the probe.
+        collation: Collation,
     },
     Filter {
         input: Box<Self>,
@@ -2384,6 +2389,8 @@ enum PullOperator {
         input: Box<Self>,
         column_types: Vec<DataType>,
         state: Option<DistinctRows>,
+        /// The plan's collation: DISTINCT decides row identity.
+        collation: Collation,
     },
     SetOp {
         left: Option<Box<Self>>,
@@ -2392,6 +2399,8 @@ enum PullOperator {
         all: bool,
         column_types: Vec<DataType>,
         state: Option<SetOpRows>,
+        /// The plan's collation: set operations compare whole rows.
+        collation: Collation,
     },
     /// Pre-materialized rows (recursive-CTE fixpoint output).
     Rows {
@@ -2406,10 +2415,14 @@ enum PullOperator {
         top_k: Option<usize>,
         trim: usize,
         state: Option<SortedRows>,
+        /// The plan's collation: ORDER BY on text is decided by it.
+        collation: Collation,
     },
     Window {
         input: Box<Self>,
         windows: Vec<CompiledWindow>,
+        /// The plan's collation: window ORDER BY and PARTITION BY use it.
+        collation: Collation,
         column_types: Vec<DataType>,
         state: Option<MaterializedRows>,
     },
@@ -2523,10 +2536,12 @@ impl PullOperator {
                 column_types,
                 right_width,
                 state,
+                collation,
             } => {
                 if state.is_none() {
-                    let built =
-                        build_hash_join_state(right, right_key, *key_mode, extra_keys, memory)?;
+                    let built = build_hash_join_state(
+                        right, right_key, *key_mode, extra_keys, memory, *collation,
+                    )?;
                     // Inner and semi joins cannot match probe rows outside
                     // the build side's key range, so the probe scan can prune
                     // storage before decoding anything. Left/anti joins need
@@ -2686,6 +2701,7 @@ impl PullOperator {
                 all,
                 column_types,
                 state,
+                collation,
             } => {
                 if state.is_none() {
                     let mut left = left.take().ok_or(ExecError::InvalidPhysicalPlan(
@@ -2701,6 +2717,7 @@ impl PullOperator {
                         *keep_matching,
                         *all,
                         memory,
+                        *collation,
                     )?);
                 }
                 state
@@ -2712,9 +2729,10 @@ impl PullOperator {
                 input,
                 column_types,
                 state,
+                collation,
             } => {
                 if state.is_none() {
-                    *state = Some(build_distinct(input, column_types, memory)?);
+                    *state = Some(build_distinct(input, column_types, memory, *collation)?);
                 }
                 state
                     .as_mut()
@@ -2726,9 +2744,10 @@ impl PullOperator {
                 windows,
                 column_types,
                 state,
+                collation,
             } => {
                 if state.is_none() {
-                    *state = Some(build_window(input, windows, memory)?);
+                    *state = Some(build_window(input, windows, memory, *collation)?);
                 }
                 next_materialized_batch(
                     state.as_mut().expect("initialized above"),
@@ -2743,6 +2762,7 @@ impl PullOperator {
                 top_k,
                 trim,
                 state,
+                collation,
             } => {
                 if state.is_none() {
                     let trim_to = if *trim > 0 {
@@ -2752,7 +2772,9 @@ impl PullOperator {
                     } else {
                         None
                     };
-                    *state = Some(build_sort(input, keys, *top_k, trim_to, memory)?);
+                    *state = Some(build_sort(
+                        input, keys, *top_k, trim_to, memory, *collation,
+                    )?);
                 }
                 state
                     .as_mut()
@@ -2819,7 +2841,7 @@ fn build_operator(
             let predicates = scan
                 .predicates
                 .iter()
-                .map(|predicate| CompiledExpr::compile(predicate, &columns))
+                .map(|predicate| CompiledExpr::compile(predicate, &columns, collation))
                 .collect::<Result<Vec<_>, _>>()?;
             let stream = provider.open_scan(&scan, memory.remaining())?;
             memory.reserve(stream.retained_bytes())?;
@@ -2917,14 +2939,14 @@ fn build_operator(
                                 "hash join keys have incompatible scalar types",
                             ))?;
                     Ok((
-                        CompiledExpr::compile(&extra_left, &left_columns)?,
-                        CompiledExpr::compile(&extra_right, &right_columns)?,
+                        CompiledExpr::compile(&extra_left, &left_columns, collation)?,
+                        CompiledExpr::compile(&extra_right, &right_columns, collation)?,
                         mode,
                     ))
                 })
                 .collect::<Result<Vec<_>, ExecError>>()?;
-            let left_key = CompiledExpr::compile(&left_key, &left_columns)?;
-            let right_key = CompiledExpr::compile(&right_key, &right_columns)?;
+            let left_key = CompiledExpr::compile(&left_key, &left_columns, collation)?;
+            let right_key = CompiledExpr::compile(&right_key, &right_columns, collation)?;
             let right_width = right_columns.len();
             let mut output_columns = left_columns;
             if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
@@ -2946,6 +2968,7 @@ fn build_operator(
                     column_types,
                     right_width,
                     state: None,
+                    collation,
                 },
                 output_columns,
             ))
@@ -3010,7 +3033,7 @@ fn build_operator(
                             memory,
                             collation,
                         )?;
-                        let compiled = CompiledExpr::compile(&expression, &columns)?;
+                        let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
                         if !predicate_truth(&compiled.evaluate(&batch, row)?)? {
                             continue;
                         }
@@ -3030,7 +3053,7 @@ fn build_operator(
                     columns,
                 ));
             }
-            let predicate = CompiledExpr::compile(&predicate, &columns)?;
+            let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
             Ok((
                 PullOperator::Filter {
                     input: Box::new(input),
@@ -3095,7 +3118,7 @@ fn build_operator(
             }));
             let group_by = group_by
                 .iter()
-                .map(|expression| CompiledExpr::compile(expression, &columns))
+                .map(|expression| CompiledExpr::compile(expression, &columns, collation))
                 .collect::<Result<Vec<_>, _>>()?;
             let aggregates = aggregates
                 .iter()
@@ -3163,7 +3186,7 @@ fn build_operator(
                                 memory,
                                 collation,
                             )?;
-                            let compiled = CompiledExpr::compile(&expression, &columns)?;
+                            let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
                             values.push(compiled.evaluate(&batch, row)?);
                         }
                         let row_bytes = estimated_row_payload_bytes(&values);
@@ -3185,7 +3208,7 @@ fn build_operator(
                 .iter()
                 .map(|projection| {
                     Ok((
-                        CompiledExpr::compile(&projection.expr, &columns)?,
+                        CompiledExpr::compile(&projection.expr, &columns, collation)?,
                         projection.expr.data_type,
                     ))
                 })
@@ -3277,6 +3300,7 @@ fn build_operator(
                     all,
                     column_types,
                     state: None,
+                    collation,
                 },
                 columns,
             ))
@@ -3293,6 +3317,7 @@ fn build_operator(
                     input: Box::new(input),
                     column_types,
                     state: None,
+                    collation,
                 },
                 columns,
             ))
@@ -3319,6 +3344,7 @@ fn build_operator(
                     windows: compiled,
                     column_types,
                     state: None,
+                    collation,
                 },
                 columns,
             ))
@@ -3351,6 +3377,7 @@ fn build_operator(
                     top_k,
                     trim,
                     state: None,
+                    collation,
                 },
                 columns,
             ))

@@ -62,23 +62,23 @@ impl CompiledWindow {
             } => CompiledWindowFunction::Offset {
                 lead: *lead,
                 offset: *offset,
-                argument: CompiledExpr::compile(expr, columns)?,
+                argument: CompiledExpr::compile(expr, columns, collation)?,
                 default: default
                     .as_ref()
-                    .map(|value| CompiledExpr::compile(value, columns))
+                    .map(|value| CompiledExpr::compile(value, columns, collation))
                     .transpose()?,
             },
             WindowFunction::NTile(buckets) => CompiledWindowFunction::NTile(*buckets),
             WindowFunction::Extreme { last, expr } => CompiledWindowFunction::Extreme {
                 last: *last,
-                argument: CompiledExpr::compile(expr, columns)?,
+                argument: CompiledExpr::compile(expr, columns, collation)?,
             },
             WindowFunction::RowNumber => CompiledWindowFunction::RowNumber,
             WindowFunction::Rank => CompiledWindowFunction::Rank,
             WindowFunction::DenseRank => CompiledWindowFunction::DenseRank,
             WindowFunction::Aggregate(aggregate) => {
                 let argument = match &aggregate.expr {
-                    Some(expr) => CompiledExpr::compile(expr, columns)?,
+                    Some(expr) => CompiledExpr::compile(expr, columns, collation)?,
                     None => CompiledExpr::compile(
                         &BoundExpr {
                             kind: BoundExprKind::Literal(Value::Int64(1)),
@@ -86,6 +86,7 @@ impl CompiledWindow {
                             nullable: false,
                         },
                         columns,
+                        collation,
                     )?,
                 };
                 CompiledWindowFunction::Aggregate(
@@ -99,14 +100,14 @@ impl CompiledWindow {
             partition: window
                 .partition_by
                 .iter()
-                .map(|expr| CompiledExpr::compile(expr, columns))
+                .map(|expr| CompiledExpr::compile(expr, columns, collation))
                 .collect::<Result<Vec<_>, _>>()?,
             order: window
                 .order_by
                 .iter()
                 .map(|key| {
                     Ok::<_, ExecError>((
-                        CompiledExpr::compile(&key.expr, columns)?,
+                        CompiledExpr::compile(&key.expr, columns, collation)?,
                         key.ascending,
                         key.nulls_first,
                         matches!(key.expr.data_type, Some(DataType::Decimal { .. })),
@@ -124,6 +125,7 @@ pub(super) fn build_window(
     input: &mut PullOperator,
     windows: &[CompiledWindow],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<MaterializedRows, ExecError> {
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut keys: Vec<Vec<Vec<Value>>> = windows.iter().map(|_| Vec::new()).collect();
@@ -178,7 +180,7 @@ pub(super) fn build_window(
     }
     let row_count = rows.len();
     for (index, window) in windows.iter().enumerate() {
-        let result = compute_window_column(window, &keys[index], row_count, memory)?;
+        let result = compute_window_column(window, &keys[index], row_count, memory, collation)?;
         for (row, value) in rows.iter_mut().zip(&result) {
             memory.reserve(value.heap_bytes().saturating_add(size_of::<Value>()))?;
             row.push(value.clone());
@@ -284,6 +286,10 @@ fn numeric_range_target(
     Ok(target)
 }
 
+// The frame a RANGE bound resolves to depends on the window, the sorted keys,
+// the row it is measured from, the offset, its direction, and how text compares.
+// Bundling them into a struct would move the same values behind one more name.
+#[allow(clippy::too_many_arguments)]
 fn numeric_range_bound(
     window: &CompiledWindow,
     keys: &[Vec<Value>],
@@ -292,6 +298,7 @@ fn numeric_range_bound(
     offset: (i128, u8),
     preceding: bool,
     upper: bool,
+    collation: Collation,
 ) -> Result<usize, ExecError> {
     let Some((_, ascending, _, decimal)) = window.order.first() else {
         return Err(ExecError::InvalidExpressionType);
@@ -305,9 +312,13 @@ fn numeric_range_bound(
         if *ascending { !preceding } else { preceding },
         *decimal,
     )?;
-    range_bound_for_target(window, keys, partition, &target, upper)
+    range_bound_for_target(window, keys, partition, &target, upper, collation)
 }
 
+// The frame a RANGE bound resolves to depends on the window, the sorted keys,
+// the row it is measured from, the offset, its direction, and how text compares.
+// Bundling them into a struct would move the same values behind one more name.
+#[allow(clippy::too_many_arguments)]
 fn temporal_range_bound(
     window: &CompiledWindow,
     keys: &[Vec<Value>],
@@ -316,6 +327,7 @@ fn temporal_range_bound(
     interval: (u64, pintail_sql::IntervalUnit),
     preceding: bool,
     upper: bool,
+    collation: Collation,
 ) -> Result<usize, ExecError> {
     let Some((_, ascending, _, _)) = window.order.first() else {
         return Err(ExecError::InvalidExpressionType);
@@ -334,15 +346,21 @@ fn temporal_range_bound(
         partition,
         &NumericRangeTarget::Value(target),
         upper,
+        collation,
     )
 }
 
+// The frame a RANGE bound resolves to depends on the window, the sorted keys,
+// the row it is measured from, the offset, its direction, and how text compares.
+// Bundling them into a struct would move the same values behind one more name.
+#[allow(clippy::too_many_arguments)]
 fn range_bound_for_target(
     window: &CompiledWindow,
     keys: &[Vec<Value>],
     partition: &[usize],
     target: &NumericRangeTarget,
     upper: bool,
+    collation: Collation,
 ) -> Result<usize, ExecError> {
     let Some((_, ascending, nulls_first, decimal)) = window.order.first() else {
         return Err(ExecError::InvalidExpressionType);
@@ -387,6 +405,7 @@ fn range_bound_for_target(
                     nulls_first: *nulls_first,
                     decimal: *decimal,
                 },
+                collation,
             ),
         };
         match target {
@@ -424,6 +443,7 @@ fn compute_window_column(
     keys: &[Vec<Value>],
     row_count: usize,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<Vec<Value>, ExecError> {
     let partition_len = window.partition.len();
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
@@ -440,6 +460,7 @@ fn compute_window_column(
                 &left_keys[position],
                 &right_keys[position],
                 order_key(true, true, false),
+                collation,
             );
             if ordering != Ordering::Equal {
                 return ordering;
@@ -450,6 +471,7 @@ fn compute_window_column(
                 &left_keys[partition_len + position],
                 &right_keys[partition_len + position],
                 order_key(*ascending, *nulls_first, *decimal),
+                collation,
             );
             if ordering != Ordering::Equal {
                 return ordering;
@@ -463,6 +485,7 @@ fn compute_window_column(
                 &keys[left][position],
                 &keys[right][position],
                 order_key(true, true, false),
+                collation,
             ) == Ordering::Equal
         })
     };
@@ -472,6 +495,7 @@ fn compute_window_column(
                 &keys[left][partition_len + position],
                 &keys[right][partition_len + position],
                 order_key(key.1, key.2, key.3),
+                collation,
             ) == Ordering::Equal
         })
     };
@@ -522,6 +546,7 @@ fn compute_window_column(
                     (units, scale),
                     preceding,
                     upper,
+                    collation,
                 ),
                 Offset::Interval { value, unit } => temporal_range_bound(
                     window,
@@ -531,6 +556,7 @@ fn compute_window_column(
                     (value, unit),
                     preceding,
                     upper,
+                    collation,
                 ),
                 Offset::Rows(_) => Err(ExecError::InvalidPhysicalPlan(
                     "row offset reached a RANGE frame",

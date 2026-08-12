@@ -1,6 +1,7 @@
 //! Sort, DISTINCT and set-operation materialization, including the
 //! on-disk spill paths used when a query exceeds its memory ceiling.
 
+use crate::collation::Collation;
 use std::cmp::Ordering;
 
 use pintail_sql::BoundOrderKey;
@@ -51,6 +52,8 @@ impl SortedRows {
 pub(super) struct DistinctRows {
     sorted: SortedRows,
     keys: Vec<BoundOrderKey>,
+    /// The plan's collation: DISTINCT decides which rows are the same row.
+    collation: Collation,
     last: Option<Vec<Value>>,
     last_reserved: usize,
 }
@@ -71,11 +74,9 @@ impl DistinctRows {
             let batch_bytes = batch.estimated_bytes();
             for row in batch.selection().selected_rows().collect::<Vec<_>>() {
                 let values = batch_row(&batch, row)?;
-                if self
-                    .last
-                    .as_ref()
-                    .is_some_and(|last| compare_sort_rows(last, &values, &self.keys).is_eq())
-                {
+                if self.last.as_ref().is_some_and(|last| {
+                    compare_sort_rows(last, &values, &self.keys, self.collation).is_eq()
+                }) {
                     batch.selection_mut().set(row, false)?;
                     continue;
                 }
@@ -100,6 +101,8 @@ impl DistinctRows {
 /// shared full-row comparator, so spilling preserves exact DECIMAL and `MySQL`
 /// collation equivalence instead of introducing a second key definition.
 pub(super) struct SetOpRows {
+    /// The plan's collation: set operations compare whole rows.
+    collation: Collation,
     left: SortedRowCursor,
     right: SortedRowCursor,
     keys: Vec<BoundOrderKey>,
@@ -110,15 +113,18 @@ pub(super) struct SetOpRows {
 }
 
 struct SortedRowCursor {
+    /// The plan's collation, for grouping equal rows.
+    collation: Collation,
     rows: SortedRows,
     head: Option<Vec<Value>>,
     exhausted: bool,
 }
 
 impl SortedRowCursor {
-    fn new(rows: SortedRows) -> Self {
+    fn new(rows: SortedRows, collation: Collation) -> Self {
         Self {
             rows,
+            collation,
             head: None,
             exhausted: false,
         }
@@ -144,7 +150,7 @@ impl SortedRowCursor {
                 self.exhausted = true;
                 break;
             };
-            if compare_sort_rows(&first, &next, keys).is_eq() {
+            if compare_sort_rows(&first, &next, keys, self.collation).is_eq() {
                 count = count.saturating_add(1);
             } else {
                 self.head = Some(next);
@@ -167,7 +173,9 @@ impl SetOpRows {
             let ordering = match (self.left.head.as_ref(), self.right.head.as_ref()) {
                 (None, _) => return Ok(None),
                 (Some(_), None) => Ordering::Less,
-                (Some(left), Some(right)) => compare_sort_rows(left, right, &self.keys),
+                (Some(left), Some(right)) => {
+                    compare_sort_rows(left, right, &self.keys, self.collation)
+                }
             };
             match ordering {
                 Ordering::Less => {
@@ -242,6 +250,7 @@ pub(super) fn build_set_operation(
     keep_matching: bool,
     all: bool,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<SetOpRows, ExecError> {
     let keys = column_types
         .iter()
@@ -253,11 +262,12 @@ pub(super) fn build_set_operation(
             decimal: matches!(data_type, DataType::Decimal { .. }),
         })
         .collect::<Vec<_>>();
-    let left = build_sort(left, &keys, None, None, memory)?;
-    let right = build_sort(right, &keys, None, None, memory)?;
+    let left = build_sort(left, &keys, None, None, memory, collation)?;
+    let right = build_sort(right, &keys, None, None, memory, collation)?;
     Ok(SetOpRows {
-        left: SortedRowCursor::new(left),
-        right: SortedRowCursor::new(right),
+        collation,
+        left: SortedRowCursor::new(left, collation),
+        right: SortedRowCursor::new(right, collation),
         keys,
         keep_matching,
         all,
@@ -270,6 +280,7 @@ pub(super) fn build_distinct(
     input: &mut PullOperator,
     column_types: &[DataType],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<DistinctRows, ExecError> {
     let keys = column_types
         .iter()
@@ -281,10 +292,11 @@ pub(super) fn build_distinct(
             decimal: matches!(data_type, DataType::Decimal { .. }),
         })
         .collect::<Vec<_>>();
-    let sorted = build_sort(input, &keys, None, None, memory)?;
+    let sorted = build_sort(input, &keys, None, None, memory, collation)?;
     Ok(DistinctRows {
         sorted,
         keys,
+        collation,
         last: None,
         last_reserved: 0,
     })
@@ -296,12 +308,14 @@ pub(super) fn build_sort(
     top_k: Option<usize>,
     trim_to: Option<usize>,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<SortedRows, ExecError> {
-    let compare = |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys);
+    let compare =
+        |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys, collation);
     if let Some(top_k) = top_k {
         // Top-k retains at most k rows and cannot exceed the ceiling by
         // materializing its input; the in-memory path is unchanged.
-        let mut rows = materialize_top_k(input, top_k, keys, compare, memory)?;
+        let mut rows = materialize_top_k(input, top_k, keys, compare, memory, collation)?;
         rows.sort_by(compare);
         if let Some(width) = trim_to {
             for row in &mut rows {
@@ -314,7 +328,7 @@ pub(super) fn build_sort(
         mut rows,
         runs,
         reserved: rows_reserved,
-    } = materialize_with_spill(input, keys, memory)?;
+    } = materialize_with_spill(input, keys, memory, collation)?;
     rows.sort_by(compare);
     if runs.is_empty() {
         if let Some(width) = trim_to {
@@ -324,7 +338,7 @@ pub(super) fn build_sort(
         }
         return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
     }
-    let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to)?;
+    let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to, collation)?;
     merge.push_final_run(&rows, memory)?;
     memory.release(rows_reserved);
     Ok(SortedRows::Spilled(merge))
@@ -343,6 +357,7 @@ fn materialize_with_spill(
     input: &mut PullOperator,
     keys: &[BoundOrderKey],
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<SpillMaterialization, ExecError> {
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut retained = 0_usize;
@@ -357,7 +372,7 @@ fn materialize_with_spill(
         match reserve_vec_elements(&mut rows, additional_rows, 0, memory) {
             Ok(reserved) => vector_reserved = vector_reserved.saturating_add(reserved),
             Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
-                rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
+                rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
                 runs.push(SpilledRun::write(&rows, memory)?);
                 rows = Vec::new();
                 memory.release(retained.saturating_add(vector_reserved));
@@ -382,7 +397,7 @@ fn materialize_with_spill(
                     // Spill the buffered rows as one sorted run and retry;
                     // releasing both the row payloads and the vector's
                     // capacity reservation frees the sort's whole footprint.
-                    rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
+                    rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
                     runs.push(SpilledRun::write(&rows, memory)?);
                     rows = Vec::new();
                     memory.release(retained.saturating_add(vector_reserved));
@@ -407,7 +422,7 @@ fn materialize_with_spill(
             // their own working sets from the remaining headroom, so a sort
             // that hoards the budget until hard failure starves the scan.
             if retained.saturating_add(vector_reserved) > memory.limit() / 2 && rows.len() > 1 {
-                rows.sort_by(|left, right| compare_sort_rows(left, right, keys));
+                rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
                 runs.push(SpilledRun::write(&rows, memory)?);
                 rows = Vec::new();
                 memory.release(retained.saturating_add(vector_reserved));
@@ -474,6 +489,8 @@ impl SpilledRun {
 /// K-way merge over sorted spilled runs; run count is bounded by
 /// input-bytes / memory-ceiling, so a linear minimum scan per row is fine.
 pub(super) struct SpilledMerge {
+    /// The plan's collation, for the merge comparison.
+    collation: Collation,
     runs: Vec<SpilledRun>,
     heads: Vec<Option<Vec<Value>>>,
     keys: Vec<BoundOrderKey>,
@@ -485,12 +502,14 @@ impl SpilledMerge {
         runs: Vec<SpilledRun>,
         keys: Vec<BoundOrderKey>,
         trim_to: Option<usize>,
+        collation: Collation,
     ) -> Result<Self, ExecError> {
         let mut merge = Self {
             heads: Vec::with_capacity(runs.len()),
             runs,
             keys,
             trim_to,
+            collation,
         };
         for index in 0..merge.runs.len() {
             let head = merge.runs[index].next_row()?;
@@ -524,7 +543,8 @@ impl SpilledMerge {
                     let current_head = self.heads[current]
                         .as_ref()
                         .expect("best head is always occupied");
-                    compare_sort_rows(candidate, current_head, &self.keys) == Ordering::Less
+                    compare_sort_rows(candidate, current_head, &self.keys, self.collation)
+                        == Ordering::Less
                 }
             };
             if better {
@@ -566,6 +586,7 @@ fn materialize_top_k(
     keys: &[BoundOrderKey],
     compare: impl Copy + FnMut(&Vec<Value>, &Vec<Value>) -> Ordering,
     memory: &MemoryTracker,
+    collation: Collation,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     if top_k == 0 {
         return Ok(Vec::new());
@@ -594,7 +615,7 @@ fn materialize_top_k(
                         .and_then(|column| column.value(row))
                         .unwrap_or(&Value::Null);
                     let retained = threshold_row.get(key.index).unwrap_or(&Value::Null);
-                    let key_ordering = compare_sort_values(candidate, retained, *key);
+                    let key_ordering = compare_sort_values(candidate, retained, *key, collation);
                     if key_ordering != Ordering::Equal {
                         ordering = key_ordering;
                         break;
@@ -645,12 +666,18 @@ fn materialize_top_k(
     Ok(rows)
 }
 
-fn compare_sort_rows(left: &[Value], right: &[Value], keys: &[BoundOrderKey]) -> Ordering {
+fn compare_sort_rows(
+    left: &[Value],
+    right: &[Value],
+    keys: &[BoundOrderKey],
+    collation: Collation,
+) -> Ordering {
     for key in keys {
         let ordering = compare_sort_values(
             left.get(key.index).unwrap_or(&Value::Null),
             right.get(key.index).unwrap_or(&Value::Null),
             *key,
+            collation,
         );
         if ordering != Ordering::Equal {
             return ordering;
@@ -659,7 +686,12 @@ fn compare_sort_rows(left: &[Value], right: &[Value], keys: &[BoundOrderKey]) ->
     Ordering::Equal
 }
 
-pub(super) fn compare_sort_values(left: &Value, right: &Value, key: BoundOrderKey) -> Ordering {
+pub(super) fn compare_sort_values(
+    left: &Value,
+    right: &Value,
+    key: BoundOrderKey,
+    collation: Collation,
+) -> Ordering {
     match (left, right) {
         (Value::Null, Value::Null) => Ordering::Equal,
         (Value::Null, _) => {
@@ -682,9 +714,9 @@ pub(super) fn compare_sort_values(left: &Value, right: &Value, key: BoundOrderKe
             // happen for decimal-typed keys) falls back to text order.
             let ordering = if key.decimal {
                 compare_decimal_text(left, right)
-                    .unwrap_or_else(|_| compare_utf8_mysql(left, right))
+                    .unwrap_or_else(|_| compare_utf8_mysql(left, right, collation))
             } else {
-                compare_utf8_mysql(left, right)
+                compare_utf8_mysql(left, right, collation)
             };
             order_direction(ordering, key.ascending)
         }

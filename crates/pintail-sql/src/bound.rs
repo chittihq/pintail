@@ -7,11 +7,7 @@ pub const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
 /// The older `MySQL` 5.x default, which most existing schemas still carry
 /// because a table keeps whatever collation it was created with.
 ///
-/// Not yet in [`SUPPORTED_TEXT_COLLATIONS`] - see the note there. It is named
-/// here so the change that admits it is a one-line edit to that list rather
-/// than a hunt for the string.
-#[expect(dead_code, reason = "admitted once the scalar evaluator is threaded")]
-pub(crate) const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
+pub const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
 
 /// Collations the executor can compare.
 ///
@@ -21,14 +17,8 @@ pub(crate) const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
 /// and no way to choose. `MySQL` resolves that by coercibility rules; until
 /// those are implemented, refusing is the honest option, because the failure
 /// mode of guessing is a wrong answer rather than an error.
-/// Currently only the default. `general_ci` comparison exists and is tested,
-/// and the grouping, join, DISTINCT and interning paths already take the
-/// plan's collation - but scalar comparison (`=`, `<`, `IN`, `ORDER BY`) is
-/// still pinned to `utf8mb4_0900_ai_ci`, so admitting `general_ci` here would
-/// answer those with the wrong rules rather than refusing. Add
-/// `GENERAL_CI_TEXT_COLLATION` to this list in the same change that threads
-/// the scalar evaluator, not before.
-pub const SUPPORTED_TEXT_COLLATIONS: [&str; 1] = [DEFAULT_TEXT_COLLATION];
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 2] =
+    [DEFAULT_TEXT_COLLATION, GENERAL_CI_TEXT_COLLATION];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
 
 /// A table made unambiguous against one catalog snapshot.
