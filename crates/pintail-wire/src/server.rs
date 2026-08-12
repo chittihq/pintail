@@ -479,6 +479,11 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
 struct Authenticated {
     database_id: String,
     database_name: String,
+    /// Named on every query line, so a session is attributed to a key rather
+    /// than only to a database. The key *id* is not carried: the audit row
+    /// written at connect time already pins the session to it, and a log line
+    /// is read by a human, who wants the name.
+    key_name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -506,6 +511,14 @@ struct Backend {
     next_statement_id: u32,
     connection_id: u32,
     salt: [u8; 20],
+}
+
+/// What a query line needs, captured before the statement moves into the
+/// worker thread. Absent when the level is off, so the capture itself is the
+/// gate rather than something checked later.
+struct RecordedStatement {
+    shape: String,
+    full: Option<String>,
 }
 
 struct CancelExecutionOnDrop(Option<pintail_exec::ExecutionCancellation>);
@@ -603,9 +616,37 @@ impl Backend {
         metadata
             .touch_api_key(&key.id, &Utc::now().to_rfc3339())
             .map_err(io_other)?;
+        // The connection is recorded before it can run anything. Per
+        // connection, not per query: a BI tool issues thousands of queries an
+        // hour, and a row each would grow this table without bound, contend
+        // with the control plane on the query path, and bury the invite and
+        // key events this trail exists for. Query detail goes to the log
+        // stream, which is built for that volume.
+        let now = Utc::now().to_rfc3339();
+        let detail = serde_json::json!({
+            "database": database.name,
+            "key": key.name,
+        })
+        .to_string();
+        if let Err(error) = metadata.record_audit_event(&pintail_meta::NewAuditEvent {
+            id: &format!("aud_wire_{}_{}", key.id, now),
+            workspace_id: database.workspace_id.as_deref().unwrap_or_default(),
+            actor_type: "api_key",
+            actor_id: &key.id,
+            actor_label: &key.name,
+            action: "wire.connect",
+            target_type: Some("database"),
+            target_id: Some(&database.id),
+            detail_json: Some(&detail),
+            created_at: &now,
+        }) {
+            // A failure to record must not refuse a valid connection.
+            pintail_log::log_error!("wire audit: could not record connection: {error}");
+        }
         Ok(Some(Authenticated {
             database_id: database.id,
             database_name: database.name,
+            key_name: key.name,
         }))
     }
 
@@ -616,7 +657,45 @@ impl Backend {
         Ok(())
     }
 
+    /// Records one executed statement.
+    ///
+    /// Takes what was captured before the statement moved into the worker.
+    /// Nothing is computed unless the level is already enabled, so a node
+    /// running at `error` pays one atomic load per query: the digest walks the
+    /// statement, and that walk must not sit on the hot path when nobody is
+    /// reading the result.
+    fn record_query(
+        &self,
+        recorded: Option<RecordedStatement>,
+        started: std::time::Instant,
+        rows: Option<usize>,
+    ) {
+        let Some(recorded) = recorded else {
+            return;
+        };
+        let millis = started.elapsed().as_millis();
+        let (database, key) = self
+            .authentication
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|auth| (auth.database_name.clone(), auth.key_name.clone()))
+            })
+            .unwrap_or_else(|| ("-".to_owned(), "-".to_owned()));
+        let outcome = rows.map_or_else(|| "error".to_owned(), |rows| format!("{rows} rows"));
+        pintail_log::log_info!(
+            "wire query db={database} key={key} {outcome} {millis}ms {}",
+            recorded.shape,
+        );
+        if let Some(full) = recorded.full {
+            pintail_log::log_debug!("wire query db={database} key={key} statement={full}");
+        }
+    }
+
     async fn execute(&self, sql: &str) -> Result<QueryOutput, QueryError> {
+        let started = std::time::Instant::now();
         let authenticated = self
             .authenticated()
             .map_err(|error| QueryError::Internal(error.to_string()))?;
@@ -638,6 +717,14 @@ impl Backend {
         let mut cancel_on_drop = CancelExecutionOnDrop::new(cancellation.clone());
         let engine = self.engine.clone();
         let database_id = authenticated.database_id;
+        // The shape is logged rather than the text: a literal is a row value,
+        // and `WHERE email = '...'` would put a real address into whatever
+        // consumes the log. The full statement is kept only at `debug`, where
+        // an operator has deliberately accepted that.
+        let recorded = pintail_log::enabled(pintail_log::INFO).then(|| RecordedStatement {
+            shape: crate::observe::truncated(&crate::observe::digest(sql), 200),
+            full: pintail_log::enabled(pintail_log::DEBUG).then(|| sql.to_owned()),
+        });
         let sql = sql.to_owned();
         let execution = tokio::task::spawn_blocking(move || {
             pintail_exec::with_execution_cancellation(cancellation, || {
@@ -664,6 +751,14 @@ impl Backend {
         if let Ok(mut current) = self.session.lock() {
             current.group_concat_warnings = execution.1;
         }
+        // Recorded on both outcomes: a query that failed is the one an
+        // operator most wants to find, and logging only successes would hide
+        // exactly the sessions worth investigating.
+        self.record_query(
+            recorded,
+            started,
+            execution.0.as_ref().ok().map(|output| output.rows.len()),
+        );
         execution.0
     }
 

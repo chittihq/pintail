@@ -2,6 +2,7 @@
 
 mod admission;
 mod engine;
+mod observe;
 mod server;
 
 pub use admission::{
