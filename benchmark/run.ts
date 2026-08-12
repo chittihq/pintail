@@ -7,7 +7,19 @@ import mysql from 'mysql2/promise'
 import { benchmarkQueries } from './queries'
 
 type CommandResult = { stdout: string; stderr: string }
-type EngineTiming = { medianMs: number; p95Ms: number; minMs: number; runs: number }
+type EngineTiming = {
+  medianMs: number
+  p95Ms: number
+  minMs: number
+  runs: number
+  meanMs: number
+  stddevMs: number
+  ci95LowMs: number
+  ci95HighMs: number
+  /// Every measured execution, sorted. Published so the summary can be
+  /// checked rather than trusted.
+  samplesMs: number[]
+}
 type EngineResources = { cpuPeakPct: number; cpuAvgPct: number; memPeakMb: number }
 type QueryResult = {
   name: string
@@ -45,6 +57,23 @@ const networkName = `${runId}-network`
 // PINTAIL_BENCHMARK_LOCAL=1 restores the old local-process mode for dev.
 const containerizedPintail = process.env.PINTAIL_BENCHMARK_LOCAL !== '1'
 const engineLimits = ['--cpus', '8', '--memory', '8g']
+
+// Five samples is too few to separate two engines whose spread overlaps, and
+// one warmup does not reliably settle a cold page cache. Raised, and made
+// configurable so a smoke run can stay cheap without the default being cheap.
+const WARMUP_COUNT = Number(process.env.BENCHMARK_WARMUPS ?? 2)
+const RUN_COUNT = Number(process.env.BENCHMARK_RUNS ?? 15)
+
+// Order matters as much as the count. Measuring the engines in a fixed
+// sequence lets any drift on a shared host - another tenant, a thermal ramp -
+// land on whichever always goes last and read as a property of that engine.
+// The order is shuffled per query from this seed, which the artifact records:
+// a shuffled order that cannot be reproduced is just an unexplained one.
+//
+// Shuffled rather than interleaved: each engine's samples stay contiguous, so
+// the container resource sampler still attributes CPU and memory to the engine
+// that spent it, which interleaving would smear across all three.
+const ENGINE_ORDER_SEED = Number(process.env.BENCHMARK_SEED ?? 0x5eed)
 const mysqlImage = 'mysql:8.4'
 const mysqlServerArgs = [
   '--server-id=909',
@@ -568,11 +597,31 @@ function summarizeTimings(times: number[]): EngineTiming {
   const sorted = [...times].sort((a, b) => a - b)
   const at = (index: number) =>
     Math.max(1, Math.round(sorted[Math.min(sorted.length - 1, index)]))
+  // Spread, not just the middle. A median alone cannot distinguish a stable
+  // measurement from one that happened to land there: two engines reported as
+  // 40ms and 44ms are indistinguishable if either swings 15ms run to run, and
+  // the summary said nothing about that. The raw samples travel too, so a
+  // reader can check the summary rather than take it.
+  const mean = sorted.reduce((total, value) => total + value, 0) / sorted.length
+  const variance =
+    sorted.length > 1
+      ? sorted.reduce((total, value) => total + (value - mean) ** 2, 0) / (sorted.length - 1)
+      : 0
+  const stddev = Math.sqrt(variance)
+  // Normal-approximation 95% interval on the mean. Honest only as a rough
+  // width at these sample counts, which is why the samples are published.
+  const halfWidth = sorted.length > 1 ? (1.96 * stddev) / Math.sqrt(sorted.length) : 0
+  const round2 = (value: number) => Math.round(value * 100) / 100
   return {
     medianMs: at(Math.floor(sorted.length / 2)),
     p95Ms: at(Math.ceil(sorted.length * 0.95) - 1),
     minMs: at(0),
     runs: sorted.length,
+    meanMs: round2(mean),
+    stddevMs: round2(stddev),
+    ci95LowMs: round2(Math.max(0, mean - halfWidth)),
+    ci95HighMs: round2(mean + halfWidth),
+    samplesMs: sorted.map((value) => round2(value)),
   }
 }
 
@@ -638,6 +687,36 @@ function canonicalRows(rows: unknown[][]): string {
     .join('\n')
 }
 
+/// Deterministic PRNG, so a shuffled engine order is reproducible from the
+/// seed the artifact records.
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let value = Math.imul(state ^ (state >>> 15), 1 | state)
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/// Runs the measurements in a shuffled order and returns them keyed by name,
+/// so callers read results by engine rather than by position.
+async function inShuffledOrder<T>(
+  random: () => number,
+  work: Record<string, () => Promise<T>>,
+): Promise<Record<string, T>> {
+  const names = Object.keys(work)
+  for (let index = names.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1))
+    ;[names[index], names[swap]] = [names[swap], names[index]]
+  }
+  const out: Record<string, T> = {}
+  for (const name of names) {
+    out[name] = await work[name]()
+  }
+  return out
+}
+
 async function runQueries(
   connection: mysql.Connection,
   clickhouseUrl: string,
@@ -646,8 +725,9 @@ async function runQueries(
   databaseId: string,
 ): Promise<QueryResult[]> {
   const results: QueryResult[] = []
-  const warmups = 1
-  const runs = 5
+  const warmups = WARMUP_COUNT
+  const runs = RUN_COUNT
+  const engineOrder = mulberry32(ENGINE_ORDER_SEED)
   const clickhouseQuery = async (database: string, sql: string, settings: string) => {
     const response = await fetch(`${clickhouseUrl}/?database=${database}`, {
       method: 'POST',
@@ -712,57 +792,68 @@ async function runQueries(
     }
     const mysqlTiming = summarizeTimings(mysqlTimes)
     const mysqlMs = mysqlTiming.medianMs
-    const pintailSampled = await sampled(containerizedPintail ? pintailName : undefined, () =>
-      query.coldOnly
-        ? measuredVariants(variants, (variant) =>
-            api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
-              method: 'POST',
-              token,
-              body: { db: databaseId, sql: variant.sql },
-            }),
-          )
-        : measured(
-            () =>
-              api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
-                method: 'POST',
-                token,
-                body: { db: databaseId, sql: query.sql },
-              }),
-            warmups,
-            runs,
-          ).then((run) => ({ values: [run.value], timing: run.timing })),
-    )
-    const pintailRun = pintailSampled.value
-    resources.pintail = pintailSampled.resources
-    const clickhouseSampled = await sampled(clickhouseName, () =>
-      query.coldOnly
-        ? measuredVariants(variants, (variant) =>
-            clickhouseQuery('benchmark', variant.clickhouseSql, ''),
-          )
-        : measured(
-            () => clickhouseQuery('benchmark', variants[0].clickhouseSql, ''),
-            warmups,
-            runs,
-          ).then((run) => ({ values: [run.value], timing: run.timing })),
-    )
-    const clickhouseRun = clickhouseSampled.value
-    resources.clickhouse = clickhouseSampled.resources
-    // The fair reference: ReplacingMergeTree doing pintail's merge-on-read
-    // duty on every read (`final = 1`), same data, same host, same limits.
-    const clickhouseFinalSampled = await sampled(clickhouseName, () =>
-      query.coldOnly
-        ? measuredVariants(variants, (variant) =>
-            clickhouseQuery('benchmark_rmt', variant.clickhouseSql, ' SETTINGS final = 1'),
-          )
-        : measured(
-            () =>
-              clickhouseQuery('benchmark_rmt', variants[0].clickhouseSql, ' SETTINGS final = 1'),
-            warmups,
-            runs,
-          ).then((run) => ({ values: [run.value], timing: run.timing })),
-    )
-    const clickhouseFinalRun = clickhouseFinalSampled.value
-    resources.clickhouseFinal = clickhouseFinalSampled.resources
+    // Shuffled per query from the run seed, so no engine is always last.
+    const measurements = await inShuffledOrder(engineOrder, {
+      pintail: () =>
+        sampled(containerizedPintail ? pintailName : undefined, () =>
+          query.coldOnly
+            ? measuredVariants(variants, (variant) =>
+                api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+                  method: 'POST',
+                  token,
+                  body: { db: databaseId, sql: variant.sql },
+                }),
+              )
+            : measured(
+                () =>
+                  api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+                    method: 'POST',
+                    token,
+                    body: { db: databaseId, sql: query.sql },
+                  }),
+                warmups,
+                runs,
+              ).then((run) => ({ values: [run.value], timing: run.timing })),
+        ),
+      clickhouse: () =>
+        sampled(clickhouseName, () =>
+          query.coldOnly
+            ? measuredVariants(variants, (variant) =>
+                clickhouseQuery('benchmark', variant.clickhouseSql, ''),
+              )
+            : measured(
+                () => clickhouseQuery('benchmark', variants[0].clickhouseSql, ''),
+                warmups,
+                runs,
+              ).then((run) => ({ values: [run.value], timing: run.timing })),
+        ),
+      // The comparable reference: ReplacingMergeTree doing pintail's
+      // merge-on-read duty on every read (`final = 1`), same data, same host,
+      // same limits.
+      clickhouseFinal: () =>
+        sampled(clickhouseName, () =>
+          query.coldOnly
+            ? measuredVariants(variants, (variant) =>
+                clickhouseQuery('benchmark_rmt', variant.clickhouseSql, ' SETTINGS final = 1'),
+              )
+            : measured(
+                () =>
+                  clickhouseQuery(
+                    'benchmark_rmt',
+                    variants[0].clickhouseSql,
+                    ' SETTINGS final = 1',
+                  ),
+                warmups,
+                runs,
+              ).then((run) => ({ values: [run.value], timing: run.timing })),
+        ),
+    })
+    const pintailRun = measurements.pintail.value
+    resources.pintail = measurements.pintail.resources
+    const clickhouseRun = measurements.clickhouse.value
+    resources.clickhouse = measurements.clickhouse.resources
+    const clickhouseFinalRun = measurements.clickhouseFinal.value
+    resources.clickhouseFinal = measurements.clickhouseFinal.resources
     const pintailMatchesMysql = pintailRun.values.every(
       (value, index) => canonicalRows(value.rows) === mysqlCanonicals[index],
     )
@@ -841,8 +932,14 @@ function publishResults(allResults: QueryResult[]) {
         ? 'container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)'
         : 'LOCAL PROCESS — cross-host numbers, not comparable',
       iterations: baselineProvenance
-        ? `warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from ${baselineProvenance}`
-        : 'warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants',
+        ? `warm: ${WARMUP_COUNT} warmup + ${RUN_COUNT} measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from ${baselineProvenance}`
+        : `warm: ${WARMUP_COUNT} warmup + ${RUN_COUNT} measured; cold: 5 distinct memo-cold variants`,
+      /// Engine order is shuffled per query from this seed; same seed, same
+      /// order, so two runs can be compared without wondering about it.
+      engineOrderSeed: ENGINE_ORDER_SEED,
+      /// Reported per engine as median, mean, p95, stddev and a 95% interval,
+      /// alongside every raw sample, so the summary can be checked.
+      statistics: 'median, mean, p95, stddev, ci95, and all raw samples',
       references: {
         clickhouse: 'plain MergeTree (raw-speed ceiling)',
         clickhouseFinal: 'ReplacingMergeTree, final=1 (merge-on-read duty, query cache off)',

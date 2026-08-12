@@ -302,8 +302,12 @@
   {
     "phase": "snapshot",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "snapshot",
@@ -734,8 +738,12 @@
   {
     "phase": "orm-compat",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "orm-compat",
@@ -1046,8 +1054,12 @@
   {
     "phase": "crud",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "crud",
@@ -1358,8 +1370,12 @@
   {
     "phase": "type-edges",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "type-edges",
@@ -1675,8 +1691,12 @@
   {
     "phase": "ddl",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -2022,8 +2042,12 @@
   {
     "phase": "churn",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -2359,8 +2383,12 @@
   {
     "phase": "spill",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "spill",
@@ -2691,8 +2719,12 @@
   {
     "phase": "pooling",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "pooling",
@@ -3008,8 +3040,12 @@
   {
     "phase": "restart",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -3395,8 +3431,12 @@
   {
     "phase": "control-plane",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -3719,8 +3759,12 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:general_ci: joining on a collated column",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   Active | 144.0000\n  pintail active | 144.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
