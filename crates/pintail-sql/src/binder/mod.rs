@@ -96,7 +96,14 @@ impl<'catalog> Binder<'catalog> {
         let Statement::Query(query) = statement else {
             return Err(BindError::UnsupportedStatement(statement.to_string()));
         };
-        self.bind_query(query, &[])
+        let mut bound = self.bind_query(query, &[])?;
+        // Each expression was checked for a single supported collation as it
+        // was bound. This resolves the query as a whole, which is the level
+        // the executor works at: one comparison rule for the whole plan. A
+        // query whose filter is general_ci and whose ORDER BY is 0900_ai_ci
+        // passes every per-expression check and still has no single answer.
+        bound.text_collation = resolve_query_collation(&bound.source_collations())?;
+        Ok(bound)
     }
 
     fn bind_query(&self, query: &Query, outer_ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
@@ -398,6 +405,8 @@ impl<'catalog> Binder<'catalog> {
             })
             .collect();
         BoundQuery {
+            // Overwritten by bind() once the whole query is known.
+            text_collation: DEFAULT_TEXT_COLLATION,
             from: vec![BoundFrom {
                 base: relation.clone(),
                 joins: Vec::new(),
@@ -676,6 +685,8 @@ impl<'catalog> Binder<'catalog> {
             }
         }
         Ok(BoundQuery {
+            // Overwritten by bind() once the whole query is known.
+            text_collation: DEFAULT_TEXT_COLLATION,
             from,
             tables,
             projection,
@@ -1336,6 +1347,8 @@ impl<'catalog> Binder<'catalog> {
             })
             .collect();
         let input = BoundQuery {
+            // Overwritten by bind() once the whole query is known.
+            text_collation: DEFAULT_TEXT_COLLATION,
             from: scope.from,
             tables: scope.tables.clone(),
             projection,
@@ -5326,5 +5339,29 @@ mod tests {
             bind("SELECT COUNT(DISTINCT *) FROM Events"),
             Err(BindError::UnsupportedAggregate(_))
         ));
+    }
+}
+
+/// Picks the one collation a plan will compare with.
+///
+/// Absent any text, the default stands - it is never consulted, and giving it
+/// a value keeps every downstream operator free of an Option it cannot act on.
+fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindError> {
+    match collations {
+        [] => Ok(DEFAULT_TEXT_COLLATION),
+        [only] => crate::bound::SUPPORTED_TEXT_COLLATIONS
+            .into_iter()
+            .find(|supported| supported == only)
+            .ok_or_else(|| {
+                BindError::UnsupportedExpression(format!(
+                    "text collation {only} is unsupported; supported: {}",
+                    crate::bound::SUPPORTED_TEXT_COLLATIONS.join(", "),
+                ))
+            }),
+        many => Err(BindError::UnsupportedExpression(format!(
+            "this query reads text in more than one collation ({}), and they do \
+             not agree about trailing spaces or about characters above the BMP",
+            many.join(", "),
+        ))),
     }
 }

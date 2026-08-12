@@ -14,8 +14,7 @@ use super::{
 };
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundExpr, BoundExprKind, BoundTable, BoundWindow,
-    BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit, ScalarFunction,
-    WindowFunction,
+    BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, WindowFunction,
 };
 
 /// A top-level `function(...) OVER (...)` projection item.
@@ -1348,21 +1347,27 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     }
     collations.sort_unstable();
     collations.dedup();
-    if collations
-        .iter()
-        .all(|collation| collation == DEFAULT_TEXT_COLLATION)
+    if collations.is_empty() {
+        return Ok(());
+    }
+    // One supported collation for the whole expression is fine; the executor
+    // is told which one and compares accordingly. A MIXTURE is not, even when
+    // both halves are supported - the two disagree about trailing spaces and
+    // about supplementary characters, so the comparison has two defensible
+    // answers. MySQL picks one by coercibility; guessing here would produce a
+    // wrong answer where refusing produces an error.
+    if collations.len() == 1
+        && crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&collations[0].as_str())
     {
         return Ok(());
     }
-    let detail = if collations.is_empty() {
-        return Ok(());
+    let detail = collations.join(", ");
+    let supported = crate::bound::SUPPORTED_TEXT_COLLATIONS.join(", ");
+    Err(BindError::UnsupportedExpression(if collations.len() > 1 {
+        format!("comparing text across collations {detail} is unsupported")
     } else {
-        collations.join(", ")
-    };
-    Err(BindError::UnsupportedExpression(format!(
-        "text collation {detail} is unsupported; the initial executable profile is \
-         {DEFAULT_TEXT_COLLATION}"
-    )))
+        format!("text collation {detail} is unsupported; supported: {supported}")
+    }))
 }
 
 fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {

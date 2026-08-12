@@ -3,6 +3,21 @@ use pintail_types::{DataType, Value};
 
 /// The one text collation Pintail currently executes rather than rejecting.
 pub const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
+
+/// The older `MySQL` 5.x default, which most existing schemas still carry
+/// because a table keeps whatever collation it was created with.
+pub const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
+
+/// Collations the executor can compare.
+///
+/// A query may use one of them, not a mixture: `general_ci` and
+/// `0900_ai_ci` disagree about trailing spaces and about every character
+/// above the BMP, so a comparison spanning both has two defensible answers
+/// and no way to choose. `MySQL` resolves that by coercibility rules; until
+/// those are implemented, refusing is the honest option, because the failure
+/// mode of guessing is a wrong answer rather than an error.
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 2] =
+    [DEFAULT_TEXT_COLLATION, GENERAL_CI_TEXT_COLLATION];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
 
 /// A table made unambiguous against one catalog snapshot.
@@ -850,9 +865,85 @@ pub struct BoundQuery {
     /// Recursive-CTE fixpoint: this query is the anchor and `member`
     /// re-executes against the working table until no new rows appear.
     pub recursive: Option<Box<BoundRecursive>>,
+    /// The one collation every text comparison in this plan uses.
+    ///
+    /// Resolved once, at the end of binding, so the row loop dispatches on a
+    /// value it already holds rather than resolving anything per comparison.
+    /// Defaults to [`DEFAULT_TEXT_COLLATION`] for a query that reads no text,
+    /// where it is never consulted.
+    pub text_collation: &'static str,
 }
 
 impl BoundQuery {
+    /// Every distinct text collation this query COMPARES, deduplicated.
+    ///
+    /// Only comparing positions count. Handing a column back to the client
+    /// unchanged is collation-independent - the bytes are copied, never
+    /// ordered - so a query may project a collation the executor cannot
+    /// compare and still be perfectly answerable. Refusing those would take
+    /// away `SELECT name FROM legacy`, which has exactly one right answer.
+    ///
+    /// Projections therefore enter only when something orders them: `DISTINCT`
+    /// compares every projected row against every other, and an `ORDER BY` key
+    /// is a projection index.
+    #[must_use]
+    pub fn source_collations(&self) -> Vec<String> {
+        let mut collations = Vec::new();
+        self.gather_source_collations(&mut collations);
+        collations.sort_unstable();
+        collations.dedup();
+        collations
+    }
+
+    fn gather_source_collations(&self, collations: &mut Vec<String>) {
+        for from in &self.from {
+            for join in &from.joins {
+                if let Some(condition) = &join.condition {
+                    condition.collect_source_collations(collations);
+                }
+            }
+        }
+        if self.distinct {
+            for projection in &self.projection {
+                projection.expr.collect_source_collations(collations);
+            }
+        } else {
+            for key in &self.order_by {
+                if let Some(projection) = self.projection.get(key.index) {
+                    projection.expr.collect_source_collations(collations);
+                }
+            }
+        }
+        for expr in self.filter.iter().chain(self.having.iter()) {
+            expr.collect_source_collations(collations);
+        }
+        for expr in &self.group_by {
+            expr.collect_source_collations(collations);
+        }
+        for aggregate in &self.aggregates {
+            if let Some(expr) = &aggregate.expr {
+                expr.collect_source_collations(collations);
+            }
+            for (expr, _) in &aggregate.order_within {
+                expr.collect_source_collations(collations);
+            }
+        }
+        for window in &self.windows {
+            for expr in &window.partition_by {
+                expr.collect_source_collations(collations);
+            }
+        }
+        for branch in &self.union_all {
+            branch.gather_source_collations(collations);
+        }
+        for (_, branch) in &self.set_ops {
+            branch.gather_source_collations(collations);
+        }
+        if let Some(recursive) = &self.recursive {
+            recursive.member.gather_source_collations(collations);
+        }
+    }
+
     /// Returns the text collation of a query-layout expression.
     ///
     /// Grouping, aggregation, and window lowering replace result-bearing
