@@ -4,6 +4,75 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc12] - 2026-08-12
+
+### Fixed
+
+- Replication survives `ALTER TABLE ... CONVERT TO CHARACTER SET`. The SQL
+  parser cannot represent that statement, so schema tracking returned a hard
+  error and stopped the stream on DDL the source had already accepted and
+  applied — and it is exactly the statement an operator runs to move a table
+  onto a collation this engine can compare, so the remedy for one collation
+  problem triggered an outage through another. It is now recognised ahead of
+  the parser and treated as metadata-only: stored values are decoded
+  characters rather than source bytes, so re-encoding a column between
+  character sets leaves the logical value identical and only the collation
+  changes, which the re-probe adopts. A narrowing conversion MySQL cannot
+  perform losslessly does change values and still needs a resnapshot, which is
+  recorded as a limitation rather than guessed at from the statement text.
+- The wire endpoint no longer stops answering. Every await before
+  authentication was unbounded, so a peer that opened a socket and then
+  vanished without closing it — what a firewall or NAT leaves behind when it
+  drops an idle flow — parked its task forever on a read that never returned,
+  holding the socket and the disconnect watch's dup of it. The idle timeout did
+  not cover this, because it only wraps the serving loop a connection reaches
+  after it authenticates. Meanwhile the accept loop propagated every error, so
+  the first failure ended it and took the endpoint with it. Together the
+  half-open sockets exhausted the descriptors and the accept loop died, leaving
+  a listening socket nobody was accepting on: new connections were neither
+  served nor refused, they sat in the backlog until the client's own deadline
+  expired, and the server logged nothing because from its side nothing had
+  happened. The handshake now has a thirty-second deadline and accept failures
+  are logged and retried.
+
+### Added
+
+- `utf8mb4_general_ci` in the executor. It is MySQL 5.x's default, and a table
+  keeps whatever collation it was created with, so supporting only MySQL 8's
+  default meant a source could snapshot, replicate and read back while every
+  `WHERE`, `JOIN`, `GROUP BY` and `ORDER BY` on its text columns was refused.
+  The weight table was extracted from a live server with `WEIGHT_STRING()`
+  rather than transcribed, and the collation is reproduced as it actually
+  behaves rather than as it ought to: it is PAD SPACE, so trailing spaces are
+  insignificant and `''` equals `' '`; and every character above the BMP weighs
+  the same, so all of them compare equal to each other. Both are real MySQL
+  behaviour, verified differentially, and implementing something more sensible
+  would be a parity bug. The probe now also names any column whose collation
+  the executor cannot compare, at probe time rather than at first query.
+- Query logging on the wire. A connection through the MySQL protocol recorded
+  nothing about who opened it or what they ran, so the one surface that
+  accepts arbitrary SQL was the one with no audit trail. Statements are
+  digested with literals replaced before they are stored, so the trail says
+  what shape of query ran without becoming a copy of the data it read.
+- An admin can change a member's role. A workspace could grant a role at
+  invite time and revoke it by removing the member, but never move one between
+  them: promoting a teammate meant removing them and re-inviting, which cost
+  them their audit trail. Nobody may change their own role, which is what keeps
+  a workspace administrable — no sequence of calls can leave it with nobody
+  able to make the next change.
+
+### Changed
+
+- The differential gate carries a second collation. Every text column in its
+  source was one the executor already compared, so the whole class of
+  divergence above was invisible to it. It now exercises case folding, accent
+  folding, PAD SPACE and the supplementary-plane collapse against a live MySQL
+  every release, and converts a table's character set mid-stream to prove the
+  schema change is survived. A documented gap now warns when the engine refuses
+  a query, not only when it answers differently, so a gap can be recorded
+  before it is fixed — which is what makes the fix verifiable rather than
+  asserted.
+
 ## [0.0.1-rc11] - 2026-08-12
 
 ### Added
@@ -34,6 +103,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   host's totals, so a container capped at 4GB reads as busy at 3.5GB instead
   of using 5% of the machine.
 
+- Remote diagnostics: crashes and errors to Sentry, every log line to Logtail
+  (Better Stack). Both are spoken directly over their HTTP APIs rather than
+  through an SDK, for the same reason `pintail-log` has no dependencies at all.
+  A panic captures a backtrace — with `force_capture`, since `RUST_BACKTRACE`
+  is unset in production and a crash report without a stack is the reason this
+  exists — parses it into Sentry frames, and blocks the panicking thread until
+  it has been delivered or five seconds pass. Logging never blocks: lines go
+  into a bounded queue and are dropped and counted when it is full, because a
+  replication loop stalling behind a slow log endpoint is worse than a missing
+  line. Configured by `PINTAIL_SENTRY_DSN`, `PINTAIL_LOGTAIL_ENDPOINT`,
+  `PINTAIL_LOGTAIL_TOKEN`, and optionally `PINTAIL_ENVIRONMENT` and
+  `PINTAIL_RELEASE`. Entirely inert when unset.
+
 ### Changed
 
 - The dashboard matches shadcn's default sizing. It was generated from the
@@ -56,10 +138,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   two refusal checks assert the diagnostic line exists and names the account
   rather than only that the browser was refused.
 
-## [Unreleased]
-
-### Changed
-
 - The dashboard has a 12px floor on type. Seventy declarations rendered below
   10.5px — nine arbitrary sizes between 8.8px and 10.1px, which is drift rather
   than a scale — and the worst of them were mono, uppercase and letter-spaced,
@@ -69,21 +147,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `text-xs` or above, which is the floor iOS and Material both put body text at
   and above what any of these were. Badge and small-button heights grew from
   20px to 24px so the larger text is not clipped.
-
-### Added
-
-- Remote diagnostics: crashes and errors to Sentry, every log line to Logtail
-  (Better Stack). Both are spoken directly over their HTTP APIs rather than
-  through an SDK, for the same reason `pintail-log` has no dependencies at all.
-  A panic captures a backtrace — with `force_capture`, since `RUST_BACKTRACE`
-  is unset in production and a crash report without a stack is the reason this
-  exists — parses it into Sentry frames, and blocks the panicking thread until
-  it has been delivered or five seconds pass. Logging never blocks: lines go
-  into a bounded queue and are dropped and counted when it is full, because a
-  replication loop stalling behind a slow log endpoint is worse than a missing
-  line. Configured by `PINTAIL_SENTRY_DSN`, `PINTAIL_LOGTAIL_ENDPOINT`,
-  `PINTAIL_LOGTAIL_TOKEN`, and optionally `PINTAIL_ENVIRONMENT` and
-  `PINTAIL_RELEASE`. Entirely inert when unset.
 
 ## [0.0.1-rc10] - 2026-08-11
 
