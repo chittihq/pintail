@@ -36,6 +36,65 @@ static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 /// Default time an authenticated wire connection may remain idle.
 pub const DEFAULT_WIRE_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
+/// How long a client has to finish the pre-authentication exchange.
+///
+/// Every await before authentication used to be unbounded, so a peer that
+/// opened a socket and then vanished WITHOUT closing it parked its task
+/// forever - blocked on a read that would never return. That is not a rare
+/// shape: a stateful firewall or NAT dropping an idle flow leaves exactly
+/// this half-open socket, as does a client host losing power. The idle
+/// timeout does not cover it, because that only wraps the serving loop a
+/// connection reaches after it authenticates.
+///
+/// Each stalled task pinned two descriptors (the socket and the disconnect
+/// watch's dup), so they accumulated until the process ran out, at which
+/// point `accept` began failing for everyone.
+///
+/// `MySQL`'s own `connect_timeout` defaults to 10 seconds. This is more
+/// generous because a TLS handshake over a slow link is legitimately slower
+/// than a plaintext one, and the cost of being wrong here is refusing a real
+/// client.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Bounds one step of the pre-authentication exchange.
+async fn before_login<T>(step: impl Future<Output = io::Result<T>>) -> io::Result<T> {
+    within(LOGIN_TIMEOUT, step).await
+}
+
+/// The deadline itself, separated so a test can impose a short one rather
+/// than wait out the real thirty seconds.
+async fn within<T>(limit: Duration, step: impl Future<Output = io::Result<T>>) -> io::Result<T> {
+    tokio::time::timeout(limit, step).await.map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "client did not finish the handshake",
+        )
+    })?
+}
+
+/// Waits for the next client, surviving errors that are not about this
+/// process being unable to continue.
+///
+/// `accept` used to propagate every error, which ended the accept loop and
+/// with it the whole wire endpoint - one transient failure and the port
+/// stopped answering until someone restarted the server. `ECONNABORTED` (a
+/// client that hung up between SYN and accept) and descriptor exhaustion are
+/// both recoverable, and neither should cost every other client its service.
+///
+/// The pause matters on exhaustion: the condition persists until some
+/// connection closes, and retrying flat out would spin a core doing nothing.
+async fn accept_recovering(listener: &TcpListener) -> (TcpStream, ()) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => return (stream, ()),
+            Err(error) => {
+                pintail_log::log_error!("wire accept failed, retrying: {error}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
+}
+
 /// Accepts `MySQL` clients and serves read-only Pintail queries.
 ///
 /// # Errors
@@ -49,7 +108,7 @@ pub async fn serve(
     let data_dir = data_dir.into();
     let metadata_path = metadata_path.into();
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, ()) = accept_recovering(&listener).await;
         let backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
         tokio::spawn(async move {
             let _ = serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await;
@@ -185,8 +244,7 @@ where
         tokio::select! {
             biased;
             () = &mut shutdown => return Ok(()),
-            accepted = listener.accept() => {
-                let (stream, _) = accepted?;
+            (stream, ()) = accept_recovering(&listener) => {
                 let backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
                 let tls = tls.clone();
                 tokio::spawn(async move {
@@ -281,10 +339,8 @@ async fn serve_connection(
     } else {
         CapabilityFlags::empty()
     };
-    connection
-        .send_greeting(&backend, scramble, extra_capabilities)
-        .await?;
-    let initial = connection.read_initial_response().await?;
+    before_login(connection.send_greeting(&backend, scramble, extra_capabilities)).await?;
+    let initial = before_login(connection.read_initial_response()).await?;
     match (initial, tls) {
         // A required-TLS listener drops a plaintext client after the
         // greeting rather than serve it unencrypted; MySQL clients report
@@ -297,11 +353,11 @@ async fn serve_connection(
             let (reader, writer, read_sequence, write_sequence) = connection.into_parts();
             let stream = reader.reunite(writer).map_err(io_other)?;
             let acceptor = tokio_rustls::TlsAcceptor::from(tls.config);
-            let tls_stream = acceptor.accept(stream).await?;
+            let tls_stream = before_login(acceptor.accept(stream)).await?;
             let (tls_reader, tls_writer) = tokio::io::split(tls_stream);
             let mut connection =
                 Connection::new_at_sequence(tls_reader, tls_writer, read_sequence, write_sequence);
-            let response = match connection.read_initial_response().await? {
+            let response = match before_login(connection.read_initial_response()).await? {
                 pintail_protocol::InitialResponse::Full(response) => response,
                 pintail_protocol::InitialResponse::Ssl => {
                     return Err(io::Error::new(
@@ -337,8 +393,7 @@ where
     R: tokio::io::AsyncRead + Unpin + Send,
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
-    if connection
-        .complete_authentication(&mut backend, response, &scramble)
+    if before_login(connection.complete_authentication(&mut backend, response, &scramble))
         .await
         .is_err()
     {
@@ -369,8 +424,7 @@ where
     R: tokio::io::AsyncRead + Unpin + Send,
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
-    if connection
-        .complete_authentication(&mut backend, response, &scramble)
+    if before_login(connection.complete_authentication(&mut backend, response, &scramble))
         .await
         .is_err()
     {
@@ -1872,7 +1926,7 @@ mod tests {
     use sha2::Digest as _;
 
     use super::{
-        Session, Sha256, compatibility_query, mysql_column, placeholder_offsets,
+        LOGIN_TIMEOUT, Session, Sha256, compatibility_query, mysql_column, placeholder_offsets,
         placeholder_preview_literals, substitute_parameters, verify_caching_sha2,
         verify_native_password,
     };
@@ -2208,5 +2262,54 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         )
         .expect("compatibility response");
         assert_eq!(casing.rows, vec![vec![pintail_types::Value::UInt64(2)]]);
+    }
+
+    /// A peer that opens a socket and then says nothing must be let go.
+    ///
+    /// This is the half-open socket a firewall leaves behind when it drops an
+    /// idle flow. Before the pre-authentication exchange had a deadline the
+    /// task blocked on that read forever, holding its descriptors, and enough
+    /// of them stopped the server accepting anybody at all.
+    #[tokio::test]
+    async fn a_client_that_never_finishes_the_handshake_is_dropped() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            // The read the pre-auth path performs, under a deadline short
+            // enough to assert on.
+            super::within(std::time::Duration::from_millis(50), async move {
+                let mut byte = [0_u8; 1];
+                loop {
+                    stream.readable().await?;
+                    match stream.try_read(&mut byte) {
+                        Ok(0) => return Ok(()),
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            })
+            .await
+        });
+        // Connect, then hold the socket open without ever writing.
+        let _client = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect");
+        let outcome = server.await.expect("server task");
+        assert_eq!(
+            outcome.expect_err("the silent client must time out").kind(),
+            std::io::ErrorKind::TimedOut,
+        );
+    }
+
+    #[test]
+    fn the_login_deadline_is_more_generous_than_mysql_but_still_bounded() {
+        // Generous enough for a TLS handshake on a slow link, short enough
+        // that a stalled peer cannot hold descriptors for long.
+        assert!(LOGIN_TIMEOUT >= std::time::Duration::from_secs(10));
+        assert!(LOGIN_TIMEOUT <= std::time::Duration::from_secs(60));
     }
 }
