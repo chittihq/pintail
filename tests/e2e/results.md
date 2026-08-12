@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-12T13:35:26.051Z.
+Measured 2026-08-12T23:09:23.351Z.
 
-**637 passed, 0 failed, 90 documented-gap warnings.**
+**714 passed, 0 failed, 13 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -59,13 +59,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | snapshot | query:between and null-safe coalesce on balance | PASS |  |
 | snapshot | query:intersect all-style customer buyers | PASS |  |
 | snapshot | query:derived table status revenue share | PASS |  |
-| snapshot | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| snapshot | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| snapshot | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| snapshot | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| snapshot | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| snapshot | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| snapshot | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| snapshot | query:general_ci: equality folds ASCII case | PASS |  |
+| snapshot | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| snapshot | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| snapshot | query:general_ci: every supplementary character compares equal | PASS |  |
+| snapshot | query:general_ci: grouping partitions by collated equality | PASS |  |
+| snapshot | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| snapshot | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | snapshot | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
@@ -144,13 +144,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | orm-compat | query:between and null-safe coalesce on balance | PASS |  |
 | orm-compat | query:intersect all-style customer buyers | PASS |  |
 | orm-compat | query:derived table status revenue share | PASS |  |
-| orm-compat | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| orm-compat | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| orm-compat | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| orm-compat | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| orm-compat | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| orm-compat | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| orm-compat | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| orm-compat | query:general_ci: equality folds ASCII case | PASS |  |
+| orm-compat | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| orm-compat | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| orm-compat | query:general_ci: every supplementary character compares equal | PASS |  |
+| orm-compat | query:general_ci: grouping partitions by collated equality | PASS |  |
+| orm-compat | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| orm-compat | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | orm-compat | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
@@ -205,13 +205,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | crud | query:between and null-safe coalesce on balance | PASS |  |
 | crud | query:intersect all-style customer buyers | PASS |  |
 | crud | query:derived table status revenue share | PASS |  |
-| crud | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| crud | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| crud | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| crud | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| crud | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| crud | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| crud | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| crud | query:general_ci: equality folds ASCII case | PASS |  |
+| crud | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| crud | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| crud | query:general_ci: every supplementary character compares equal | PASS |  |
+| crud | query:general_ci: grouping partitions by collated equality | PASS |  |
+| crud | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| crud | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | crud | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
@@ -266,13 +266,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | type-edges | query:between and null-safe coalesce on balance | PASS |  |
 | type-edges | query:intersect all-style customer buyers | PASS |  |
 | type-edges | query:derived table status revenue share | PASS |  |
-| type-edges | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| type-edges | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| type-edges | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| type-edges | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| type-edges | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| type-edges | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| type-edges | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| type-edges | query:general_ci: equality folds ASCII case | PASS |  |
+| type-edges | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| type-edges | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| type-edges | query:general_ci: every supplementary character compares equal | PASS |  |
+| type-edges | query:general_ci: grouping partitions by collated equality | PASS |  |
+| type-edges | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| type-edges | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | type-edges | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
@@ -328,13 +328,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | ddl | query:between and null-safe coalesce on balance | PASS |  |
 | ddl | query:intersect all-style customer buyers | PASS |  |
 | ddl | query:derived table status revenue share | PASS |  |
-| ddl | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| ddl | query:general_ci: equality folds ASCII case | PASS |  |
+| ddl | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| ddl | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| ddl | query:general_ci: every supplementary character compares equal | PASS |  |
+| ddl | query:general_ci: grouping partitions by collated equality | PASS |  |
+| ddl | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| ddl | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | ddl | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
@@ -396,13 +396,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | churn | query:between and null-safe coalesce on balance | PASS |  |
 | churn | query:intersect all-style customer buyers | PASS |  |
 | churn | query:derived table status revenue share | PASS |  |
-| churn | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| churn | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| churn | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| churn | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| churn | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| churn | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| churn | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| churn | query:general_ci: equality folds ASCII case | PASS |  |
+| churn | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| churn | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| churn | query:general_ci: every supplementary character compares equal | PASS |  |
+| churn | query:general_ci: grouping partitions by collated equality | PASS |  |
+| churn | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| churn | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | churn | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
@@ -462,13 +462,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | spill | query:between and null-safe coalesce on balance | PASS |  |
 | spill | query:intersect all-style customer buyers | PASS |  |
 | spill | query:derived table status revenue share | PASS |  |
-| spill | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| spill | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| spill | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| spill | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| spill | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| spill | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| spill | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| spill | query:general_ci: equality folds ASCII case | PASS |  |
+| spill | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| spill | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| spill | query:general_ci: every supplementary character compares equal | PASS |  |
+| spill | query:general_ci: grouping partitions by collated equality | PASS |  |
+| spill | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| spill | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | spill | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
@@ -527,13 +527,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | pooling | query:between and null-safe coalesce on balance | PASS |  |
 | pooling | query:intersect all-style customer buyers | PASS |  |
 | pooling | query:derived table status revenue share | PASS |  |
-| pooling | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| pooling | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| pooling | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| pooling | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| pooling | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| pooling | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| pooling | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| pooling | query:general_ci: equality folds ASCII case | PASS |  |
+| pooling | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| pooling | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| pooling | query:general_ci: every supplementary character compares equal | PASS |  |
+| pooling | query:general_ci: grouping partitions by collated equality | PASS |  |
+| pooling | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| pooling | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | pooling | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
@@ -589,13 +589,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | restart | query:between and null-safe coalesce on balance | PASS |  |
 | restart | query:intersect all-style customer buyers | PASS |  |
 | restart | query:derived table status revenue share | PASS |  |
-| restart | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| restart | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| restart | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| restart | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| restart | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| restart | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| restart | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| restart | query:general_ci: equality folds ASCII case | PASS |  |
+| restart | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| restart | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| restart | query:general_ci: every supplementary character compares equal | PASS |  |
+| restart | query:general_ci: grouping partitions by collated equality | PASS |  |
+| restart | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| restart | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | restart | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
@@ -665,13 +665,13 @@ Measured 2026-08-12T13:35:26.051Z.
 | control-plane | query:between and null-safe coalesce on balance | PASS |  |
 | control-plane | query:intersect all-style customer buyers | PASS |  |
 | control-plane | query:derived table status revenue share | PASS |  |
-| control-plane | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| control-plane | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| control-plane | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| control-plane | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| control-plane | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| control-plane | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| control-plane | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| control-plane | query:general_ci: equality folds ASCII case | PASS |  |
+| control-plane | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| control-plane | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| control-plane | query:general_ci: every supplementary character compares equal | PASS |  |
+| control-plane | query:general_ci: grouping partitions by collated equality | PASS |  |
+| control-plane | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| control-plane | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | control-plane | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
@@ -728,11 +728,11 @@ Measured 2026-08-12T13:35:26.051Z.
 | ddl-documented-gaps | query:between and null-safe coalesce on balance | PASS |  |
 | ddl-documented-gaps | query:intersect all-style customer buyers | PASS |  |
 | ddl-documented-gaps | query:derived table status revenue share | PASS |  |
-| ddl-documented-gaps | query:general_ci: equality folds ASCII case | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl-documented-gaps | query:general_ci: equality folds Latin-1 accents onto the base letter | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl-documented-gaps | query:general_ci: trailing spaces are insignificant (PAD SPACE) | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl-documented-gaps | query:general_ci: every supplementary character compares equal | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl-documented-gaps | query:general_ci: grouping partitions by collated equality | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl-documented-gaps | query:general_ci: ordering follows the collation, not code points | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
-| ddl-documented-gaps | query:general_ci: DISTINCT collapses collation-equal values | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |
+| ddl-documented-gaps | query:general_ci: equality folds ASCII case | PASS |  |
+| ddl-documented-gaps | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| ddl-documented-gaps | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| ddl-documented-gaps | query:general_ci: every supplementary character compares equal | PASS |  |
+| ddl-documented-gaps | query:general_ci: grouping partitions by collated equality | PASS |  |
+| ddl-documented-gaps | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| ddl-documented-gaps | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | ddl-documented-gaps | query:general_ci: joining on a collated column | WARN | text collation utf8mb4_general_ci is not yet comparable in the executor (#10) |

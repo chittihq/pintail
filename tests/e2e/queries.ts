@@ -21,12 +21,6 @@ export interface DifferentialQuery {
   documentedGap?: string
 }
 
-/// Why every general_ci case below is a documented gap rather than a
-/// failure: the divergence is known and recorded, so a regression stays
-/// visible while the gate stays green until the fix lands.
-const GENERAL_CI_GAP =
-  "text collation utf8mb4_general_ci is not yet comparable in the executor (#10)"
-
 export const differentialQueries: DifferentialQuery[] = [
   {
     name: 'point lookup by key',
@@ -411,48 +405,52 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'general_ci: equality folds ASCII case',
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'active'",
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: equality folds Latin-1 accents onto the base letter',
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'arger'",
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: trailing spaces are insignificant (PAD SPACE)',
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'pending'",
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: every supplementary character compares equal',
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = '\u{1f600}'",
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: grouping partitions by collated equality',
     sql: 'SELECT legacy_label, COUNT(*) AS n FROM customers GROUP BY legacy_label ORDER BY n DESC, legacy_label',
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: ordering follows the collation, not code points',
     sql: 'SELECT legacy_label FROM customers WHERE legacy_label IS NOT NULL ORDER BY legacy_label, id LIMIT 25',
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: DISTINCT collapses collation-equal values',
     sql: 'SELECT DISTINCT legacy_label FROM customers ORDER BY legacy_label',
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
   },
   {
     name: 'general_ci: joining on a collated column',
+    sql: 'SELECT c.legacy_label, COUNT(*) AS n FROM customers c JOIN customers d ON c.legacy_label = d.legacy_label GROUP BY c.legacy_label ORDER BY c.legacy_label',
+    tables: ['customers'],
+  },
+  {
+    // Every comparison here is internally consistent - the join compares two
+    // general_ci columns, the grouping compares one 0900_ai_ci column - and
+    // MySQL answers it. Pintail resolves ONE collation per query, so it
+    // refuses. A real limitation of that choice, kept visible rather than
+    // written out of the corpus.
+    name: 'general_ci: mixing collations across separate comparisons',
     sql: 'SELECT c.tier, COUNT(*) AS n FROM customers c JOIN customers d ON c.legacy_label = d.legacy_label GROUP BY c.tier ORDER BY c.tier',
     tables: ['customers'],
-    documentedGap: GENERAL_CI_GAP,
+    documentedGap:
+      'a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)',
   },
 ]

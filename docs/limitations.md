@@ -265,6 +265,14 @@ worth refusing.
   identities or use collision-prone row fingerprints.
 - A source charset outside utf8mb4/utf8mb3, ASCII and latin1 (cp1252) is
   quarantined through the DLQ.
+- One text collation per query. `utf8mb4_0900_ai_ci` and `utf8mb4_general_ci`
+  are both executable, but a query that compares text in both is refused even
+  when each comparison is internally consistent - a join on `general_ci`
+  columns grouped by a `0900_ai_ci` one, for instance, which MySQL answers.
+  The two disagree about trailing spaces and about every character above the
+  BMP, and MySQL picks between them by coercibility rules that do not exist
+  here; refusing beats guessing, because the cost of guessing is a wrong
+  answer rather than an error.
 - `ALTER TABLE ... CONVERT TO CHARACTER SET` is treated as metadata-only.
   Stored values are decoded characters rather than source bytes, so a
   conversion that preserves them changes only the collation. A conversion
