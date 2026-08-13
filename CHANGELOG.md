@@ -4,6 +4,70 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc13] - 2026-08-13
+
+### Added
+
+- `utf8mb4_general_ci` is a collation queries can use, not merely one the
+  replica can store. It is MySQL 5.x's default and a table keeps whatever
+  collation it was created with, so supporting only MySQL 8's default meant a
+  source could snapshot, replicate and read back while every `WHERE`, `JOIN`,
+  `GROUP BY` and `ORDER BY` on its text was refused. The weight table was
+  extracted from a live server with `WEIGHT_STRING()` rather than transcribed,
+  and the collation is reproduced as it behaves rather than as it ought to: it
+  is PAD SPACE, so `''` equals `' '` and trailing spaces do not count; and
+  every character above the BMP weighs the same, so all of them compare equal
+  to each other. Both are real MySQL behaviour, verified differentially, and
+  implementing something more sensible would be a parity bug.
+- Query logging on the MySQL wire. A connection through that protocol recorded
+  nothing about who opened it or what they ran, so the one surface accepting
+  arbitrary SQL was the one with no audit trail. Statements are digested with
+  literals replaced before they are stored, so the trail says what shape of
+  query ran without becoming a copy of the data it read.
+- An admin can change a member's role. A workspace could grant a role at invite
+  time and revoke it by removing the member, but never move one between them,
+  so promoting a teammate cost them their audit trail. Nobody may change their
+  own role, which is what keeps a workspace administrable: no sequence of calls
+  can leave it with nobody able to make the next change.
+
+### Fixed
+
+- Replication survives `ALTER TABLE ... CONVERT TO CHARACTER SET`. The SQL
+  parser cannot represent that statement, so schema tracking returned a hard
+  error and stopped the stream on DDL the source had already applied - and it
+  is exactly the statement an operator runs to move a table onto a collation
+  this engine can compare, so approaching a supported schema was what broke
+  replication. It is now recognised ahead of the parser and treated as
+  metadata-only: stored values are decoded characters rather than source bytes,
+  so re-encoding a column leaves the logical value identical and only the
+  collation changes.
+- Text collation resolves per comparison rather than per query. A query reading
+  two collations was refused outright even when every comparison inside it was
+  internally consistent - a `general_ci` filter beside a `0900_ai_ci` ordering,
+  which MySQL answers and which a schema part-way through a collation migration
+  produces constantly. One comparison spanning two collations is still refused,
+  because that is genuinely undecidable without coercibility rules.
+- The wire endpoint no longer stops answering. Every await before
+  authentication was unbounded, so a peer that opened a socket and vanished
+  without closing it parked its task forever - what a firewall leaves behind
+  when it drops an idle flow. Each stalled task pinned two descriptors, and the
+  accept loop propagated every error, so exhaustion killed it and left a
+  listening socket nobody was accepting on: connections were neither served nor
+  refused, and the server logged nothing.
+
+### Changed
+
+- The benchmark reports engine speed separately from cache latency. The
+  headline compared pintail answering from its result memo against ClickHouse
+  executing, which measured one engine's cache against the other's execution.
+  The same queries now also run with the memo disabled, on the same replica,
+  and that table shows ClickHouse ahead - published because it is the honest
+  measure of execution performance.
+- The benchmark gate fails on a query that errors, is unsupported, or
+  disagrees with MySQL. It recorded such outcomes and still exited zero, so a
+  run where a quarter of the workload never executed could report success.
+  Gaps declared before a run warn; anything else fails.
+
 ## [0.0.1-rc12] - 2026-08-12
 
 ### Fixed
