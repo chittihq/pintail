@@ -535,3 +535,30 @@ Measuring 0.5M through 4M back to back let the largest dataset evict the
 smaller ones from page cache, and it reported 830ms for a 2M query that
 measures 173-183ms warm. The thread-scaling numbers above avoid that - one
 dataset, consecutive runs - which is why they are quoted and the sweep is not.
+
+Dictionary-encoding the build side was then implemented and measured, and it
+is slower. Storing build rows as interned cells - a per-bucket dictionary of
+distinct text, a `Vec` of tagged cells, and rows addressed by offset - removed
+the owned `String` per row that the profile pointed at, and cost 15-30% on
+`q8` (214-239ms against 162-192ms, measured order-reversed in two interleaved
+pairs). The reason is that the old path MOVED a whole `Vec<Value>` per row,
+one memory operation, while interning walks every cell, hashes each text
+value against the dictionary, and pushes cells one at a time. It then repays
+that on the probe with a tag branch and a dictionary indirection per access.
+The clone the profile attributed to the build side is real, but it is cheaper
+than the bookkeeping that removes it. Reverted rather than kept.
+
+Sampling the same query then found the actual cost, and it was not the row
+representation at all: `resolve_join_group_plan` was 26% of the query, and
+ICU sort-key generation inside it was 12.6% of non-idle samples. The plan
+resolves group identity from the build side, collating the group column of
+every build row - 250,000 of them - for a `region` column with eight distinct
+values. Memoising the sort key by its text drops ICU to 0.3% of samples and
+takes about 7% off the query (min 124-128ms against 135-137ms, two
+interleaved pairs, n~150 per arm). The cache is capped, so a group column
+with a distinct value per row degrades to the previous behaviour rather than
+holding every string twice.
+
+This supersedes the earlier note that "memoising the collation key" measured
+at nothing. That attempt memoised a different key on a different path, and
+was measured best-of-three, where the noise floor is wider than the effect.
