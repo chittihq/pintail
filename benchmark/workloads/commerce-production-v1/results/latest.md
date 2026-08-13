@@ -1,163 +1,163 @@
 # commerce-production-v1 — smoke profile
 
-Run: 2026-08-13T08:44:24.487Z → 2026-08-13T09:21:22.893Z. Engines: mysql, pintail. Scale: 0.0001.
+Run: 2026-08-13T09:26:27.001Z → 2026-08-13T10:03:04.251Z. Engines: mysql, pintail. Scale: 0.0001.
 
 ## Phase: cold
 
 | Query | Engine | Status | Median ms | p95 ms |
 |---|---|---|---:|---:|
-| q01-tenant-revenue | mysql | ok | 9.7 | 13.2 |
-| q01-tenant-revenue | pintail | ok | 12.8 | 35.8 |
-| q02-customer-history | mysql | ok | 153.9 | 161.2 |
-| q02-customer-history | pintail | ok | 11.0 | 31.7 |
-| q03-fulfillment-backlog | mysql | ok | 8.4 | 15.3 |
-| q03-fulfillment-backlog | pintail | ok | 8.1 | 11.4 |
-| q04-inventory-risk | mysql | ok | 9.9 | 11.8 |
-| q04-inventory-risk | pintail | ok | 9.7 | 14.6 |
-| q05-payment-failures | mysql | ok | 14.2 | 101.7 |
-| q05-payment-failures | pintail | ok | 5.8 | 13.4 |
-| q06-refund-rate | mysql | ok | 16.0 | 34.5 |
-| q06-refund-rate | pintail | ok | 16.2 | 21.4 |
-| q07-product-performance | mysql | ok | 22.1 | 26.7 |
-| q07-product-performance | pintail | ok | 17.9 | 20.1 |
-| q08-regional-cohorts | mysql | ok | 11.6 | 12.2 |
-| q08-regional-cohorts | pintail | ok | 9.4 | 10.6 |
-| q09-order-lifecycle | mysql | ok | 10.3 | 289.8 |
-| q09-order-lifecycle | pintail | ok | 16.9 | 24.5 |
-| q10-wide-operational-join | mysql | ok | 11.1 | 13.9 |
-| q10-wide-operational-join | pintail | ok | 13.4 | 18.0 |
-| q11-dormant-customers | mysql | ok | 94.9 | 135.2 |
-| q11-dormant-customers | pintail | ok | 20.8 | 26.3 |
-| q12-per-customer-revenue | mysql | ok | 9.9 | 29.1 |
-| q12-per-customer-revenue | pintail | ok | 6.9 | 8.3 |
+| q01-tenant-revenue | mysql | ok | 19.6 | 155.8 |
+| q01-tenant-revenue | pintail | ok | 26.5 | 43.2 |
+| q02-customer-history | mysql | ok | 65.9 | 163.2 |
+| q02-customer-history | pintail | ok | 12.2 | 13.4 |
+| q03-fulfillment-backlog | mysql | ok | 27.9 | 155.3 |
+| q03-fulfillment-backlog | pintail | ok | 8.2 | 10.9 |
+| q04-inventory-risk | mysql | ok | 15.8 | 140.0 |
+| q04-inventory-risk | pintail | ok | 125.6 | 140.3 |
+| q05-payment-failures | mysql | ok | 17.1 | 21.5 |
+| q05-payment-failures | pintail | ok | 4.9 | 9.7 |
+| q06-refund-rate | mysql | ok | 17.3 | 109.6 |
+| q06-refund-rate | pintail | ok | 14.8 | 16.2 |
+| q07-product-performance | mysql | ok | 21.6 | 22.9 |
+| q07-product-performance | pintail | ok | 18.2 | 21.0 |
+| q08-regional-cohorts | mysql | ok | 13.3 | 14.0 |
+| q08-regional-cohorts | pintail | ok | 10.2 | 11.4 |
+| q09-order-lifecycle | mysql | ok | 15.1 | 348.3 |
+| q09-order-lifecycle | pintail | ok | 21.8 | 24.8 |
+| q10-wide-operational-join | mysql | ok | 10.4 | 11.2 |
+| q10-wide-operational-join | pintail | ok | 14.5 | 16.6 |
+| q11-dormant-customers | mysql | ok | 91.6 | 141.8 |
+| q11-dormant-customers | pintail | ok | 15.4 | 19.7 |
+| q12-per-customer-revenue | mysql | ok | 95.1 | 373.9 |
+| q12-per-customer-revenue | pintail | ok | 11.4 | 15.8 |
 
 ## Phase: warm
 
 | Query | Engine | Status | Median ms | p95 ms |
 |---|---|---|---:|---:|
-| q01-tenant-revenue | mysql | ok | 9.3 | 141.6 |
-| q01-tenant-revenue | pintail | ok | 8.5 | 9.8 |
-| q02-customer-history | mysql | ok | 8.5 | 137.5 |
-| q02-customer-history | pintail | ok | 9.7 | 10.4 |
-| q03-fulfillment-backlog | mysql | ok | 10.6 | 175.8 |
-| q03-fulfillment-backlog | pintail | ok | 8.0 | 9.9 |
-| q04-inventory-risk | mysql | ok | 8.8 | 134.2 |
-| q04-inventory-risk | pintail | ok | 7.8 | 9.5 |
-| q05-payment-failures | mysql | ok | 20.3 | 100.0 |
-| q05-payment-failures | pintail | ok | 4.1 | 4.9 |
-| q06-refund-rate | mysql | ok | 14.2 | 146.2 |
-| q06-refund-rate | pintail | ok | 12.8 | 15.5 |
-| q07-product-performance | mysql | ok | 20.1 | 25.9 |
-| q07-product-performance | pintail | ok | 17.5 | 17.7 |
-| q08-regional-cohorts | mysql | ok | 15.3 | 107.9 |
-| q08-regional-cohorts | pintail | ok | 9.7 | 12.5 |
-| q09-order-lifecycle | mysql | ok | 11.8 | 26.2 |
-| q09-order-lifecycle | pintail | ok | 10.6 | 14.6 |
-| q10-wide-operational-join | mysql | ok | 9.9 | 142.1 |
-| q10-wide-operational-join | pintail | ok | 11.3 | 15.4 |
-| q11-dormant-customers | mysql | ok | 9.6 | 140.3 |
-| q11-dormant-customers | pintail | ok | 13.9 | 15.9 |
-| q12-per-customer-revenue | mysql | ok | 11.8 | 263.1 |
-| q12-per-customer-revenue | pintail | ok | 6.7 | 8.7 |
+| q01-tenant-revenue | mysql | ok | 9.9 | 27.8 |
+| q01-tenant-revenue | pintail | ok | 8.3 | 8.8 |
+| q02-customer-history | mysql | ok | 8.5 | 93.0 |
+| q02-customer-history | pintail | ok | 9.2 | 10.3 |
+| q03-fulfillment-backlog | mysql | ok | 8.6 | 143.6 |
+| q03-fulfillment-backlog | pintail | ok | 7.1 | 7.8 |
+| q04-inventory-risk | mysql | ok | 9.3 | 148.4 |
+| q04-inventory-risk | pintail | ok | 9.1 | 10.2 |
+| q05-payment-failures | mysql | ok | 14.2 | 38.1 |
+| q05-payment-failures | pintail | ok | 4.0 | 6.3 |
+| q06-refund-rate | mysql | ok | 14.8 | 161.3 |
+| q06-refund-rate | pintail | ok | 13.9 | 17.9 |
+| q07-product-performance | mysql | ok | 23.6 | 400.2 |
+| q07-product-performance | pintail | ok | 19.0 | 21.4 |
+| q08-regional-cohorts | mysql | ok | 12.5 | 155.1 |
+| q08-regional-cohorts | pintail | ok | 10.8 | 18.0 |
+| q09-order-lifecycle | mysql | ok | 11.5 | 383.6 |
+| q09-order-lifecycle | pintail | ok | 10.5 | 11.8 |
+| q10-wide-operational-join | mysql | ok | 13.5 | 138.1 |
+| q10-wide-operational-join | pintail | ok | 12.9 | 18.5 |
+| q11-dormant-customers | mysql | ok | 9.5 | 102.6 |
+| q11-dormant-customers | pintail | ok | 14.5 | 21.4 |
+| q12-per-customer-revenue | mysql | ok | 11.8 | 23.2 |
+| q12-per-customer-revenue | pintail | ok | 7.1 | 7.5 |
 
 ## Phase: mixed-light
 
 ```json
 {
   "mutationStats": {
-    "inserts": 7083,
-    "updates": 2190,
-    "deletes": 55,
-    "transactions": 2735,
-    "cascadeDeletes": 4,
+    "inserts": 7524,
+    "updates": 2319,
+    "deletes": 58,
+    "transactions": 2902,
+    "cascadeDeletes": 5,
     "errors": 0
   },
-  "readerPasses": 295,
-  "sourceToVisibleLagMs": 707,
+  "readerPasses": 331,
+  "sourceToVisibleLagMs": 3942,
   "underLoadLatency": [
     {
       "id": "q01-tenant-revenue",
-      "passes": 295,
-      "medianMs": 19.14299999998184,
-      "p95Ms": 42.42833399999654,
-      "maxMs": 110.87654100000509
+      "passes": 331,
+      "medianMs": 18.56995800000732,
+      "p95Ms": 39.70045800000662,
+      "maxMs": 169.73454199999105
     },
     {
       "id": "q02-customer-history",
-      "passes": 295,
-      "medianMs": 22.94945800001733,
-      "p95Ms": 46.34887499996694,
-      "maxMs": 100.98220899997978
+      "passes": 331,
+      "medianMs": 22.70745800001896,
+      "p95Ms": 38.613707999989856,
+      "maxMs": 97.15341699996497
     },
     {
       "id": "q03-fulfillment-backlog",
-      "passes": 295,
-      "medianMs": 18.472208999999566,
-      "p95Ms": 38.65620800000033,
-      "maxMs": 165.6848750000354
+      "passes": 331,
+      "medianMs": 17.74845899999491,
+      "p95Ms": 36.1070830000026,
+      "maxMs": 79.60195899999235
     },
     {
       "id": "q04-inventory-risk",
-      "passes": 295,
-      "medianMs": 21.394625000015367,
-      "p95Ms": 41.72629100002814,
-      "maxMs": 63.42241699999431
+      "passes": 331,
+      "medianMs": 20.609207999994396,
+      "p95Ms": 38.81637499999488,
+      "maxMs": 70.24037499999395
     },
     {
       "id": "q05-payment-failures",
-      "passes": 295,
-      "medianMs": 12.257209000003058,
-      "p95Ms": 35.0655839999672,
-      "maxMs": 76.22729100001743
+      "passes": 331,
+      "medianMs": 12.254541000002064,
+      "p95Ms": 22.72962500003632,
+      "maxMs": 58.40037500002654
     },
     {
       "id": "q06-refund-rate",
-      "passes": 295,
-      "medianMs": 31.46287499999744,
-      "p95Ms": 60.92041700001573,
-      "maxMs": 111.77941699998337
+      "passes": 331,
+      "medianMs": 30.242082999997365,
+      "p95Ms": 49.5187919999953,
+      "maxMs": 152.36675000000105
     },
     {
       "id": "q07-product-performance",
-      "passes": 295,
-      "medianMs": 32.43466699999408,
-      "p95Ms": 60.34637500002282,
-      "maxMs": 80.58983300000546
+      "passes": 331,
+      "medianMs": 31.881374999997206,
+      "p95Ms": 47.40729099998134,
+      "maxMs": 210.94445799999812
     },
     {
       "id": "q08-regional-cohorts",
-      "passes": 295,
-      "medianMs": 20.54008399997838,
-      "p95Ms": 37.45112500002142,
-      "maxMs": 87.24587499999325
+      "passes": 331,
+      "medianMs": 20.92666699999245,
+      "p95Ms": 35.17687500000466,
+      "maxMs": 70.89091600000393
     },
     {
       "id": "q09-order-lifecycle",
-      "passes": 295,
-      "medianMs": 20.32445899999584,
-      "p95Ms": 37.23354200000176,
-      "maxMs": 161.96495799999684
+      "passes": 331,
+      "medianMs": 19.85687499999767,
+      "p95Ms": 34.56254099996295,
+      "maxMs": 70.41654100001324
     },
     {
       "id": "q10-wide-operational-join",
-      "passes": 295,
-      "medianMs": 26.690333999998984,
-      "p95Ms": 49.58258400001796,
-      "maxMs": 186.78174999999464
+      "passes": 331,
+      "medianMs": 26.65450000000419,
+      "p95Ms": 53.41770799999358,
+      "maxMs": 516.0008329999982
     },
     {
       "id": "q11-dormant-customers",
-      "passes": 295,
-      "medianMs": 26.469499999977415,
-      "p95Ms": 53.94795800000429,
-      "maxMs": 79.94558300002245
+      "passes": 331,
+      "medianMs": 26.59633400000166,
+      "p95Ms": 45.49199999999837,
+      "maxMs": 162.817584000004
     },
     {
       "id": "q12-per-customer-revenue",
-      "passes": 295,
-      "medianMs": 16.728457999997772,
-      "p95Ms": 33.899167000025045,
-      "maxMs": 80.07879100000719
+      "passes": 331,
+      "medianMs": 16.56445900001563,
+      "p95Ms": 29.147916999994777,
+      "maxMs": 132.86600000000908
     }
   ],
   "fingerprintMismatches": [],
@@ -165,13 +165,13 @@ Run: 2026-08-13T08:44:24.487Z → 2026-08-13T09:21:22.893Z. Engines: mysql, pint
     {
       "table": "shipment_items",
       "field": "rows",
-      "mysql": 4475,
+      "mysql": 4472,
       "pintail": 4493
     },
     {
       "table": "shipment_items",
       "field": "amountSum",
-      "mysql": "16597",
+      "mysql": "16586",
       "pintail": "16683"
     }
   ]
@@ -183,99 +183,99 @@ Run: 2026-08-13T08:44:24.487Z → 2026-08-13T09:21:22.893Z. Engines: mysql, pint
 ```json
 {
   "mutationStats": {
-    "inserts": 88602,
-    "updates": 27065,
-    "deletes": 469,
-    "transactions": 34178,
+    "inserts": 90133,
+    "updates": 27534,
+    "deletes": 475,
+    "transactions": 34773,
     "cascadeDeletes": 66,
-    "errors": 133
+    "errors": 140
   },
-  "readerPasses": 638,
-  "sourceToVisibleLagMs": 4422,
+  "readerPasses": 682,
+  "sourceToVisibleLagMs": 4720,
   "underLoadLatency": [
     {
       "id": "q01-tenant-revenue",
-      "passes": 638,
-      "medianMs": 106.47658300003968,
-      "p95Ms": 280.4983339998871,
-      "maxMs": 1427.4374170000665
+      "passes": 682,
+      "medianMs": 114.45616699999664,
+      "p95Ms": 255.19020899990574,
+      "maxMs": 305.1841659999918
     },
     {
       "id": "q02-customer-history",
-      "passes": 638,
-      "medianMs": 120.16766699997243,
-      "p95Ms": 327.0384999997914,
-      "maxMs": 2053.4081670001615
+      "passes": 682,
+      "medianMs": 136.57962500001304,
+      "p95Ms": 289.4764580000192,
+      "maxMs": 410.9923749999143
     },
     {
       "id": "q03-fulfillment-backlog",
-      "passes": 638,
-      "medianMs": 106.95129200001247,
-      "p95Ms": 280.1344579998404,
-      "maxMs": 2619.622291999869
+      "passes": 682,
+      "medianMs": 115.61095800006296,
+      "p95Ms": 259.67283300007693,
+      "maxMs": 938.2835419999901
     },
     {
       "id": "q04-inventory-risk",
-      "passes": 638,
-      "medianMs": 119.69295799999963,
-      "p95Ms": 308.23391700023785,
-      "maxMs": 2971.217292000074
+      "passes": 682,
+      "medianMs": 132.5870420000283,
+      "p95Ms": 294.88950000004843,
+      "maxMs": 514.8042090001982
     },
     {
       "id": "q05-payment-failures",
-      "passes": 638,
-      "medianMs": 87.11920799990185,
-      "p95Ms": 226.00716699985787,
-      "maxMs": 2856.7746250000782
+      "passes": 682,
+      "medianMs": 93.35654199996497,
+      "p95Ms": 214.6977079999633,
+      "maxMs": 757.8643340000417
     },
     {
       "id": "q06-refund-rate",
-      "passes": 638,
-      "medianMs": 160.05945900001097,
-      "p95Ms": 465.3155000000261,
-      "maxMs": 2540.94837499992
+      "passes": 682,
+      "medianMs": 177.52045900002122,
+      "p95Ms": 398.25350000010803,
+      "maxMs": 466.4098750001285
     },
     {
       "id": "q07-product-performance",
-      "passes": 638,
-      "medianMs": 131.57512499997392,
-      "p95Ms": 364.3743750001304,
-      "maxMs": 1930.2907920000143
+      "passes": 682,
+      "medianMs": 145.22412500006612,
+      "p95Ms": 307.3108749999665,
+      "maxMs": 391.96762500004843
     },
     {
       "id": "q08-regional-cohorts",
-      "passes": 638,
-      "medianMs": 123.43612500000745,
-      "p95Ms": 349.558333999943,
-      "maxMs": 1846.6465000000317
+      "passes": 682,
+      "medianMs": 136.75537500006612,
+      "p95Ms": 306.4380419999361,
+      "maxMs": 432.8028749998193
     },
     {
       "id": "q09-order-lifecycle",
-      "passes": 638,
-      "medianMs": 103.70666699996218,
-      "p95Ms": 292.35612499993294,
-      "maxMs": 1402.9125840000343
+      "passes": 682,
+      "medianMs": 114.75729199999478,
+      "p95Ms": 250.98949999990873,
+      "maxMs": 333.1012499999488
     },
     {
       "id": "q10-wide-operational-join",
-      "passes": 638,
-      "medianMs": 126.7409579999512,
-      "p95Ms": 376.6824169999454,
-      "maxMs": 1802.5052079998422
+      "passes": 682,
+      "medianMs": 137.81366700003855,
+      "p95Ms": 301.38066699984483,
+      "maxMs": 566.4247910003178
     },
     {
       "id": "q11-dormant-customers",
-      "passes": 638,
-      "medianMs": 137.85291699995287,
-      "p95Ms": 385.1434579999186,
-      "maxMs": 1761.908415999962
+      "passes": 682,
+      "medianMs": 151.7082909999881,
+      "p95Ms": 336.2888750000857,
+      "maxMs": 636.3828750000102
     },
     {
       "id": "q12-per-customer-revenue",
-      "passes": 638,
-      "medianMs": 102.71037500002421,
-      "p95Ms": 280.8830420002341,
-      "maxMs": 1144.9564580000006
+      "passes": 682,
+      "medianMs": 115.71525000000838,
+      "p95Ms": 257.99762499984354,
+      "maxMs": 424.64200000005076
     }
   ],
   "fingerprintMismatches": [],
@@ -283,14 +283,14 @@ Run: 2026-08-13T08:44:24.487Z → 2026-08-13T09:21:22.893Z. Engines: mysql, pint
     {
       "table": "shipment_items",
       "field": "rows",
-      "mysql": 4311,
-      "pintail": 4336
+      "mysql": 4310,
+      "pintail": 4335
     },
     {
       "table": "shipment_items",
       "field": "amountSum",
-      "mysql": "15967",
-      "pintail": "16061"
+      "mysql": "15966",
+      "pintail": "16060"
     }
   ]
 }
@@ -300,30 +300,30 @@ Run: 2026-08-13T08:44:24.487Z → 2026-08-13T09:21:22.893Z. Engines: mysql, pint
 
 | Query | Engine | Status | Median ms | p95 ms |
 |---|---|---|---:|---:|
-| q01-tenant-revenue | mysql | ok | 47.9 | 126.7 |
-| q01-tenant-revenue | pintail | ok | 280.9 | 301.8 |
-| q02-customer-history | mysql | ok | 22.9 | 37.4 |
-| q02-customer-history | pintail | ok | 311.0 | 384.6 |
-| q03-fulfillment-backlog | mysql | ok | 19.5 | 330.1 |
-| q03-fulfillment-backlog | pintail | ok | 272.1 | 287.4 |
-| q04-inventory-risk | mysql | ok | 10.9 | 274.0 |
-| q04-inventory-risk | pintail | ok | 297.8 | 321.6 |
-| q05-payment-failures | mysql | ok | 13.5 | 26.5 |
-| q05-payment-failures | pintail | ok | 246.6 | 335.0 |
-| q06-refund-rate | mysql | ok | 173.4 | 192.9 |
-| q06-refund-rate | pintail | mismatch | 463.6 | 709.1 |
-| q07-product-performance | mysql | ok | 23.7 | 36.3 |
-| q07-product-performance | pintail | ok | 339.9 | 449.5 |
-| q08-regional-cohorts | mysql | ok | 83.0 | 120.7 |
-| q08-regional-cohorts | pintail | ok | 338.9 | 355.7 |
-| q09-order-lifecycle | mysql | ok | 17.8 | 101.9 |
-| q09-order-lifecycle | pintail | ok | 271.2 | 286.2 |
-| q10-wide-operational-join | mysql | ok | 11.5 | 318.0 |
-| q10-wide-operational-join | pintail | ok | 319.5 | 669.7 |
-| q11-dormant-customers | mysql | ok | 10.2 | 344.6 |
-| q11-dormant-customers | pintail | ok | 345.8 | 349.7 |
-| q12-per-customer-revenue | mysql | ok | 10.3 | 12.7 |
-| q12-per-customer-revenue | pintail | ok | 267.6 | 290.3 |
+| q01-tenant-revenue | mysql | ok | 35.8 | 383.3 |
+| q01-tenant-revenue | pintail | ok | 269.5 | 272.1 |
+| q02-customer-history | mysql | ok | 14.6 | 22.4 |
+| q02-customer-history | pintail | ok | 295.0 | 338.8 |
+| q03-fulfillment-backlog | mysql | ok | 17.7 | 275.4 |
+| q03-fulfillment-backlog | pintail | ok | 268.7 | 313.9 |
+| q04-inventory-risk | mysql | ok | 13.3 | 1367.1 |
+| q04-inventory-risk | pintail | ok | 291.0 | 308.9 |
+| q05-payment-failures | mysql | ok | 13.5 | 289.7 |
+| q05-payment-failures | pintail | ok | 216.5 | 232.9 |
+| q06-refund-rate | mysql | ok | 163.8 | 198.2 |
+| q06-refund-rate | pintail | ok | 398.1 | 479.3 |
+| q07-product-performance | mysql | ok | 25.1 | 35.0 |
+| q07-product-performance | pintail | ok | 322.4 | 351.6 |
+| q08-regional-cohorts | mysql | ok | 69.1 | 1118.2 |
+| q08-regional-cohorts | pintail | ok | 315.3 | 376.3 |
+| q09-order-lifecycle | mysql | ok | 16.2 | 22.1 |
+| q09-order-lifecycle | pintail | ok | 255.5 | 269.3 |
+| q10-wide-operational-join | mysql | ok | 13.7 | 290.3 |
+| q10-wide-operational-join | pintail | ok | 317.5 | 321.9 |
+| q11-dormant-customers | mysql | ok | 14.5 | 289.7 |
+| q11-dormant-customers | pintail | ok | 360.7 | 395.7 |
+| q12-per-customer-revenue | mysql | ok | 12.3 | 277.7 |
+| q12-per-customer-revenue | pintail | ok | 277.3 | 284.3 |
 
 ## Phase: restart
 
@@ -333,14 +333,14 @@ Run: 2026-08-13T08:44:24.487Z → 2026-08-13T09:21:22.893Z. Engines: mysql, pint
     {
       "table": "shipment_items",
       "field": "rows",
-      "mysql": 4311,
-      "pintail": 4336
+      "mysql": 4310,
+      "pintail": 4335
     },
     {
       "table": "shipment_items",
       "field": "amountSum",
-      "mysql": "15967",
-      "pintail": "16061"
+      "mysql": "15966",
+      "pintail": "16060"
     }
   ]
 }

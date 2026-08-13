@@ -110,8 +110,6 @@ export default {
     },
     {
       id: 'q03-fulfillment-backlog',
-      declaredGap:
-        'selects a column functionally dependent on the grouped key; MySQL allows it, pintail has no functional-dependency analysis (docs/limitations.md)',
       class: 'operational-dashboard',
       sqlFile: './queries/q03-fulfillment-backlog.sql',
       weight: 12,
@@ -122,8 +120,6 @@ export default {
     },
     {
       id: 'q04-inventory-risk',
-      declaredGap:
-        'references a SELECT alias from another clause; pintail resolves aliases in fewer positions than MySQL (docs/limitations.md)',
       class: 'operational-dashboard',
       sqlFile: './queries/q04-inventory-risk.sql',
       weight: 8,
@@ -144,8 +140,6 @@ export default {
     },
     {
       id: 'q06-refund-rate',
-      declaredGap:
-        'references a derived-table name pintail does not resolve in that position (docs/limitations.md)',
       class: 'quality-analytics',
       sqlFile: './queries/q06-refund-rate.sql',
       weight: 8,
