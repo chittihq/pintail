@@ -3576,6 +3576,84 @@ mod tests {
         (directory, snapshot, catalog)
     }
 
+    /// The process-wide budget is what a long-running server actually has: it
+    /// is shared, finite, and nothing refills it. A query that returns less
+    /// than it borrowed walks the balance in one direction until every query
+    /// is refused - which is what a 30-minute benchmark phase hit after about
+    /// 1,500 queries, while replication carried on looking healthy.
+    #[test]
+    fn repeated_queries_return_the_memory_they_borrowed() {
+        let (_directory, snapshot, catalog) = window_fixture();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
+                .expect("provider");
+        // Generous, and restored at the end: the budget is process-wide, so a
+        // small ceiling left behind would starve whichever test ran next.
+        let previous_limit = crate::shared_memory_budget().limit();
+        crate::init_shared_memory_budget(4 * 1024 * 1024 * 1024);
+        // A zero limit accounts for nothing, so every measurement below would
+        // read zero and this would pass having proved nothing.
+        assert!(
+            crate::shared_memory_budget().limit() > 0,
+            "budget is not accounting"
+        );
+        let sql = "SELECT name, COUNT(*) AS n FROM events GROUP BY name ORDER BY name";
+
+        execute_rows(sql, &catalog, &provider);
+        let after_first = crate::shared_memory_budget().used();
+        for iteration in 2..=20 {
+            execute_rows(sql, &catalog, &provider);
+            assert_eq!(
+                crate::shared_memory_budget().used(),
+                after_first,
+                "query {iteration} left the shared budget higher than query 1 did \
+                 ({after_first} bytes); the balance only ever grows",
+            );
+        }
+        crate::init_shared_memory_budget(previous_limit);
+    }
+
+    /// The opposite failure to the leak, and the worse one.
+    ///
+    /// A tracker that repaid more than it borrowed would hand the pool memory
+    /// that was never in it, and the budget would drift DOWNWARD until it
+    /// believed it had capacity nobody was using - a limit that stops
+    /// limiting. Clones are the risk: they inherit what the query is holding,
+    /// so a naive release-on-drop would repay one debt twice.
+    #[test]
+    fn a_cloned_tracker_does_not_repay_the_original_debt() {
+        let previous_limit = crate::shared_memory_budget().limit();
+        crate::init_shared_memory_budget(4 * 1024 * 1024 * 1024);
+        assert!(
+            crate::shared_memory_budget().limit() > 0,
+            "budget is not accounting"
+        );
+        let before = crate::shared_memory_budget().used();
+        {
+            let tracker = crate::MemoryTracker::new(8 * 1024 * 1024);
+            tracker.reserve(4096).expect("reserve");
+            assert_eq!(crate::shared_memory_budget().used(), before + 4096);
+            let clone = tracker.clone();
+            assert_eq!(
+                clone.used(),
+                tracker.used(),
+                "the clone inherits the holding"
+            );
+            drop(clone);
+            assert_eq!(
+                crate::shared_memory_budget().used(),
+                before + 4096,
+                "dropping the clone must not repay a debt it never took on",
+            );
+        }
+        assert_eq!(
+            crate::shared_memory_budget().used(),
+            before,
+            "the original repays exactly once, when it goes away",
+        );
+        crate::init_shared_memory_budget(previous_limit);
+    }
+
     #[test]
     fn window_row_number_partitions_and_orders() {
         let (_directory, snapshot, catalog) = window_fixture();

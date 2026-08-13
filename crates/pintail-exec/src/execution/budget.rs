@@ -47,7 +47,7 @@ impl MemoryScope {
 /// A shared byte budget.
 #[derive(Debug)]
 pub struct MemoryBudget {
-    limit: usize,
+    limit: AtomicUsize,
     used: AtomicUsize,
 }
 
@@ -58,15 +58,27 @@ impl MemoryBudget {
     #[must_use]
     pub const fn new(limit: usize) -> Self {
         Self {
-            limit,
+            limit: AtomicUsize::new(limit),
             used: AtomicUsize::new(0),
         }
     }
 
+    /// Sets the ceiling on an existing budget.
+    ///
+    /// The process-wide budget lives behind a `OnceLock`, and anything that
+    /// merely READS it before startup configures it would win that race and
+    /// pin the limit at zero - unbounded - for the life of the process. A
+    /// limit that silently stops limiting is worse than no limit, because
+    /// nothing says it happened. Setting the ceiling in place makes
+    /// configuration win regardless of who looked first.
+    pub fn set_limit(&self, limit: usize) {
+        self.limit.store(limit, Ordering::Relaxed);
+    }
+
     /// The configured ceiling; zero means unbounded.
     #[must_use]
-    pub const fn limit(&self) -> usize {
-        self.limit
+    pub fn limit(&self) -> usize {
+        self.limit.load(Ordering::Relaxed)
     }
 
     /// Bytes currently held across every query.
@@ -82,26 +94,26 @@ impl MemoryBudget {
     /// Returns [`ExecError::MemoryLimitExceeded`] with server scope when the
     /// process budget cannot cover the request.
     pub fn reserve(&self, bytes: usize) -> Result<(), ExecError> {
-        if self.limit == 0 {
+        if self.limit() == 0 {
             return Ok(());
         }
         self.used
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 let requested = used.saturating_add(bytes);
-                (requested <= self.limit).then_some(requested)
+                (requested <= self.limit()).then_some(requested)
             })
             .map(|_| ())
             .map_err(|used| ExecError::MemoryLimitExceeded {
                 used,
                 requested: bytes,
-                limit: self.limit,
+                limit: self.limit(),
                 scope: MemoryScope::Server,
             })
     }
 
     /// Returns `bytes` to the shared budget.
     pub fn release(&self, bytes: usize) {
-        if self.limit == 0 {
+        if self.limit() == 0 {
             return;
         }
         let _ = self
@@ -114,7 +126,7 @@ impl MemoryBudget {
     /// Whether `bytes` would fit without taking them.
     #[must_use]
     pub fn would_fit(&self, bytes: usize) -> bool {
-        self.limit == 0 || self.used().saturating_add(bytes) <= self.limit
+        self.limit() == 0 || self.used().saturating_add(bytes) <= self.limit()
     }
 }
 

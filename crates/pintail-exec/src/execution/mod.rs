@@ -147,7 +147,9 @@ static SHARED_MEMORY_BUDGET: std::sync::OnceLock<MemoryBudget> = std::sync::Once
 /// Installs the process-wide memory budget. Called once at startup; later
 /// calls are ignored so a stray caller cannot loosen a configured budget.
 pub fn init_shared_memory_budget(limit: usize) {
-    let _ = SHARED_MEMORY_BUDGET.set(MemoryBudget::new(limit));
+    // Set in place rather than raced: a reader that arrived first would
+    // otherwise have pinned the limit at zero - unbounded - for the process.
+    shared_memory_budget().set_limit(limit);
 }
 
 /// The process-wide budget, unbounded when startup configured none.
@@ -997,6 +999,15 @@ pub struct MemoryTracker {
     /// trackers are accounting-independent clones of a parent that already
     /// charged it, so they must not charge it twice.
     charges_shared: bool,
+    /// Bytes this tracker has taken from the process-wide budget and not yet
+    /// returned.
+    ///
+    /// Separate from `used`, which is the query's own ceiling, because the two
+    /// answer different questions: `used` is how much the query is holding,
+    /// this is how much THIS tracker owes the shared pool. A clone inherits
+    /// the first and not the second - it has borrowed nothing itself - which
+    /// is what stops two trackers from repaying one debt twice.
+    shared_charged: std::sync::atomic::AtomicUsize,
     spill: spill::QuerySpill,
 }
 
@@ -1008,7 +1019,33 @@ impl Clone for MemoryTracker {
             cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(self.used()),
             charges_shared: self.charges_shared,
+            // Zero: the clone has taken nothing from the shared budget, so it
+            // owes nothing and must not repay the original's debt.
+            shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
+        }
+    }
+}
+
+/// Returns whatever the tracker still owes the process-wide budget.
+///
+/// Releases were explicit, so every path that ended early - an error, a `?`,
+/// an operator dropped before it finished - kept its reservation forever. The
+/// budget is process-wide and nothing refills it, so a long-running server
+/// walked one way: a benchmark phase exhausted 12GiB after about 1,500
+/// queries and then refused every query, while replication stayed healthy and
+/// nothing was logged. Correctness here cannot rest on remembering to call
+/// release on every path, so it rests on the type system instead.
+impl Drop for MemoryTracker {
+    fn drop(&mut self) {
+        if !self.charges_shared {
+            return;
+        }
+        let owed = self
+            .shared_charged
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
+        if owed > 0 {
+            shared_memory_budget().release(owed);
         }
     }
 }
@@ -1038,6 +1075,7 @@ impl MemoryTracker {
             cancellation: EXECUTION_CANCELLATION.with(|current| current.borrow().clone()),
             used: std::sync::atomic::AtomicUsize::new(0),
             charges_shared: true,
+            shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: spill::QuerySpill::new(),
         }
     }
@@ -1051,6 +1089,7 @@ impl MemoryTracker {
             cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(0),
             charges_shared: false,
+            shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
         }
     }
@@ -1101,14 +1140,16 @@ impl MemoryTracker {
         );
         match outcome {
             Ok(_) => {
-                if self.charges_shared
-                    && let Err(error) = shared_memory_budget().reserve(bytes)
-                {
-                    // The query ceiling already accepted these bytes. Give
-                    // them back before reporting, or a refused reservation
-                    // permanently shrinks this query's own allowance.
-                    self.release_local(bytes);
-                    return Err(error);
+                if self.charges_shared {
+                    if let Err(error) = shared_memory_budget().reserve(bytes) {
+                        // The query ceiling already accepted these bytes. Give
+                        // them back before reporting, or a refused reservation
+                        // permanently shrinks this query's own allowance.
+                        self.release_local(bytes);
+                        return Err(error);
+                    }
+                    self.shared_charged
+                        .fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
                 }
                 Ok(())
             }
@@ -1133,7 +1174,26 @@ impl MemoryTracker {
     pub fn release(&self, bytes: usize) {
         self.release_local(bytes);
         if self.charges_shared {
-            shared_memory_budget().release(bytes);
+            self.repay_shared(bytes);
+        }
+    }
+
+    /// Returns up to `bytes` of this tracker's shared debt.
+    ///
+    /// Clamped to what it actually owes: callers release what an operator
+    /// held, which is not always what this tracker borrowed, and repaying
+    /// more than was taken would hand the pool memory that was never in it.
+    fn repay_shared(&self, bytes: usize) {
+        let repaid = self
+            .shared_charged
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |owed| Some(owed.saturating_sub(bytes)),
+            )
+            .map_or(0, |owed| owed.min(bytes));
+        if repaid > 0 {
+            shared_memory_budget().release(repaid);
         }
     }
 
