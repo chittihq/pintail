@@ -1269,6 +1269,7 @@ mod tests {
             name: "audit_log".to_owned(),
             engine: Some("InnoDB".to_owned()),
             estimated_rows: Some(1),
+            rows_are_exact: false,
             columns: vec![SourceColumn {
                 id: 1,
                 name: "note".to_owned(),

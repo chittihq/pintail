@@ -93,8 +93,16 @@ pub struct SourceTable {
     pub name: String,
     /// Storage engine reported by `MySQL`.
     pub engine: Option<String>,
-    /// Approximate source row count.
+    /// Source row count: exact when it could be counted inside the probe's
+    /// budget, otherwise the storage engine's estimate.
     pub estimated_rows: Option<u64>,
+    /// Whether `estimated_rows` was counted exactly rather than estimated.
+    ///
+    /// The UI needs this: a number rendered without a "~" that is actually a
+    /// twenty-page `InnoDB` sample invites someone to reconcile it against their
+    /// own `COUNT(*)` and find it wrong.
+    #[serde(default)]
+    pub rows_are_exact: bool,
     /// Included physical columns in ordinal order.
     pub columns: Vec<SourceColumn>,
     /// Selected primary/unique/append key strategy.
@@ -284,12 +292,128 @@ struct RawIndexPart {
     column: String,
     prefix_length: Option<u64>,
 }
+/// How long one table's exact count may run before it is abandoned.
+const COUNT_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long counting may run across the WHOLE probe before the rest of the
+/// tables fall back to statistics.
+///
+/// The per-table budget alone is not a bound on the wait: a hundred large
+/// tables would each spend their thirty seconds and leave someone staring at
+/// a connection screen for the best part of an hour. Once this is spent the
+/// remaining tables report the estimate, which is what they would have
+/// reported anyway before counting existed.
+const COUNT_TOTAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Counts one table exactly, abandoning the attempt at [`COUNT_BUDGET`].
+///
+/// `COUNT(*)` on `InnoDB` is a full index scan - there is no stored row count -
+/// so on a large table it runs for minutes. The bound is applied by the SERVER
+/// first, through `MAX_EXECUTION_TIME` on `MySQL` and `max_statement_time` on
+/// `MariaDB`, because that is the only bound that actually stops the work:
+/// dropping the client connection leaves the scan running to completion for
+/// nobody, holding a read view open the whole time.
+///
+/// The client-side deadline behind it exists for servers that ignore the hint,
+/// which predates `MySQL` 5.7.8, and it does not merely give up: it issues
+/// `KILL QUERY` on a second connection, because giving up without killing is
+/// precisely the failure the server-side bound is there to prevent.
+async fn count_rows_within_budget(
+    pool: &Pool,
+    connection: &mut mysql_async::Conn,
+    connection_id: u64,
+    database: &str,
+    table: &str,
+    flavor: SourceFlavor,
+) -> Option<u64> {
+    let budget_ms = COUNT_BUDGET.as_millis();
+    let target = format!(
+        "`{}`.`{}`",
+        database.replace('`', "``"),
+        table.replace('`', "``")
+    );
+    let sql = match flavor {
+        SourceFlavor::Mysql => {
+            format!("SELECT /*+ MAX_EXECUTION_TIME({budget_ms}) */ COUNT(*) FROM {target}")
+        }
+        SourceFlavor::MariaDb => {
+            let seconds = COUNT_BUDGET.as_secs();
+            format!("SET STATEMENT max_statement_time={seconds} FOR SELECT COUNT(*) FROM {target}")
+        }
+    };
+    // A little past the server's own bound, so the server wins the race in the
+    // ordinary case and this only fires when the hint was ignored.
+    let deadline = COUNT_BUDGET.saturating_add(std::time::Duration::from_secs(5));
+    match tokio::time::timeout(deadline, connection.query_first::<u64, _>(sql)).await {
+        Ok(Ok(Some(rows))) => Some(rows),
+        // The server aborted it at the budget, which is the expected outcome
+        // for a table too large to count.
+        Ok(Err(error)) => {
+            pintail_log::log_info!(
+                "probe count abandoned db={database} table={table}: {error}; using statistics"
+            );
+            None
+        }
+        Ok(Ok(None)) => None,
+        Err(_) => {
+            pintail_log::log_info!(
+                "probe count exceeded {}s db={database} table={table}; killing query {connection_id}",
+                deadline.as_secs()
+            );
+            // A separate connection: the one running the count cannot issue
+            // this, which is the whole reason a client-side timeout without a
+            // kill leaves the server scanning.
+            match pool.get_conn().await {
+                Ok(mut killer) => {
+                    if let Err(error) = killer
+                        .query_drop(format!("KILL QUERY {connection_id}"))
+                        .await
+                    {
+                        pintail_log::log_info!(
+                            "probe could not kill query {connection_id}: {error}"
+                        );
+                    }
+                }
+                Err(error) => {
+                    pintail_log::log_info!("probe could not open a killer connection: {error}");
+                }
+            }
+            None
+        }
+    }
+}
+
+/// Counts one table when the probe still has counting time left, charging what
+/// it spends against the whole-probe budget.
+///
+/// Split out of `probe` so the loop reads as what it is - metadata per table -
+/// rather than burying the budget arithmetic in it.
+#[allow(clippy::too_many_arguments)]
+async fn count_if_budget_remains(
+    pool: &Pool,
+    connection: &mut mysql_async::Conn,
+    connection_id: u64,
+    database: &str,
+    table: &str,
+    flavor: SourceFlavor,
+    spent: &mut std::time::Duration,
+) -> Option<u64> {
+    if *spent >= COUNT_TOTAL_BUDGET {
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let counted =
+        count_rows_within_budget(pool, connection, connection_id, database, table, flavor).await;
+    *spent = spent.saturating_add(started.elapsed());
+    counted
+}
 
 /// Probes one database through a real `mysql_async` connection.
 ///
 /// # Errors
 ///
 /// Returns a protocol error or rejects inconsistent source metadata.
+#[allow(clippy::too_many_lines)] // one linear walk: identity, then table by table
 pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeError> {
     if database.is_empty() {
         return Err(ProbeError::InvalidMetadata(
@@ -322,6 +446,12 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
     let grants: Vec<String> = connection.query("SHOW GRANTS FOR CURRENT_USER()").await?;
     let capabilities = derive_capabilities(&variables, &grants, flavor);
 
+    // Needed to KILL a count that overruns; it identifies the session the
+    // count runs on, and only a different session can kill it.
+    let connection_id: u64 = connection
+        .query_first("SELECT CONNECTION_ID()")
+        .await?
+        .unwrap_or_default();
     let raw_tables: Vec<(String, Option<String>, Option<u64>)> = connection
         .exec(
             "SELECT TABLE_NAME, ENGINE, TABLE_ROWS \
@@ -340,6 +470,7 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
     let started = std::time::Instant::now();
     let total = raw_tables.len();
     pintail_log::log_info!("probe start db={database} tables={total}");
+    let mut counting_spent = std::time::Duration::ZERO;
     let mut tables = Vec::with_capacity(raw_tables.len());
     let mut warnings = Vec::new();
     for (index, (name, engine, estimated_rows)) in raw_tables.into_iter().enumerate() {
@@ -347,7 +478,25 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
         // than hiding inside one aggregate duration.
         let table_started = std::time::Instant::now();
         let probed_name = name.clone();
-        let table = probe_table(&mut connection, database, name, engine, estimated_rows).await?;
+        let counted = count_if_budget_remains(
+            pool,
+            &mut connection,
+            connection_id,
+            database,
+            &name,
+            flavor,
+            &mut counting_spent,
+        )
+        .await;
+        let table = probe_table(
+            &mut connection,
+            database,
+            name,
+            engine,
+            counted.or(estimated_rows),
+            counted.is_some(),
+        )
+        .await?;
         pintail_log::log_debug!(
             "probe table db={database} table={probed_name} {}/{total} {}ms",
             index + 1,
@@ -389,6 +538,7 @@ async fn probe_table(
     table: String,
     engine: Option<String>,
     estimated_rows: Option<u64>,
+    rows_are_exact: bool,
 ) -> Result<SourceTable, ProbeError> {
     type IndexRow = (String, u8, u32, Option<String>, Option<u64>);
     let column_rows: Vec<mysql_async::Row> = connection
@@ -597,6 +747,7 @@ async fn probe_table(
         name: table,
         engine,
         estimated_rows,
+        rows_are_exact,
         columns,
         key,
         unique_keys,
@@ -916,9 +1067,9 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        RawColumn, RawIndexPart, RecommendedMode, SourceColumn, SourceFlavor, SourceKey,
-        SourceTable, choose_key, derive_capabilities, generated_flags, invisible_fk_rule,
-        map_mysql_type, usable_unique_keys,
+        COUNT_BUDGET, COUNT_TOTAL_BUDGET, RawColumn, RawIndexPart, RecommendedMode, SourceColumn,
+        SourceFlavor, SourceKey, SourceTable, choose_key, derive_capabilities, generated_flags,
+        invisible_fk_rule, map_mysql_type, usable_unique_keys,
     };
     use pintail_types::{DataType, KeyMode};
     use std::collections::BTreeMap;
@@ -1061,6 +1212,7 @@ mod tests {
             name: "events".to_owned(),
             engine: Some("InnoDB".to_owned()),
             estimated_rows: None,
+            rows_are_exact: false,
             columns: vec![
                 SourceColumn {
                     id: 1,
@@ -1108,5 +1260,61 @@ mod tests {
         let schema = table.table_schema().expect("table schema");
         assert!(!schema.columns()[0].is_nullable());
         assert!(schema.columns()[1].is_nullable());
+    }
+
+    /// The server has to be the one that stops a runaway count.
+    ///
+    /// A client-side deadline alone abandons the caller but not the work: the
+    /// scan runs to completion on a connection nobody is reading, holding a
+    /// read view open. So the statement carries the bound with it, in the form
+    /// each flavour actually honours.
+    #[test]
+    fn a_count_carries_a_server_side_deadline_for_each_flavor() {
+        let budget_ms = COUNT_BUDGET.as_millis();
+        assert_eq!(budget_ms, 30_000, "the documented budget is 30 seconds");
+
+        let mysql = format!("SELECT /*+ MAX_EXECUTION_TIME({budget_ms}) */ COUNT(*) FROM `db`.`t`");
+        assert!(
+            mysql.contains("MAX_EXECUTION_TIME(30000)"),
+            "MySQL takes the bound as an optimizer hint in milliseconds"
+        );
+
+        let maria = format!(
+            "SET STATEMENT max_statement_time={} FOR SELECT COUNT(*) FROM `db`.`t`",
+            COUNT_BUDGET.as_secs()
+        );
+        assert!(
+            maria.starts_with("SET STATEMENT max_statement_time=30 FOR"),
+            "MariaDB has no such hint and takes seconds through SET STATEMENT"
+        );
+    }
+
+    /// Backticks in an identifier must not end the quoting, or a table named
+    /// with one would change what is counted.
+    #[test]
+    fn count_targets_quote_identifiers_that_contain_backticks() {
+        let database = "d`b";
+        let table = "t`bl";
+        let target = format!(
+            "`{}`.`{}`",
+            database.replace('`', "``"),
+            table.replace('`', "``")
+        );
+        assert_eq!(target, "`d``b`.`t``bl`");
+    }
+
+    /// The per-table budget is not a bound on the wait; the total one is.
+    #[test]
+    fn the_whole_probe_stops_counting_before_it_stops_being_usable() {
+        let worst_case_per_table = COUNT_BUDGET.as_secs();
+        assert!(
+            COUNT_TOTAL_BUDGET.as_secs() / worst_case_per_table <= 12,
+            "a schema wide enough to spend the total budget must not be able to \
+             hold the connection screen for more than a few minutes"
+        );
+        assert!(
+            COUNT_TOTAL_BUDGET > COUNT_BUDGET,
+            "the total budget must allow at least one table to be counted"
+        );
     }
 }

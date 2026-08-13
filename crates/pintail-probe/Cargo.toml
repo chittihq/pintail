@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 pintail-log.workspace = true
 mysql_async.workspace = true
+tokio.workspace = true
 pintail-types.workspace = true
 serde.workspace = true
 thiserror.workspace = true

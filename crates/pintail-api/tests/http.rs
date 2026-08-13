@@ -84,6 +84,7 @@ fn test_source_table() -> SourceTable {
         name: "events".to_owned(),
         engine: Some("InnoDB".to_owned()),
         estimated_rows: Some(2),
+        rows_are_exact: false,
         columns: vec![
             SourceColumn {
                 id: 1,
