@@ -596,9 +596,10 @@ impl<'catalog> Binder<'catalog> {
         // columns, so a real column always keeps its meaning. That ordering
         // matters here: one of these queries aliases a count as `orders`
         // while a table of that name is in scope.
-        let having_expr = select.having.as_ref().map(|expr| {
-            substitute_projection_aliases(expr, &select.projection, &expression_tables)
-        });
+        let having_expr = select
+            .having
+            .as_ref()
+            .map(|expr| substitute_projection_aliases(expr, &select.projection));
         let mut having = having_expr
             .as_ref()
             .map(|expr| {
@@ -2068,16 +2069,11 @@ fn bind_projection(
 /// checked against a live server, and this way round cannot change a query
 /// that already bound. Worth settling differentially before anyone leans on
 /// it.
-fn substitute_projection_aliases(
-    expr: &Expr,
-    projection: &[SelectItem],
-    tables: &[BoundTable],
-) -> Expr {
+fn substitute_projection_aliases(expr: &Expr, projection: &[SelectItem]) -> Expr {
     let mut rewritten = expr.clone();
     let flow: std::ops::ControlFlow<()> =
         sqlparser::ast::visit_expressions_mut(&mut rewritten, |node| {
             if let Expr::Identifier(identifier) = node
-                && bind_column(std::slice::from_ref(identifier), tables).is_err()
                 && let Some(aliased) = projection.iter().find_map(|item| match item {
                     SelectItem::ExprWithAlias { expr, alias }
                         if alias.value.eq_ignore_ascii_case(&identifier.value) =>
@@ -4581,6 +4577,28 @@ mod tests {
     /// Both halves are supported and they still cannot meet: `general_ci` and
     /// `0900_ai_ci` disagree about trailing spaces and about every character
     /// above the BMP, so the comparison has no single right answer.
+    /// A column determined by the grouped key is still refused.
+    ///
+    /// `MySQL` under `ONLY_FULL_GROUP_BY` accepts this: grouping by a primary
+    /// key determines every other column of the row, so selecting one is
+    /// unambiguous. That analysis does not exist here.
+    ///
+    /// Pinned as a test rather than left in prose because the limitation was
+    /// first written down on the strength of an error message whose real
+    /// cause turned out to be something else entirely - an unsupported
+    /// `GROUP BY` ordinal. This one is checked.
+    #[test]
+    fn a_column_determined_by_the_grouped_key_is_still_refused() {
+        assert!(
+            matches!(
+                bind("SELECT id, Name FROM Events GROUP BY id"),
+                Err(BindError::UngroupedColumn(_)),
+            ),
+            "functional-dependency analysis is not implemented; if this now \
+             passes, the limitation in docs/limitations.md is stale",
+        );
+    }
+
     /// `GROUP BY 2` names the second SELECT item.
     ///
     /// A query grouping by a CASE expression has no other way to say it
@@ -4594,6 +4612,33 @@ mod tests {
         )
         .expect("positional grouping binds");
         assert_eq!(bound.group_by.len(), 2, "both keys are grouped");
+    }
+
+    /// The alias outranks a column of the same name, because `MySQL` says so.
+    ///
+    /// Measured, not reasoned: on `MySQL` 8.4, `SELECT id, COUNT(*) AS tag
+    /// FROM t GROUP BY id HAVING tag > 5` against a table whose `tag` column
+    /// holds 10, 20 and 30 returns no rows - it compares the count, not the
+    /// column. Preferring the column looks like the safe choice and would
+    /// have answered three rows where `MySQL` answers none.
+    ///
+    /// Asserted on the bound plan rather than on success or failure: an
+    /// integer is a valid predicate in `MySQL`, so both readings bind, and
+    /// only the shape says which one was taken.
+    #[test]
+    fn a_having_alias_outranks_a_column_of_the_same_name() {
+        let bound =
+            bind("SELECT COUNT(*) AS active, Name FROM Events GROUP BY Name HAVING active > 0")
+                .expect("binds either way");
+        let having = bound.having.as_ref().expect("HAVING is present");
+        let BoundExprKind::Binary { left, .. } = &having.kind else {
+            panic!("HAVING is a comparison");
+        };
+        assert!(
+            matches!(left.kind, BoundExprKind::Aggregate(_)),
+            "HAVING resolved to {:?} - the Boolean column - instead of the aliased count",
+            left.kind,
+        );
     }
 
     /// HAVING may name a SELECT alias rather than repeat its expression.
