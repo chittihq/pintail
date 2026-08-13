@@ -468,7 +468,7 @@ window: replica reads served from pinned manifest generations, which the
 existing snapshot isolation already makes safe, before any attempt at
 multi-writer clustering.
 
-### The join and aggregate path is row-shaped, and that is the analytical gap
+### The JOIN is the analytical gap, not the scan or the aggregate
 
 With the result memo disabled so both engines compute, ClickHouse answers the
 benchmark's join-and-group-by roughly 8.7x faster. Profiling and four
@@ -506,7 +506,24 @@ redundant per-row clone (175ms against 178ms) and memoising the collation key
 (170-179ms against 175-178ms, reverted). Neither changes the representation,
 which is consistent with the representation being the cost.
 
-So the direction is to keep the columnar form through the join and aggregate
+A later experiment narrowed this considerably, and the earlier framing above -
+that the executor is broadly row-shaped - was too broad. Run on the same 2M
+rows with the same aggregates, `q3` groups and aggregates WITHOUT a join in
+24ms; `q8` adds the join and takes 172ms. The scan and aggregate machinery is
+already competitive - ClickHouse answers the joined query in about 20ms - and
+the join adds 148ms, 86% of the query. Nothing needs rewriting except the
+join.
+
+Within that, the build side is the surprise. It holds 100,000 users against
+2,000,000 probe rows, yet `resolve_join_group_plan` and
+`build_hash_join_state` together take roughly 40% of the query: about 690ns
+per build row, against 50ns per probe row. Profiling inside the build shows
+over half of it in `Clone::clone` and `memmove` - materialising each row as a
+`Vec<Value>` and copying every cell, including an owned `String` per row for a
+`region` column holding eight distinct values. Memory accounting, which looked
+like a plausible culprit, is under 1%.
+
+So the direction is to keep the columnar form through the join
 rather than materialising rows: typed key columns, packed fixed-width join
 keys instead of hashing a heap structure, and dictionary encoding for the text
 that grouping repeats. That is a substantial piece of work on the executor's
