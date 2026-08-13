@@ -587,8 +587,19 @@ impl<'catalog> Binder<'catalog> {
             &expression_tables,
             Some(&resolve_subquery),
         )?;
-        let mut having = select
-            .having
+        // HAVING may name a SELECT alias - `HAVING days_of_cover < 7` where
+        // the select list computes it. MySQL allows this and applications use
+        // it constantly, because repeating the whole expression in HAVING is
+        // both verbose and a place for the two copies to drift apart.
+        //
+        // Substituted before binding, and only for identifiers that are NOT
+        // columns, so a real column always keeps its meaning. That ordering
+        // matters here: one of these queries aliases a count as `orders`
+        // while a table of that name is in scope.
+        let having_expr = select.having.as_ref().map(|expr| {
+            substitute_projection_aliases(expr, &select.projection, &expression_tables)
+        });
+        let mut having = having_expr
             .as_ref()
             .map(|expr| {
                 bind_aggregate_expr(
@@ -2045,6 +2056,45 @@ fn bind_projection(
     Ok(projection)
 }
 
+/// Rewrites SELECT aliases appearing in an expression into the expressions
+/// they name.
+///
+/// Only identifiers that do not resolve as a column are replaced, so a column
+/// and an alias sharing a name keeps the column's meaning and nothing that
+/// bound before binds differently now.
+///
+/// That precedence is the conservative choice rather than a verified one:
+/// `MySQL`'s own order when a column and an alias collide in HAVING has not been
+/// checked against a live server, and this way round cannot change a query
+/// that already bound. Worth settling differentially before anyone leans on
+/// it.
+fn substitute_projection_aliases(
+    expr: &Expr,
+    projection: &[SelectItem],
+    tables: &[BoundTable],
+) -> Expr {
+    let mut rewritten = expr.clone();
+    let flow: std::ops::ControlFlow<()> =
+        sqlparser::ast::visit_expressions_mut(&mut rewritten, |node| {
+            if let Expr::Identifier(identifier) = node
+                && bind_column(std::slice::from_ref(identifier), tables).is_err()
+                && let Some(aliased) = projection.iter().find_map(|item| match item {
+                    SelectItem::ExprWithAlias { expr, alias }
+                        if alias.value.eq_ignore_ascii_case(&identifier.value) =>
+                    {
+                        Some(expr)
+                    }
+                    _ => None,
+                })
+            {
+                *node = aliased.clone();
+            }
+            std::ops::ControlFlow::Continue(())
+        });
+    debug_assert!(flow.is_continue());
+    rewritten
+}
+
 fn bind_group_by(
     group_by: &GroupByExpr,
     projection: &[SelectItem],
@@ -2060,6 +2110,29 @@ fn bind_group_by(
     let groups = expressions
         .iter()
         .map(|expr| {
+            // `GROUP BY 2` is the second SELECT item, not the number two.
+            // MySQL reads a bare unsigned integer here positionally, the same
+            // way ORDER BY does, and a query that groups by a CASE expression
+            // has no other way to name it.
+            if let Expr::Value(value) = expr
+                && let SqlValue::Number(digits, _) = &value.value
+                && !digits.contains(['.', 'e', 'E'])
+            {
+                let ordinal = digits
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|ordinal| ordinal.checked_sub(1))
+                    .filter(|index| *index < projection.len())
+                    .ok_or_else(|| BindError::UnsupportedQueryClause(expr.to_string()))?;
+                return match &projection[ordinal] {
+                    SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+                        bind_expr(expr, tables, subqueries)
+                    }
+                    // A wildcard has no single expression to group by, and
+                    // MySQL rejects the position too.
+                    item => Err(BindError::UnsupportedQueryClause(item.to_string())),
+                };
+            }
             let Expr::Identifier(identifier) = expr else {
                 return bind_expr(expr, tables, subqueries);
             };
@@ -4508,6 +4581,37 @@ mod tests {
     /// Both halves are supported and they still cannot meet: `general_ci` and
     /// `0900_ai_ci` disagree about trailing spaces and about every character
     /// above the BMP, so the comparison has no single right answer.
+    /// `GROUP BY 2` names the second SELECT item.
+    ///
+    /// A query grouping by a CASE expression has no other way to say it
+    /// without repeating the whole expression, and `MySQL` reads a bare
+    /// unsigned integer here positionally.
+    #[test]
+    fn group_by_resolves_a_positional_ordinal() {
+        let bound = bind(
+            "SELECT Name, CASE WHEN active THEN 'on' ELSE 'off' END AS side, COUNT(*) \
+             FROM Events GROUP BY Name, 2",
+        )
+        .expect("positional grouping binds");
+        assert_eq!(bound.group_by.len(), 2, "both keys are grouped");
+    }
+
+    /// HAVING may name a SELECT alias rather than repeat its expression.
+    #[test]
+    fn having_resolves_a_select_alias() {
+        bind("SELECT Name, COUNT(*) AS n FROM Events GROUP BY Name HAVING n > 2")
+            .expect("alias in HAVING binds");
+    }
+
+    /// An alias that shares its name with a table in scope still resolves:
+    /// the collision is with a relation, not a column, and one of the
+    /// production queries aliases a count as `orders` while querying orders.
+    #[test]
+    fn a_having_alias_may_share_a_name_with_a_table() {
+        bind("SELECT Name, COUNT(*) AS users FROM Events GROUP BY Name HAVING users >= 1")
+            .expect("alias shadowing a table name binds");
+    }
+
     #[test]
     fn a_single_comparison_cannot_span_two_collations() {
         let error = bind("SELECT l.label FROM legacy l JOIN Events e ON l.label = e.Name")
