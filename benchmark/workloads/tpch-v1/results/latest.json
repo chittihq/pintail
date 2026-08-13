@@ -2,8 +2,8 @@
   "workload": "tpch-v1",
   "profile": "ci",
   "scale": 0.01,
-  "startedAt": "2026-08-13T16:51:06.583Z",
-  "finishedAt": "2026-08-13T16:51:58.539Z",
+  "startedAt": "2026-08-13T17:59:14.586Z",
+  "finishedAt": "2026-08-13T18:00:24.360Z",
   "counts": {
     "region": 5,
     "nation": 25,
@@ -19,34 +19,37 @@
       "id": "q01-pricing-summary",
       "class": "scan-aggregate",
       "status": "ok",
-      "mysqlMs": 96,
-      "pintailMs": 143,
+      "mysqlMs": 218,
+      "pintailMs": 372,
       "rows": 6
     },
     {
       "id": "q03-shipping-priority",
       "class": "join-topn",
-      "status": "error",
-      "mysqlMs": 16,
-      "detail": "Error: /api/query -> 400: {\"error\":\"cross join estimate 1352272500000 exceeds safety limit 1000000\"}"
+      "status": "ok",
+      "mysqlMs": 40,
+      "pintailMs": 99,
+      "rows": 10
     },
     {
       "id": "q05-local-supplier-volume",
       "class": "join-wide",
-      "status": "error",
-      "mysqlMs": 15,
-      "detail": "Error: /api/query -> 400: {\"error\":\"cross join estimate 16903406250000000 exceeds safety limit 1000000\"}"
+      "status": "ok",
+      "mysqlMs": 58,
+      "pintailMs": 114,
+      "rows": 5
     },
     {
       "id": "q10-returned-item-reporting",
       "class": "join-high-cardinality",
-      "status": "error",
-      "mysqlMs": 13,
-      "detail": "Error: /api/query -> 400: {\"error\":\"cross join estimate 33806812500000 exceeds safety limit 1000000\"}"
+      "status": "ok",
+      "mysqlMs": 44,
+      "pintailMs": 47,
+      "rows": 20
     }
   ],
   "gate": {
     "exactResults": true,
-    "passed": false
+    "passed": true
   }
 }

@@ -865,6 +865,104 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
     }
 }
 
+/// Turns a filtered Cartesian product into joins.
+///
+/// `FROM a, b WHERE a.id = b.a_id` is the SQL-89 join, and it is what TPC-H
+/// and a great deal of generated and legacy SQL are written in. Bound
+/// literally it is a cross join under a filter, which for six tables is an
+/// estimate in the quadrillions and is refused by the cross-join guard before
+/// it can run - so the query fails rather than executing slowly.
+///
+/// The conversion is the standard one: a conjunct that references tables from
+/// exactly two sides, one of them already in the tree, becomes that join's
+/// condition. Conjuncts that reference one table stay behind for predicate
+/// pushdown, and anything left over stays in the filter, so the rule only ever
+/// moves predicates it can attribute and never drops one.
+///
+/// Inputs that nothing links to remain a Cartesian product with the rest,
+/// which is the honest outcome: the query really did ask for one.
+fn infer_joins_from_filter(input: LogicalPlan, predicate: BoundExpr) -> LogicalPlan {
+    {
+        {
+            let LogicalPlan::CrossJoin { inputs } = input else {
+                return LogicalPlan::Filter {
+                    input: Box::new(input),
+                    predicate,
+                };
+            };
+            let mut remaining = inputs;
+            let mut conjuncts = split_conjunction(predicate);
+            // Sorted by estimated rows already, so the smallest relation seeds
+            // the tree and the build sides stay small as it grows.
+            let mut tree = remaining.remove(0);
+
+            while !remaining.is_empty() {
+                // The next input is the first that some conjunct links to what
+                // is already joined; ties go to whichever comes first, which is
+                // the cheapest by the ordering above.
+                let linked = remaining.iter().position(|candidate| {
+                    conjuncts
+                        .iter()
+                        .any(|c| links_two_sides(c, &tree, candidate))
+                });
+                let Some(index) = linked else {
+                    break;
+                };
+                let candidate = remaining.remove(index);
+                let mut condition: Option<BoundExpr> = None;
+                let mut kept = Vec::with_capacity(conjuncts.len());
+                for conjunct in conjuncts {
+                    if links_two_sides(&conjunct, &tree, &candidate) {
+                        condition = Some(match condition {
+                            None => conjunct,
+                            Some(existing) => and_expr(existing, conjunct),
+                        });
+                    } else {
+                        kept.push(conjunct);
+                    }
+                }
+                conjuncts = kept;
+                tree = LogicalPlan::Join {
+                    left: Box::new(tree),
+                    right: Box::new(candidate),
+                    kind: pintail_sql::BoundJoinKind::Inner,
+                    condition,
+                };
+            }
+
+            // Anything nothing linked to stays a Cartesian product, as asked.
+            if !remaining.is_empty() {
+                let mut inputs = vec![tree];
+                inputs.extend(remaining);
+                tree = LogicalPlan::CrossJoin { inputs };
+            }
+            match conjuncts.into_iter().reduce(and_expr) {
+                None => tree,
+                Some(predicate) => LogicalPlan::Filter {
+                    input: Box::new(tree),
+                    predicate,
+                },
+            }
+        }
+    }
+}
+
+/// Whether a conjunct references both sides and nothing else, which is what
+/// makes it a join condition rather than a filter.
+fn links_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan) -> bool {
+    let referenced = referenced_tables(conjunct);
+    if referenced.len() < 2 {
+        return false;
+    }
+    let touches_left = referenced.iter().any(|table| contains_table(left, *table));
+    let touches_right = referenced.iter().any(|table| contains_table(right, *table));
+    touches_left
+        && touches_right
+        && referenced
+            .iter()
+            .all(|table| contains_table(left, *table) || contains_table(right, *table))
+}
+
 fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::CrossJoin { inputs } => {
@@ -917,10 +1015,9 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             kind,
             condition,
         },
-        LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
-            input: Box::new(reorder_cross_joins(*input)),
-            predicate,
-        },
+        LogicalPlan::Filter { input, predicate } => {
+            infer_joins_from_filter(reorder_cross_joins(*input), predicate)
+        }
         LogicalPlan::Window {
             input,
             windows,
@@ -1392,15 +1489,57 @@ mod tests {
         assert_eq!(second.projected_column_ids, [2]);
     }
 
+    /// A predicate spanning two tables becomes the join's condition.
+    ///
+    /// This used to assert the opposite - that the plan stayed a filter over a
+    /// Cartesian product - because a two-table predicate cannot be pushed into
+    /// either scan and there was nowhere else for it to go. That safety
+    /// property is still checked below; what changed is that there is now
+    /// somewhere for it to go, which is the difference between answering
+    /// `FROM a, b WHERE a.id = b.id` and refusing it at the cross-join guard.
     #[test]
-    fn retains_multi_table_predicates_above_cross_join() {
+    fn a_predicate_spanning_two_tables_becomes_a_join_condition() {
         let input = project_input(optimized(
             "SELECT events.name FROM events, users WHERE events.id = users.id",
         ));
-        let LogicalPlan::Filter { input, .. } = input else {
-            panic!("residual filter");
+        let LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } = input
+        else {
+            panic!("expected the cross join and its filter to become a join");
         };
-        assert!(matches!(*input, LogicalPlan::CrossJoin { .. }));
+        assert_eq!(kind, pintail_sql::BoundJoinKind::Inner);
+        assert!(condition.is_some(), "the predicate is the join condition");
+        // The original property: neither scan absorbed a predicate it cannot
+        // evaluate alone.
+        for side in [*left, *right] {
+            if let LogicalPlan::Scan(scan) = side {
+                assert!(
+                    scan.predicates.is_empty(),
+                    "a two-table predicate must never be pushed into one scan"
+                );
+            }
+        }
+    }
+
+    /// Nothing links these tables, so the Cartesian product is what was asked
+    /// for and the plan must still say so.
+    #[test]
+    fn an_unlinked_cross_join_stays_a_cross_join() {
+        let plan = project_input(optimized(
+            "SELECT events.name FROM events, users WHERE events.id > 5",
+        ));
+        let inner = match plan {
+            LogicalPlan::Filter { input, .. } => *input,
+            other => other,
+        };
+        assert!(
+            matches!(inner, LogicalPlan::CrossJoin { .. }),
+            "no conjunct links the two relations, so they stay a product"
+        );
     }
 
     #[test]
