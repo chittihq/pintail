@@ -79,6 +79,39 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
     }
 }
 
+/// FNV-1a over bytes, for the two byte-keyed maps plan resolution builds.
+///
+/// Both hold data this query just produced and neither outlives it, so
+/// `SipHash`'s resistance to attacker-chosen keys buys nothing - while its
+/// cost lands once per build row, on the group key and again on the collation
+/// cache lookup. Together they were 3.7% of the profile in `SipHash` alone,
+/// before the `memcmp` each collision costs.
+#[derive(Default)]
+struct ByteKeyHasher(u64);
+
+impl std::hash::Hasher for ByteKeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        // Zero is the offset basis rather than a state, so a fresh hasher and
+        // one that has consumed nothing agree.
+        let mut hash = if self.0 == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.0
+        };
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.0 = hash;
+    }
+}
+
+type ByteKeyMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<ByteKeyHasher>>;
+
 /// Collation keys already computed for this plan, by their text.
 ///
 /// A group column is usually low-cardinality - eight regions, a dozen order
@@ -93,7 +126,7 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
 /// each key as it did before.
 #[derive(Default)]
 struct CollationKeyCache {
-    keys: HashMap<String, Vec<u8>>,
+    keys: ByteKeyMap<String, Vec<u8>>,
 }
 
 /// Entries the collation cache will hold before it stops growing.
@@ -177,7 +210,7 @@ pub(super) fn resolve_join_group_plan(
     collation: Collation,
 ) -> Result<JoinGroupPlan, ExecError> {
     let mut values = Vec::new();
-    let mut index = HashMap::<Vec<u8>, usize>::new();
+    let mut index = ByteKeyMap::<Vec<u8>, usize>::default();
     let mut buckets =
         AddressMap::with_capacity_and_hasher(build.len(), std::hash::BuildHasherDefault::default());
     // One scratch buffer for the whole plan. The key used to be a
