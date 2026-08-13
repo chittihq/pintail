@@ -32,31 +32,107 @@ pub(super) struct JoinGroupPlan {
     pub(super) buckets: HashMap<usize, Vec<usize>>,
 }
 
+/// Appends a value's collation sort key, without the hex detour.
+///
+/// `normalized_collation_text` renders the key as hexadecimal so it can live
+/// in a `Value::Utf8`. Nothing reads it - it is compared and hashed - so the
+/// text form doubles the bytes and allocates a `String` per cell for no
+/// purpose beyond fitting the row-shaped key. Writing the raw bytes into a
+/// caller's buffer avoids both.
+fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
+    match collation {
+        Collation::Utf8mb4GeneralCi => {
+            out.extend_from_slice(&crate::collation::general_ci_sort_key(text));
+        }
+        Collation::Utf8mb40900AiCi => MYSQL_DEFAULT_COLLATOR.with(|collator| {
+            collator
+                .write_sort_key_to(text, out)
+                .expect("Vec-backed collation keys cannot fail");
+        }),
+    }
+}
+
+/// Encodes one group value into `out`, injectively.
+///
+/// Injective is the whole requirement: two group values must produce the same
+/// bytes exactly when they belong in the same group. A tag separates the
+/// variants, and anything variable-length carries its length AFTER its bytes -
+/// nothing decodes this, so a suffix distinguishes `("ab", "c")` from
+/// `("a", "bc")` as well as a prefix would, without a second pass to measure
+/// first.
+fn encode_group_value(value: &Value, collation: Collation, out: &mut Vec<u8>) {
+    match value {
+        Value::Null => out.push(0),
+        Value::Boolean(flag) => {
+            out.push(1);
+            out.push(u8::from(*flag));
+        }
+        Value::Int64(number) => {
+            out.push(2);
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+        Value::UInt64(number) => {
+            out.push(3);
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+        Value::Float64(number) => {
+            out.push(4);
+            out.extend_from_slice(&number.get().to_bits().to_le_bytes());
+        }
+        Value::Utf8(text) => {
+            out.push(5);
+            let start = out.len();
+            append_collation_key(text, collation, out);
+            let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
+            out.extend_from_slice(&length.to_le_bytes());
+        }
+        Value::Binary(bytes) => {
+            out.push(6);
+            out.extend_from_slice(bytes);
+            let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+            out.extend_from_slice(&length.to_le_bytes());
+        }
+        // An ENUM groups by its label, matching how it compares and how the
+        // row-shaped key treated it.
+        Value::Enum { label, .. } => {
+            out.push(7);
+            let start = out.len();
+            append_collation_key(label, collation, out);
+            let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
+            out.extend_from_slice(&length.to_le_bytes());
+        }
+    }
+}
+
 pub(super) fn resolve_join_group_plan(
     build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
     right_group_columns: &[usize],
     collation: Collation,
 ) -> Result<JoinGroupPlan, ExecError> {
     let mut values = Vec::new();
-    let mut index = HashMap::<Vec<Value>, usize>::new();
+    let mut index = HashMap::<Vec<u8>, usize>::new();
     let mut buckets = HashMap::with_capacity(build.len());
+    // One scratch buffer for the whole plan. The key used to be a
+    // `Vec<Value>`: a heap vector per row, each cell a 32-byte tagged enum,
+    // and every text cell an owned hexadecimal `String`. For a build side of
+    // a hundred thousand rows that is a hundred thousand allocations to ask
+    // a question - which group is this? - whose answer is almost always one
+    // we already have. Packed bytes in a reused buffer allocate only when the
+    // group is genuinely new.
+    let mut key = Vec::<u8>::with_capacity(64);
     for bucket in build.values() {
         let mut indexes = Vec::with_capacity(bucket.len());
-        let mut key = Vec::with_capacity(right_group_columns.len());
         for row in bucket {
-            // The key is built by borrowing, and the original values are
-            // cloned only when the group turns out to be new. Every row used
-            // to pay for two vectors - one to hold the values, one to hold
-            // their normalized form - when the overwhelmingly common case is
-            // a group that already exists and needs neither.
             key.clear();
             for column in right_group_columns {
                 let value = row.get(*column).ok_or(ExecError::InvalidPhysicalPlan(
                     "join aggregate group is outside the build-side layout",
                 ))?;
-                key.push(normalized_collation_value(value.clone(), collation));
+                encode_group_value(value, collation, &mut key);
             }
-            let position = if let Some(position) = index.get(&key) {
+            // Borrowed lookup: `Vec<u8>` keys probe by slice, so the hit path
+            // - the common one - neither allocates nor copies.
+            let position = if let Some(position) = index.get(key.as_slice()) {
                 *position
             } else {
                 let group_values = right_group_columns
