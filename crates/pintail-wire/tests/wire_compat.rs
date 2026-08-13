@@ -1,3 +1,9 @@
+// These tests take turns; see `wire_serial`. The guard is deliberately held
+// across the awaits of a whole test, which is the point of it - an async-aware
+// mutex would serialize the same way and read no better here, since nothing
+// else in the process contends for it.
+#![allow(clippy::await_holding_lock)]
+
 use std::collections::{BTreeMap, hash_map::DefaultHasher};
 use std::future::Future;
 use std::hash::{Hash as _, Hasher as _};
@@ -20,8 +26,30 @@ use sha1::{Digest as _, Sha1};
 use sha2::{Digest as _, Sha256};
 use tokio::{net::TcpListener, sync::oneshot};
 
+/// Serializes the tests in this binary.
+///
+/// They share one process, and `a_saturated_server_refuses_queries_instead_of_
+/// queueing_them` pins the process-wide admission bound to a single slot and
+/// then holds that slot - so any sibling running beside it is refused with
+/// "too many concurrent queries" and fails on a contract it never tested.
+/// Run alone every test passes; run together one to three of five fail, and
+/// which ones varies by scheduling.
+///
+/// The bound is a `OnceLock`, so it cannot be put back afterwards. Taking
+/// turns is what is left, and it costs nothing measurable: the whole file
+/// runs in about three seconds either way.
+fn wire_serial() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // The data is `()`, so a panicking test leaves nothing to be corrupted
+    // and the next one may proceed.
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn wire_tls_negotiates_and_required_tls_refuses_plaintext() {
+    let _serial = wire_serial();
     // mysql_async's rustls client hits the same multi-backend ambiguity the
     // server pins away internally; tests pick ring process-wide.
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -100,6 +128,7 @@ async fn wire_tls_negotiates_and_required_tls_refuses_plaintext() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wire_idle_timeout_closes_inactive_authenticated_connections() {
+    let _serial = wire_serial();
     let data = tempfile::tempdir().expect("wire data directory");
     let metadata_path = data.path().join("pintail-meta.db");
     seed_replica(data.path(), &metadata_path);
@@ -150,6 +179,7 @@ async fn wire_idle_timeout_closes_inactive_authenticated_connections() {
 
 #[test]
 fn disconnecting_clients_cancel_active_query_execution() {
+    let _serial = wire_serial();
     let data = tempfile::tempdir().expect("wire data directory");
     let metadata_path = data.path().join("pintail-meta.db");
     seed_replica(data.path(), &metadata_path);
@@ -265,6 +295,7 @@ fn append_cancellation_rows(data_dir: &std::path::Path) {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::too_many_lines)]
 async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
+    let _serial = wire_serial();
     let data = tempfile::tempdir().expect("wire data directory");
     let metadata_path = data.path().join("pintail-meta.db");
     seed_replica(data.path(), &metadata_path);
@@ -1368,6 +1399,7 @@ fn probe_report(tables: Vec<SourceTable>) -> ProbeReport {
 /// pins the opposite contract — past the bound the client is told, quickly.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_saturated_server_refuses_queries_instead_of_queueing_them() {
+    let _serial = wire_serial();
     // A one-slot bound makes saturation deterministic: the first query holds
     // the only permit while the second asks for one.
     pintail_wire::init_shared_admission(1);
