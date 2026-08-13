@@ -17,8 +17,8 @@ use crate::collation::Collation;
 use rayon::prelude::*;
 
 use super::join::{
-    JoinGroupPlan, JoinHashKey, MAX_DENSE_SPAN, build_hash_join_state, normalized_collation_value,
-    normalized_hash_key, normalized_join_key, resolve_join_group_plan,
+    JoinGroupPlan, JoinHashKey, MAX_DENSE_SPAN, PartitionedBuild, build_hash_join_state,
+    normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::two_pass::{
     TwoPassKeySource, TwoPassLane, build_streaming_two_pass_aggregate, two_pass_lanes,
@@ -2999,7 +2999,7 @@ fn build_fused_inner_join_aggregate(
             if integers && max - min < MAX_DENSE_SPAN {
                 let span = usize::try_from(max - min).expect("bounded span") + 1;
                 let mut table: Vec<Option<&Vec<Vec<Value>>>> = vec![None; span];
-                for (key, bucket) in &join.build {
+                for (key, bucket) in join.build.iter() {
                     let value = match key {
                         JoinHashKey::NegativeInteger(value) => i128::from(*value),
                         JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
@@ -3130,7 +3130,7 @@ fn build_local_fused_join_groups(
     collation: Collation,
     left_width: usize,
     aggregates: &[CompiledAggregate],
-    build: &HashMap<JoinHashKey, Vec<Vec<Value>>>,
+    build: &PartitionedBuild,
     dense: Option<&DenseJoinTable<'_>>,
     plan: &JoinGroupPlan,
     parent_memory: &MemoryTracker,
