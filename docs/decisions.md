@@ -586,3 +586,46 @@ indexes beside its rows rather than in a separate map keyed by where it
 happens to live - a mechanical change to the bucket type, and explicitly NOT
 a change to the row representation, which is the thing that failed when it was
 tried.
+
+Resolving the group during the build was implemented and is 5% SLOWER. The
+previous entry argued for it: the group column arrives dictionary-coded, plan
+resolution re-derives group identity from text per row, and moving the work
+into the build would keep the codes in reach. It also removed the per-probe-row
+lookup that found a bucket's group indexes by its address. Measured on an idle
+sixteen-core host with four interleaved rounds, it read 169-173ms against
+160-167ms - no overlap between the arms. The likely mechanism is that the
+second pass it replaced was a tight loop over already-materialised rows with
+exact-sized allocations, while resolving inline adds a branch and a growing
+per-bucket vector to a hot loop that runs once per build row. Reverted.
+
+That is the second measured failure at the same target, and the two together
+say something the profile could not: the per-row costs in the join are not
+where the time is. So the question was put differently - not "what is slow"
+but "how much of this runs on one core" - and the answer changes the program.
+
+Speedup from one thread to sixteen, on an idle sixteen-core host, 2M rows,
+minimum of a twelve-second window, forward and reversed:
+
+  q3 (no join) 75ms -> 44 -> 29 -> 26 -> 24 -> 25   peak 3.12x at 12 threads
+  q8 (join)   323ms -> 228 -> 180 -> 169 -> 165 -> 168  peak 1.96x at 12 threads
+
+Fitting Amdahl: q3 is about 26% serial, ceiling 3.9x. q8 is about 47% serial,
+ceiling 2.1x. THE JOIN IS HALF SERIAL - no number of cores takes it past
+twice one core's speed.
+
+Extrapolating the one-thread cost to the benchmark's 20M rows says the rest.
+q3 at perfect sixteen-core scaling would answer in 47ms against ClickHouse's
+69ms - ahead. q8 would be 202ms against 169ms - near parity. Our per-row cost
+is already competitive; what we do not do is use the machine. The measured
+4.5x execution gap and the 8.4x novel-query gap are, to a first approximation,
+the difference between 3x scaling and 12x scaling.
+
+This supersedes the framing of the earlier entries. "The join is the
+analytical gap, not the scan or the aggregate" was drawn from a 2M-row local
+profile; the benchmark's join-free `Q3` is 4.1x behind, so the gap is not
+join-specific. And per-row tuning - cheaper hashing, memoised collation keys,
+packed keys - helped precisely because those costs sat on the SERIAL path,
+not because per-row work is expensive in general. The next work is to find
+what runs serially and make it run in parallel: batch pulling and decode ahead
+of the parallel aggregation are the first suspects, since the scan hands
+batches out one at a time.
