@@ -1243,6 +1243,64 @@ pub struct Execution {
     root: PullOperator,
     memory: MemoryTracker,
     output_fields: Vec<OutputField>,
+    /// Held for the execution's life so a test measuring the process-wide
+    /// budget can be sure no sibling test is charging it. Absent outside
+    /// tests: nothing in production needs queries serialized.
+    #[cfg(test)]
+    _budget_serial: budget_serial::Serial,
+}
+
+/// Serializes tests that CHARGE the process-wide memory budget against the
+/// tests that MEASURE it.
+///
+/// The budget is a process-wide singleton, so a test asserting that a query
+/// returned exactly what it borrowed is reading a counter every other test in
+/// the binary is moving. Run alone those tests pass; run in the suite - which
+/// is how the gate runs them - they fail on another test's reservation and
+/// say nothing about leaks. Every query goes through `Execution::start`, so
+/// one door is enough to close.
+#[cfg(test)]
+pub(crate) mod budget_serial {
+    use std::{
+        cell::Cell,
+        sync::{Mutex, MutexGuard, PoisonError},
+    };
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    thread_local! {
+        /// Whether this thread already holds the lock. A measuring test runs
+        /// queries of its own, and those come back through the same door -
+        /// which a plain mutex would deadlock on.
+        static HELD: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Exclusive right to charge the shared budget, for as long as it lives.
+    pub(crate) struct Serial {
+        guard: Option<MutexGuard<'static, ()>>,
+    }
+
+    impl Serial {
+        /// Takes the lock, or takes nothing if this thread already holds it.
+        pub(crate) fn acquire() -> Self {
+            if HELD.with(Cell::get) {
+                return Self { guard: None };
+            }
+            // A panicking test poisons the lock; the data is `()`, so there
+            // is nothing to be corrupted and the next test may proceed.
+            let guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+            HELD.with(|held| held.set(true));
+            Self { guard: Some(guard) }
+        }
+    }
+
+    impl Drop for Serial {
+        fn drop(&mut self) {
+            if self.guard.is_some() {
+                HELD.with(|held| held.set(false));
+            }
+        }
+    }
 }
 
 fn aggregate_regex_memory_upper_bound(aggregate: &BoundAggregate) -> usize {
@@ -1391,6 +1449,11 @@ impl Execution {
         deadline: Option<Instant>,
         collation: Collation,
     ) -> Result<Self, ExecError> {
+        // Taken before anything reserves: subquery resolution charges the
+        // budget too, and a lock taken after it would leave that charge
+        // outside the window a measuring test believes it owns.
+        #[cfg(test)]
+        let serial = budget_serial::Serial::acquire();
         let mut subquery_bytes = 0;
         resolve_plan_subqueries(
             &mut plan,
@@ -1409,6 +1472,8 @@ impl Execution {
             root,
             memory,
             output_fields,
+            #[cfg(test)]
+            _budget_serial: serial,
         })
     }
 

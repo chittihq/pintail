@@ -3583,6 +3583,10 @@ mod tests {
     /// 1,500 queries, while replication carried on looking healthy.
     #[test]
     fn repeated_queries_return_the_memory_they_borrowed() {
+        // Held across the whole loop, not just each query: the reading that
+        // matters is taken BETWEEN queries, and a sibling test reserving in
+        // that gap is what made this fail in the suite while passing alone.
+        let _serial = crate::execution::budget_serial::Serial::acquire();
         let (_directory, snapshot, catalog) = window_fixture();
         let provider =
             SnapshotScanProvider::new([(DatabaseId::new(15), TableId::new(17), &snapshot)])
@@ -3622,6 +3626,9 @@ mod tests {
     /// so a naive release-on-drop would repay one debt twice.
     #[test]
     fn a_cloned_tracker_does_not_repay_the_original_debt() {
+        // This one never runs a query, so nothing takes the lock on its
+        // behalf - and it reads the same process-wide counter.
+        let _serial = crate::execution::budget_serial::Serial::acquire();
         let previous_limit = crate::shared_memory_budget().limit();
         crate::init_shared_memory_budget(4 * 1024 * 1024 * 1024);
         assert!(
