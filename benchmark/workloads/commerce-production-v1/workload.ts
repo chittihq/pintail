@@ -186,5 +186,35 @@ export default {
       resultComparison: 'ordered',
       latencySlaMs: { median: 800, p95: 2400 },
     },
+    {
+      // Absence, not presence: the engine cannot early-exit on a match.
+      id: 'q11-dormant-customers',
+      class: 'anti-join',
+      sqlFile: './queries/q11-dormant-customers.sql',
+      weight: 5,
+      requiresWindowFunctions: false,
+      params: {
+        tenantId: { kind: 'zipfTenant' },
+        windowStart: { kind: 'daysAgo', choices: [30, 90] },
+      },
+      resultComparison: 'ordered',
+      latencySlaMs: { median: 1200, p95: 3000 },
+    },
+    {
+      // Hundreds of thousands of groups rather than a handful, so the cost
+      // lands on the hash table rather than on the scan.
+      id: 'q12-per-customer-revenue',
+      class: 'high-cardinality-grouping',
+      sqlFile: './queries/q12-per-customer-revenue.sql',
+      weight: 6,
+      requiresWindowFunctions: false,
+      params: {
+        tenantId: { kind: 'zipfTenant' },
+        windowStart: { kind: 'daysAgo', choices: [30, 90, 365] },
+        windowEnd: { kind: 'daysAgo', choices: [1] },
+      },
+      resultComparison: 'ordered',
+      latencySlaMs: { median: 1500, p95: 4000 },
+    },
   ] satisfies QuerySpec[],
 }
