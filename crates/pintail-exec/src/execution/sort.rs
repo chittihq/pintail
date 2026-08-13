@@ -260,6 +260,7 @@ pub(super) fn build_set_operation(
             ascending: true,
             nulls_first: true,
             decimal: matches!(data_type, DataType::Decimal { .. }),
+            collation: None,
         })
         .collect::<Vec<_>>();
     let left = build_sort(left, &keys, None, None, memory, collation)?;
@@ -290,6 +291,7 @@ pub(super) fn build_distinct(
             ascending: true,
             nulls_first: true,
             decimal: matches!(data_type, DataType::Decimal { .. }),
+            collation: None,
         })
         .collect::<Vec<_>>();
     let sorted = build_sort(input, &keys, None, None, memory, collation)?;
@@ -692,6 +694,14 @@ pub(super) fn compare_sort_values(
     key: BoundOrderKey,
     collation: Collation,
 ) -> Ordering {
+    // The KEY's collation wins where it has one: `ORDER BY general_ci_column,
+    // ai_ci_column` orders each column by its own rules, which is what MySQL
+    // does. The passed collation is the plan's fallback, used for keys that
+    // order no text and for the operator's internal keys.
+    let collation = key
+        .collation
+        .and_then(Collation::from_mysql_name)
+        .unwrap_or(collation);
     match (left, right) {
         (Value::Null, Value::Null) => Ordering::Equal,
         (Value::Null, _) => {

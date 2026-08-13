@@ -404,6 +404,7 @@ fn range_bound_for_target(
                     ascending: *ascending,
                     nulls_first: *nulls_first,
                     decimal: *decimal,
+                    collation: None,
                 },
                 collation,
             ),
@@ -451,6 +452,7 @@ fn compute_window_column(
         ascending,
         nulls_first,
         decimal,
+        collation: None,
     };
     let compare_rows = |left: usize, right: usize| {
         let left_keys = &keys[left];

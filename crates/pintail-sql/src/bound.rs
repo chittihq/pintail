@@ -789,6 +789,13 @@ pub struct BoundOrderKey {
     /// Whether the key is DECIMAL-typed: canonical decimal text must order
     /// numerically, not lexically.
     pub decimal: bool,
+    /// The collation this key orders under, when it orders text.
+    ///
+    /// Per key rather than per query: `ORDER BY general_ci_column,
+    /// ai_ci_column` sorts each by its own rules, and `MySQL` answers it. The
+    /// sort sees keys, not expressions, so the binder - which knows the
+    /// projection each key points at - records it here.
+    pub collation: Option<&'static str>,
 }
 
 /// One comma-separated `FROM` item and its left-deep explicit join chain.
@@ -873,6 +880,29 @@ pub struct BoundQuery {
     /// Defaults to [`DEFAULT_TEXT_COLLATION`] for a query that reads no text,
     /// where it is never consulted.
     pub text_collation: &'static str,
+}
+
+impl BoundExpr {
+    /// The collation this expression's own text operands share.
+    ///
+    /// `None` when it reads no text, or when it reads more than one collation.
+    /// The caller decides what that means: a comparison spanning two
+    /// collations has no defined answer and is refused, while a QUERY spanning
+    /// two is perfectly answerable - each comparison inside it is consistent,
+    /// and they simply do not have to agree with each other.
+    #[must_use]
+    pub fn text_collation(&self) -> Option<&'static str> {
+        let mut collations = Vec::new();
+        self.collect_source_collations(&mut collations);
+        collations.sort_unstable();
+        collations.dedup();
+        match collations.as_slice() {
+            [only] => SUPPORTED_TEXT_COLLATIONS
+                .into_iter()
+                .find(|supported| supported == only),
+            _ => None,
+        }
+    }
 }
 
 impl BoundQuery {

@@ -731,6 +731,41 @@ enum JoinKeyMode {
     MysqlNumber,
 }
 
+/// The collation one key compares under: its own, falling back to the plan's
+/// where the key reads no text (an integer key, or one whose operands span
+/// two collations - which the binder refuses before it reaches here).
+/// The one collation a grouping folds its keys under.
+///
+/// # Errors
+///
+/// Returns [`ExecError::InvalidPhysicalPlan`] when the keys span more than one
+/// collation, which the interner cannot represent: it folds a whole key tuple
+/// into a single entry, so there is nowhere to record that one column of the
+/// tuple compares by different rules than the next.
+fn grouping_collation(keys: &[BoundExpr], fallback: Collation) -> Result<Collation, ExecError> {
+    let mut resolved: Option<Collation> = None;
+    for key in keys {
+        let Some(collation) = key.text_collation().and_then(Collation::from_mysql_name) else {
+            continue;
+        };
+        match resolved {
+            Some(existing) if existing != collation => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "grouping keys use more than one text collation",
+                ));
+            }
+            _ => resolved = Some(collation),
+        }
+    }
+    Ok(resolved.unwrap_or(fallback))
+}
+
+fn key_collation_of(key: &BoundExpr, fallback: Collation) -> Collation {
+    key.text_collation()
+        .and_then(Collation::from_mysql_name)
+        .unwrap_or(fallback)
+}
+
 fn hash_join_key_mode(
     left: Option<DataType>,
     right: Option<DataType>,
@@ -2926,18 +2961,27 @@ fn build_operator(
         } => {
             let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
             let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
-            let key_mode = hash_join_key_mode(left_key.data_type, right_key.data_type, collation)
-                .ok_or(ExecError::InvalidPhysicalPlan(
-                "hash join keys have incompatible scalar types",
-            ))?;
+            // Each join key decides its own collation from the columns it
+            // compares, so a plan may join general_ci here and 0900_ai_ci in
+            // the next operator. Both sides of ONE key must agree - that is
+            // the undecidable case, and the binder has already refused it -
+            // so taking the left side's is safe.
+            let key_collation = key_collation_of(&left_key, collation);
+            let key_mode =
+                hash_join_key_mode(left_key.data_type, right_key.data_type, key_collation).ok_or(
+                    ExecError::InvalidPhysicalPlan("hash join keys have incompatible scalar types"),
+                )?;
             let extra_keys = extra_keys
                 .into_iter()
                 .map(|(extra_left, extra_right)| {
-                    let mode =
-                        hash_join_key_mode(extra_left.data_type, extra_right.data_type, collation)
-                            .ok_or(ExecError::InvalidPhysicalPlan(
-                                "hash join keys have incompatible scalar types",
-                            ))?;
+                    let mode = hash_join_key_mode(
+                        extra_left.data_type,
+                        extra_right.data_type,
+                        key_collation_of(&extra_left, collation),
+                    )
+                    .ok_or(ExecError::InvalidPhysicalPlan(
+                        "hash join keys have incompatible scalar types",
+                    ))?;
                     Ok((
                         CompiledExpr::compile(&extra_left, &left_columns, collation)?,
                         CompiledExpr::compile(&extra_right, &right_columns, collation)?,
@@ -3116,9 +3160,21 @@ fn build_operator(
                     aggregate.nullable,
                 )
             }));
+            // Grouping decides row identity across ALL its keys at once - the
+            // interner folds a whole key tuple into one entry - so unlike a
+            // sort, which compares key by key, this operator needs one
+            // collation. Taken from the group keys themselves, so a grouping
+            // on general_ci columns works inside a query whose other operators
+            // use a different one.
+            //
+            // Keys spanning two collations within a single grouping is the one
+            // case still refused: answering it needs per-key folding the
+            // interner does not have, and guessing which of the two applies
+            // would silently merge groups that MySQL keeps apart.
+            let group_collation = grouping_collation(&group_by, collation)?;
             let group_by = group_by
                 .iter()
-                .map(|expression| CompiledExpr::compile(expression, &columns, collation))
+                .map(|expression| CompiledExpr::compile(expression, &columns, group_collation))
                 .collect::<Result<Vec<_>, _>>()?;
             let aggregates = aggregates
                 .iter()
@@ -3131,7 +3187,7 @@ fn build_operator(
                     aggregates,
                     column_types,
                     state: None,
-                    collation,
+                    collation: group_collation,
                 },
                 output_columns,
             ))

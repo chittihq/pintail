@@ -1127,6 +1127,7 @@ impl AggregateState {
                                     // MySQL sorts NULL keys first ascending.
                                     nulls_first: *ascending,
                                     decimal: *decimal,
+                                    collation: None,
                                 },
                                 self.collation,
                             );

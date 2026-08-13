@@ -270,14 +270,17 @@ worth refusing.
   grouping and on the counts; each returns the spelling its own scan reached
   first, and the scans do not share an order. MySQL does not define which it
   returns either.
-- One text collation per query. `utf8mb4_0900_ai_ci` and `utf8mb4_general_ci`
-  are both executable, but a query that compares text in both is refused even
-  when each comparison is internally consistent - a join on `general_ci`
-  columns grouped by a `0900_ai_ci` one, for instance, which MySQL answers.
-  The two disagree about trailing spaces and about every character above the
-  BMP, and MySQL picks between them by coercibility rules that do not exist
-  here; refusing beats guessing, because the cost of guessing is a wrong
-  answer rather than an error.
+- A single comparison spanning two collations is refused. `WHERE a = b` where
+  the two columns are `utf8mb4_general_ci` and `utf8mb4_0900_ai_ci` has no
+  defined answer here: the collations disagree about trailing spaces and about
+  every character above the BMP, and MySQL chooses between them by coercibility
+  rules that do not exist here. A query using both collations in SEPARATE
+  comparisons is fine - each resolves its own.
+- Grouping keys must share one collation. `GROUP BY general_ci_col,
+  ai_ci_col` is refused, because grouping folds a whole key tuple into one
+  entry and there is nowhere to record that one column of the tuple compares by
+  different rules than the next. Ordering has no such limit: each `ORDER BY`
+  key sorts under its own collation.
 - `ALTER TABLE ... CONVERT TO CHARACTER SET` is treated as metadata-only.
   Stored values are decoded characters rather than source bytes, so a
   conversion that preserves them changes only the collation. A conversion

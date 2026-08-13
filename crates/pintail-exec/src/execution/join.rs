@@ -126,6 +126,7 @@ pub(super) fn build_hash_join_state(
         ascending: true,
         nulls_first: true,
         decimal: false,
+        collation: None,
     };
     while let Some(batch) = right.next_batch(memory)? {
         let used_before_batch = memory.used();

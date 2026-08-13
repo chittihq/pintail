@@ -4018,6 +4018,12 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
             Ok(BoundOrderKey {
                 index,
                 ascending,
+                // From the projection this key points at, so each key sorts by
+                // its own column's rules.
+                collation: bound
+                    .projection
+                    .get(index)
+                    .and_then(|projection| projection.expr.text_collation()),
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
                 decimal: matches!(
                     bound.projection.get(index).and_then(|p| p.expr.data_type),
@@ -4503,12 +4509,49 @@ mod tests {
     /// `0900_ai_ci` disagree about trailing spaces and about every character
     /// above the BMP, so the comparison has no single right answer.
     #[test]
-    fn two_supported_collations_still_cannot_be_compared_together() {
+    fn a_single_comparison_cannot_span_two_collations() {
         let error = bind("SELECT l.label FROM legacy l JOIN Events e ON l.label = e.Name")
-            .expect_err("a cross-collation join must be refused");
-        // Caught by the per-expression gate, which sees both collations meet
-        // inside the join condition before the query-level check runs.
+            .expect_err("a cross-collation comparison must be refused");
         assert!(error.to_string().contains("across collations"), "{error}");
+    }
+
+    /// A QUERY spanning two collations is answerable, and used to be refused.
+    ///
+    /// Each comparison here is internally consistent - the filter compares a
+    /// `general_ci` column to a literal, the ordering sorts a `0900_ai_ci`
+    /// one -
+    /// and they are under no obligation to agree. `MySQL` answers this, and a
+    /// schema part-way through a collation migration is full of it.
+    #[test]
+    fn separate_comparisons_may_use_different_collations() {
+        for sql in [
+            "SELECT e.Name FROM legacy l CROSS JOIN Events e \
+             WHERE l.label = 'a' ORDER BY e.Name",
+            "SELECT e.Name, COUNT(*) FROM legacy l CROSS JOIN Events e \
+             WHERE l.label = 'a' GROUP BY e.Name",
+        ] {
+            bind(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+        }
+    }
+
+    /// Each ORDER BY key records its own collation, so two text columns sort
+    /// by their own rules rather than by whichever the query resolved first.
+    #[test]
+    fn each_order_key_carries_its_own_collation() {
+        // One ORDER BY, two collations: each key keeps its own, which is what
+        // lets the sort order each column by its own rules.
+        let bound = bind(
+            "SELECT l.label, e.Name FROM legacy l CROSS JOIN Events e ORDER BY l.label, e.Name",
+        )
+        .expect("bind");
+        assert_eq!(
+            bound
+                .order_by
+                .iter()
+                .map(|key| key.collation)
+                .collect::<Vec<_>>(),
+            vec![Some("utf8mb4_general_ci"), Some("utf8mb4_0900_ai_ci")],
+        );
     }
 
     /// A query that reads no text still resolves to something, so operators
@@ -5009,12 +5052,16 @@ mod tests {
                     ascending: false,
                     nulls_first: false,
                     decimal: false,
+                    // A text key now records the collation it orders under,
+                    // so ORDER BY on two columns sorts each by its own.
+                    collation: Some(crate::DEFAULT_TEXT_COLLATION),
                 },
                 crate::BoundOrderKey {
                     index: 1,
                     ascending: true,
                     nulls_first: true,
                     decimal: false,
+                    collation: None,
                 },
             ]
         );
@@ -5383,22 +5430,31 @@ mod tests {
 ///
 /// Absent any text, the default stands - it is never consulted, and giving it
 /// a value keeps every downstream operator free of an Option it cannot act on.
+/// The collation an operator falls back to when its own keys carry none - a
+/// grouping over integers, say, whose plan still has to name something.
+///
+/// A query reading SEVERAL collations is fine and is not this function's
+/// business. Each comparison resolves its own, and two comparisons in one
+/// query have no obligation to agree: a join on `general_ci` columns beside a
+/// grouping on `0900_ai_ci` ones asks two questions, each with one answer.
+/// Only a single comparison spanning two collations is undecidable, and that
+/// is refused where the comparison is bound, not here.
 fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindError> {
-    match collations {
-        [] => Ok(DEFAULT_TEXT_COLLATION),
-        [only] => crate::bound::SUPPORTED_TEXT_COLLATIONS
-            .into_iter()
-            .find(|supported| supported == only)
-            .ok_or_else(|| {
-                BindError::UnsupportedExpression(format!(
-                    "text collation {only} is unsupported; supported: {}",
-                    crate::bound::SUPPORTED_TEXT_COLLATIONS.join(", "),
-                ))
-            }),
-        many => Err(BindError::UnsupportedExpression(format!(
-            "this query reads text in more than one collation ({}), and they do \
-             not agree about trailing spaces or about characters above the BMP",
-            many.join(", "),
-        ))),
+    let mut unsupported = collations
+        .iter()
+        .filter(|collation| !crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&collation.as_str()));
+    if let Some(collation) = unsupported.next() {
+        return Err(BindError::UnsupportedExpression(format!(
+            "text collation {collation} is unsupported; supported: {}",
+            crate::bound::SUPPORTED_TEXT_COLLATIONS.join(", "),
+        )));
     }
+    Ok(collations
+        .iter()
+        .find_map(|collation| {
+            crate::bound::SUPPORTED_TEXT_COLLATIONS
+                .into_iter()
+                .find(|supported| supported == collation)
+        })
+        .unwrap_or(DEFAULT_TEXT_COLLATION))
 }

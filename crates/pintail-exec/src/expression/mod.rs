@@ -656,12 +656,22 @@ impl CompiledExpr {
                 expr: Box::new(Self::compile(child, columns, collation)?),
                 data_type: expr.data_type,
             }),
+            // The node's OWN operands decide how it compares, not the plan.
+            // A query may hold a general_ci join beside a 0900_ai_ci grouping;
+            // each is internally consistent, and stamping one plan-wide
+            // collation onto both would answer one of them under the other's
+            // rules. `text_collation` yields None when the operands span two
+            // collations - undecidable, and refused at bind time - so falling
+            // back to the plan's is only ever reached where no text is read.
             BoundExprKind::Binary { op, left, right } => Ok(Self::Binary {
                 op: *op,
                 left: Box::new(Self::compile(left, columns, collation)?),
                 right: Box::new(Self::compile(right, columns, collation)?),
                 data_type: expr.data_type,
-                collation,
+                collation: expr
+                    .text_collation()
+                    .and_then(Collation::from_mysql_name)
+                    .unwrap_or(collation),
             }),
             BoundExprKind::IsNull {
                 expr: child,
@@ -681,7 +691,10 @@ impl CompiledExpr {
                         .collect::<Result<Vec<_>, _>>()?,
                     literal_regex,
                     data_type: expr.data_type,
-                    collation,
+                    collation: expr
+                        .text_collation()
+                        .and_then(Collation::from_mysql_name)
+                        .unwrap_or(collation),
                 })
             }
             BoundExprKind::ScalarSubquery(_)
