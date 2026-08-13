@@ -2949,9 +2949,13 @@ fn build_fused_inner_join_aggregate(
         .iter()
         .map(|column| column - left_width)
         .collect::<Vec<_>>();
+    let build_clock = std::time::Instant::now();
     let build_start = memory.used();
     let join = build_hash_join_state(right, right_key, *key_mode, extra_keys, memory, collation)?;
     let build_reserved = memory.used().saturating_sub(build_start);
+    let build_us = build_clock.elapsed().as_micros();
+    let probe_clock = std::time::Instant::now();
+    let mut pull_us = 0_u128;
     // A build side that outgrew the ceiling is no longer in `join.build`: it
     // was drained into grace partitions, and only the general operator knows
     // how to serve those. The fused spine reads the resident map directly, so
@@ -3013,6 +3017,7 @@ fn build_fused_inner_join_aggregate(
     let plan = resolve_join_group_plan(&join.build, &right_group_columns, collation)?;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     loop {
+        let gather_clock = std::time::Instant::now();
         let round = aggregate_round_batches();
         let mut batches = Vec::with_capacity(round);
         let mut batch_reserved = 0_usize;
@@ -3028,6 +3033,7 @@ fn build_fused_inner_join_aggregate(
         if batches.is_empty() {
             break;
         }
+        pull_us += gather_clock.elapsed().as_micros();
         let selected_rows = batches
             .iter()
             .map(RecordBatch::visible_row_count)
@@ -3102,6 +3108,14 @@ fn build_fused_inner_join_aggregate(
         memory.release(local_upper.saturating_add(batch_reserved));
     }
 
+    if std::env::var_os("PINTAIL_PHASE_TIMING").is_some() {
+        eprintln!(
+            "JOINPHASE build={}us probe={}us of_which_pull={}us",
+            build_us,
+            probe_clock.elapsed().as_micros(),
+            pull_us
+        );
+    }
     drop(dense);
     drop(join);
     memory.release(build_reserved);

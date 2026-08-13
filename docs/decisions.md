@@ -629,3 +629,32 @@ not because per-row work is expensive in general. The next work is to find
 what runs serially and make it run in parallel: batch pulling and decode ahead
 of the parallel aggregation are the first suspects, since the scan hands
 batches out one at a time.
+
+The join's serial 44% decomposes into a serial build and a serial gather.
+Timing the phases directly, on an idle sixteen-core host, 2M rows:
+
+                    1 thread     16 threads
+  join build          44.4ms        45.0ms     does not scale at all
+  probe: gather       34ms          28ms       does not scale at all
+  probe: parallel    239ms          52ms       4.6x
+  total              349ms         165ms       2.12x
+
+Serial work is 73ms of the 165ms sixteen-thread query - 44%, which reproduces
+the Amdahl fit from an unrelated method and is the reason to believe both.
+
+The build does not scale because it is one thread walking batches, computing
+keys and inserting into one map. The gather does not scale because a round of
+batches is pulled - and decompressed - one at a time before being handed to
+`par_iter`. The parallel remainder reaching only 4.6x is a separate question
+and may be memory bandwidth rather than removable serial work; it should not
+be assumed fixable.
+
+Ranked by what is actually on the table: the build is 45ms, the gather 28ms.
+An earlier reading of this that put the probe first confused "does not scale
+perfectly" with "is serial" - the probe's serial part is the smaller of the
+two.
+
+Partitioning the build by key hash, so each thread owns a partition and the
+probe routes through the same function, removes the larger block without a
+merge step. Decoding a round's batches in parallel removes the other, and that
+one also lands on every scan-and-aggregate query, not just joins.
