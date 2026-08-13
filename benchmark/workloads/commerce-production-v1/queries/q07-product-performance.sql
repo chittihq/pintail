@@ -8,7 +8,14 @@ SELECT * FROM (
     SUM(i.quantity) AS units,
     SUM(SUM(i.total_amount)) OVER (PARTITION BY c.name) AS category_revenue,
     SUM(i.total_amount) / SUM(SUM(i.total_amount)) OVER (PARTITION BY c.name) AS category_share,
-    ROW_NUMBER() OVER (PARTITION BY c.name ORDER BY SUM(i.total_amount) DESC) AS rank_in_category
+    -- product_name breaks ties. ROW_NUMBER over an ordering key that ties is
+    -- undefined - two products on identical revenue may take 2 and 3 in either
+    -- order, and no engine promises which. Compared across engines that reads
+    -- as a divergence when both answers are correct.
+    ROW_NUMBER() OVER (
+      PARTITION BY c.name
+      ORDER BY SUM(i.total_amount) DESC, i.product_name
+    ) AS rank_in_category
   FROM order_items i
   JOIN orders o ON o.id = i.order_id
   JOIN product_variants v ON v.id = i.product_variant_id

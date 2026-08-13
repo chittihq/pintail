@@ -4,9 +4,13 @@ WITH durations AS (
   SELECT
     DATE_FORMAT(placed_at, '%Y-%m') AS month,
     TIMESTAMPDIFF(SECOND, placed_at, completed_at) AS seconds_to_complete,
+    -- id breaks ties, and they are near-certain here: the ordering key is a
+    -- duration rounded to whole seconds, so any two orders completing at the
+    -- same pace share it. Without a tiebreak their sequence numbers - and so
+    -- the median this query selects - are undefined.
     ROW_NUMBER() OVER (
       PARTITION BY DATE_FORMAT(placed_at, '%Y-%m')
-      ORDER BY TIMESTAMPDIFF(SECOND, placed_at, completed_at)
+      ORDER BY TIMESTAMPDIFF(SECOND, placed_at, completed_at), id
     ) AS rn,
     COUNT(*) OVER (PARTITION BY DATE_FORMAT(placed_at, '%Y-%m')) AS n
   FROM orders

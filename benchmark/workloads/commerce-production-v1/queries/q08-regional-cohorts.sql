@@ -5,7 +5,9 @@ WITH first_orders AS (
     customer_id,
     shipping_country,
     placed_at,
-    ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY placed_at) AS order_seq,
+    -- id breaks ties: two orders placed in the same microsecond would
+    -- otherwise take their sequence numbers in an undefined order.
+    ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY placed_at, id) AS order_seq,
     MIN(placed_at) OVER (PARTITION BY customer_id) AS first_order_at
   FROM orders
   WHERE deleted_at IS NULL

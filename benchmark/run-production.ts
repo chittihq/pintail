@@ -317,7 +317,7 @@ function substitute(
 interface QueryRun {
   id: string
   engine: string
-  status: 'ok' | 'unsupported' | 'error' | 'mismatch'
+  status: 'ok' | 'unsupported' | 'error' | 'mismatch' | 'lagging'
   /// A gap the workload declares in advance, so the gate can tell one apart
   /// from a query the engine simply failed to answer. Recorded on the run
   /// rather than looked up later, so the artifact says which it was.
@@ -336,11 +336,18 @@ function summarize(times: number[]): { medianMs: number; p95Ms: number } {
   }
 }
 
+/// `sourceIsMutating` marks a phase where writers are running. Comparing an
+/// aggregate exactly against a source still being written to is a race, not a
+/// test: the replica is behind by design, so a diff proves lag rather than
+/// divergence. Those phases record the mismatch and keep the latency, and
+/// correctness is settled afterwards by the fingerprint comparison, which runs
+/// once the writes have stopped and the replica has caught up.
 async function runQuerySuite(
   phaseId: string,
   runs: number,
   warmups: number,
   seedResult: SeedResult,
+  sourceIsMutating = false,
 ): Promise<QueryRun[]> {
   const queries = loadQueries()
   const tenantZipf = new Zipf(seedResult.counts.tenants, 1.15)
@@ -384,12 +391,20 @@ async function runQuerySuite(
       results.push({
         id: query.id,
         engine: 'pintail',
-        status: exact ? 'ok' : 'mismatch',
+        // A difference while writers run is the replica being behind, which
+        // is what a replica does. Recorded as its own outcome rather than
+        // folded into 'ok' - the run should say the rows differed and that
+        // this phase cannot prove otherwise, not pretend they matched.
+        status: exact ? 'ok' : sourceIsMutating ? 'lagging' : 'mismatch',
         runs: pintailTimes,
         ...summarize(pintailTimes),
       })
       if (!exact) {
-        log(`RESULT MISMATCH on ${query.id}`)
+        log(
+          sourceIsMutating
+            ? `rows differed on ${query.id} while writers ran (lag, not divergence)`
+            : `RESULT MISMATCH on ${query.id}`,
+        )
         // Row-level evidence, or a mismatch is undebuggable after teardown.
         const diffDir = join(workloadDir, 'results', 'diffs')
         mkdirSync(diffDir, { recursive: true })
@@ -496,7 +511,7 @@ async function main() {
         const readUntil = Date.now() + (phase.durationSeconds ?? 300) * 1000
         const readerRuns: QueryRun[][] = []
         while (Date.now() < readUntil) {
-          readerRuns.push(await runQuerySuite('mixed', 1, 0, seedResult))
+          readerRuns.push(await runQuerySuite(phase.id, 1, 0, seedResult, true))
         }
         const stats = await controller.stop()
         for (const conn of writerConns) await conn.end()
@@ -633,6 +648,13 @@ async function main() {
     if (!Array.isArray(data)) continue
     for (const run of data as QueryRun[]) {
       if (run.status === 'ok') continue
+      // Correctness under ingest is settled by the post-phase fingerprint
+      // comparison, once the writes stop and the replica catches up. A row
+      // difference DURING the writes proves lag, which is not a defect.
+      if (run.status === 'lagging') {
+        log(`lagging during ingest: ${phaseId}/${run.id} (rows differed while writers ran)`)
+        continue
+      }
       // An unsupported query counts as a declared gap only where the workload
       // said so ahead of the run - window functions are v1's known hole. Any
       // other refusal is a query the engine could not answer, which is the
