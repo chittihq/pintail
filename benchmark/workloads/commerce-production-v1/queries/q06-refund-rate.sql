@@ -17,5 +17,8 @@ WHERE o.placed_at >= :windowStart
   AND o.deleted_at IS NULL
 GROUP BY c.name
 HAVING orders >= 100
-ORDER BY refund_rate DESC
+-- The trailing key breaks ties. Ordering by a value that repeats leaves
+-- which rows come back undefined, and with a LIMIT it decides which rows
+-- come back at all - so two engines can both be right and still disagree.
+ORDER BY refund_rate DESC, category
 LIMIT 50;

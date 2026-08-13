@@ -20,5 +20,8 @@ JOIN (
 WHERE b.tenant_id = :tenantId
 GROUP BY v.sku, d.units_14d
 HAVING days_of_cover < 7
-ORDER BY days_of_cover ASC
+-- The trailing key breaks ties. Ordering by a value that repeats leaves
+-- which rows come back undefined, and with a LIMIT it decides which rows
+-- come back at all - so two engines can both be right and still disagree.
+ORDER BY days_of_cover ASC, v.sku
 LIMIT 100;

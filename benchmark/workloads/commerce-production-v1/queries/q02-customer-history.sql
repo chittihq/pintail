@@ -16,5 +16,8 @@ WHERE o.customer_id = :customerId
   AND o.deleted_at IS NULL
 GROUP BY o.id, o.placed_at, o.order_status, o.payment_status,
          o.fulfillment_status, o.currency, o.total_amount
-ORDER BY o.placed_at DESC
+-- The trailing key breaks ties. Ordering by a value that repeats leaves
+-- which rows come back undefined, and with a LIMIT it decides which rows
+-- come back at all - so two engines can both be right and still disagree.
+ORDER BY o.placed_at DESC, o.id
 LIMIT 50;
