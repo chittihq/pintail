@@ -467,3 +467,54 @@ v2 direction, when it is justified by an operator who cannot absorb the restart
 window: replica reads served from pinned manifest generations, which the
 existing snapshot isolation already makes safe, before any attempt at
 multi-writer clustering.
+
+### The join and aggregate path is row-shaped, and that is the analytical gap
+
+With the result memo disabled so both engines compute, ClickHouse answers the
+benchmark's join-and-group-by roughly 8.7x faster. Profiling and four
+experiments locate the cause, and rule out the two explanations that look
+obvious first.
+
+It is not one slow function. A sampling profile attributes the query as
+`build_hash_aggregate_scan` 34.2%, `resolve_join_group_plan` 22.3%,
+`build_fused_inner_join_aggregate` 21.5% (of which the ICU collation key is
+10.3%), `build_hash_join_state` 6.7%. Nothing dominates, which is itself the
+finding: a gap of this size spread that evenly is a property of the shape, not
+of a hotspot.
+
+It is not parallelism either, though the profile invites that reading - rayon
+workers sample overwhelmingly as idle. Measured at 2M rows on the same dataset:
+1 thread 249ms, 2 threads 191ms, 4 threads 189ms, 8 threads 175ms, 10 threads
+174ms. Ten cores buy 1.43x, which by Amdahl puts ~67% of the query on the
+serial path and caps perfect parallelism at 1.50x. The workers are idle because
+two thirds of the work cannot be handed to them. Partitioning harder buys at
+most 4%.
+
+What remains is the serial path's cost per row, and that is a representation
+question. The scan is columnar, but the join materializes its build side as
+`Vec<Vec<Value>>` - `crates/pintail-exec/src/execution/join.rs` contains ten
+such types and zero uses of `ColumnVector` or `TypedValues` - and the group
+plan keys a `HashMap` on `Vec<Value>`. `Value` is a 32-byte tagged enum, so a
+two-column build row costs a 24-byte `Vec` header plus 64 bytes of cells, and
+one heap allocation, where typed columns would carry eight bytes for the
+integer key and roughly one for a dictionary-coded region. That is about ten
+times the memory traffic, plus an allocation per row and a tag branch per cell
+access - against a gap that needs 8.7x.
+
+Two micro-optimisations were tried and measured at nothing: removing a
+redundant per-row clone (175ms against 178ms) and memoising the collation key
+(170-179ms against 175-178ms, reverted). Neither changes the representation,
+which is consistent with the representation being the cost.
+
+So the direction is to keep the columnar form through the join and aggregate
+rather than materialising rows: typed key columns, packed fixed-width join
+keys instead of hashing a heap structure, and dictionary encoding for the text
+that grouping repeats. That is a substantial piece of work on the executor's
+core, not a tuning pass, and it should be entered deliberately with the
+engine-speed track as its measure.
+
+One caveat on the evidence: a row-count scaling sweep was run and discarded.
+Measuring 0.5M through 4M back to back let the largest dataset evict the
+smaller ones from page cache, and it reported 830ms for a 2M query that
+measures 173-183ms warm. The thread-scaling numbers above avoid that - one
+dataset, consecutive runs - which is why they are quoted and the sweep is not.
