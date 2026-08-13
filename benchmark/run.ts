@@ -476,16 +476,19 @@ async function createReplica(baseUrl: string, token: string, dsn: string): Promi
   throw new Error('snapshot did not complete within four hours')
 }
 
+/// Verification runs straight after the snapshot, which is the longest
+/// silence on this connection in the whole run - twenty million rows is
+/// minutes of it - so the session is routinely dead by the time the first
+/// count is asked for. `mysqlColdQuery` already reconnects for the same
+/// reason on the query path; this asks through it rather than holding its own
+/// handle, so a dropped session costs a reconnect instead of the run.
 async function verifyCounts(
-  connection: mysql.Connection,
   clickhouseUrl: string,
   pintailUrl: string,
   token: string,
   databaseId: string,
 ) {
-  const [mysqlRows] = await connection.query<mysql.RowDataPacket[]>(
-    'SELECT COUNT(*) AS count FROM benchmark_db.orders',
-  )
+  const mysqlRows = await mysqlColdQuery('SELECT COUNT(*) AS count FROM benchmark_db.orders')
   const clickhouseResponse = await fetch(`${clickhouseUrl}/?database=benchmark`, {
     method: 'POST',
     headers: clickhouseHeaders,
@@ -499,7 +502,7 @@ async function verifyCounts(
     body: { db: databaseId, sql: 'SELECT COUNT(*) FROM orders' },
   })
   const counts = [
-    Number(mysqlRows[0].count),
+    Number(mysqlRows[0][0]),
     Number(clickhouseRows.data[0][0]),
     Number(pintailRows.rows[0][0]),
   ]
@@ -1397,7 +1400,7 @@ async function main() {
     body: { email: 'benchmark@pintail.local', password: 'benchmark-release-gate' },
   })
   const databaseId = await createReplica(pintailUrl, setup.token, dsn)
-  await verifyCounts(mysqlConnection, clickhouseUrl, pintailUrl, setup.token, databaseId)
+  await verifyCounts(clickhouseUrl, pintailUrl, setup.token, databaseId)
   const results = await runQueries(
     mysqlConnection,
     clickhouseUrl,
