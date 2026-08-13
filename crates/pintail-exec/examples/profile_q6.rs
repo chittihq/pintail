@@ -98,6 +98,10 @@ fn users_schema() -> TableSchema {
         vec![
             Column::new(1, "id", DataType::UInt64, false),
             Column::new(2, "region", DataType::Utf8, false),
+            // An integer key with eight distinct values, so a join can vary
+            // key CARDINALITY while holding the key TYPE and the build row
+            // count fixed. Joining on `region` would vary both at once.
+            Column::new(3, "bucket", DataType::UInt64, false),
         ],
     )
     .expect("users schema")
@@ -110,6 +114,7 @@ fn user_row(id: u64) -> StoredRow {
         vec![
             Value::UInt64(id),
             Value::Utf8(USER_REGIONS[usize::try_from(id % 8).expect("region index")].to_owned()),
+            Value::UInt64(id % 8),
         ],
         id,
         false,
@@ -137,6 +142,17 @@ fn query_sql(name: &str) -> &'static str {
         "q6" => {
             "SELECT user_id, COUNT(*) AS order_count, ROUND(SUM(total_amount), 2) AS total_spent \
              FROM orders GROUP BY user_id ORDER BY total_spent DESC, user_id LIMIT 10"
+        }
+        // Build-cost probes: identical build side and a deliberately tiny
+        // probe, so the phase timer reports build cost alone. q9 keys on a
+        // unique integer, q10 on an integer with eight distinct values.
+        "q9" => {
+            "SELECT u.region, COUNT(*) AS cnt FROM orders o JOIN users u ON o.user_id = u.id \
+             WHERE o.id < 200 GROUP BY u.region"
+        }
+        "q10" => {
+            "SELECT u.region, COUNT(*) AS cnt FROM orders o JOIN users u ON o.user_id = u.bucket \
+             WHERE o.id < 200 GROUP BY u.region"
         }
         "q8" => {
             "SELECT u.region, COUNT(*) AS cnt, ROUND(SUM(o.total_amount), 2) AS total \

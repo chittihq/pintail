@@ -682,3 +682,27 @@ share of the profile without first establishing WHICH operation inside that
 phase dominates. The build's remaining 45ms and the gather's 28ms should be
 decomposed - allocation against hashing against decode - before any further
 code is written against them.
+
+The build's cost is a cache problem, and a third of it is measurable as one.
+Holding the build side, the key type and the probe size fixed and varying ONLY
+the number of distinct keys - `q9` joins on a unique integer, `q10` on an
+integer with eight values - the build phase reads 44.4ms against 28.9ms. So
+35% of it is the large hash table: a quarter of a million inserts scattered
+across a table far bigger than L2, each one a likely miss.
+
+What it is NOT was established first, and each of those was a measurement:
+fanning key evaluation and row materialisation across sixteen threads changed
+the build by nothing; the map is already pre-sized per batch, so growth is
+amortised; and swapping the system allocator for jemalloc moved it 1ms, which
+rules out allocation despite two allocations per row.
+
+That points at the standard answer rather than another guess. Radix-partition
+the build by key hash so each partition's table is cache-resident, and give
+each partition to a thread: the same change removes the cache misses AND the
+serial fraction, which is why it is worth more than either alone. The grace
+join already partitions by key hash for spilling, so the routing function and
+its probe-side counterpart exist.
+
+The remaining 28.9ms is per-row work independent of table size, and is NOT yet
+decomposed. It should be, before anything is written against it - the same
+discipline that turned three failures into this.
