@@ -74,6 +74,15 @@ const RUN_COUNT = Number(process.env.BENCHMARK_RUNS ?? 15)
 // the container resource sampler still attributes CPU and memory to the engine
 // that spent it, which interleaving would smear across all three.
 const ENGINE_ORDER_SEED = Number(process.env.BENCHMARK_SEED ?? 0x5eed)
+
+// Concurrency levels. One client measures an engine at rest; a server is
+// asked many things at once, and that is where admission, memory accounting
+// and lock contention show up.
+const CONCURRENCY_CLIENTS = (process.env.BENCHMARK_CONCURRENCY ?? '1,4,8,16')
+  .split(',')
+  .map((value) => Number(value.trim()))
+  .filter((value) => Number.isFinite(value) && value > 0)
+const CONCURRENCY_SECONDS = Number(process.env.BENCHMARK_CONCURRENCY_SECONDS ?? 10)
 const mysqlImage = 'mysql:8.4'
 const mysqlServerArgs = [
   '--server-id=909',
@@ -718,6 +727,64 @@ async function inShuffledOrder<T>(
   return out
 }
 
+/// One engine's behaviour under N concurrent clients.
+type ConcurrencyPoint = {
+  clients: number
+  completed: number
+  /// Completed queries per second across all clients.
+  throughput: number
+  medianMs: number
+  p95Ms: number
+  errors: number
+}
+
+/// Drives `clients` concurrent callers at one operation for `seconds`.
+///
+/// Every published number so far is single-client, which says nothing about
+/// the case a server actually faces. Two engines with the same median can
+/// differ completely here: one holds its latency and adds throughput, the
+/// other collapses because its admission or memory accounting serialises.
+///
+/// Throughput and p95 together, because either alone misleads - throughput
+/// can rise while the slowest decile becomes unusable, and a flat p95 can
+/// hide an engine that stopped accepting work.
+async function measureConcurrency(
+  operation: () => Promise<unknown>,
+  clients: number,
+  seconds: number,
+): Promise<ConcurrencyPoint> {
+  const latencies: number[] = []
+  let errors = 0
+  const until = performance.now() + seconds * 1000
+  const client = async () => {
+    while (performance.now() < until) {
+      const started = performance.now()
+      try {
+        await operation()
+        latencies.push(performance.now() - started)
+      } catch {
+        // Counted, not thrown: an engine that refuses work under load has
+        // told us something, and losing the run would lose the finding.
+        errors += 1
+      }
+    }
+  }
+  const started = performance.now()
+  await Promise.all(Array.from({ length: clients }, client))
+  const elapsed = (performance.now() - started) / 1000
+  const sorted = [...latencies].sort((left, right) => left - right)
+  const at = (index: number) =>
+    sorted.length === 0 ? 0 : Math.round(sorted[Math.min(sorted.length - 1, index)])
+  return {
+    clients,
+    completed: sorted.length,
+    throughput: Math.round((sorted.length / elapsed) * 10) / 10,
+    medianMs: at(Math.floor(sorted.length / 2)),
+    p95Ms: at(Math.ceil(sorted.length * 0.95) - 1),
+    errors,
+  }
+}
+
 async function runQueries(
   connection: mysql.Connection,
   clickhouseUrl: string,
@@ -906,7 +973,11 @@ async function runQueries(
   return results
 }
 
-function publishResults(allResults: QueryResult[], engineResults: QueryResult[] = []) {
+function publishResults(
+  allResults: QueryResult[],
+  engineResults: QueryResult[] = [],
+  concurrency: Array<{ query: string; pintail: ConcurrencyPoint; clickhouse: ConcurrencyPoint }> = [],
+) {
   // Gate totals keep their original definition: repeat-query medians of
   // the canonical eight. Novel (cold) rows publish separately — they
   // measure the engine, not the memo.
@@ -964,6 +1035,8 @@ function publishResults(allResults: QueryResult[], engineResults: QueryResult[] 
     /// memo is off, so both engines execute. This is the engine-speed track;
     /// the `queries` table above is the cache-latency one.
     engineQueries: engineResults.filter((row) => !row.coldOnly),
+    /// Throughput and p95 at each client count, both engines computing.
+    concurrency,
     totals: {
       ...totals,
       speedup,
@@ -1015,6 +1088,27 @@ function publishResults(allResults: QueryResult[], engineResults: QueryResult[] 
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
     '',
+    ...(concurrency.length > 0
+      ? [
+          '## Concurrency (memo disabled — both engines executing)',
+          '',
+          'One client measures an engine at rest. This is the shape a server',
+          'actually meets, and where admission, memory accounting and lock',
+          'contention appear. Throughput and p95 together: throughput alone can',
+          'rise while the slowest decile becomes unusable, and a flat p95 can',
+          'hide an engine that has stopped accepting work.',
+          '',
+          '| Clients | Pintail /s | Pintail p95 | Pintail errors | CH /s | CH p95 | CH errors |',
+          '|---:|---:|---:|---:|---:|---:|---:|',
+          ...concurrency.map(
+            (row) =>
+              `| ${row.pintail.clients} | ${row.pintail.throughput} | ${row.pintail.p95Ms} ms | ` +
+              `${row.pintail.errors} | ${row.clickhouse.throughput} | ${row.clickhouse.p95Ms} ms | ` +
+              `${row.clickhouse.errors} |`,
+          ),
+          '',
+        ]
+      : []),
     ...(engineResults.length > 0
       ? [
           '## Engine speed (memo DISABLED — both engines execute)',
@@ -1322,6 +1416,11 @@ async function main() {
   // Restarted rather than re-seeded: the replica sits on a named volume, so
   // this costs a container restart instead of another full snapshot.
   let engineResults: QueryResult[] = []
+  const concurrency: Array<{
+    query: string
+    pintail: ConcurrencyPoint
+    clickhouse: ConcurrencyPoint
+  }> = []
   if (containerizedPintail) {
     log('restarting pintail with the result memo disabled (engine-speed track)')
     await docker('rm', '--force', pintailName).catch(() => undefined)
@@ -1354,11 +1453,50 @@ async function main() {
       databaseId,
       { memoDisabled: true },
     )
+
+    // Concurrency, on the same memo-disabled server so both engines are
+    // computing rather than replaying. One client says nothing about the case
+    // a server actually faces: two engines with the same median can diverge
+    // completely here, one holding latency while adding throughput and the
+    // other collapsing as its admission or memory accounting serialises.
+    const concurrencyQuery =
+      benchmarkQueries.find((query) => !query.coldOnly) ?? benchmarkQueries[0]
+    for (const clients of CONCURRENCY_CLIENTS) {
+      const pintailPoint = await measureConcurrency(
+        () =>
+          api<{ rows: unknown[][] }>(engineUrl, '/api/query', {
+            method: 'POST',
+            token: setup.token,
+            body: { db: databaseId, sql: concurrencyQuery.sql },
+          }),
+        clients,
+        CONCURRENCY_SECONDS,
+      )
+      const clickhousePoint = await measureConcurrency(
+        async () => {
+          const response = await fetch(`${clickhouseUrl}/?database=benchmark_rmt`, {
+            method: 'POST',
+            headers: clickhouseHeaders,
+            body: `${concurrencyQuery.clickhouseSql ?? concurrencyQuery.sql} SETTINGS final = 1 FORMAT JSONCompact`,
+          })
+          if (!response.ok) throw new Error(await response.text())
+          await response.text()
+        },
+        clients,
+        CONCURRENCY_SECONDS,
+      )
+      concurrency.push({ query: concurrencyQuery.name, pintail: pintailPoint, clickhouse: clickhousePoint })
+      log(
+        `concurrency ${clients}: pintail ${pintailPoint.throughput}/s p95 ${pintailPoint.p95Ms}ms ` +
+          `(${pintailPoint.errors} errors) | clickhouse ${clickhousePoint.throughput}/s ` +
+          `p95 ${clickhousePoint.p95Ms}ms (${clickhousePoint.errors} errors)`,
+      )
+    }
   } else {
     log('SKIPPING the engine-speed track: it needs the containerized pintail')
   }
 
-  publishResults(results, engineResults)
+  publishResults(results, engineResults, concurrency)
 }
 
 try {
