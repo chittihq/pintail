@@ -79,6 +79,41 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
     }
 }
 
+/// Collation keys already computed for this plan, by their text.
+///
+/// A group column is usually low-cardinality - eight regions, a dozen order
+/// statuses - while the build side it is read from is hundreds of thousands
+/// of rows, so the same handful of strings get collated over and over.
+/// Generating those sort keys was 26% of the fused join-aggregate profile,
+/// almost all of it recomputing an answer already held.
+///
+/// Capped: a group column with a distinct value per row - a customer name, an
+/// e-mail - would otherwise hold every string in the build side twice, and
+/// caching cannot help there anyway. Past the cap this degrades to computing
+/// each key as it did before.
+#[derive(Default)]
+struct CollationKeyCache {
+    keys: HashMap<String, Vec<u8>>,
+}
+
+/// Entries the collation cache will hold before it stops growing.
+const COLLATION_KEY_CACHE_LIMIT: usize = 1 << 16;
+
+impl CollationKeyCache {
+    fn append(&mut self, text: &str, collation: Collation, out: &mut Vec<u8>) {
+        if let Some(key) = self.keys.get(text) {
+            out.extend_from_slice(key);
+            return;
+        }
+        let mut key = Vec::new();
+        append_collation_key(text, collation, &mut key);
+        out.extend_from_slice(&key);
+        if self.keys.len() < COLLATION_KEY_CACHE_LIMIT {
+            self.keys.insert(text.to_owned(), key);
+        }
+    }
+}
+
 /// Encodes one group value into `out`, injectively.
 ///
 /// Injective is the whole requirement: two group values must produce the same
@@ -87,7 +122,12 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
 /// nothing decodes this, so a suffix distinguishes `("ab", "c")` from
 /// `("a", "bc")` as well as a prefix would, without a second pass to measure
 /// first.
-fn encode_group_value(value: &Value, collation: Collation, out: &mut Vec<u8>) {
+fn encode_group_value(
+    value: &Value,
+    collation: Collation,
+    keys: &mut CollationKeyCache,
+    out: &mut Vec<u8>,
+) {
     match value {
         Value::Null => out.push(0),
         Value::Boolean(flag) => {
@@ -109,7 +149,7 @@ fn encode_group_value(value: &Value, collation: Collation, out: &mut Vec<u8>) {
         Value::Utf8(text) => {
             out.push(5);
             let start = out.len();
-            append_collation_key(text, collation, out);
+            keys.append(text, collation, out);
             let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
             out.extend_from_slice(&length.to_le_bytes());
         }
@@ -124,7 +164,7 @@ fn encode_group_value(value: &Value, collation: Collation, out: &mut Vec<u8>) {
         Value::Enum { label, .. } => {
             out.push(7);
             let start = out.len();
-            append_collation_key(label, collation, out);
+            keys.append(label, collation, out);
             let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
             out.extend_from_slice(&length.to_le_bytes());
         }
@@ -148,6 +188,7 @@ pub(super) fn resolve_join_group_plan(
     // we already have. Packed bytes in a reused buffer allocate only when the
     // group is genuinely new.
     let mut key = Vec::<u8>::with_capacity(64);
+    let mut keys = CollationKeyCache::default();
     for bucket in build.values() {
         let mut indexes = Vec::with_capacity(bucket.len());
         for row in bucket {
@@ -156,7 +197,7 @@ pub(super) fn resolve_join_group_plan(
                 let value = row.get(*column).ok_or(ExecError::InvalidPhysicalPlan(
                     "join aggregate group is outside the build-side layout",
                 ))?;
-                encode_group_value(value, collation, &mut key);
+                encode_group_value(value, collation, &mut keys, &mut key);
             }
             // Borrowed lookup: `Vec<u8>` keys probe by slice, so the hit path
             // - the common one - neither allocates nor copies.
