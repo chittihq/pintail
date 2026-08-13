@@ -5299,6 +5299,95 @@ mod tests {
         }
     }
 
+    /// A join whose build side outgrows the ceiling drains its resident map
+    /// into grace partitions, and the answer must not change. The fused
+    /// join-aggregate spine reads that resident map directly, so a build side
+    /// that moved out from under it would answer with silence rather than an
+    /// error - the worst shape a wrong answer can take.
+    ///
+    /// Grouped on each side of the join in turn, because which relation the
+    /// planner builds from decides which spine runs, and the answer has to
+    /// hold either way.
+    #[test]
+    fn a_join_aggregate_still_counts_every_row_when_the_build_side_spills() {
+        let batches = (0..48)
+            .map(|batch| {
+                let ids = (0..512)
+                    .map(|row| Value::UInt64(batch * 512 + row))
+                    .collect::<Vec<_>>();
+                let names = ids
+                    .iter()
+                    .map(|id| match id {
+                        Value::UInt64(id) => Value::Utf8(format!(
+                            "region-{}-padded-so-the-build-side-is-heavy",
+                            id % 4
+                        )),
+                        _ => unreachable!("generated ids are unsigned integers"),
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    ids.len(),
+                    vec![
+                        ColumnVector::new(DataType::UInt64, ids).expect("ids"),
+                        ColumnVector::new(DataType::Utf8, names).expect("names"),
+                    ],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |memory_limit, sql: &str| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution =
+                Execution::start(physical(sql), &provider, memory_limit, Collation::default())
+                    .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .columns()
+                            .iter()
+                            .map(|column| column.value(row).cloned().expect("set value"))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        let total = |rows: &[Vec<Value>]| {
+            rows.iter()
+                .filter_map(|row| match row.get(1) {
+                    Some(Value::UInt64(count)) => Some(*count),
+                    _ => None,
+                })
+                .sum::<u64>()
+        };
+        for side in ["u", "e"] {
+            let sql = format!(
+                "SELECT {side}.name AS region, COUNT(*) AS n \
+                 FROM events e INNER JOIN events u ON e.id = u.id \
+                 GROUP BY {side}.name ORDER BY region"
+            );
+            let (reference, _) = execute(64 * 1024 * 1024, &sql);
+            assert_eq!(
+                total(&reference),
+                48 * 512,
+                "grouped on {side}, the roomy run joins every row"
+            );
+            let (tight, spill) = execute(3 * 1024 * 1024, &sql);
+            assert!(
+                spill.files > 0,
+                "grouped on {side}, the tight run must actually spill"
+            );
+            assert_eq!(
+                tight, reference,
+                "grouped on {side}, a build side that spilled must still be joined and counted"
+            );
+        }
+    }
+
     #[test]
     fn hash_joins_mysql_comparable_mixed_scalar_keys() {
         for key in ["CAST(e.id AS DOUBLE)", "CAST(e.id AS CHAR)"] {
