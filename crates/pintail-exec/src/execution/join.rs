@@ -42,26 +42,31 @@ pub(super) fn resolve_join_group_plan(
     let mut buckets = HashMap::with_capacity(build.len());
     for bucket in build.values() {
         let mut indexes = Vec::with_capacity(bucket.len());
+        let mut key = Vec::with_capacity(right_group_columns.len());
         for row in bucket {
-            let group_values = right_group_columns
-                .iter()
-                .map(|column| {
-                    row.get(*column)
-                        .cloned()
-                        .ok_or(ExecError::InvalidPhysicalPlan(
-                            "join aggregate group is outside the build-side layout",
-                        ))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let key = group_values
-                .iter()
-                .cloned()
-                .map(|value| normalized_collation_value(value, collation))
-                .collect::<Vec<_>>();
-            let position = *index.entry(key).or_insert_with(|| {
+            // The key is built by borrowing, and the original values are
+            // cloned only when the group turns out to be new. Every row used
+            // to pay for two vectors - one to hold the values, one to hold
+            // their normalized form - when the overwhelmingly common case is
+            // a group that already exists and needs neither.
+            key.clear();
+            for column in right_group_columns {
+                let value = row.get(*column).ok_or(ExecError::InvalidPhysicalPlan(
+                    "join aggregate group is outside the build-side layout",
+                ))?;
+                key.push(normalized_collation_value(value.clone(), collation));
+            }
+            let position = if let Some(position) = index.get(&key) {
+                *position
+            } else {
+                let group_values = right_group_columns
+                    .iter()
+                    .map(|column| row[*column].clone())
+                    .collect::<Vec<_>>();
                 values.push(group_values);
+                index.insert(key.clone(), values.len() - 1);
                 values.len() - 1
-            });
+            };
             indexes.push(position);
         }
         buckets.insert(std::ptr::from_ref(bucket) as usize, indexes);
