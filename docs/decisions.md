@@ -562,3 +562,27 @@ holding every string twice.
 This supersedes the earlier note that "memoising the collation key" measured
 at nothing. That attempt memoised a different key on a different path, and
 was measured best-of-three, where the noise floor is wider than the effect.
+
+The group column arrives dictionary-coded, and the plan throws that away.
+Instrumenting the build side of `q8` shows the join key as a plain `UInt64`
+projection and the `region` column as `DICT codes=4096 distinct=8` - storage
+has already done the work of reducing it to eight values, and the batch still
+carries the codes. `resolve_join_group_plan` never sees them: it runs after
+`batch_row` has materialised each row into a `Vec<Value>`, by which point the
+coding is gone and every row's group must be re-derived from its text -
+encode a byte key, hash it, look it up, 250,000 times to answer a question
+with eight possible answers.
+
+That is what remains of the cost after the collation memo and FNV took it from
+26% of the serial path to 12.3%. Resolving group identity during the build,
+where the codes are still in hand, turns the per-row work into one array
+index and leaves eight encodes per batch.
+
+The obstacle is association, not arithmetic. The plan maps each bucket to its
+rows' group indexes BY ADDRESS, which is only sound because the build has
+finished and the map has stopped rehashing; resolving during the build would
+take addresses that later move. The fix is for a bucket to carry its group
+indexes beside its rows rather than in a separate map keyed by where it
+happens to live - a mechanical change to the bucket type, and explicitly NOT
+a change to the row representation, which is the thing that failed when it was
+tried.
