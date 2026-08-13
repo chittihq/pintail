@@ -270,6 +270,12 @@ worth refusing.
   grouping and on the counts; each returns the spelling its own scan reached
   first, and the scans do not share an order. MySQL does not define which it
   returns either.
+- `GROUP BY` accepts only columns that are grouped or aggregated. MySQL also
+  accepts a column functionally dependent on the grouped key - selecting
+  `orders.placed_at` while grouping by `orders.id`, say - because the key
+  determines it. That analysis does not exist here, so such a query is
+  refused rather than answered.
+- A `SELECT` alias is resolvable in fewer positions than MySQL allows.
 - A single comparison spanning two collations is refused. `WHERE a = b` where
   the two columns are `utf8mb4_general_ci` and `utf8mb4_0900_ai_ci` has no
   defined answer here: the collations disagree about trailing spaces and about

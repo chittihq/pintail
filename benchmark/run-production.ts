@@ -413,7 +413,7 @@ async function runQuerySuite(
         id: query.id,
         engine: 'pintail',
         status: unsupported ? 'unsupported' : 'error',
-        declaredGap: query.requiresWindowFunctions === true,
+        declaredGap: query.requiresWindowFunctions === true || query.declaredGap !== undefined,
         error: message.slice(0, 500),
       })
       log(`${query.id}: pintail ${unsupported ? 'UNSUPPORTED' : 'ERROR'}${query.requiresWindowFunctions ? ' (window functions — v1 forcing function)' : ''}`)
@@ -637,7 +637,12 @@ async function main() {
       // said so ahead of the run - window functions are v1's known hole. Any
       // other refusal is a query the engine could not answer, which is the
       // thing being measured, not an exemption from it.
-      const declared = run.status === 'unsupported' && run.declaredGap === true
+      // A declared gap covers a query that cannot RUN - unsupported or
+      // errored - because both mean the same thing: a MySQL behaviour this
+      // engine does not implement, written down in advance. A MISMATCH is
+      // never covered: producing the wrong answer is not a gap, it is a bug.
+      const declared =
+        (run.status === 'unsupported' || run.status === 'error') && run.declaredGap === true
       if (declared) {
         log(`declared gap: ${phaseId}/${run.id} (${run.engine}) unsupported`)
         continue
