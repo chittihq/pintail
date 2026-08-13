@@ -212,7 +212,11 @@ async function setupPintail(mysqlHost: string, mysqlPort: number): Promise<void>
       name: 'production_db',
       dsn: `mysql://benchmark:benchmarkpass@${mysqlHost}:${mysqlPort}/production_db`,
       mode: 'cdc',
-      include_tables: [...TABLES],
+      // The replicated set is the verified set plus the lag sentinel. It is
+      // deliberately NOT in TABLES: that list drives fingerprint comparison,
+      // and a probe table written to during the phase is harness scaffolding
+      // rather than workload data to be checked.
+      include_tables: [...TABLES, 'lag_probe'],
     },
   })
   pintailDb = database.id
@@ -497,8 +501,60 @@ async function main() {
         const stats = await controller.stop()
         for (const conn of writerConns) await conn.end()
         log(`mutations: ${JSON.stringify(stats)}`)
-        // convergence: wait for lag to settle, then fingerprint-compare
-        await Bun.sleep(manifest.gates.maximumReplicationLagSeconds * 2000)
+
+        // Source-to-visible lag, measured rather than assumed. The phase used
+        // to sleep twice the gate's limit and call it settled, which cannot
+        // fail and cannot report how far behind the replica actually was -
+        // the number this whole phase exists to produce. A sentinel row is
+        // written and then polled for, so what is recorded is the time the
+        // replica took, not the time the harness waited.
+        const sentinel = `lag-probe-${phase.id}`
+        const lagStarted = performance.now()
+        await mysqlConn!.query('INSERT INTO lag_probe (marker) VALUES (?)', [sentinel])
+        let visibleAfterMs: number | null = null
+        const lagDeadline = Date.now() + manifest.gates.maximumReplicationLagSeconds * 4000
+        while (Date.now() < lagDeadline) {
+          const rows = await queryPintail(
+            `SELECT COUNT(*) AS n FROM lag_probe WHERE marker = '${sentinel}'`,
+          ).catch(() => [] as unknown[][])
+          if (Number(rows?.[0]?.[0] ?? 0) > 0) {
+            visibleAfterMs = Math.round(performance.now() - lagStarted)
+            break
+          }
+          await Bun.sleep(50)
+        }
+        if (visibleAfterMs === null) {
+          log(
+            `REPLICATION LAG EXCEEDED: sentinel not visible within ` +
+              `${manifest.gates.maximumReplicationLagSeconds * 4}s`,
+          )
+          process.exitCode = 1
+        } else {
+          log(`source-to-visible lag: ${visibleAfterMs}ms`)
+        }
+
+        // Query latency WHILE the writers were running. The phase counted its
+        // reader passes and threw the timings away, so "queries stay fast
+        // under ingest" had no number behind it.
+        const underLoad = new Map<string, number[]>()
+        for (const pass of readerRuns) {
+          for (const run of pass) {
+            if (run.engine !== 'pintail' || run.medianMs === undefined) continue
+            const seen = underLoad.get(run.id) ?? []
+            seen.push(run.medianMs)
+            underLoad.set(run.id, seen)
+          }
+        }
+        const underLoadLatency = [...underLoad.entries()].map(([id, samples]) => {
+          const sorted = [...samples].sort((left, right) => left - right)
+          return {
+            id,
+            passes: sorted.length,
+            medianMs: sorted[Math.floor(sorted.length / 2)],
+            p95Ms: sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)],
+            maxMs: sorted[sorted.length - 1],
+          }
+        })
         const a = await mysqlFingerprints(mysqlConn!)
         const b = await pintailFingerprints(queryPintail)
         const mismatches = compareFingerprints(a, b)
@@ -514,6 +570,8 @@ async function main() {
         ;(report.phases as Record<string, unknown>)[phase.id] = {
           mutationStats: stats,
           readerPasses: readerRuns.length,
+          sourceToVisibleLagMs: visibleAfterMs,
+          underLoadLatency,
           fingerprintMismatches: unexpected,
           expectedFingerprintMismatches: expected,
         }

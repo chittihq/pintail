@@ -50,6 +50,17 @@ export default {
     { id: 'snapshot', action: 'seed-and-snapshot' },
     { id: 'cold', action: 'query-suite', runs: 3 },
     { id: 'warm', action: 'query-suite', warmups: 2, runs: 7 },
+    // Two ingestion rates, not one. A single rate reports whether queries
+    // stayed fast under that load and cannot say whether they degrade with it,
+    // which is the question a replica is actually asked. The light pass runs
+    // briefly because it exists to be compared against the heavy one.
+    {
+      id: 'mixed-light',
+      action: 'cdc-and-query',
+      durationSeconds: 300,
+      writers: 2,
+      readers: 16,
+    },
     {
       id: 'mixed',
       action: 'cdc-and-query',

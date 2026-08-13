@@ -252,3 +252,16 @@ CREATE TABLE order_events (
   KEY idx_events_order (order_id),
   KEY idx_events_tenant_type_created (tenant_id, event_type, created_at)
 ) ENGINE=InnoDB;
+
+-- Sentinel table for measuring source-to-visible replication lag. A row is
+-- written to MySQL and polled for on the replica, so the recorded lag is the
+-- time replication took rather than the time the harness chose to wait.
+--
+-- Deliberately trivial: no indexes to build, no width to decode, so what it
+-- measures is the pipeline's latency and not the cost of the row.
+CREATE TABLE lag_probe (
+  id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  marker          VARCHAR(64) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_lag_probe_marker (marker)
+) ENGINE=InnoDB;
