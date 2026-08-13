@@ -110,6 +110,7 @@ const benchmarkFingerprint = createHash('sha256')
 const sqlHash = (sql: string) => createHash('sha256').update(sql).digest('hex').slice(0, 16)
 const seedVolumeName = `pintail-bench-seed-${benchmarkFingerprint.slice(0, 12)}`
 const runVolumeName = `${runId}-mysql-data`
+const pintailVolumeName = `${runId}-pintail-data`
 const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
 type MysqlBaseline = {
   fingerprint: string
@@ -723,6 +724,7 @@ async function runQueries(
   pintailUrl: string,
   token: string,
   databaseId: string,
+  options: { memoDisabled?: boolean } = {},
 ): Promise<QueryResult[]> {
   const results: QueryResult[] = []
   const warmups = WARMUP_COUNT
@@ -904,7 +906,7 @@ async function runQueries(
   return results
 }
 
-function publishResults(allResults: QueryResult[]) {
+function publishResults(allResults: QueryResult[], engineResults: QueryResult[] = []) {
   // Gate totals keep their original definition: repeat-query medians of
   // the canonical eight. Novel (cold) rows publish separately — they
   // measure the engine, not the memo.
@@ -958,6 +960,10 @@ function publishResults(allResults: QueryResult[]) {
     },
     queries: results,
     novelQueries: novelResults,
+    /// The same canonical queries measured against a pintail whose result
+    /// memo is off, so both engines execute. This is the engine-speed track;
+    /// the `queries` table above is the cache-latency one.
+    engineQueries: engineResults.filter((row) => !row.coldOnly),
     totals: {
       ...totals,
       speedup,
@@ -1009,6 +1015,30 @@ function publishResults(allResults: QueryResult[]) {
       ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
     '',
+    ...(engineResults.length > 0
+      ? [
+          '## Engine speed (memo DISABLED — both engines execute)',
+          '',
+          'The canonical queries against a pintail restarted with its settled',
+          'aggregate memo off, on the same replica. This is the like-for-like',
+          'comparison: the table at the top measures a cache hit against',
+          "ClickHouse's execution, which is a different question.",
+          '',
+          '| Query | MySQL | Pintail (no memo) | CH MergeTree | CH RMT+FINAL | vs CH |',
+          '|---|---:|---:|---:|---:|---:|',
+          ...engineResults
+            .filter((row) => !row.coldOnly)
+            .map(
+              (row) =>
+                `| ${row.name} | ${row.mysqlMs.toLocaleString()} ms | ` +
+                `${row.pintailMs.toLocaleString()} ms | ` +
+                `${row.clickhouseMs.toLocaleString()} ms | ` +
+                `${row.clickhouseFinalMs.toLocaleString()} ms | ` +
+                `${row.speedupVsClickhouse.toFixed(2)}× |`,
+            ),
+          '',
+        ]
+      : []),
     '## Novel queries (median of 5 memo-cold variants — RAW ENGINE SPEED)',
     '',
     'Both engines execute every run here. This is the comparison that speaks\n'
@@ -1091,6 +1121,9 @@ async function cleanup() {
     if (runVolumeCreated) {
       await docker('volume', 'rm', runVolumeName).catch(() => undefined)
     }
+    // Always: this one is created by the pintail container regardless of
+    // whether the MySQL seed volume was.
+    await docker('volume', 'rm', pintailVolumeName).catch(() => undefined)
   }
   rmSync(dataDir, { recursive: true, force: true })
 }
@@ -1223,6 +1256,12 @@ async function main() {
       networkName,
       '--publish',
       '0:8080',
+      // A NAMED volume, so the replica survives the container. The engine
+      // track restarts pintail with its result memo disabled, and reattaching
+      // the same replica turns that into a ~30s restart instead of another
+      // full snapshot of every row.
+      '--volume',
+      `${pintailVolumeName}:/var/lib/pintail`,
       ...engineLimits,
       '--env',
       `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
@@ -1272,7 +1311,54 @@ async function main() {
     setup.token,
     databaseId,
   )
-  publishResults(results)
+
+  // The engine track. Everything above measures pintail with its settled
+  // aggregate memo live, which for a repeated query reports the cost of a
+  // cache hit - a real number, and not one that says anything about how fast
+  // the engine computes. Restarting with the memo off makes the same queries
+  // execute, against the same data, so the comparison is finally like for
+  // like.
+  //
+  // Restarted rather than re-seeded: the replica sits on a named volume, so
+  // this costs a container restart instead of another full snapshot.
+  let engineResults: QueryResult[] = []
+  if (containerizedPintail) {
+    log('restarting pintail with the result memo disabled (engine-speed track)')
+    await docker('rm', '--force', pintailName).catch(() => undefined)
+    await docker(
+      'run',
+      '--detach',
+      '--name',
+      pintailName,
+      '--network',
+      networkName,
+      '--publish',
+      '0:8080',
+      '--volume',
+      `${pintailVolumeName}:/var/lib/pintail`,
+      ...engineLimits,
+      '--env',
+      `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
+      '--env',
+      'PINTAIL_DISABLE_SETTLED_MEMO=1',
+      'pintail-benchmark:latest',
+    )
+    const enginePort = await publishedPort(pintailName, 8080)
+    const engineUrl = `http://${host}:${enginePort}`
+    await waitForHttp(engineUrl)
+    engineResults = await runQueries(
+      mysqlConnection,
+      clickhouseUrl,
+      engineUrl,
+      setup.token,
+      databaseId,
+      { memoDisabled: true },
+    )
+  } else {
+    log('SKIPPING the engine-speed track: it needs the containerized pintail')
+  }
+
+  publishResults(results, engineResults)
 }
 
 try {
