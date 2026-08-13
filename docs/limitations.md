@@ -307,6 +307,15 @@ worth refusing.
   invocation, resetting every included target, because one global source
   coordinate cannot safely advance while a table retains an unfillable gap.
 
+- Joins written in the SQL-89 style - tables comma-separated in `FROM` with
+  the equi-predicates in `WHERE` - are planned as a Cartesian product and
+  refused by the cross-join guard rather than executed as joins. The predicates
+  are never converted into join conditions. This is the style TPC-H is written
+  in and the style much generated and legacy SQL still uses: of the four TPC-H
+  queries, the one without a join answers and all three with one fail, at
+  estimates from 1.35e12 to 1.69e16 rows. Rewriting the same query with
+  explicit `JOIN ... ON` executes normally.
+
 ## DDL and polling
 
 - Polling cannot reproduce intermediate states that exist entirely between
