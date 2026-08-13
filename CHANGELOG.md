@@ -4,6 +4,55 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc14] - 2026-08-13
+
+### Added
+
+- `GROUP BY` accepts an ordinal and `HAVING` accepts a projection alias, both
+  of which MySQL has always allowed and neither of which this engine could
+  bind. A dashboard that generated `GROUP BY 1` - which many do, because it
+  survives renaming the column - was refused outright.
+
+### Fixed
+
+- A long-running server no longer refuses every query eventually. The
+  process-wide memory budget is shared, finite, and nothing refills it, so a
+  query that returned less than it borrowed walked the balance in one
+  direction until nothing could be admitted: about 1,500 queries into a
+  30-minute benchmark phase, while replication carried on looking healthy and
+  the logs said nothing. Borrowings are now repaid when the tracker is
+  dropped, on every path including the error ones, and a clone inherits what
+  the query is holding without inheriting the debt - which is what stops two
+  trackers from repaying one borrowing twice and walking the balance the other
+  way, into a limit that no longer limits.
+- `HAVING` resolves a projection alias ahead of a source column of the same
+  name. This was measured against MySQL 8.4 rather than reasoned about: the
+  conservative reading - that a real column should outrank an alias - was
+  implemented first, tested against the server, and found to be wrong.
+- The fused join-aggregate declines the query when the build side spilled. A
+  build side that outgrows the memory ceiling is drained into grace partitions
+  and its resident map left empty; the fused path read that map directly and
+  would have answered with silence rather than an error. No query is known
+  that reaches it - every candidate tried resolves its group columns to the
+  probe side and declines earlier - but the failure mode is a wrong answer, so
+  it is guarded regardless.
+
+### Changed
+
+- The join answers roughly 10% faster with the result memo disabled, from two
+  measured changes rather than a rewrite. Resolving which group a build row
+  belongs to was generating a full collation sort key per row - 250,000 of
+  them for a column holding eight distinct values - and those keys are now
+  memoized by their text, which took ICU from 12.6% of the profile to 0.3%.
+  The plan's two byte-keyed maps also hashed with SipHash, whose resistance to
+  attacker-chosen keys buys nothing for data the query itself just produced.
+  Dictionary-encoding the build side was tried for the same gap and measured
+  15-30% SLOWER; it is recorded in `docs/decisions.md` as a dead end rather
+  than left as an open direction.
+- The benchmark measures throughput and p95 under concurrent clients, and
+  ships a TPC-H workload alongside the commerce one, so the join numbers can
+  be read against a recognised suite rather than only against our own.
+
 ## [0.0.1-rc13] - 2026-08-13
 
 ### Added
