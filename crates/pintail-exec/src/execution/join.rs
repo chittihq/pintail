@@ -272,6 +272,13 @@ pub(super) struct HashJoinState {
 }
 
 impl HashJoinState {
+    /// Whether the build side outgrew the ceiling and moved to grace
+    /// partitions. `build` is drained when that happens, so anything reading
+    /// it directly has to ask first.
+    pub(super) const fn spilled(&self) -> bool {
+        self.grace.is_some()
+    }
+
     fn clear_left(&mut self, memory: &MemoryTracker) {
         self.left_values = None;
         self.left_key = None;

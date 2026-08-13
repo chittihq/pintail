@@ -2936,6 +2936,21 @@ fn build_fused_inner_join_aggregate(
     let build_start = memory.used();
     let join = build_hash_join_state(right, right_key, *key_mode, extra_keys, memory, collation)?;
     let build_reserved = memory.used().saturating_sub(build_start);
+    // A build side that outgrew the ceiling is no longer in `join.build`: it
+    // was drained into grace partitions, and only the general operator knows
+    // how to serve those. The fused spine reads the resident map directly, so
+    // probing it here would match nothing and answer with silence rather than
+    // an error. Hand the built state back to the operator - which resumes
+    // from exactly this - and let it run.
+    //
+    // No query is known that reaches this: every fused candidate tried so far
+    // resolves its group columns to the probe side and declines above. It is
+    // guarded anyway because the failure mode is a wrong answer, not a crash,
+    // and the guard costs one branch per query.
+    if join.spilled() {
+        *state = Some(Box::new(join));
+        return Ok(None);
+    }
     // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
     // Integer-mode build keys occupying a small dense range trade the
     // per-probe evaluate+hash for one bounds-checked index lookup. MySQL
