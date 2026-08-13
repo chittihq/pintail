@@ -658,3 +658,27 @@ Partitioning the build by key hash, so each thread owns a partition and the
 probe routes through the same function, removes the larger block without a
 merge step. Decoding a round's batches in parallel removes the other, and that
 one also lands on every scan-and-aggregate query, not just joins.
+
+Parallelising the build's inputs does nothing, which says what the build
+actually costs. Key evaluation and row materialisation were moved across the
+pool, leaving accounting, bounds, the map insert and the spill decision
+serial and in order. The build phase read 47ms on sixteen threads against
+45ms before, and 52ms on one thread against 44ms - slightly worse both ways,
+from the pool's overhead and one extra vector. Reverted.
+
+So the 45ms is not the per-row work fanned out; it is what remains. At 250,000
+rows that is 180ns per row, and `q8` joins on `user_id`, which is UNIQUE -
+every row is its own bucket. The build therefore does a quarter of a million
+inserts into a map growing to a quarter of a million entries, cache-missing on
+most of them, and a heap allocation per bucket for a row vector holding one
+row. That is serial by nature and untouched by parallelising the inputs.
+
+It is also, in hindsight, why dictionary-encoding the build side lost: it
+added per-cell bookkeeping to a phase whose cost is map growth and allocation,
+not cell handling.
+
+Three measured failures now share a shape: each predicted a win from a phase's
+share of the profile without first establishing WHICH operation inside that
+phase dominates. The build's remaining 45ms and the gather's 28ms should be
+decomposed - allocation against hashing against decode - before any further
+code is written against them.
