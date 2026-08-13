@@ -801,14 +801,34 @@ async function runQueries(
   const runs = RUN_COUNT
   const engineOrder = mulberry32(ENGINE_ORDER_SEED)
   const clickhouseQuery = async (database: string, sql: string, settings: string) => {
-    const response = await fetch(`${clickhouseUrl}/?database=${database}`, {
-      method: 'POST',
-      headers: clickhouseHeaders,
-      body: `${sql}${settings} FORMAT JSONCompact`,
-    })
-    const text = await response.text()
-    if (!response.ok) throw new Error(`ClickHouse query failed: ${text}`)
-    return (JSON.parse(text) as { data: unknown[][] }).data
+    // Retried once on a dropped connection, for the same reason the MySQL side
+    // reconnects: a query that runs for minutes leaves the socket silent, and
+    // something between here and the docker host resets it. A `FINAL` scan of
+    // twenty million rows is long enough to hit that, and losing it fails the
+    // whole stage - a 47-minute run ended on one ECONNRESET with every other
+    // query already measured.
+    //
+    // A retry is sound for the measurement because each attempt is timed by the
+    // caller: a reset attempt never produces a sample, so the number reported
+    // is a clean run rather than one carrying a failure's latency.
+    const attempt = async () => {
+      const response = await fetch(`${clickhouseUrl}/?database=${database}`, {
+        method: 'POST',
+        headers: clickhouseHeaders,
+        body: `${sql}${settings} FORMAT JSONCompact`,
+      })
+      const text = await response.text()
+      if (!response.ok) throw new Error(`ClickHouse query failed: ${text}`)
+      return (JSON.parse(text) as { data: unknown[][] }).data
+    }
+    try {
+      return await attempt()
+    } catch (error) {
+      const reset = /ECONNRESET|socket connection was closed|fetch failed/i.test(String(error))
+      if (!reset) throw error
+      log(`  ClickHouse connection dropped (${error}); retrying once`)
+      return attempt()
+    }
   }
   const baseline = loadMysqlBaseline()
   const freshBaseline: MysqlBaseline['queries'] = {}
