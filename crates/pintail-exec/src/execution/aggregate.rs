@@ -1895,6 +1895,21 @@ fn try_sma_fold(
     Ok(Some(vec![row]))
 }
 
+/// Batches gathered before a parallel round runs.
+///
+/// This is the parallel WIDTH of aggregation: the round is pulled serially,
+/// handed to `par_iter`, and merged serially, so a round of eight can occupy
+/// at most eight threads however many the machine has. Measured 1->16 threads
+/// on sixteen cores, a join-free group-by peaked at 3.12x and went flat after
+/// eight threads, which is the shape of exactly this cap.
+///
+/// Sized from the pool so the round can fill the machine. The per-round memory
+/// ceiling below still bounds it, so a wide machine with a tight budget cuts
+/// the round short rather than overcommitting.
+fn aggregate_round_batches() -> usize {
+    rayon::current_num_threads().clamp(8, 64)
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_hash_aggregate_scan(
     input: &mut PullOperator,
@@ -2207,10 +2222,11 @@ fn build_buffered_hash_aggregate(
         .saturating_add(HASH_ENTRY_OVERHEAD)
         .saturating_add(256);
     loop {
-        let mut batches = Vec::with_capacity(8);
+        let round = aggregate_round_batches();
+        let mut batches = Vec::with_capacity(round);
         let mut batch_reserved = 0_usize;
         let mut selected_rows = 0_usize;
-        while batches.len() < 8 {
+        while batches.len() < round {
             let batch = if let Some(batch) = first_batch.take() {
                 Some(batch)
             } else {
@@ -2997,9 +3013,10 @@ fn build_fused_inner_join_aggregate(
     let plan = resolve_join_group_plan(&join.build, &right_group_columns, collation)?;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     loop {
-        let mut batches = Vec::with_capacity(8);
+        let round = aggregate_round_batches();
+        let mut batches = Vec::with_capacity(round);
         let mut batch_reserved = 0_usize;
-        while batches.len() < 8 {
+        while batches.len() < round {
             let Some(batch) = left.next_batch(memory)? else {
                 break;
             };
