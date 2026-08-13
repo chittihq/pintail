@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-12T13:24:53.875Z",
+  "generatedAt": "2026-08-13T06:29:03.017Z",
   "scale": 1,
   "rows": {
     "users": 100000,
@@ -8,10 +8,12 @@
   },
   "methodology": {
     "pintailPlacement": "container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)",
-    "iterations": "warm: 1 warmup + 5 measured; cold: 5 distinct memo-cold variants",
+    "iterations": "warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-08-13T06:25:48.317Z",
+    "engineOrderSeed": 24301,
+    "statistics": "median, mean, p95, stddev, ci95, and all raw samples",
     "references": {
       "clickhouse": "plain MergeTree (raw-speed ceiling)",
-      "clickhouseFinal": "ReplacingMergeTree, final=1 (apples-to-apples merge-on-read duty)"
+      "clickhouseFinal": "ReplacingMergeTree, final=1 (merge-on-read duty, query cache off)"
     },
     "pintailSettledMemo": "bare full-table aggregates on a settled replica (empty memtable) are served from a manifest-generation-keyed exact result memo; any ingest invalidates it by construction. ClickHouse ships a query cache too, disabled by default and TTL-stale; pintail's is provably fresh, so it stays on."
   },
@@ -24,43 +26,113 @@
   "queries": [
     {
       "name": "Q1: Full table count",
-      "mysqlMs": 1434,
-      "pintailMs": 10,
-      "clickhouseMs": 8,
-      "clickhouseFinalMs": 10,
-      "speedup": 143.4,
-      "speedupVsClickhouse": 1,
+      "mysqlMs": 1505,
+      "pintailMs": 16,
+      "clickhouseMs": 11,
+      "clickhouseFinalMs": 15,
+      "speedup": 94.0625,
+      "speedupVsClickhouse": 0.9375,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 10,
-          "p95Ms": 11,
-          "minMs": 9,
-          "runs": 5
+          "medianMs": 16,
+          "p95Ms": 252,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 66.68,
+          "stddevMs": 81.47,
+          "ci95LowMs": 25.45,
+          "ci95HighMs": 107.91,
+          "samplesMs": [
+            11.49,
+            13.47,
+            13.8,
+            13.9,
+            14.31,
+            15.41,
+            15.59,
+            15.59,
+            16.7,
+            16.74,
+            99.06,
+            161.36,
+            166.95,
+            173.71,
+            252.06
+          ]
         },
         "clickhouse": {
-          "medianMs": 8,
-          "p95Ms": 10,
-          "minMs": 7,
-          "runs": 5
+          "medianMs": 11,
+          "p95Ms": 207,
+          "minMs": 8,
+          "runs": 15,
+          "meanMs": 24.53,
+          "stddevMs": 50.53,
+          "ci95LowMs": 0,
+          "ci95HighMs": 50.1,
+          "samplesMs": [
+            7.62,
+            8.83,
+            9.39,
+            10.11,
+            10.6,
+            10.94,
+            11.3,
+            11.35,
+            11.43,
+            11.57,
+            13.05,
+            14.06,
+            14.31,
+            16.41,
+            207
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 10,
-          "p95Ms": 11,
-          "minMs": 8,
-          "runs": 5
+          "medianMs": 15,
+          "p95Ms": 101,
+          "minMs": 13,
+          "runs": 15,
+          "meanMs": 21.72,
+          "stddevMs": 22.12,
+          "ci95LowMs": 10.53,
+          "ci95HighMs": 32.91,
+          "samplesMs": [
+            12.78,
+            12.83,
+            13.28,
+            13.58,
+            13.66,
+            13.94,
+            14.13,
+            15,
+            15.52,
+            15.89,
+            17.47,
+            19.69,
+            23.6,
+            23.8,
+            100.59
+          ]
         },
         "mysql": {
-          "medianMs": 1434,
-          "p95Ms": 1434,
-          "minMs": 1434,
-          "runs": 1
+          "medianMs": 1505,
+          "p95Ms": 1505,
+          "minMs": 1505,
+          "runs": 1,
+          "meanMs": 1505,
+          "stddevMs": 0,
+          "ci95LowMs": 1505,
+          "ci95HighMs": 1505,
+          "samplesMs": [
+            1505
+          ]
         }
       },
       "resources": {
         "mysql": {
-          "cpuPeakPct": 100,
-          "cpuAvgPct": 100,
+          "cpuPeakPct": 52,
+          "cpuAvgPct": 52,
           "memPeakMb": 1541
         },
         "pintail": {
@@ -69,14 +141,14 @@
           "memPeakMb": 38
         },
         "clickhouse": {
-          "cpuPeakPct": 2,
-          "cpuAvgPct": 2,
-          "memPeakMb": 483
+          "cpuPeakPct": 7,
+          "cpuAvgPct": 7,
+          "memPeakMb": 446
         },
         "clickhouseFinal": {
           "cpuPeakPct": 3,
           "cpuAvgPct": 3,
-          "memPeakMb": 492
+          "memPeakMb": 449
         }
       },
       "pintailMatchesMysql": true,
@@ -85,37 +157,107 @@
     },
     {
       "name": "Q2: Filtered count",
-      "mysqlMs": 593,
-      "pintailMs": 8,
-      "clickhouseMs": 29,
-      "clickhouseFinalMs": 30,
-      "speedup": 74.125,
-      "speedupVsClickhouse": 3.75,
+      "mysqlMs": 596,
+      "pintailMs": 15,
+      "clickhouseMs": 41,
+      "clickhouseFinalMs": 34,
+      "speedup": 39.733333333333334,
+      "speedupVsClickhouse": 2.2666666666666666,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 8,
-          "p95Ms": 14,
-          "minMs": 8,
-          "runs": 5
+          "medianMs": 15,
+          "p95Ms": 253,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 50.68,
+          "stddevMs": 76.29,
+          "ci95LowMs": 12.08,
+          "ci95HighMs": 89.29,
+          "samplesMs": [
+            11.32,
+            13.3,
+            13.33,
+            14.06,
+            14.21,
+            14.27,
+            14.4,
+            15.35,
+            15.6,
+            16.54,
+            18.87,
+            19.66,
+            159.03,
+            167.76,
+            252.55
+          ]
         },
         "clickhouse": {
-          "medianMs": 29,
-          "p95Ms": 38,
-          "minMs": 26,
-          "runs": 5
+          "medianMs": 41,
+          "p95Ms": 126,
+          "minMs": 33,
+          "runs": 15,
+          "meanMs": 57.05,
+          "stddevMs": 33.34,
+          "ci95LowMs": 40.18,
+          "ci95HighMs": 73.92,
+          "samplesMs": [
+            32.93,
+            33.28,
+            35.09,
+            36.25,
+            36.99,
+            38.67,
+            38.71,
+            40.87,
+            50.08,
+            50.12,
+            50.14,
+            52.41,
+            113.89,
+            120.7,
+            125.69
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 30,
-          "p95Ms": 39,
-          "minMs": 27,
-          "runs": 5
+          "medianMs": 34,
+          "p95Ms": 681,
+          "minMs": 28,
+          "runs": 15,
+          "meanMs": 112.61,
+          "stddevMs": 175.33,
+          "ci95LowMs": 23.89,
+          "ci95HighMs": 201.34,
+          "samplesMs": [
+            27.72,
+            30.7,
+            31.11,
+            31.25,
+            31.33,
+            31.42,
+            32.56,
+            34.1,
+            34.37,
+            51.61,
+            106.42,
+            113.07,
+            129.84,
+            322.67,
+            681.04
+          ]
         },
         "mysql": {
-          "medianMs": 593,
-          "p95Ms": 593,
-          "minMs": 593,
-          "runs": 1
+          "medianMs": 596,
+          "p95Ms": 596,
+          "minMs": 596,
+          "runs": 1,
+          "meanMs": 596,
+          "stddevMs": 0,
+          "ci95LowMs": 596,
+          "ci95HighMs": 596,
+          "samplesMs": [
+            596
+          ]
         }
       },
       "resources": {
@@ -130,14 +272,14 @@
           "memPeakMb": 52
         },
         "clickhouse": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
-          "memPeakMb": 505
+          "cpuPeakPct": 49,
+          "cpuAvgPct": 49,
+          "memPeakMb": 473
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 4,
-          "cpuAvgPct": 4,
-          "memPeakMb": 504
+          "cpuPeakPct": 106,
+          "cpuAvgPct": 106,
+          "memPeakMb": 484
         }
       },
       "pintailMatchesMysql": true,
@@ -146,220 +288,500 @@
     },
     {
       "name": "Q3: Group by status",
-      "mysqlMs": 35774,
-      "pintailMs": 10,
-      "clickhouseMs": 61,
-      "clickhouseFinalMs": 66,
-      "speedup": 3577.4,
-      "speedupVsClickhouse": 6.6,
+      "mysqlMs": 35395,
+      "pintailMs": 16,
+      "clickhouseMs": 127,
+      "clickhouseFinalMs": 91,
+      "speedup": 2212.1875,
+      "speedupVsClickhouse": 5.6875,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 10,
-          "p95Ms": 23,
-          "minMs": 9,
-          "runs": 5
+          "medianMs": 16,
+          "p95Ms": 536,
+          "minMs": 13,
+          "runs": 15,
+          "meanMs": 74.77,
+          "stddevMs": 137.73,
+          "ci95LowMs": 5.07,
+          "ci95HighMs": 144.47,
+          "samplesMs": [
+            12.78,
+            13.88,
+            14.31,
+            14.71,
+            14.82,
+            14.99,
+            15.57,
+            15.62,
+            16.07,
+            17.5,
+            25.3,
+            101.29,
+            128.63,
+            180.08,
+            536.01
+          ]
         },
         "clickhouse": {
-          "medianMs": 61,
-          "p95Ms": 123,
-          "minMs": 59,
-          "runs": 5
+          "medianMs": 127,
+          "p95Ms": 256,
+          "minMs": 60,
+          "runs": 15,
+          "meanMs": 122.17,
+          "stddevMs": 64.3,
+          "ci95LowMs": 89.63,
+          "ci95HighMs": 154.71,
+          "samplesMs": [
+            60.16,
+            64.31,
+            65.49,
+            66.72,
+            66.86,
+            67.6,
+            68.09,
+            127.13,
+            129.18,
+            133.63,
+            133.94,
+            191.65,
+            198.97,
+            203.27,
+            255.53
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 66,
-          "p95Ms": 99,
-          "minMs": 59,
-          "runs": 5
+          "medianMs": 91,
+          "p95Ms": 148,
+          "minMs": 67,
+          "runs": 15,
+          "meanMs": 100.18,
+          "stddevMs": 27.48,
+          "ci95LowMs": 86.28,
+          "ci95HighMs": 114.09,
+          "samplesMs": [
+            66.73,
+            67.97,
+            74.94,
+            79.11,
+            81.34,
+            81.94,
+            85.07,
+            91.37,
+            99,
+            107.3,
+            116.52,
+            122.86,
+            139.49,
+            140.91,
+            148.16
+          ]
         },
         "mysql": {
-          "medianMs": 35774,
-          "p95Ms": 35774,
-          "minMs": 35774,
-          "runs": 1
+          "medianMs": 35395,
+          "p95Ms": 35395,
+          "minMs": 35395,
+          "runs": 1,
+          "meanMs": 35395,
+          "stddevMs": 0,
+          "ci95LowMs": 35395,
+          "ci95HighMs": 35395,
+          "samplesMs": [
+            35395
+          ]
         }
       },
       "resources": {
         "mysql": {
           "cpuPeakPct": 83,
-          "cpuAvgPct": 68,
+          "cpuAvgPct": 69,
           "memPeakMb": 1541
         },
         "pintail": {
-          "cpuPeakPct": 0,
-          "cpuAvgPct": 0,
-          "memPeakMb": 142
+          "cpuPeakPct": 4,
+          "cpuAvgPct": 4,
+          "memPeakMb": 139
         },
         "clickhouse": {
-          "cpuPeakPct": 7,
-          "cpuAvgPct": 7,
-          "memPeakMb": 543
+          "cpuPeakPct": 124,
+          "cpuAvgPct": 124,
+          "memPeakMb": 519
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
-          "memPeakMb": 550
+          "cpuPeakPct": 289,
+          "cpuAvgPct": 289,
+          "memPeakMb": 512
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: false }] top_k=None trim=0\n  Project outputs=[status, cnt, avg_amt]\n    HashAggregate groups=1 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: false, collation: None }] top_k=None trim=0\n  Project outputs=[status, cnt, avg_amt]\n    HashAggregate groups=1 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "Q4: Region × status breakdown",
-      "mysqlMs": 13301,
-      "pintailMs": 10,
-      "clickhouseMs": 247,
-      "clickhouseFinalMs": 233,
-      "speedup": 1330.1,
-      "speedupVsClickhouse": 23.3,
+      "mysqlMs": 13784,
+      "pintailMs": 13,
+      "clickhouseMs": 273,
+      "clickhouseFinalMs": 256,
+      "speedup": 1060.3076923076924,
+      "speedupVsClickhouse": 19.692307692307693,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 10,
-          "p95Ms": 15,
-          "minMs": 9,
-          "runs": 5
+          "medianMs": 13,
+          "p95Ms": 165,
+          "minMs": 12,
+          "runs": 15,
+          "meanMs": 44.02,
+          "stddevMs": 55.9,
+          "ci95LowMs": 15.74,
+          "ci95HighMs": 72.31,
+          "samplesMs": [
+            11.83,
+            11.89,
+            12.02,
+            12.36,
+            12.51,
+            12.52,
+            12.91,
+            13.06,
+            13.38,
+            14.04,
+            14.25,
+            100.32,
+            100.91,
+            152.96,
+            165.42
+          ]
         },
         "clickhouse": {
-          "medianMs": 247,
-          "p95Ms": 295,
-          "minMs": 228,
-          "runs": 5
+          "medianMs": 273,
+          "p95Ms": 328,
+          "minMs": 225,
+          "runs": 15,
+          "meanMs": 264.34,
+          "stddevMs": 35.24,
+          "ci95LowMs": 246.5,
+          "ci95HighMs": 282.17,
+          "samplesMs": [
+            224.79,
+            226.07,
+            226.13,
+            226.58,
+            227.45,
+            232.18,
+            251.45,
+            272.59,
+            281.15,
+            283.38,
+            289.99,
+            297.87,
+            298.6,
+            298.76,
+            328.06
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 233,
-          "p95Ms": 306,
-          "minMs": 219,
-          "runs": 5
+          "medianMs": 256,
+          "p95Ms": 344,
+          "minMs": 220,
+          "runs": 15,
+          "meanMs": 262,
+          "stddevMs": 40.47,
+          "ci95LowMs": 241.52,
+          "ci95HighMs": 282.48,
+          "samplesMs": [
+            219.9,
+            221,
+            223.18,
+            223.25,
+            224.54,
+            231.62,
+            233.24,
+            255.58,
+            265.35,
+            288.53,
+            293.89,
+            298.57,
+            303.11,
+            304.2,
+            344.05
+          ]
         },
         "mysql": {
-          "medianMs": 13301,
-          "p95Ms": 13301,
-          "minMs": 13301,
-          "runs": 1
+          "medianMs": 13784,
+          "p95Ms": 13784,
+          "minMs": 13784,
+          "runs": 1,
+          "meanMs": 13784,
+          "stddevMs": 0,
+          "ci95LowMs": 13784,
+          "ci95HighMs": 13784,
+          "samplesMs": [
+            13784
+          ]
         }
       },
       "resources": {
         "mysql": {
           "cpuPeakPct": 106,
-          "cpuAvgPct": 88,
-          "memPeakMb": 1553
+          "cpuAvgPct": 83,
+          "memPeakMb": 1552
         },
         "pintail": {
-          "cpuPeakPct": 0,
-          "cpuAvgPct": 0,
-          "memPeakMb": 199
+          "cpuPeakPct": 1,
+          "cpuAvgPct": 1,
+          "memPeakMb": 196
         },
         "clickhouse": {
-          "cpuPeakPct": 336,
-          "cpuAvgPct": 336,
-          "memPeakMb": 597
+          "cpuPeakPct": 678,
+          "cpuAvgPct": 672,
+          "memPeakMb": 564
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 390,
-          "cpuAvgPct": 390,
-          "memPeakMb": 581
+          "cpuPeakPct": 669,
+          "cpuAvgPct": 419,
+          "memPeakMb": 572
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Limit offset=0 count=20\n  Sort keys=[BoundOrderKey { index: 3, ascending: false, nulls_first: false, decimal: true }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false }] top_k=Some(20) trim=0\n    Project outputs=[region, status, cnt, total]\n      HashAggregate groups=2 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7, 8] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Limit offset=0 count=20\n  Sort keys=[BoundOrderKey { index: 3, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=Some(20) trim=0\n    Project outputs=[region, status, cnt, total]\n      HashAggregate groups=2 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7, 8] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "Q5: Monthly revenue (2023)",
-      "mysqlMs": 5638,
-      "pintailMs": 10,
-      "clickhouseMs": 41,
+      "mysqlMs": 5726,
+      "pintailMs": 14,
+      "clickhouseMs": 42,
       "clickhouseFinalMs": 47,
-      "speedup": 563.8,
-      "speedupVsClickhouse": 4.7,
+      "speedup": 409,
+      "speedupVsClickhouse": 3.357142857142857,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 10,
-          "p95Ms": 12,
-          "minMs": 8,
-          "runs": 5
+          "medianMs": 14,
+          "p95Ms": 156,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 31.02,
+          "stddevMs": 41.51,
+          "ci95LowMs": 10.01,
+          "ci95HighMs": 52.03,
+          "samplesMs": [
+            11.35,
+            11.57,
+            11.7,
+            12.3,
+            12.62,
+            13.34,
+            13.59,
+            13.99,
+            15.94,
+            16.36,
+            17.58,
+            18.17,
+            40.06,
+            100.46,
+            156.31
+          ]
         },
         "clickhouse": {
-          "medianMs": 41,
-          "p95Ms": 96,
-          "minMs": 37,
-          "runs": 5
+          "medianMs": 42,
+          "p95Ms": 113,
+          "minMs": 38,
+          "runs": 15,
+          "meanMs": 46.74,
+          "stddevMs": 18.57,
+          "ci95LowMs": 37.35,
+          "ci95HighMs": 56.14,
+          "samplesMs": [
+            37.76,
+            37.89,
+            38.26,
+            40.19,
+            40.33,
+            40.65,
+            40.9,
+            41.98,
+            42.78,
+            43.42,
+            43.61,
+            44.24,
+            47.25,
+            49.06,
+            112.84
+          ]
         },
         "clickhouseFinal": {
           "medianMs": 47,
-          "p95Ms": 121,
+          "p95Ms": 129,
           "minMs": 42,
-          "runs": 5
+          "runs": 15,
+          "meanMs": 52.29,
+          "stddevMs": 21.59,
+          "ci95LowMs": 41.36,
+          "ci95HighMs": 63.21,
+          "samplesMs": [
+            41.88,
+            42.43,
+            42.93,
+            43.22,
+            44.04,
+            45.24,
+            46.01,
+            47.2,
+            47.82,
+            48.15,
+            48.79,
+            48.93,
+            49.11,
+            59.81,
+            128.72
+          ]
         },
         "mysql": {
-          "medianMs": 5638,
-          "p95Ms": 5638,
-          "minMs": 5638,
-          "runs": 1
+          "medianMs": 5726,
+          "p95Ms": 5726,
+          "minMs": 5726,
+          "runs": 1,
+          "meanMs": 5726,
+          "stddevMs": 0,
+          "ci95LowMs": 5726,
+          "ci95HighMs": 5726,
+          "samplesMs": [
+            5726
+          ]
         }
       },
       "resources": {
         "mysql": {
-          "cpuPeakPct": 110,
-          "cpuAvgPct": 80,
+          "cpuPeakPct": 109,
+          "cpuAvgPct": 76,
           "memPeakMb": 1552
         },
         "pintail": {
           "cpuPeakPct": 0,
           "cpuAvgPct": 0,
-          "memPeakMb": 500
+          "memPeakMb": 499
         },
         "clickhouse": {
-          "cpuPeakPct": 2,
-          "cpuAvgPct": 2,
-          "memPeakMb": 556
-        },
-        "clickhouseFinal": {
           "cpuPeakPct": 3,
           "cpuAvgPct": 3,
-          "memPeakMb": 538
+          "memPeakMb": 522
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 7,
+          "cpuAvgPct": 7,
+          "memPeakMb": 528
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false }] top_k=None trim=0\n  Project outputs=[yr, mo, cnt, revenue]\n    HashAggregate groups=2 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 9] predicates=2 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=None trim=0\n  Project outputs=[yr, mo, cnt, revenue]\n    HashAggregate groups=2 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 9] predicates=2 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "Q6: Top 10 spenders",
-      "mysqlMs": 814794,
-      "pintailMs": 69,
-      "clickhouseMs": 270,
-      "clickhouseFinalMs": 238,
-      "speedup": 11808.608695652174,
-      "speedupVsClickhouse": 3.449275362318841,
+      "mysqlMs": 821652,
+      "pintailMs": 102,
+      "clickhouseMs": 255,
+      "clickhouseFinalMs": 249,
+      "speedup": 8055.411764705882,
+      "speedupVsClickhouse": 2.4411764705882355,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 69,
-          "p95Ms": 75,
-          "minMs": 68,
-          "runs": 5
+          "medianMs": 102,
+          "p95Ms": 183,
+          "minMs": 78,
+          "runs": 15,
+          "meanMs": 112.67,
+          "stddevMs": 33.02,
+          "ci95LowMs": 95.95,
+          "ci95HighMs": 129.38,
+          "samplesMs": [
+            77.7,
+            81.68,
+            84.76,
+            88.53,
+            90.57,
+            95.62,
+            97.02,
+            101.75,
+            102.41,
+            113.28,
+            116.82,
+            138.44,
+            143.1,
+            175.48,
+            182.82
+          ]
         },
         "clickhouse": {
-          "medianMs": 270,
-          "p95Ms": 288,
-          "minMs": 234,
-          "runs": 5
+          "medianMs": 255,
+          "p95Ms": 443,
+          "minMs": 237,
+          "runs": 15,
+          "meanMs": 273.17,
+          "stddevMs": 58.76,
+          "ci95LowMs": 243.43,
+          "ci95HighMs": 302.91,
+          "samplesMs": [
+            236.88,
+            236.98,
+            237.96,
+            239.16,
+            244.41,
+            252.2,
+            252.29,
+            255.3,
+            259.65,
+            260.28,
+            262.46,
+            265.21,
+            269.51,
+            382.22,
+            443.05
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 238,
-          "p95Ms": 268,
-          "minMs": 229,
-          "runs": 5
+          "medianMs": 249,
+          "p95Ms": 410,
+          "minMs": 234,
+          "runs": 15,
+          "meanMs": 271.79,
+          "stddevMs": 58.97,
+          "ci95LowMs": 241.95,
+          "ci95HighMs": 301.64,
+          "samplesMs": [
+            234.33,
+            234.83,
+            235.06,
+            236.83,
+            237.32,
+            237.4,
+            244.25,
+            249.22,
+            250.57,
+            254.47,
+            258.11,
+            259.96,
+            341.65,
+            393.27,
+            409.6
+          ]
         },
         "mysql": {
-          "medianMs": 814794,
-          "p95Ms": 814794,
-          "minMs": 814794,
-          "runs": 1
+          "medianMs": 821652,
+          "p95Ms": 821652,
+          "minMs": 821652,
+          "runs": 1,
+          "meanMs": 821652,
+          "stddevMs": 0,
+          "ci95LowMs": 821652,
+          "ci95HighMs": 821652,
+          "samplesMs": [
+            821652
+          ]
         }
       },
       "resources": {
@@ -369,58 +791,128 @@
           "memPeakMb": 1553
         },
         "pintail": {
-          "cpuPeakPct": 39,
-          "cpuAvgPct": 39,
-          "memPeakMb": 706
+          "cpuPeakPct": 62,
+          "cpuAvgPct": 31,
+          "memPeakMb": 698
         },
         "clickhouse": {
-          "cpuPeakPct": 429,
-          "cpuAvgPct": 429,
-          "memPeakMb": 760
+          "cpuPeakPct": 707,
+          "cpuAvgPct": 461,
+          "memPeakMb": 753
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 342,
-          "cpuAvgPct": 342,
-          "memPeakMb": 744
+          "cpuPeakPct": 750,
+          "cpuAvgPct": 477,
+          "memPeakMb": 745
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Limit offset=0 count=10\n  Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false }] top_k=Some(10) trim=0\n    Project outputs=[user_id, order_count, total_spent]\n      HashAggregate groups=1 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Limit offset=0 count=10\n  Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=Some(10) trim=0\n    Project outputs=[user_id, order_count, total_spent]\n      HashAggregate groups=1 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "Q7: Regional analytics",
-      "mysqlMs": 56956,
-      "pintailMs": 10,
-      "clickhouseMs": 140,
-      "clickhouseFinalMs": 165,
-      "speedup": 5695.6,
-      "speedupVsClickhouse": 16.5,
+      "mysqlMs": 56606,
+      "pintailMs": 13,
+      "clickhouseMs": 147,
+      "clickhouseFinalMs": 172,
+      "speedup": 4354.307692307692,
+      "speedupVsClickhouse": 13.23076923076923,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 10,
-          "p95Ms": 12,
-          "minMs": 10,
-          "runs": 5
+          "medianMs": 13,
+          "p95Ms": 158,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 33.13,
+          "stddevMs": 49.27,
+          "ci95LowMs": 8.2,
+          "ci95HighMs": 58.07,
+          "samplesMs": [
+            10.6,
+            11.62,
+            11.72,
+            11.77,
+            12.27,
+            12.49,
+            12.58,
+            13.29,
+            14.2,
+            15.63,
+            16.02,
+            16.22,
+            30.94,
+            149.45,
+            158.2
+          ]
         },
         "clickhouse": {
-          "medianMs": 140,
-          "p95Ms": 154,
-          "minMs": 138,
-          "runs": 5
+          "medianMs": 147,
+          "p95Ms": 241,
+          "minMs": 141,
+          "runs": 15,
+          "meanMs": 175.4,
+          "stddevMs": 40,
+          "ci95LowMs": 155.15,
+          "ci95HighMs": 195.64,
+          "samplesMs": [
+            141.17,
+            141.58,
+            143.71,
+            144.33,
+            146.75,
+            147.35,
+            147.42,
+            147.45,
+            151.27,
+            180.57,
+            212.07,
+            223.07,
+            224.8,
+            238.66,
+            240.79
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 165,
-          "p95Ms": 195,
+          "medianMs": 172,
+          "p95Ms": 243,
           "minMs": 162,
-          "runs": 5
+          "runs": 15,
+          "meanMs": 178.99,
+          "stddevMs": 21.81,
+          "ci95LowMs": 167.95,
+          "ci95HighMs": 190.03,
+          "samplesMs": [
+            161.75,
+            161.96,
+            162.33,
+            164.01,
+            164.4,
+            165.59,
+            166.51,
+            172.22,
+            176.72,
+            179.86,
+            181.82,
+            188.09,
+            195.17,
+            201.23,
+            243.2
+          ]
         },
         "mysql": {
-          "medianMs": 56956,
-          "p95Ms": 56956,
-          "minMs": 56956,
-          "runs": 1
+          "medianMs": 56606,
+          "p95Ms": 56606,
+          "minMs": 56606,
+          "runs": 1,
+          "meanMs": 56606,
+          "stddevMs": 0,
+          "ci95LowMs": 56606,
+          "ci95HighMs": 56606,
+          "samplesMs": [
+            56606
+          ]
         }
       },
       "resources": {
@@ -430,143 +922,257 @@
           "memPeakMb": 1553
         },
         "pintail": {
-          "cpuPeakPct": 45,
-          "cpuAvgPct": 45,
-          "memPeakMb": 869
+          "cpuPeakPct": 98,
+          "cpuAvgPct": 98,
+          "memPeakMb": 871
         },
         "clickhouse": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
+          "cpuPeakPct": 573,
+          "cpuAvgPct": 293,
           "memPeakMb": 659
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 45,
-          "cpuAvgPct": 45,
-          "memPeakMb": 649
+          "cpuPeakPct": 683,
+          "cpuAvgPct": 367,
+          "memPeakMb": 674
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true }] top_k=None trim=0\n  Project outputs=[region, cnt, total, avg_amt, min_amt, max_amt, unique_users]\n    HashAggregate groups=1 aggregates=6\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6, 8, 9] predicates=1 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }] top_k=None trim=0\n  Project outputs=[region, cnt, total, avg_amt, min_amt, max_amt, unique_users]\n    HashAggregate groups=1 aggregates=6\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6, 8, 9] predicates=1 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "Q8: Join users + orders",
-      "mysqlMs": 826572,
-      "pintailMs": 9,
-      "clickhouseMs": 188,
-      "clickhouseFinalMs": 190,
-      "speedup": 91841.33333333333,
-      "speedupVsClickhouse": 21.11111111111111,
+      "mysqlMs": 836232,
+      "pintailMs": 15,
+      "clickhouseMs": 209,
+      "clickhouseFinalMs": 211,
+      "speedup": 55748.8,
+      "speedupVsClickhouse": 14.066666666666666,
       "coldOnly": false,
       "timings": {
         "pintail": {
-          "medianMs": 9,
-          "p95Ms": 13,
-          "minMs": 8,
-          "runs": 5
+          "medianMs": 15,
+          "p95Ms": 98,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 22.13,
+          "stddevMs": 21.92,
+          "ci95LowMs": 11.04,
+          "ci95HighMs": 33.22,
+          "samplesMs": [
+            11.32,
+            11.59,
+            11.69,
+            12.02,
+            12.31,
+            12.4,
+            13.86,
+            15.03,
+            15.44,
+            17.09,
+            17.2,
+            20.44,
+            31.34,
+            32.64,
+            97.53
+          ]
         },
         "clickhouse": {
-          "medianMs": 188,
-          "p95Ms": 197,
-          "minMs": 179,
-          "runs": 5
+          "medianMs": 209,
+          "p95Ms": 333,
+          "minMs": 182,
+          "runs": 15,
+          "meanMs": 228.04,
+          "stddevMs": 44.33,
+          "ci95LowMs": 205.6,
+          "ci95HighMs": 250.47,
+          "samplesMs": [
+            182.48,
+            194.39,
+            198.92,
+            200.78,
+            201.6,
+            203.22,
+            204.07,
+            208.79,
+            210.53,
+            215.34,
+            229.01,
+            262.35,
+            270.62,
+            305.63,
+            332.81
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 190,
-          "p95Ms": 204,
-          "minMs": 181,
-          "runs": 5
+          "medianMs": 211,
+          "p95Ms": 328,
+          "minMs": 183,
+          "runs": 15,
+          "meanMs": 231.57,
+          "stddevMs": 53.39,
+          "ci95LowMs": 204.55,
+          "ci95HighMs": 258.59,
+          "samplesMs": [
+            182.64,
+            186.31,
+            189.91,
+            191.99,
+            195.74,
+            198.67,
+            207.31,
+            210.89,
+            211.46,
+            214.12,
+            228,
+            290.92,
+            316.46,
+            321.15,
+            328
+          ]
         },
         "mysql": {
-          "medianMs": 826572,
-          "p95Ms": 826572,
-          "minMs": 826572,
-          "runs": 1
+          "medianMs": 836232,
+          "p95Ms": 836232,
+          "minMs": 836232,
+          "runs": 1,
+          "meanMs": 836232,
+          "stddevMs": 0,
+          "ci95LowMs": 836232,
+          "ci95HighMs": 836232,
+          "samplesMs": [
+            836232
+          ]
         }
       },
       "resources": {
         "mysql": {
-          "cpuPeakPct": 14,
-          "cpuAvgPct": 13,
-          "memPeakMb": 1706
+          "cpuPeakPct": 13,
+          "cpuAvgPct": 12,
+          "memPeakMb": 1705
         },
         "pintail": {
-          "cpuPeakPct": 16,
-          "cpuAvgPct": 16,
-          "memPeakMb": 982
+          "cpuPeakPct": 6,
+          "cpuAvgPct": 6,
+          "memPeakMb": 995
         },
         "clickhouse": {
-          "cpuPeakPct": 139,
-          "cpuAvgPct": 139,
-          "memPeakMb": 849
+          "cpuPeakPct": 588,
+          "cpuAvgPct": 575,
+          "memPeakMb": 871
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 131,
-          "cpuAvgPct": 131,
-          "memPeakMb": 795
+          "cpuPeakPct": 625,
+          "cpuAvgPct": 578,
+          "memPeakMb": 916
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true }] top_k=None trim=0\n  Project outputs=[region, cnt, total]\n    HashAggregate groups=1 aggregates=2\n      HashJoin kind=inner\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n        Scan table=benchmark_db.users rows=Some(100000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }] top_k=None trim=0\n  Project outputs=[region, cnt, total]\n    HashAggregate groups=1 aggregates=2\n      HashJoin kind=inner\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\n        Scan table=benchmark_db.users rows=Some(100000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     }
   ],
   "novelQueries": [
     {
       "name": "N1: Filtered count, novel constant",
-      "mysqlMs": 1081,
-      "pintailMs": 615,
-      "clickhouseMs": 53,
-      "clickhouseFinalMs": 49,
-      "speedup": 1.7577235772357724,
-      "speedupVsClickhouse": 0.07967479674796749,
+      "mysqlMs": 1090,
+      "pintailMs": 621,
+      "clickhouseMs": 59,
+      "clickhouseFinalMs": 52,
+      "speedup": 1.7552334943639292,
+      "speedupVsClickhouse": 0.08373590982286634,
       "coldOnly": true,
       "timings": {
         "pintail": {
-          "medianMs": 615,
-          "p95Ms": 618,
-          "minMs": 515,
-          "runs": 5
+          "medianMs": 621,
+          "p95Ms": 651,
+          "minMs": 522,
+          "runs": 5,
+          "meanMs": 607.6,
+          "stddevMs": 49.76,
+          "ci95LowMs": 563.99,
+          "ci95HighMs": 651.21,
+          "samplesMs": [
+            522,
+            615,
+            621,
+            629,
+            651
+          ]
         },
         "clickhouse": {
-          "medianMs": 53,
-          "p95Ms": 60,
-          "minMs": 52,
-          "runs": 5
+          "medianMs": 59,
+          "p95Ms": 115,
+          "minMs": 53,
+          "runs": 5,
+          "meanMs": 70.8,
+          "stddevMs": 25.97,
+          "ci95LowMs": 48.04,
+          "ci95HighMs": 93.56,
+          "samplesMs": [
+            53,
+            54,
+            59,
+            73,
+            115
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 49,
-          "p95Ms": 56,
-          "minMs": 47,
-          "runs": 5
+          "medianMs": 52,
+          "p95Ms": 64,
+          "minMs": 52,
+          "runs": 5,
+          "meanMs": 54.6,
+          "stddevMs": 5.27,
+          "ci95LowMs": 49.98,
+          "ci95HighMs": 59.22,
+          "samplesMs": [
+            52,
+            52,
+            52,
+            53,
+            64
+          ]
         },
         "mysql": {
-          "medianMs": 1081,
-          "p95Ms": 1125,
-          "minMs": 1025,
-          "runs": 5
+          "medianMs": 1090,
+          "p95Ms": 1132,
+          "minMs": 1032,
+          "runs": 5,
+          "meanMs": 1081.6,
+          "stddevMs": 46.03,
+          "ci95LowMs": 1041.25,
+          "ci95HighMs": 1121.95,
+          "samplesMs": [
+            1032,
+            1036,
+            1090,
+            1118,
+            1132
+          ]
         }
       },
       "resources": {
         "mysql": {
-          "cpuPeakPct": 5,
-          "cpuAvgPct": 5,
-          "memPeakMb": 1541
+          "cpuPeakPct": 14,
+          "cpuAvgPct": 14,
+          "memPeakMb": 1542
         },
         "pintail": {
-          "cpuPeakPct": 379,
-          "cpuAvgPct": 189,
-          "memPeakMb": 1005
+          "cpuPeakPct": 364,
+          "cpuAvgPct": 188,
+          "memPeakMb": 970
         },
         "clickhouse": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
-          "memPeakMb": 645
+          "cpuPeakPct": 14,
+          "cpuAvgPct": 14,
+          "memPeakMb": 633
         },
         "clickhouseFinal": {
           "cpuPeakPct": 3,
           "cpuAvgPct": 3,
-          "memPeakMb": 635
+          "memPeakMb": 625
         }
       },
       "pintailMatchesMysql": true,
@@ -575,194 +1181,1336 @@
     },
     {
       "name": "N2: Group by region (novel group column)",
-      "mysqlMs": 13995,
-      "pintailMs": 1165,
-      "clickhouseMs": 87,
-      "clickhouseFinalMs": 84,
-      "speedup": 12.012875536480687,
-      "speedupVsClickhouse": 0.07210300429184549,
+      "mysqlMs": 13998,
+      "pintailMs": 1243,
+      "clickhouseMs": 197,
+      "clickhouseFinalMs": 88,
+      "speedup": 11.261464199517297,
+      "speedupVsClickhouse": 0.07079646017699115,
       "coldOnly": true,
       "timings": {
         "pintail": {
-          "medianMs": 1165,
-          "p95Ms": 1195,
-          "minMs": 1021,
-          "runs": 5
+          "medianMs": 1243,
+          "p95Ms": 1380,
+          "minMs": 1147,
+          "runs": 5,
+          "meanMs": 1240.6,
+          "stddevMs": 90.79,
+          "ci95LowMs": 1161.02,
+          "ci95HighMs": 1320.18,
+          "samplesMs": [
+            1147,
+            1174,
+            1243,
+            1259,
+            1380
+          ]
         },
         "clickhouse": {
-          "medianMs": 87,
-          "p95Ms": 93,
-          "minMs": 77,
-          "runs": 5
+          "medianMs": 197,
+          "p95Ms": 418,
+          "minMs": 86,
+          "runs": 5,
+          "meanMs": 199.4,
+          "stddevMs": 133.36,
+          "ci95LowMs": 82.51,
+          "ci95HighMs": 316.29,
+          "samplesMs": [
+            86,
+            97,
+            197,
+            199,
+            418
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 84,
-          "p95Ms": 93,
-          "minMs": 82,
-          "runs": 5
+          "medianMs": 88,
+          "p95Ms": 181,
+          "minMs": 87,
+          "runs": 5,
+          "meanMs": 120.4,
+          "stddevMs": 45.56,
+          "ci95LowMs": 80.47,
+          "ci95HighMs": 160.33,
+          "samplesMs": [
+            87,
+            88,
+            88,
+            158,
+            181
+          ]
         },
         "mysql": {
-          "medianMs": 13995,
-          "p95Ms": 14046,
-          "minMs": 13804,
-          "runs": 5
+          "medianMs": 13998,
+          "p95Ms": 14101,
+          "minMs": 13702,
+          "runs": 5,
+          "meanMs": 13943,
+          "stddevMs": 162.53,
+          "ci95LowMs": 13800.53,
+          "ci95HighMs": 14085.47,
+          "samplesMs": [
+            13702,
+            13859,
+            13998,
+            14055,
+            14101
+          ]
         }
       },
       "resources": {
         "mysql": {
           "cpuPeakPct": 72,
-          "cpuAvgPct": 71,
+          "cpuAvgPct": 70,
           "memPeakMb": 1547
         },
         "pintail": {
-          "cpuPeakPct": 292,
-          "cpuAvgPct": 273,
-          "memPeakMb": 1055
+          "cpuPeakPct": 240,
+          "cpuAvgPct": 175,
+          "memPeakMb": 992
         },
         "clickhouse": {
-          "cpuPeakPct": 2,
-          "cpuAvgPct": 2,
-          "memPeakMb": 636
+          "cpuPeakPct": 45,
+          "cpuAvgPct": 45,
+          "memPeakMb": 642
         },
         "clickhouseFinal": {
           "cpuPeakPct": 3,
           "cpuAvgPct": 3,
-          "memPeakMb": 632
+          "memPeakMb": 628
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: false }] top_k=None trim=0\n  Project outputs=[region, cnt, avg_amt]\n    HashAggregate groups=1 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 8] predicates=0 limit=None actual_segments=200/200 actual_blocks=2800/2800 decoded_blocks=2800\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: false, collation: None }] top_k=None trim=0\n  Project outputs=[region, cnt, avg_amt]\n    HashAggregate groups=1 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 8] predicates=0 limit=None actual_segments=200/200 actual_blocks=2800/2800 decoded_blocks=2800\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "N3: Monthly revenue, novel year",
-      "mysqlMs": 9160,
-      "pintailMs": 481,
-      "clickhouseMs": 37,
-      "clickhouseFinalMs": 46,
-      "speedup": 19.043659043659044,
-      "speedupVsClickhouse": 0.09563409563409564,
+      "mysqlMs": 9192,
+      "pintailMs": 493,
+      "clickhouseMs": 49,
+      "clickhouseFinalMs": 45,
+      "speedup": 18.64503042596349,
+      "speedupVsClickhouse": 0.09127789046653144,
       "coldOnly": true,
       "timings": {
         "pintail": {
-          "medianMs": 481,
-          "p95Ms": 489,
-          "minMs": 467,
-          "runs": 5
+          "medianMs": 493,
+          "p95Ms": 627,
+          "minMs": 477,
+          "runs": 5,
+          "meanMs": 517.4,
+          "stddevMs": 62.52,
+          "ci95LowMs": 462.6,
+          "ci95HighMs": 572.2,
+          "samplesMs": [
+            477,
+            481,
+            493,
+            509,
+            627
+          ]
         },
         "clickhouse": {
-          "medianMs": 37,
-          "p95Ms": 41,
-          "minMs": 34,
-          "runs": 5
+          "medianMs": 49,
+          "p95Ms": 131,
+          "minMs": 43,
+          "runs": 5,
+          "meanMs": 64.4,
+          "stddevMs": 37.47,
+          "ci95LowMs": 31.56,
+          "ci95HighMs": 97.24,
+          "samplesMs": [
+            43,
+            45,
+            49,
+            54,
+            131
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 46,
-          "p95Ms": 48,
+          "medianMs": 45,
+          "p95Ms": 116,
           "minMs": 37,
-          "runs": 5
+          "runs": 5,
+          "meanMs": 58.4,
+          "stddevMs": 32.49,
+          "ci95LowMs": 29.92,
+          "ci95HighMs": 86.88,
+          "samplesMs": [
+            37,
+            45,
+            45,
+            49,
+            116
+          ]
         },
         "mysql": {
-          "medianMs": 9160,
-          "p95Ms": 9194,
-          "minMs": 8865,
-          "runs": 5
+          "medianMs": 9192,
+          "p95Ms": 9249,
+          "minMs": 8958,
+          "runs": 5,
+          "meanMs": 9156,
+          "stddevMs": 114.82,
+          "ci95LowMs": 9055.36,
+          "ci95HighMs": 9256.64,
+          "samplesMs": [
+            8958,
+            9166,
+            9192,
+            9215,
+            9249
+          ]
         }
       },
       "resources": {
         "mysql": {
           "cpuPeakPct": 57,
-          "cpuAvgPct": 47,
+          "cpuAvgPct": 48,
           "memPeakMb": 1546
         },
         "pintail": {
-          "cpuPeakPct": 619,
-          "cpuAvgPct": 309,
-          "memPeakMb": 961
+          "cpuPeakPct": 601,
+          "cpuAvgPct": 601,
+          "memPeakMb": 931
         },
         "clickhouse": {
           "cpuPeakPct": 3,
           "cpuAvgPct": 3,
-          "memPeakMb": 625
+          "memPeakMb": 629
         },
         "clickhouseFinal": {
-          "cpuPeakPct": 8,
-          "cpuAvgPct": 8,
-          "memPeakMb": 640
+          "cpuPeakPct": 3,
+          "cpuAvgPct": 3,
+          "memPeakMb": 615
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false }] top_k=None trim=0\n  Project outputs=[yr, mo, cnt, revenue]\n    HashAggregate groups=2 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 9] predicates=2 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=None trim=0\n  Project outputs=[yr, mo, cnt, revenue]\n    HashAggregate groups=2 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 9] predicates=2 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     },
     {
       "name": "N4: Regional analytics, novel range",
-      "mysqlMs": 58019,
-      "pintailMs": 1019,
-      "clickhouseMs": 156,
-      "clickhouseFinalMs": 172,
-      "speedup": 56.93719332679097,
-      "speedupVsClickhouse": 0.16879293424926398,
+      "mysqlMs": 57453,
+      "pintailMs": 1041,
+      "clickhouseMs": 277,
+      "clickhouseFinalMs": 190,
+      "speedup": 55.190201729106626,
+      "speedupVsClickhouse": 0.18251681075888568,
       "coldOnly": true,
       "timings": {
         "pintail": {
-          "medianMs": 1019,
-          "p95Ms": 1165,
-          "minMs": 973,
-          "runs": 5
+          "medianMs": 1041,
+          "p95Ms": 1144,
+          "minMs": 987,
+          "runs": 5,
+          "meanMs": 1062.8,
+          "stddevMs": 63.23,
+          "ci95LowMs": 1007.38,
+          "ci95HighMs": 1118.22,
+          "samplesMs": [
+            987,
+            1032,
+            1041,
+            1110,
+            1144
+          ]
         },
         "clickhouse": {
-          "medianMs": 156,
-          "p95Ms": 176,
-          "minMs": 139,
-          "runs": 5
+          "medianMs": 277,
+          "p95Ms": 350,
+          "minMs": 186,
+          "runs": 5,
+          "meanMs": 266,
+          "stddevMs": 60.27,
+          "ci95LowMs": 213.17,
+          "ci95HighMs": 318.83,
+          "samplesMs": [
+            186,
+            238,
+            277,
+            279,
+            350
+          ]
         },
         "clickhouseFinal": {
-          "medianMs": 172,
-          "p95Ms": 208,
-          "minMs": 138,
-          "runs": 5
+          "medianMs": 190,
+          "p95Ms": 235,
+          "minMs": 144,
+          "runs": 5,
+          "meanMs": 188.6,
+          "stddevMs": 36.08,
+          "ci95LowMs": 156.97,
+          "ci95HighMs": 220.23,
+          "samplesMs": [
+            144,
+            164,
+            190,
+            210,
+            235
+          ]
         },
         "mysql": {
-          "medianMs": 58019,
-          "p95Ms": 59454,
-          "minMs": 57728,
-          "runs": 5
+          "medianMs": 57453,
+          "p95Ms": 59005,
+          "minMs": 57388,
+          "runs": 5,
+          "meanMs": 58016.6,
+          "stddevMs": 813.99,
+          "ci95LowMs": 57303.11,
+          "ci95HighMs": 58730.09,
+          "samplesMs": [
+            57388,
+            57433,
+            57453,
+            58804,
+            59005
+          ]
         }
       },
       "resources": {
         "mysql": {
-          "cpuPeakPct": 56,
-          "cpuAvgPct": 55,
+          "cpuPeakPct": 57,
+          "cpuAvgPct": 54,
           "memPeakMb": 1547
         },
         "pintail": {
-          "cpuPeakPct": 386,
-          "cpuAvgPct": 299,
-          "memPeakMb": 1090
+          "cpuPeakPct": 392,
+          "cpuAvgPct": 253,
+          "memPeakMb": 1074
         },
         "clickhouse": {
-          "cpuPeakPct": 3,
-          "cpuAvgPct": 3,
-          "memPeakMb": 687
+          "cpuPeakPct": 103,
+          "cpuAvgPct": 103,
+          "memPeakMb": 682
         },
         "clickhouseFinal": {
           "cpuPeakPct": 3,
           "cpuAvgPct": 3,
+          "memPeakMb": 661
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }] top_k=None trim=0\n  Project outputs=[region, cnt, total, avg_amt, min_amt, max_amt, unique_users]\n    HashAggregate groups=1 aggregates=6\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6, 8, 9] predicates=1 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    }
+  ],
+  "engineQueries": [
+    {
+      "name": "Q1: Full table count",
+      "mysqlMs": 1505,
+      "pintailMs": 13,
+      "clickhouseMs": 10,
+      "clickhouseFinalMs": 13,
+      "speedup": 115.76923076923077,
+      "speedupVsClickhouse": 1,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 13,
+          "p95Ms": 148,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 28.15,
+          "stddevMs": 39.39,
+          "ci95LowMs": 8.21,
+          "ci95HighMs": 48.08,
+          "samplesMs": [
+            10.87,
+            11.2,
+            11.2,
+            11.22,
+            11.73,
+            11.92,
+            12.98,
+            13.21,
+            13.54,
+            13.58,
+            13.9,
+            14.45,
+            29.65,
+            95.25,
+            147.53
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 10,
+          "p95Ms": 129,
+          "minMs": 9,
+          "runs": 15,
+          "meanMs": 17.68,
+          "stddevMs": 30.77,
+          "ci95LowMs": 2.1,
+          "ci95HighMs": 33.25,
+          "samplesMs": [
+            8.56,
+            8.71,
+            8.96,
+            9.11,
+            9.11,
+            9.28,
+            9.43,
+            9.62,
+            9.63,
+            10.07,
+            10.22,
+            10.29,
+            10.75,
+            12.55,
+            128.86
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 13,
+          "p95Ms": 199,
+          "minMs": 11,
+          "runs": 15,
+          "meanMs": 42.65,
+          "stddevMs": 63.58,
+          "ci95LowMs": 10.47,
+          "ci95HighMs": 74.82,
+          "samplesMs": [
+            11.42,
+            11.45,
+            11.6,
+            11.85,
+            12.09,
+            12.34,
+            12.35,
+            12.8,
+            13.17,
+            13.27,
+            13.47,
+            13.64,
+            143.46,
+            148.05,
+            198.77
+          ]
+        },
+        "mysql": {
+          "medianMs": 1505,
+          "p95Ms": 1505,
+          "minMs": 1505,
+          "runs": 1,
+          "meanMs": 1505,
+          "stddevMs": 0,
+          "ci95LowMs": 1505,
+          "ci95HighMs": 1505,
+          "samplesMs": [
+            1505
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 0,
+          "cpuAvgPct": 0,
+          "memPeakMb": 7
+        },
+        "clickhouse": {
+          "cpuPeakPct": 8,
+          "cpuAvgPct": 8,
+          "memPeakMb": 626
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 3,
+          "cpuAvgPct": 3,
+          "memPeakMb": 614
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Project outputs=[cnt]\n  HashAggregate groups=0 aggregates=1\n    Scan table=benchmark_db.orders rows=Some(20000000) columns=[] predicates=0 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q2: Filtered count",
+      "mysqlMs": 596,
+      "pintailMs": 93,
+      "clickhouseMs": 34,
+      "clickhouseFinalMs": 32,
+      "speedup": 6.408602150537634,
+      "speedupVsClickhouse": 0.34408602150537637,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 93,
+          "p95Ms": 299,
+          "minMs": 83,
+          "runs": 15,
+          "meanMs": 128.93,
+          "stddevMs": 64.57,
+          "ci95LowMs": 96.25,
+          "ci95HighMs": 161.61,
+          "samplesMs": [
+            82.67,
+            83.5,
+            84.2,
+            88.07,
+            89.34,
+            91.48,
+            92.96,
+            93.08,
+            94,
+            97.71,
+            161.03,
+            181.05,
+            182.54,
+            212.86,
+            299.48
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 34,
+          "p95Ms": 249,
+          "minMs": 27,
+          "runs": 15,
+          "meanMs": 61.8,
+          "stddevMs": 66.34,
+          "ci95LowMs": 28.23,
+          "ci95HighMs": 95.38,
+          "samplesMs": [
+            26.9,
+            27.54,
+            28.41,
+            28.84,
+            29.43,
+            30.19,
+            32.23,
+            33.78,
+            34.72,
+            34.83,
+            36.06,
+            49.63,
+            104.81,
+            180.44,
+            249.22
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 32,
+          "p95Ms": 266,
+          "minMs": 27,
+          "runs": 15,
+          "meanMs": 97.15,
+          "stddevMs": 87.71,
+          "ci95LowMs": 52.76,
+          "ci95HighMs": 141.54,
+          "samplesMs": [
+            26.93,
+            27.11,
+            27.98,
+            29.62,
+            30.52,
+            30.92,
+            31.4,
+            31.75,
+            32.56,
+            177.3,
+            179.32,
+            180.45,
+            190.07,
+            194.98,
+            266.29
+          ]
+        },
+        "mysql": {
+          "medianMs": 596,
+          "p95Ms": 596,
+          "minMs": 596,
+          "runs": 1,
+          "meanMs": 596,
+          "stddevMs": 0,
+          "ci95LowMs": 596,
+          "ci95HighMs": 596,
+          "samplesMs": [
+            596
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 244,
+          "cpuAvgPct": 244,
+          "memPeakMb": 29
+        },
+        "clickhouse": {
+          "cpuPeakPct": 24,
+          "cpuAvgPct": 24,
+          "memPeakMb": 631
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 104,
+          "cpuAvgPct": 104,
+          "memPeakMb": 630
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Project outputs=[cnt]\n  HashAggregate groups=0 aggregates=1\n    Scan table=benchmark_db.orders rows=Some(20000000) columns=[7] predicates=1 limit=None actual_segments=200/200 actual_blocks=1400/1400 decoded_blocks=1400\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q3: Group by status",
+      "mysqlMs": 35395,
+      "pintailMs": 310,
+      "clickhouseMs": 65,
+      "clickhouseFinalMs": 64,
+      "speedup": 114.1774193548387,
+      "speedupVsClickhouse": 0.2064516129032258,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 310,
+          "p95Ms": 427,
+          "minMs": 292,
+          "runs": 15,
+          "meanMs": 321.85,
+          "stddevMs": 32.84,
+          "ci95LowMs": 305.22,
+          "ci95HighMs": 338.47,
+          "samplesMs": [
+            291.93,
+            303.28,
+            303.98,
+            305.55,
+            306.6,
+            308.13,
+            309.48,
+            309.6,
+            315.34,
+            315.88,
+            319.49,
+            325.23,
+            328.44,
+            357.27,
+            427.49
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 65,
+          "p95Ms": 207,
+          "minMs": 58,
+          "runs": 15,
+          "meanMs": 82,
+          "stddevMs": 41.82,
+          "ci95LowMs": 60.83,
+          "ci95HighMs": 103.17,
+          "samplesMs": [
+            58.14,
+            59.2,
+            60.32,
+            60.95,
+            61.72,
+            62.54,
+            64.22,
+            64.84,
+            66.2,
+            66.59,
+            75.17,
+            76.07,
+            96.89,
+            149.89,
+            207.25
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 64,
+          "p95Ms": 190,
+          "minMs": 60,
+          "runs": 15,
+          "meanMs": 83.82,
+          "stddevMs": 40.74,
+          "ci95LowMs": 63.2,
+          "ci95HighMs": 104.44,
+          "samplesMs": [
+            60.09,
+            60.44,
+            61.75,
+            62.22,
+            62.32,
+            63.36,
+            63.97,
+            64.49,
+            64.92,
+            68.75,
+            71.04,
+            74.47,
+            142.47,
+            147.29,
+            189.77
+          ]
+        },
+        "mysql": {
+          "medianMs": 35395,
+          "p95Ms": 35395,
+          "minMs": 35395,
+          "runs": 1,
+          "meanMs": 35395,
+          "stddevMs": 0,
+          "ci95LowMs": 35395,
+          "ci95HighMs": 35395,
+          "samplesMs": [
+            35395
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 607,
+          "cpuAvgPct": 425,
+          "memPeakMb": 96
+        },
+        "clickhouse": {
+          "cpuPeakPct": 150,
+          "cpuAvgPct": 150,
+          "memPeakMb": 643
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 171,
+          "cpuAvgPct": 171,
+          "memPeakMb": 657
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: false, collation: None }] top_k=None trim=0\n  Project outputs=[status, cnt, avg_amt]\n    HashAggregate groups=1 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7] predicates=0 limit=None actual_segments=200/200 actual_blocks=2800/2800 decoded_blocks=2800\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q4: Region × status breakdown",
+      "mysqlMs": 13784,
+      "pintailMs": 394,
+      "clickhouseMs": 242,
+      "clickhouseFinalMs": 285,
+      "speedup": 34.984771573604064,
+      "speedupVsClickhouse": 0.7233502538071066,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 394,
+          "p95Ms": 837,
+          "minMs": 373,
+          "runs": 15,
+          "meanMs": 445.18,
+          "stddevMs": 119.04,
+          "ci95LowMs": 384.94,
+          "ci95HighMs": 505.42,
+          "samplesMs": [
+            372.63,
+            377.9,
+            382.65,
+            384.31,
+            386.71,
+            391.67,
+            392.51,
+            394.08,
+            418.86,
+            421.69,
+            428.58,
+            438.2,
+            502.43,
+            548.12,
+            837.42
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 242,
+          "p95Ms": 364,
+          "minMs": 232,
+          "runs": 15,
+          "meanMs": 254.07,
+          "stddevMs": 33.01,
+          "ci95LowMs": 237.36,
+          "ci95HighMs": 270.77,
+          "samplesMs": [
+            232.17,
+            232.69,
+            233.09,
+            233.41,
+            236.26,
+            241.44,
+            241.72,
+            242.47,
+            248.15,
+            253.4,
+            255.9,
+            258.66,
+            265.1,
+            272.08,
+            364.46
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 285,
+          "p95Ms": 307,
+          "minMs": 221,
+          "runs": 15,
+          "meanMs": 264.86,
+          "stddevMs": 35.3,
+          "ci95LowMs": 247,
+          "ci95HighMs": 282.73,
+          "samplesMs": [
+            220.84,
+            225.52,
+            226.51,
+            227.1,
+            228.99,
+            236.36,
+            238.38,
+            285.21,
+            286.28,
+            295.84,
+            295.91,
+            296.07,
+            297.27,
+            306.05,
+            306.62
+          ]
+        },
+        "mysql": {
+          "medianMs": 13784,
+          "p95Ms": 13784,
+          "minMs": 13784,
+          "runs": 1,
+          "meanMs": 13784,
+          "stddevMs": 0,
+          "ci95LowMs": 13784,
+          "ci95HighMs": 13784,
+          "samplesMs": [
+            13784
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 406,
+          "cpuAvgPct": 328,
+          "memPeakMb": 151
+        },
+        "clickhouse": {
+          "cpuPeakPct": 723,
+          "cpuAvgPct": 469,
+          "memPeakMb": 674
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 681,
+          "cpuAvgPct": 448,
           "memPeakMb": 696
         }
       },
       "pintailMatchesMysql": true,
       "clickhouseFinalMatchesMysql": true,
-      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true }] top_k=None trim=0\n  Project outputs=[region, cnt, total, avg_amt, min_amt, max_amt, unique_users]\n    HashAggregate groups=1 aggregates=6\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6, 8, 9] predicates=1 limit=None actual_segments=200/200 actual_blocks=0/0 decoded_blocks=0\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+      "pintailExplain": "Limit offset=0 count=20\n  Sort keys=[BoundOrderKey { index: 3, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=Some(20) trim=0\n    Project outputs=[region, status, cnt, total]\n      HashAggregate groups=2 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 7, 8] predicates=0 limit=None actual_segments=200/200 actual_blocks=4200/4200 decoded_blocks=4200\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q5: Monthly revenue (2023)",
+      "mysqlMs": 5726,
+      "pintailMs": 521,
+      "clickhouseMs": 44,
+      "clickhouseFinalMs": 46,
+      "speedup": 10.990403071017274,
+      "speedupVsClickhouse": 0.08829174664107485,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 521,
+          "p95Ms": 642,
+          "minMs": 484,
+          "runs": 15,
+          "meanMs": 540.29,
+          "stddevMs": 59.06,
+          "ci95LowMs": 510.4,
+          "ci95HighMs": 570.18,
+          "samplesMs": [
+            484.34,
+            487,
+            491.48,
+            495.06,
+            501.53,
+            502.74,
+            515.34,
+            520.98,
+            521.7,
+            526.58,
+            529.35,
+            625.58,
+            626.57,
+            633.75,
+            642.38
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 44,
+          "p95Ms": 520,
+          "minMs": 37,
+          "runs": 15,
+          "meanMs": 99.22,
+          "stddevMs": 128.16,
+          "ci95LowMs": 34.36,
+          "ci95HighMs": 164.08,
+          "samplesMs": [
+            37.22,
+            38.35,
+            40.22,
+            40.64,
+            41.14,
+            41.62,
+            42.55,
+            43.84,
+            44.52,
+            44.58,
+            50.36,
+            123.51,
+            189.7,
+            189.92,
+            520.11
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 46,
+          "p95Ms": 515,
+          "minMs": 42,
+          "runs": 15,
+          "meanMs": 127.13,
+          "stddevMs": 139.91,
+          "ci95LowMs": 56.32,
+          "ci95HighMs": 197.93,
+          "samplesMs": [
+            42.43,
+            42.77,
+            44.13,
+            44.45,
+            44.72,
+            45.11,
+            45.66,
+            46.25,
+            47.95,
+            69.34,
+            131.87,
+            213.83,
+            266.61,
+            306.81,
+            515
+          ]
+        },
+        "mysql": {
+          "medianMs": 5726,
+          "p95Ms": 5726,
+          "minMs": 5726,
+          "runs": 1,
+          "meanMs": 5726,
+          "stddevMs": 0,
+          "ci95LowMs": 5726,
+          "ci95HighMs": 5726,
+          "samplesMs": [
+            5726
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 587,
+          "cpuAvgPct": 424,
+          "memPeakMb": 481
+        },
+        "clickhouse": {
+          "cpuPeakPct": 222,
+          "cpuAvgPct": 222,
+          "memPeakMb": 634
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 99,
+          "cpuAvgPct": 51,
+          "memPeakMb": 641
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=None trim=0\n  Project outputs=[yr, mo, cnt, revenue]\n    HashAggregate groups=2 aggregates=2\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[6, 9] predicates=2 limit=None actual_segments=200/200 actual_blocks=2856/2856 decoded_blocks=2856\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q6: Top 10 spenders",
+      "mysqlMs": 821652,
+      "pintailMs": 1022,
+      "clickhouseMs": 282,
+      "clickhouseFinalMs": 253,
+      "speedup": 803.9647749510763,
+      "speedupVsClickhouse": 0.24755381604696672,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 1022,
+          "p95Ms": 1088,
+          "minMs": 942,
+          "runs": 15,
+          "meanMs": 1013.66,
+          "stddevMs": 44.28,
+          "ci95LowMs": 991.25,
+          "ci95HighMs": 1036.07,
+          "samplesMs": [
+            941.69,
+            962.31,
+            969.71,
+            970,
+            970.44,
+            985.24,
+            1003.53,
+            1021.88,
+            1045.77,
+            1045.89,
+            1047.25,
+            1048.3,
+            1051.02,
+            1053.56,
+            1088.27
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 282,
+          "p95Ms": 455,
+          "minMs": 229,
+          "runs": 15,
+          "meanMs": 305.6,
+          "stddevMs": 78.97,
+          "ci95LowMs": 265.64,
+          "ci95HighMs": 345.57,
+          "samplesMs": [
+            229.08,
+            230.93,
+            233.55,
+            244.05,
+            249.23,
+            253.68,
+            258.35,
+            281.75,
+            282.21,
+            291.98,
+            337.67,
+            407.07,
+            411.42,
+            418.1,
+            454.95
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 253,
+          "p95Ms": 367,
+          "minMs": 237,
+          "runs": 15,
+          "meanMs": 261.12,
+          "stddevMs": 32.05,
+          "ci95LowMs": 244.9,
+          "ci95HighMs": 277.34,
+          "samplesMs": [
+            237.16,
+            238.82,
+            241.05,
+            241.24,
+            242.83,
+            245.88,
+            249.76,
+            252.74,
+            254.22,
+            259.77,
+            265.96,
+            268.13,
+            272,
+            280.6,
+            366.6
+          ]
+        },
+        "mysql": {
+          "medianMs": 821652,
+          "p95Ms": 821652,
+          "minMs": 821652,
+          "runs": 1,
+          "meanMs": 821652,
+          "stddevMs": 0,
+          "ci95LowMs": 821652,
+          "ci95HighMs": 821652,
+          "samplesMs": [
+            821652
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 653,
+          "cpuAvgPct": 559,
+          "memPeakMb": 650
+        },
+        "clickhouse": {
+          "cpuPeakPct": 586,
+          "cpuAvgPct": 374,
+          "memPeakMb": 746
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 736,
+          "cpuAvgPct": 468,
+          "memPeakMb": 760
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Limit offset=0 count=10\n  Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=Some(10) trim=0\n    Project outputs=[user_id, order_count, total_spent]\n      HashAggregate groups=1 aggregates=2\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=2800/2800 decoded_blocks=2800\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q7: Regional analytics",
+      "mysqlMs": 56606,
+      "pintailMs": 1050,
+      "clickhouseMs": 148,
+      "clickhouseFinalMs": 175,
+      "speedup": 53.91047619047619,
+      "speedupVsClickhouse": 0.16666666666666666,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 1050,
+          "p95Ms": 1377,
+          "minMs": 1016,
+          "runs": 15,
+          "meanMs": 1079.56,
+          "stddevMs": 88.77,
+          "ci95LowMs": 1034.63,
+          "ci95HighMs": 1124.49,
+          "samplesMs": [
+            1016.46,
+            1041.08,
+            1043.38,
+            1044.4,
+            1045.68,
+            1046.84,
+            1049.83,
+            1049.97,
+            1051.24,
+            1053.49,
+            1056.74,
+            1066.72,
+            1083.87,
+            1166.46,
+            1377.23
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 148,
+          "p95Ms": 502,
+          "minMs": 138,
+          "runs": 15,
+          "meanMs": 188.77,
+          "stddevMs": 93.46,
+          "ci95LowMs": 141.48,
+          "ci95HighMs": 236.07,
+          "samplesMs": [
+            138.46,
+            138.54,
+            140.07,
+            140.63,
+            142.66,
+            143.74,
+            144.07,
+            148.17,
+            153.19,
+            164.15,
+            203.29,
+            204.21,
+            233.65,
+            234.44,
+            502.33
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 175,
+          "p95Ms": 295,
+          "minMs": 162,
+          "runs": 15,
+          "meanMs": 186.4,
+          "stddevMs": 35.36,
+          "ci95LowMs": 168.5,
+          "ci95HighMs": 204.29,
+          "samplesMs": [
+            162.05,
+            163.14,
+            163.19,
+            164.53,
+            165.63,
+            167.92,
+            169.93,
+            174.69,
+            175.52,
+            184.19,
+            187.31,
+            194.98,
+            195.72,
+            232.14,
+            295.02
+          ]
+        },
+        "mysql": {
+          "medianMs": 56606,
+          "p95Ms": 56606,
+          "minMs": 56606,
+          "runs": 1,
+          "meanMs": 56606,
+          "stddevMs": 0,
+          "ci95LowMs": 56606,
+          "ci95HighMs": 56606,
+          "samplesMs": [
+            56606
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 371,
+          "cpuAvgPct": 362,
+          "memPeakMb": 753
+        },
+        "clickhouse": {
+          "cpuPeakPct": 633,
+          "cpuAvgPct": 522,
+          "memPeakMb": 773
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 650,
+          "cpuAvgPct": 327,
+          "memPeakMb": 699
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }] top_k=None trim=0\n  Project outputs=[region, cnt, total, avg_amt, min_amt, max_amt, unique_users]\n    HashAggregate groups=1 aggregates=6\n      Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6, 8, 9] predicates=1 limit=None actual_segments=200/200 actual_blocks=5628/5628 decoded_blocks=5628\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
+    },
+    {
+      "name": "Q8: Join users + orders",
+      "mysqlMs": 836232,
+      "pintailMs": 942,
+      "clickhouseMs": 203,
+      "clickhouseFinalMs": 201,
+      "speedup": 887.71974522293,
+      "speedupVsClickhouse": 0.21337579617834396,
+      "coldOnly": false,
+      "timings": {
+        "pintail": {
+          "medianMs": 942,
+          "p95Ms": 1058,
+          "minMs": 909,
+          "runs": 15,
+          "meanMs": 952.02,
+          "stddevMs": 41.83,
+          "ci95LowMs": 930.86,
+          "ci95HighMs": 973.19,
+          "samplesMs": [
+            909.07,
+            909.77,
+            916.97,
+            922.89,
+            927.51,
+            934.71,
+            935.52,
+            942.1,
+            943.89,
+            947.95,
+            961.36,
+            969.73,
+            976.79,
+            1024.23,
+            1057.88
+          ]
+        },
+        "clickhouse": {
+          "medianMs": 203,
+          "p95Ms": 331,
+          "minMs": 182,
+          "runs": 15,
+          "meanMs": 218.42,
+          "stddevMs": 43.05,
+          "ci95LowMs": 196.64,
+          "ci95HighMs": 240.21,
+          "samplesMs": [
+            182.49,
+            185.4,
+            188.24,
+            195.11,
+            196.42,
+            196.66,
+            200.36,
+            203.39,
+            204.26,
+            206.47,
+            210.76,
+            222.04,
+            258.14,
+            295.93,
+            330.69
+          ]
+        },
+        "clickhouseFinal": {
+          "medianMs": 201,
+          "p95Ms": 325,
+          "minMs": 184,
+          "runs": 15,
+          "meanMs": 211.53,
+          "stddevMs": 36.61,
+          "ci95LowMs": 193,
+          "ci95HighMs": 230.05,
+          "samplesMs": [
+            183.6,
+            184.73,
+            185.43,
+            185.91,
+            189.29,
+            191.79,
+            198.19,
+            200.97,
+            202.81,
+            206.42,
+            212.49,
+            226.97,
+            239.24,
+            240.32,
+            324.73
+          ]
+        },
+        "mysql": {
+          "medianMs": 836232,
+          "p95Ms": 836232,
+          "minMs": 836232,
+          "runs": 1,
+          "meanMs": 836232,
+          "stddevMs": 0,
+          "ci95LowMs": 836232,
+          "ci95HighMs": 836232,
+          "samplesMs": [
+            836232
+          ]
+        }
+      },
+      "resources": {
+        "pintail": {
+          "cpuPeakPct": 603,
+          "cpuAvgPct": 510,
+          "memPeakMb": 997
+        },
+        "clickhouse": {
+          "cpuPeakPct": 670,
+          "cpuAvgPct": 639,
+          "memPeakMb": 892
+        },
+        "clickhouseFinal": {
+          "cpuPeakPct": 704,
+          "cpuAvgPct": 678,
+          "memPeakMb": 904
+        }
+      },
+      "pintailMatchesMysql": true,
+      "clickhouseFinalMatchesMysql": true,
+      "pintailExplain": "Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }] top_k=None trim=0\n  Project outputs=[region, cnt, total]\n    HashAggregate groups=1 aggregates=2\n      HashJoin kind=inner\n        Scan table=benchmark_db.orders rows=Some(20000000) columns=[2, 6] predicates=0 limit=None actual_segments=200/200 actual_blocks=2800/2800 decoded_blocks=2800\n        Scan table=benchmark_db.users rows=Some(100000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=14/14 decoded_blocks=14\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0\n"
     }
   ],
   "totals": {
-    "mysqlMs": 1755062,
-    "pintailMs": 136,
-    "clickhouseMs": 984,
-    "clickhouseFinalMs": 979,
-    "speedup": 12904.867647058823,
-    "speedupVsClickhouse": 7.198529411764706
+    "mysqlMs": 1771496,
+    "pintailMs": 204,
+    "clickhouseMs": 1105,
+    "clickhouseFinalMs": 1075,
+    "speedup": 8683.803921568628,
+    "speedupVsClickhouse": 5.269607843137255
   }
 }

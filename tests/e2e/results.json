@@ -313,7 +313,7 @@
     "phase": "snapshot",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "orm-compat",
@@ -749,7 +749,7 @@
     "phase": "orm-compat",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "crud",
@@ -1065,7 +1065,7 @@
     "phase": "crud",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "type-edges",
@@ -1381,7 +1381,7 @@
     "phase": "type-edges",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "ddl",
@@ -1702,7 +1702,7 @@
     "phase": "ddl",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "churn-live",
@@ -2053,7 +2053,7 @@
     "phase": "churn",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "spill",
@@ -2394,7 +2394,7 @@
     "phase": "spill",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "pooling",
@@ -2730,7 +2730,7 @@
     "phase": "pooling",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "restart",
@@ -3051,7 +3051,7 @@
     "phase": "restart",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "control-plane",
@@ -3442,7 +3442,7 @@
     "phase": "control-plane",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
     "phase": "ddl-documented-gaps",
@@ -3770,6 +3770,6 @@
     "phase": "ddl-documented-gaps",
     "check": "query:general_ci: mixing collations across separate comparisons",
     "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nError: unsupported expression: this query reads text in more than one collation (utf8mb4_0900_ai_ci, utf8mb4_general_ci), and they do not agree about trailing spaces or about characters above the BMP"
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   }
 ]
