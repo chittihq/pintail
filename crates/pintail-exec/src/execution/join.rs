@@ -20,6 +20,33 @@ use crate::{
     spill,
 };
 
+/// Hashes the bucket addresses the probe loop looks up.
+///
+/// The fused probe asks "which groups does this bucket hold?" once per probe
+/// row - two million times for this query - against a map keyed by the
+/// bucket's address. `SipHash` earns its keep against attacker-chosen keys in
+/// a persistent table; these are addresses this process just produced, living
+/// for one query, so its cost is pure overhead on the hottest lookup in the
+/// join.
+#[derive(Default)]
+pub(super) struct AddressHasher(u64);
+
+impl std::hash::Hasher for AddressHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        unreachable!("bucket addresses hash through write_usize");
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.0 = crate::batch::mix64(value as u64);
+    }
+}
+
+pub(super) type AddressMap<V> = HashMap<usize, V, std::hash::BuildHasherDefault<AddressHasher>>;
+
 /// Group identity resolved ONCE from the build side. Group columns of a
 /// fused join are build-side by construction, so the complete group set is
 /// known before probing: workers then index groups directly instead of
@@ -29,7 +56,7 @@ pub(super) struct JoinGroupPlan {
     /// Group key values in index order.
     pub(super) values: Vec<Vec<Value>>,
     /// Per build bucket (keyed by its address), the group index of each row.
-    pub(super) buckets: HashMap<usize, Vec<usize>>,
+    pub(super) buckets: AddressMap<Vec<usize>>,
 }
 
 /// Appends a value's collation sort key, without the hex detour.
@@ -111,7 +138,8 @@ pub(super) fn resolve_join_group_plan(
 ) -> Result<JoinGroupPlan, ExecError> {
     let mut values = Vec::new();
     let mut index = HashMap::<Vec<u8>, usize>::new();
-    let mut buckets = HashMap::with_capacity(build.len());
+    let mut buckets =
+        AddressMap::with_capacity_and_hasher(build.len(), std::hash::BuildHasherDefault::default());
     // One scratch buffer for the whole plan. The key used to be a
     // `Vec<Value>`: a heap vector per row, each cell a 32-byte tagged enum,
     // and every text cell an owned hexadecimal `String`. For a build side of
