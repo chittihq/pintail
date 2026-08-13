@@ -322,6 +322,14 @@ worth refusing.
   until a bloom-assisted or partitioned anti-join is implemented.
 - CDC-side cascade/SET NULL reconciliation materializes a table-sized
   comparison in memory.
+- Rows removed by an invisible foreign-key cascade stay visible in the replica
+  until that reconciliation runs, so the replica reads AHEAD of the source -
+  more rows, larger sums - rather than behind it. A full production run with
+  eight writers issued 74 cascade deletes and left `shipment_items` 51 rows
+  and 173 units of `amountSum` above the source, still unconverged when the
+  phase ended. Ordinary replication lag resolves itself and reads low; this
+  does not resolve until reconciliation, and reads high, so the two cannot be
+  told apart by direction alone.
 - Cursor-less keyed checksums can re-dump adjacent chunks when inserts or
   deletes shift chunk boundaries; correctness holds, but repair work can exceed
   the number of rows that changed.
