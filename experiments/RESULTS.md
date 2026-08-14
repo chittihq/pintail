@@ -14,6 +14,24 @@ produced identical checksums. Raw outputs: rerun per `TODO.md`; summary tables b
 > trail, not usable evidence. Their pass/reject language is withdrawn until each experiment
 > is replaced and re-executed.
 
+### 2026-08-15 re-audit — e36 negative selection
+
+The replacement classifier accepts only observable transaction facts; the oracle fault
+label is held in a separate wrapper used by `evaluate` and cannot be passed to `decide`.
+Five injected fault kinds rotate independently, while valid high-row/high-lag traffic sits
+outside the healthy envelope without violating an exact invariant. Regression tests prove
+fault rotation, valid-outlier behavior, and label-independent decisions.
+
+| Policy | Recall | False quarantine | 100K decisions (local median) |
+|---|---:|---:|---:|
+| fixed thresholds | 40.06% | 0% | 0.149 ms |
+| diagonal distance | **100%** | **0%** | 0.330 ms |
+| negative selection | **100%** | **0%** | 0.253 ms |
+
+**Re-audited verdict: reject the biomimetic candidate.** It clears the absolute safety
+gate but produces the identical decision checksum as diagonal distance. That is a tie, not
+evidence for a negative-selection ensemble; the simpler distance detector wins.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

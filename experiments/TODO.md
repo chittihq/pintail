@@ -146,8 +146,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     detector fires, so controlled reset provides no gain.
   - [ ] **e30-physarum-access** — simulation passes on both targets; real cold PTSEG
     bundle/rewrite measurements required.
-  - [ ] **e36-negative-selection** — **INVALIDATED:** the quarantine decision consumes
-    the ground-truth fault label and the generator injects faults into only one feature.
+  - [x] **e36-negative-selection** — re-executed without label leakage: negative selection
+    reaches 100% recall and zero false quarantine but exactly ties diagonal distance, so the
+    added ensemble has no qualifying value.
   - [ ] **e39-granule-quarantine** — **INVALIDATED:** silent corruption is unreachable
     and unaffected-range availability is 100% by construction.
   - [x] **e42-predictive-columns** — rejected: only one shape shrinks (11.8%) and decode
