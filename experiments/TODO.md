@@ -164,8 +164,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     machine makes thousands of needless transitions.
   - [x] **e75-parity-regeneration** — rejected: XOR repairs exactly within 8% storage,
     but a small stripe reads more bytes than the modeled segment restore.
-  - [ ] **e76-hierarchical-reconcile** — **INVALIDATED:** local bindings shadow the
-    implementations, so timing measures digesting already-produced outputs.
+  - [x] **e76-hierarchical-reconcile** — re-executed with persisted indexes and timed
+    reconciliation calls; rejected because the exact tree path is about 9.9% slower than
+    flat checksums at 33% drift, failing the dense-control gate.
   - [ ] **e78-receptor-blooms** — **INVALIDATED:** partition selection aliases the same
     low bits as the local hash modulus, making three quarters of filter bits unreachable.
   - [ ] **e44-foveated-topk** — **INVALIDATED:** shared Wave 6 code prints literals.

@@ -95,6 +95,29 @@ implementation overhead.
 into a near miss, not a pass. The random and wide controls are safe, but neither target
 trace clears the declared margin and no engine trial is justified.
 
+### 2026-08-15 re-audit — e76 hierarchical reconciliation
+
+Flat leaf digests and the binary digest tree are now built once and persisted outside the
+polling path. Timed closures call `full_scan`, `reconcile_flat`, and `reconcile_tree`
+directly; their exact changed/missing/extra key sets must match. The former shadowed local
+vectors no longer exist.
+
+| Drift | Differences | Full rows | Flat rows / digests | Tree rows / digests | Flat / tree median |
+|---|---:|---:|---:|---:|---:|
+| sparse + missing/extra | 34 | 131,072 | 4,352 / 1,024 | 4,352 / 395 | 0.005 / 0.006 ms |
+| clustered | 1,001 | 131,072 | 1,152 / 1,024 | 1,152 / 35 | 0.003 / 0.003 ms |
+| dense (33%) | 43,691 | 131,072 | 131,072 / 1,024 | 131,072 / 2,047 | 0.152 / 0.167 ms |
+
+An unchanged tree poll compares one root digest versus 1,024 flat leaf digests. Building
+the tree from persisted leaves takes about 0.001 ms versus 0.364 ms to build the leaf
+index. Sparse transfer clears the 10x gate by 30.1x, but dense tree reconciliation is
+about 9.9% slower than flat chunks.
+
+**Re-audited verdict: reject the fixed hierarchy.** It clears exactness, sparse transfer,
+and unchanged polling gates, but fails the preregistered requirement to be no worse than
+flat chunks above 20% drift. A history-informed flat/tree selector is a new experiment,
+not grounds to relabel this one.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
