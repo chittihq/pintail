@@ -170,7 +170,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e78-receptor-blooms** — re-executed across all declared query classes with
     independent routing/hash mixing, equal bits/probes, and addressability regressions;
     rejected because the ensemble has 3.16x the false reads of learned tuple allocation.
-  - [ ] **e44-foveated-topk** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e44-foveated-topk** — re-executed over actual ordered Top-K and payload pages;
+    rejected because the uncorrelated safe fallback is 11.8% slower by local median,
+    despite 56-88% fewer payload bytes when proof-gated fine pages activate.
   - [ ] **e47-waggle-morsels** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e49-schooling-control** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e52-join-fibers** — **INVALIDATED:** shared Wave 6 code prints literals.

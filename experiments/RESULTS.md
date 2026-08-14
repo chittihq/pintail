@@ -143,6 +143,25 @@ only against a baseline that cannot prune composite queries; it fails against le
 tuple allocation. The winning result is feature-aware allocation, not separate broad
 receptors, and requires an independent workload-shift trial before consideration.
 
+### 2026-08-15 re-audit — e44 foveated Top-K
+
+The replacement executes ordered Top-K over 65,536 rows and reads actual payload pages.
+All three materializers must return the same ordered score/payload checksum. Fine 16-row
+payload pages are enabled only when cheap bounds prove correlation; otherwise the candidate
+falls back to the same 128-row pages as score-only late materialization.
+
+| Shape | Late payload | Foveated payload | Reduction | Late / foveated median |
+|---|---:|---:|---:|---:|
+| wide, clustered | 16,384 B | **7,168 B** | 56.3% | 0.111 / 0.110 ms |
+| wide, scattered | 819,200 B | **102,400 B** | 87.5% | 0.164 / 0.111 ms |
+| narrow, clustered | 2,048 B | **896 B** | 56.3% | 0.114 / 0.117 ms |
+| uncorrelated | 16,384 B | 16,384 B | 0% | 0.102 / 0.114 ms |
+
+**Re-audited verdict: reject at the full gate.** The executable mechanism clears the 30%
+payload-byte target whenever its proof activates and remains exact, but its measured
+uncorrelated median is 11.8% slower, above the 5% fallback guardrail. Fine payload pages
+are promising storage work; this prototype does not justify a kernel promotion.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
