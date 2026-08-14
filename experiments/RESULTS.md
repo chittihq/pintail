@@ -212,6 +212,18 @@ false-abort, spill-preservation, and healthy-p99 gates. The observation curves a
 synthetic, so calibration against real Pintail operator telemetry is required before any
 containment code is proposed.
 
+### 2026-08-15 re-audit — e47 waggle morsels
+
+All schedulers now process the same 512 executable morsels and produce one exact checksum.
+Waggle scores change only after observing completed yield; one in four picks remains a
+scout. It reaches the first clustered result in 20-25 time units, tying the static density
+hint and beating FIFO, while uniform completion regresses only 0.6%.
+
+**Re-audited verdict: reject.** Completion is 1,821 versus the best baseline's 1,811 on
+clustered work, 1,825 versus 1,818 on moving clusters, and 6,899 versus 6,906 on the costly
+UDF. Those changes are within 1%, far below the 15% completion gate; discovery latency
+alone does not validate the mechanism.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

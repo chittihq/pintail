@@ -173,7 +173,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e44-foveated-topk** — re-executed over actual ordered Top-K and payload pages;
     rejected because the uncorrelated safe fallback is 11.8% slower by local median,
     despite 56-88% fewer payload bytes when proof-gated fine pages activate.
-  - [ ] **e47-waggle-morsels** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e47-waggle-morsels** — re-executed over observable morsel yield with exact
+    results; rejected because completion changes by less than 1%, missing the 15% gate.
   - [ ] **e49-schooling-control** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e52-join-fibers** — re-executed on both targets over real FK arrays with exact
     join checksums and an actually executed build scan; the prototype clears all numeric
