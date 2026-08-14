@@ -167,8 +167,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e76-hierarchical-reconcile** — re-executed with persisted indexes and timed
     reconciliation calls; rejected because the exact tree path is about 9.9% slower than
     flat checksums at 33% drift, failing the dense-control gate.
-  - [ ] **e78-receptor-blooms** — **INVALIDATED:** partition selection aliases the same
-    low bits as the local hash modulus, making three quarters of filter bits unreachable.
+  - [x] **e78-receptor-blooms** — re-executed across all declared query classes with
+    independent routing/hash mixing, equal bits/probes, and addressability regressions;
+    rejected because the ensemble has 3.16x the false reads of learned tuple allocation.
   - [ ] **e44-foveated-topk** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e47-waggle-morsels** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e49-schooling-control** — **INVALIDATED:** shared Wave 6 code prints literals.

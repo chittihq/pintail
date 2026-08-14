@@ -118,6 +118,31 @@ and unchanged polling gates, but fails the preregistered requirement to be no wo
 flat chunks above 20% drift. A history-informed flat/tree selector is a new experiment,
 not grounds to relabel this one.
 
+### 2026-08-15 re-audit — e78 Bloom receptors
+
+The replacement builds per-block metadata and executes point, absent-heavy, composite,
+IN-list, and low-bit-adversarial queries. Every policy receives exactly 2,048 bits per
+block and three build probes per row. Partition routing and local Bloom positions use
+independent mixed hashes; regression tests require every local bit quarter and every
+partition to be reachable. Exact block maps make any false negative a hard failure.
+
+| Policy | False block reads | Query median | Build median | False negatives |
+|---|---:|---:|---:|---:|
+| one PK Bloom | 76,581 | 2.250 ms | 0.057 ms | 0 |
+| partitioned PK | 76,665 | 2.948 ms | 0.088 ms | 0 |
+| workload-learned PK/tuple split | **7,497** | 2.283 ms | 0.061 ms | 0 |
+| receptor ensemble | 23,681 | **1.843 ms** | **0.053 ms** | 0 |
+
+The learned baseline derives its 1,536/512-bit split from the observed 2,000 PK-class
+versus 600 composite queries. The ensemble cuts false reads 69.1% versus a PK-only filter,
+but produces 3.16x as many as the strongest equal-budget baseline. Equal probe counts and
+measured build time rule out the original addressing artifact as an explanation.
+
+**Re-audited verdict: reject the receptor ensemble.** It clears the absolute 30% margin
+only against a baseline that cannot prune composite queries; it fails against learned
+tuple allocation. The winning result is feature-aware allocation, not separate broad
+receptors, and requires an independent workload-shift trial before consideration.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
