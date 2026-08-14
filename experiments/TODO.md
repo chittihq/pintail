@@ -190,6 +190,7 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [ ] **e61-apoptotic-queries** — re-executed on both targets with label-free decisions,
     actual early-stop/false-abort accounting, exact preserved answers, and computed healthy
     p99; all prototype gates pass pending real-telemetry calibration.
-  - [ ] **e62-operator-fission** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e62-operator-fission** — re-executed with exact global/sharded aggregation and
+    charged transitions; rejected at 3.8% shift improvement and +25% tiny-work cost.
   - [ ] **e64-circadian-maintenance** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e69-invasive-defense** — **INVALIDATED:** shared Wave 6 code prints literals.

@@ -272,6 +272,17 @@ fragmentation grows by 360,448 bytes.
 the churn trace breaches both the 10% slack ceiling and no-growth fragmentation guardrail.
 The simpler size-class pool also allocates fewer bytes.
 
+### 2026-08-15 re-audit — e62 operator fission/fusion
+
+Global and eight-shard aggregators now execute and merge exact 1,024-group state; an
+order-sensitive checksum covers every phase and group. Reversible sampling selects the
+better mode on uniform/skew phases and transition work is 3.84% on the shifting trace.
+Its shifting cost is 92,372 versus 96,000 for the best fixed mode, only 3.8% better, and
+its 256-row sampling charge makes tiny work 25% worse than global.
+
+**Re-audited verdict: reject.** It misses both the 20% cumulative-shift target and the
+within-5% tiny control, despite exact merging and bounded transition work.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
