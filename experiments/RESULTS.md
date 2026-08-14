@@ -295,6 +295,22 @@ units worse; forecast-only is substantially worse and breaches the modeled SLO.
 an artificially timid reactive threshold. Once both may use available slack, seasonal
 history adds no maintenance or p99 value.
 
+### 2026-08-15 re-audit — e69 invasive-template defense
+
+The replacement runs every arrival through real invasive/diverse queues, drains every job,
+and compares count/sum/xor result checksums. Harm must persist for 50 ticks before the
+template cap falls to 20%; minimum contended share, completed work during arrivals, p99
+from individual diverse-job latencies, and flash classification are all measured.
+
+Harm feedback improves non-invasive p99 from 239 to 68 on the cheap flood and 120 to 24
+on polluting scans, retains identical useful work, and preserves a 10-20% minimum share.
+It never classifies the 40-tick flash as invasive—but flash p99 rises from FIFO's 16 to 38.
+
+**Re-audited verdict: reject.** The sustained attacks clear the 30% target and flash
+misclassification is zero, but the legitimate-flash latency guard fails by 137.5%.
+Static quotas get p99 1 on attacks but misclassify every flash tick, confirming the real
+tradeoff rather than validating harm feedback.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

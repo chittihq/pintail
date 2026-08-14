@@ -194,4 +194,5 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     charged transitions; rejected at 3.8% shift improvement and +25% tiny-work cost.
   - [x] **e64-circadian-maintenance** — re-executed with bounded learned history and a
     full-slack reactive control; rejected because forecasting ties or loses to reaction.
-  - [ ] **e69-invasive-defense** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e69-invasive-defense** — re-executed with real queues and per-job latency;
+    rejected because legitimate-flash p99 rises from 16 to 38 despite zero misclassification.
