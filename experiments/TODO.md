@@ -185,7 +185,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e58-enzyme-batches** — re-executed with charged curve probes and exact chunked
     checksums; rejected because saturation needs 6-7 probes and cannot repay on the
     unchanged filter control.
-  - [ ] **e60-autophagic-buffers** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e60-autophagic-buffers** — re-executed with real zeroed byte buffers and cap
+    accounting; rejected because churn slack is 13.9% and fragmentation grows 360 KiB.
   - [ ] **e61-apoptotic-queries** — re-executed on both targets with label-free decisions,
     actual early-stop/false-abort accounting, exact preserved answers, and computed healthy
     p99; all prototype gates pass pending real-telemetry calibration.

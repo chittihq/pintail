@@ -259,6 +259,19 @@ unchanged 4,096-row filter batch (with no subsequent saving) and seven for decod
 adaptation cannot repay inside five batches on the fixed-size control and misses the probe
 budget outright. Hill climb is no worse and usually probes less.
 
+### 2026-08-15 re-audit — e60 selective buffer recycling
+
+The replacement allocates real byte buffers, zeroes and verifies every reused range, writes
+request contents, and checksums them identically. Selective recycling cuts allocated bytes
+by more than 99% and modeled p95 allocation work by 89% across alternating, pressure, and
+churn traces under a measured 4 MiB resident cap. Actual medians improve only 2-4% because
+mandatory initialization dominates. On churn, resident slack reaches 13.9% and retained
+fragmentation grows by 360,448 bytes.
+
+**Re-audited verdict: reject.** Correct initialization and allocation reductions pass, but
+the churn trace breaches both the 10% slack ceiling and no-growth fragmentation guardrail.
+The simpler size-class pool also allocates fewer bytes.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
