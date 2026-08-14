@@ -10,6 +10,8 @@
     "pintailPlacement": "container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)",
     "iterations": "warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-08-13T22:45:56.812Z",
     "engineOrderSeed": 24301,
+    "hostFingerprint": "2c89ea593c54a6dc3dcd61e20ea00deee006c814ec7ff47e3e2712dd3edf2913",
+    "engineFingerprint": "a420f5d73797052f8eaf90490dd0a7580c5cc985bfa5f0b22d03adc806392131",
     "statistics": "median, mean, p95, stddev, ci95, and all raw samples",
     "references": {
       "clickhouse": "plain MergeTree (raw-speed ceiling)",
@@ -18,6 +20,7 @@
     "pintailSettledMemo": "bare full-table aggregates on a settled replica (empty memtable) are served from a manifest-generation-keyed exact result memo; any ingest invalidates it by construction. ClickHouse ships a query cache too, disabled by default and TTL-stale; pintail's is provably fresh, so it stays on."
   },
   "gate": {
+    "scope": "memo-dashboard latency, not raw engine speed",
     "requiredSpeedup": 50,
     "enforced": true,
     "passed": true,

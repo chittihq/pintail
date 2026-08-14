@@ -13,6 +13,11 @@ run. It measures what a repeated dashboard query costs, not engine speed.
 The novel-query table below is the engine-speed comparison - both engines
 execute there, and ClickHouse is currently faster.
 
+> Historical evidence warning: the 2026-08-11 run banked by `de974db` is
+> withdrawn. Pintail minima regressed on Q1/Q3 while unchanged MySQL and
+> ClickHouse controls did not, so the repository's host-noise rule did not apply.
+> The current artifact supersedes it; the harness now rejects that signature.
+
 ## Repeated queries (memo-served — dashboard refresh cost, not engine speed)
 
 | Query | MySQL | Pintail (memo) | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |
@@ -27,7 +32,7 @@ execute there, and ClickHouse is currently faster.
 | Q8: Join users + orders | 980,888 ms | 13 ms | 75452.9× | 208 ms | 206 ms | 15.85× | yes |
 | **Total** | **1,885,286 ms** | **170 ms** | **11089.9×** | **1,026 ms** | **1,055 ms** | **6.21×** | |
 
-Release gate: PASS (required ≥50× and exact results).
+Memo-dashboard release gate: PASS (required ≥50× and exact results; not an engine-speed gate).
 
 ## Concurrency (memo disabled — both engines executing)
 
@@ -94,4 +99,3 @@ MySQL shows n/a when its cold baseline came from the cache.
 | Q6: Top 10 spenders | 19% | 675 MB | 688% | 630 MB | n/a | n/a |
 | Q7: Regional analytics | 27% | 765 MB | 556% | 591 MB | n/a | n/a |
 | Q8: Join users + orders | 6% | 901 MB | 659% | 739 MB | n/a | n/a |
-

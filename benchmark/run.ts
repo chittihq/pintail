@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { createServer } from 'node:net'
 import mysql from 'mysql2/promise'
 import { benchmarkQueries } from './queries'
+import { pintailSpecificMinimumRegressions, type ComparableReport } from './evidence'
 
 type CommandResult = { stdout: string; stderr: string }
 type EngineTiming = {
@@ -134,6 +135,7 @@ type MysqlBaseline = {
 let baselineProvenance: string | undefined
 let runVolumeCreated = false
 let dockerHostName = ''
+let engineFingerprint = ''
 
 const hostFingerprint = () => createHash('sha256').update(dockerHostName).digest('hex')
 
@@ -1033,6 +1035,8 @@ function publishResults(
       /// Engine order is shuffled per query from this seed; same seed, same
       /// order, so two runs can be compared without wondering about it.
       engineOrderSeed: ENGINE_ORDER_SEED,
+      hostFingerprint: hostFingerprint(),
+      engineFingerprint,
       /// Reported per engine as median, mean, p95, stddev and a 95% interval,
       /// alongside every raw sample, so the summary can be checked.
       statistics: 'median, mean, p95, stddev, ci95, and all raw samples',
@@ -1047,6 +1051,7 @@ function publishResults(
         'TTL-stale; pintail\'s is provably fresh, so it stays on.',
     },
     gate: {
+      scope: 'memo-dashboard latency, not raw engine speed',
       requiredSpeedup: 50,
       enforced: fullGate,
       passed: speedup >= 50 && mismatches.length === 0,
@@ -1066,10 +1071,23 @@ function publishResults(
       speedupVsClickhouse: totals.clickhouseFinalMs / totals.pintailMs,
     },
   }
-  writeFileSync(
-    join(benchmarkDir, `results${suffix}.json`),
-    `${JSON.stringify(report, null, 2)}\n`,
-  )
+  const resultPath = join(benchmarkDir, `results${suffix}.json`)
+  let previousReport: ComparableReport | undefined
+  if (existsSync(resultPath)) {
+    try {
+      previousReport = JSON.parse(readFileSync(resultPath, 'utf8')) as ComparableReport
+    } catch {
+      previousReport = undefined
+    }
+  }
+  const suspiciousRegressions = pintailSpecificMinimumRegressions(previousReport, report)
+  if (suspiciousRegressions.length >= 2) {
+    throw new Error(
+      'refusing to bank a Pintail-specific minimum regression while the control is stable:\n' +
+        suspiciousRegressions.join('\n'),
+    )
+  }
+  writeFileSync(resultPath, `${JSON.stringify(report, null, 2)}\n`)
   const lines = [
     '# Pintail analytical benchmark results',
     '',
@@ -1087,6 +1105,11 @@ function publishResults(
     'run. It measures what a repeated dashboard query costs, not engine speed.',
     'The novel-query table below is the engine-speed comparison - both engines',
     'execute there, and ClickHouse is currently faster.',
+    '',
+    '> Historical evidence warning: the 2026-08-11 run banked by `de974db` is',
+    '> withdrawn. Pintail minima regressed on Q1/Q3 while unchanged MySQL and',
+    '> ClickHouse controls did not, so the repository\'s host-noise rule did not apply.',
+    '> The current artifact supersedes it; the harness now rejects that signature.',
     '',
     '## Repeated queries (memo-served — dashboard refresh cost, not engine speed)',
     '',
@@ -1108,7 +1131,7 @@ function publishResults(
       `**${(totals.clickhouseFinalMs / totals.pintailMs).toFixed(2)}×** | |`,
     '',
     fullGate
-      ? `Release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results).`
+      ? `Memo-dashboard release gate: ${speedup >= 50 && mismatches.length === 0 ? 'PASS' : 'FAIL'} (required ≥50× and exact results; not an engine-speed gate).`
       : 'Smoke scale only: the release speedup gate was not enforced.',
     '',
     ...(concurrency.length > 0
@@ -1258,6 +1281,11 @@ async function main() {
       'working tree is dirty — commit first so the benchmark measures an attributable state, or set PINTAIL_BENCHMARK_ALLOW_DIRTY=1',
     )
   }
+  const engineTrees = await command(
+    ['git', 'rev-parse', 'HEAD:crates', 'HEAD:Cargo.toml', 'HEAD:Cargo.lock'],
+    { quiet: true },
+  )
+  engineFingerprint = createHash('sha256').update(engineTrees.stdout).digest('hex')
   await docker('network', 'create', networkName)
   dockerCreated = true
   const haveSeedVolume = await volumeExists(seedVolumeName)
