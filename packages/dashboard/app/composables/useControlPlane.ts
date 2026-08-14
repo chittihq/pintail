@@ -201,6 +201,35 @@ export function useControlPlane() {
     deadLetters.value = []
   }
 
+  /// Changes how often a database reconciles, without touching anything else.
+  ///
+  /// This is the only control an operator has over how quickly rows removed by
+  /// a foreign-key cascade converge: MySQL applies CASCADE and SET NULL inside
+  /// InnoDB without writing row events, so those rows never arrive through CDC
+  /// and wait for reconciliation. The interval was settable through the API and
+  /// shown but never editable here, so in practice it was fixed at its default.
+  ///
+  /// The update endpoint replaces the record, and omitting the table lists used
+  /// to clear them; they are omitted deliberately here now that omission means
+  /// unchanged.
+  async function setReconcileInterval(database: DatabaseRecord, seconds: number) {
+    try {
+      await request(`/databases/${database.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: database.name,
+          mode: database.mode,
+          poll_interval_seconds: database.poll_interval_seconds,
+          reconcile_interval_seconds: seconds,
+        }),
+      })
+      toast(`Reconcile interval set to ${seconds}s`)
+      await loadControlPlane()
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  }
+
   async function setMode(database: DatabaseRecord, mode: DatabaseRecord['mode']) {
     try {
       await request(`/databases/${database.id}/mode`, {
@@ -324,6 +353,7 @@ export function useControlPlane() {
     stopEventStream,
     logout,
     setMode,
+    setReconcileInterval,
     forceSnapshot,
     runTableAction,
     removeDatabase,

@@ -559,6 +559,110 @@ async fn database_crud_encrypts_dsn_and_requires_authentication() {
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
 }
 
+/// Updating one field must not clear the table selection.
+///
+/// The update request used to default the two table lists to empty vectors, so
+/// a caller changing the reconcile interval - the only way to shorten cascade
+/// repair latency - silently replicated every table in the source instead of
+/// the chosen ones. Omitted now means unchanged, matching what the metadata
+/// layer always accepted and what `keyless_policy` already did.
+#[tokio::test]
+async fn updating_one_field_keeps_the_table_selection() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let authorization = format!("Bearer {}", setup_admin(&app).await);
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/databases")
+                .header(header::AUTHORIZATION, &authorization)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "name": "app",
+                        "dsn": "mysql://user:pass@127.0.0.1:3306/app",
+                        "include_tables": ["orders", "users"],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let database = json_response(created).await;
+    let id = database["id"].as_str().expect("database ID").to_owned();
+    assert_eq!(
+        database["include_tables"].as_array().unwrap().len(),
+        2,
+        "the selection is stored as given"
+    );
+
+    // Change only the reconcile interval, as a dashboard control would.
+    let updated = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/databases/{id}"))
+                .header(header::AUTHORIZATION, &authorization)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "name": "app",
+                        "mode": "cdc",
+                        "reconcile_interval_seconds": 30,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let after = json_response(updated).await;
+    assert_eq!(
+        after["reconcile_interval_seconds"], 30,
+        "the interval moved"
+    );
+    assert_eq!(
+        after["include_tables"],
+        serde_json::json!(["orders", "users"]),
+        "omitting the selection must keep it, not clear it"
+    );
+
+    // Sending an explicit empty list still clears it, which is how a caller
+    // says "replicate everything".
+    let cleared = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/databases/{id}"))
+                .header(header::AUTHORIZATION, &authorization)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "name": "app",
+                        "mode": "cdc",
+                        "include_tables": [],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        json_response(cleared).await["include_tables"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "an explicit empty list is still an instruction"
+    );
+}
+
 #[tokio::test]
 async fn table_controls_require_authentication_and_a_known_table() {
     let data = tempfile::tempdir().expect("API data directory");

@@ -81,10 +81,20 @@ pub(crate) struct UpdateDatabaseRequest {
     name: String,
     dsn: Option<String>,
     mode: String,
-    #[serde(default)]
-    include_tables: Vec<String>,
-    #[serde(default)]
-    exclude_tables: Vec<String>,
+    /// Omitted keeps the database's current selection.
+    ///
+    /// This used to default to an empty vector, so a caller updating only the
+    /// reconcile interval silently cleared the table selection unless it
+    /// happened to resend it. An explicit empty list still clears it, because
+    /// that is a caller saying "replicate everything".
+    ///
+    /// The store cannot express "leave this alone": its update writes every
+    /// column unconditionally and `Option` there means SQL NULL. So the
+    /// existing value is read and rewritten here rather than passed through as
+    /// `None`.
+    include_tables: Option<Vec<String>>,
+    /// Omitted keeps the database's current selection.
+    exclude_tables: Option<Vec<String>>,
     #[serde(default = "default_poll_interval")]
     poll_interval_seconds: u64,
     #[serde(default = "default_reconcile_interval")]
@@ -222,8 +232,16 @@ pub(crate) async fn update(
         .as_deref()
         .map(|dsn| state.encrypt_dsn(dsn.trim()))
         .transpose()?;
-    let includes = encode_names(&request.include_tables)?;
-    let excludes = encode_names(&request.exclude_tables)?;
+    let includes = request
+        .include_tables
+        .as_deref()
+        .map(encode_names)
+        .transpose()?;
+    let excludes = request
+        .exclude_tables
+        .as_deref()
+        .map(encode_names)
+        .transpose()?;
     let keyless_policy = request
         .keyless_policy
         .as_deref()
@@ -235,8 +253,17 @@ pub(crate) async fn update(
         && let Some(probe_json) = existing.probe_json.as_deref()
         && let Ok(report) = serde_json::from_str::<pintail_probe::ProbeReport>(probe_json)
     {
-        let keyless =
-            included_keyless_tables(&report, &request.include_tables, &request.exclude_tables);
+        // The selection that will be in force after this update, which is the
+        // existing one when the request omits it.
+        let effective_includes = request
+            .include_tables
+            .clone()
+            .unwrap_or_else(|| decode_names(existing.include_tables.clone()));
+        let effective_excludes = request
+            .exclude_tables
+            .clone()
+            .unwrap_or_else(|| decode_names(existing.exclude_tables.clone()));
+        let keyless = included_keyless_tables(&report, &effective_includes, &effective_excludes);
         if !keyless.is_empty() {
             return Err(ApiError::conflict(format!(
                 "keyless_policy reject refused: tables without a usable key: {}",
@@ -253,8 +280,8 @@ pub(crate) async fn update(
                 name: request.name.trim(),
                 encrypted_dsn: encrypted.as_deref(),
                 mode: &request.mode,
-                include_tables: Some(&includes),
-                exclude_tables: Some(&excludes),
+                include_tables: includes.as_deref().or(existing.include_tables.as_deref()),
+                exclude_tables: excludes.as_deref().or(existing.exclude_tables.as_deref()),
                 poll_interval_seconds: request.poll_interval_seconds,
                 reconcile_interval_seconds: request.reconcile_interval_seconds,
                 keyless_policy,

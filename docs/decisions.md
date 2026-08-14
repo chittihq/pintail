@@ -243,8 +243,11 @@ semantics.
 `pintail-poll` executes one deterministic cycle and accepts explicit requests
 for full reconciliation or CDC-side cascade repair. It does not spawn timers.
 The M8 per-database supervised task tree owns the 1-second probe, 5-second sync,
-10-minute delete-reconcile, and hourly CDC-cascade defaults so pause, shutdown,
-backoff, and blast-radius behavior have one lifetime owner.
+10-minute delete-reconcile, and 10-minute CDC-cascade defaults so pause,
+shutdown, backoff, and blast-radius behavior have one lifetime owner. This
+entry said "hourly" for the cascade repair while the code shipped
+`reconcile_interval_seconds` at 600 seconds; the code is what runs, so the
+sentence is corrected to it rather than the other way round.
 
 ### Operator resync preserves the database-wide handoff
 

@@ -7,7 +7,7 @@ import type { SnapshotStatus, TableSummary } from '@/types/pintail'
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases, statuses, deadLetters, error, loading, setMode, forceSnapshot, runTableAction, discardDlq, retryDlq } = useControlPlane()
+const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, runTableAction, discardDlq, retryDlq } = useControlPlane()
 
 const databaseId = computed(() => String(route.params.id))
 const database = computed(() => databases.value.find((item) => item.id === databaseId.value) ?? null)
@@ -41,6 +41,31 @@ useIntervalFn(() => void loadDatabaseDetail(false), 8_000)
 async function pauseResume() {
   if (!database.value) return
   await setMode(database.value, database.value.mode === 'paused' ? 'auto' : 'paused')
+}
+
+/// Reconcile interval, in seconds, as edited.
+///
+/// Seeded from the record and reset whenever it reloads, so an operator never
+/// edits a value that has since changed underneath them.
+const reconcileDraft = ref<number | null>(null)
+const savingReconcile = ref(false)
+watch(
+  () => database.value?.reconcile_interval_seconds,
+  (seconds) => {
+    if (seconds !== undefined) reconcileDraft.value = seconds
+  },
+  { immediate: true },
+)
+
+async function saveReconcileInterval() {
+  if (!database.value || reconcileDraft.value === null) return
+  savingReconcile.value = true
+  try {
+    await setReconcileInterval(database.value, reconcileDraft.value)
+    await loadDatabaseDetail(false)
+  } finally {
+    savingReconcile.value = false
+  }
 }
 
 async function resnapshot() {
@@ -113,8 +138,8 @@ function describeTable(table: TableSummary) {
                   <Badge
                     v-if="table.cascade_reconciled"
                     class="tone-warning ml-1.5"
-                    title="A source foreign key cascades into this table. MySQL performs cascades inside InnoDB without writing row events, so they cannot reach the replica through CDC; these rows converge on the reconcile interval rather than in seconds."
-                  >cascade</Badge>
+                    title="A source foreign key performs ON DELETE/UPDATE CASCADE or SET NULL into this table. MySQL applies both inside InnoDB without writing row events, so they cannot reach the replica through CDC; these rows converge on the reconcile interval rather than in seconds."
+                  >fk repair</Badge>
                   <Badge
                     v-if="table.key_mode === 'append_row_id'"
                     class="tone-warning ml-1.5"
@@ -226,7 +251,27 @@ function describeTable(table: TableSummary) {
           </div>
           <dl class="grid grid-cols-2 gap-x-4">
             <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Poll cadence</dt><dd class="mt-1 text-sm">{{ database.poll_interval_seconds }} seconds</dd></div>
-            <div class="border-b py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Reconciliation</dt><dd class="mt-1 text-sm">{{ database.reconcile_interval_seconds }} seconds</dd></div>
+            <div class="border-b py-3">
+              <dt class="text-muted-foreground font-mono text-xs uppercase">Reconciliation</dt>
+              <dd class="mt-1 flex items-center gap-2">
+                <input
+                  v-model.number="reconcileDraft"
+                  type="number"
+                  min="10"
+                  step="10"
+                  class="border-input bg-background w-24 rounded-md border px-2 py-1 text-sm"
+                  aria-label="Reconcile interval in seconds"
+                >
+                <span class="text-muted-foreground text-sm">seconds</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  :disabled="savingReconcile || reconcileDraft === database.reconcile_interval_seconds"
+                  title="Rows removed by a foreign-key cascade or SET NULL never arrive through CDC; they converge on this interval."
+                  @click="saveReconcileInterval"
+                >Save</Button>
+              </dd>
+            </div>
             <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Included</dt><dd class="mt-1 text-sm">{{ database.include_tables.length || 'All tables' }}</dd></div>
             <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Excluded</dt><dd class="mt-1 text-sm">{{ database.exclude_tables.length || 'None' }}</dd></div>
           </dl>
