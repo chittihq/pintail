@@ -95,8 +95,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e43-lateral-predicates** — re-audited with observable benchmark state,
     stratified samples, and a misleading-prefix control; rejected because three
     stable shapes regress 6.4-11.2% and the adaptive loop is 1.9-3.9x slower.
-  - [ ] **e77-retinal-granules** — simulation passes on both targets (28% fewer rows
-    touched on moving/stationary hotspots); real PTSEG A/B is required.
+  - [x] **e77-retinal-granules** — invalidated: bounded foveation loses badly to the
+    simpler heat-only control and worsens p95 versus fixed granules.
   - [x] **e38-fever-overload** — rejected: CDC is protected, but query p99 is
     20-157% worse and the result barely differs from a fixed conservative limit.
   - [x] **e46-quorum-compaction** — rejected: neighborhood reinforcement misses the
@@ -105,32 +105,32 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     the simpler debt-only controller.
   - [x] **e55-stomatal-prefetch** — rejected: mixed pressure triggers 1,389
     reversals and 6.8x the offline-best cost.
-  - [ ] **e59-endocrine-spill** — simulation passes on both targets (45-72% less
-    modeled spill); real operator marginal-utility measurement is required.
-  - [ ] **e63-glycogen-reserve** — simulation passes on both targets (zero protected
-    spill and 15-32% lower makespan); real budget/spill integration is required.
+  - [x] **e59-endocrine-spill** — invalidated: allocation receives current ground-truth
+    utility and only the independent baseline pays the synthetic storm penalty.
+  - [x] **e63-glycogen-reserve** — invalidated: multiple protected tasks reuse one
+    reserve, making zero protected spill true by construction.
   - [x] **e31-ant-join-paths** — rejected: evaporation recovers much more slowly than
     discounted UCB and misses the shift and worst-regret gates.
-  - [ ] **e35-clonal-kernels** — simulation passes on both targets (1.7-1.8% from the
-    contextual oracle and 29-35% below one global winner); real dispatch is required.
+  - [x] **e35-clonal-kernels** — invalidated: the learner is handed the exact phase
+    boundary and opens a fresh model bank at the reversal.
   - [x] **e37-immune-plan-memory** — rejected: affinity matching loses to simpler fixed
     parameter buckets in every workload.
   - [x] **e40-hippocampal-replay** — rejected: weak-trace replay improves frequency
     replay, but misses both preregistered 20% gates in every workload.
   - [x] **e45-cardinality-homeostasis** — rejected: bounded homeostatic estimates are
     less accurate and costlier than a simple EWMA.
-  - [ ] **e57-atp-plans** — conditional simulation passes on both targets (100% fastest
-    feasible, zero violations); real calibration accuracy and overhead are required.
+  - [x] **e57-atp-plans** — invalidated: predicted ATP cost is identical to the
+    function used as truth, so 100% selection accuracy is an identity.
   - [x] **e68-biodiversity-reserve** — rejected: rapid reversal detection does not
     offset exploration tax against periodic probing in the single-reversal trace.
   - [x] **e79-echolocation-plans** — rejected: triggered probes are safe but improve
     uncertain plans by only 13-22%, below the 25% gate.
   - [x] **e41-synaptic-cache** — rejected: graph reinforcement loses to
     GreedyDual-size while doing more bookkeeping.
-  - [ ] **e48-flocking-reads** — simulation passes on both targets (94-97% fewer
-    overlapping reads and 29% lower modeled median); real cold-file trial required.
-  - [ ] **e51-mycelial-blocks** — simulation passes on both targets (27% less decode
-    work and 17% lower p95 than LRU); real decoded PTSEG exchange required.
+  - [x] **e48-flocking-reads** — invalidated: it executes no file reads and derives
+    latency from a hand-written equation around interval unioning.
+  - [x] **e51-mycelial-blocks** — invalidated: its modulo rotation preserves the
+    uniform distribution, so the claimed dashboard phase shift never occurs.
   - [x] **e65-predator-cache** — rejected: it fails to beat ARC by 15% consistently
     and the modeled class populations oscillate beyond the gate.
   - [x] **e66-cache-niches** — rejected: adaptive borders range from -8% to +5.5%
@@ -143,12 +143,12 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e72-seasonal-columns** — re-executed with 24 distinct `u32` column bits,
     oracle-identical answers, and random/wide anti-churn regressions; rejected because
     corrected periodic and drifting gains are 18.4% and 19.4%, below the 20% gate.
-  - [ ] **e73-symbiotic-intermediates** — simulation passes on both targets at one
-    shared 12-entry cap; real immutable/versioned intermediate trial required.
+  - [x] **e73-symbiotic-intermediates** — invalidated: the supposed measured-net-reuse
+    admission rule is a fixed `family < 16` predicate.
   - [x] **e74-fire-cache-reset** — rejected: LRU recovers before the prolonged-low-hit
     detector fires, so controlled reset provides no gain.
-  - [ ] **e30-physarum-access** — simulation passes on both targets; real cold PTSEG
-    bundle/rewrite measurements required.
+  - [x] **e30-physarum-access** — invalidated: the baseline is a hard-coded column-ID
+    rule, capacities are unequal, and recovery also fires on non-shifting traces.
   - [x] **e36-negative-selection** — re-executed without label leakage: negative selection
     reaches 100% recall and zero false quarantine but exactly ties diagonal distance, so the
     added ensemble has no qualifying value.
@@ -157,8 +157,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     oracle-exact, and verified bytes fall 97.3%; real PTSEG persistence remains.
   - [x] **e42-predictive-columns** — rejected: only one shape shrinks (11.8%) and decode
     is slower, missing both correlated-shape gates.
-  - [ ] **e53-coral-views** — conditional simulation passes; real lineage-aware aggregate
-    partials and invalidation costs required.
+  - [x] **e53-coral-views** — invalidated: work, storage, and build numbers are formulas;
+    no aggregate, partial, lineage, or invalidation is executed.
   - [x] **e54-ant-tombstones** — rejected: evaporation increases moving/scattered read
     work and fails the write-amplification margin.
   - [x] **e67-segment-succession** — rejected: heat-only tiers dominate and the state

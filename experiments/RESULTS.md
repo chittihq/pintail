@@ -14,6 +14,13 @@ produced identical checksums. Raw outputs: rerun per `TODO.md`; summary tables b
 > trail, not usable evidence. Their pass/reject language is withdrawn until each experiment
 > is replaced and re-executed.
 
+> **Audit completed — 2026-08-15.** All 50 packages now pass local tests and Clippy
+> and have been executed as release binaries. Execution alone did not rehabilitate a
+> claim: source-level decision, budget, checksum, and benchmark review leaves only e39,
+> e52, and e61 as prototype candidates. Ten additional former positive claims are invalid,
+> and e43 was reversed after making its full policy outcome observable. The controlling
+> per-experiment record and future evidence contract are in [`AUDIT.md`](AUDIT.md).
+
 ### 2026-08-15 re-audit — e36 negative selection
 
 The replacement classifier accepts only observable transaction facts; the oracle fault
@@ -1677,19 +1684,16 @@ case but becomes 30% worse than fixed when the hotspot moves. The candidate's
 p95 touched granule grows from 16K to 20-21K on hotspot traces, an explicit
 tail tradeoff.
 
-**Verdict: simulation byte gate passes; format claim remains unvalidated.** The
-equal-metadata and hostile-work gates pass on both targets, but this model does
-not measure PTSEG write throughput, metadata search, decompression, or the cost
-of producing variable blocks during immutable writes. Advance to a real PTSEG
-reader/writer A/B test. Do not change the 16,384-row format default yet.
+**Re-audited verdict: reject.** The bounded candidate loses decisively to the
+simpler heat-only policy on both hotspot traces and raises hotspot p95 above the
+fixed layout. Beating fixed decoded rows while losing to the strongest control
+is not a pass.
 
 ## 2026-08-12 biomimetic program — Wave 2
 
-Wave 2 executed e38, e46, e50, e55, e59, and e63. Every policy drained or
-completed the identical deterministic workload and compared a sorted exact
-completion set or logical query checksum. e59 and e63 cleared their local gates
-and reproduced on the pinned Linux target; the four local failures did not
-consume shared-host time.
+Wave 2 executed e38, e46, e50, e55, e59, and e63. Its original positive claims
+for e59 and e63 were invalidated by the 2026-08-15 source audit; all six ideas
+are rejected or unsupported.
 
 ### e38 — Fever-mode overload control
 
@@ -1781,11 +1785,9 @@ Linux reproduced every modeled metric and exact checksum. No policy exceeded
 the cap; the candidate created no synchronized spill storm and left no memory
 unused under pressure.
 
-**Verdict: simulation gate passes; utility measurement remains unvalidated.**
-The win is large and stable, but this model gives the allocator correct marginal
-utility. The next experiment must measure real sort/aggregate/join spill curves,
-including the cost and noise of online probing. Do not replace Pintail's current
-budget allocator from this simulation alone.
+**Re-audited verdict: invalid positive.** The candidate receives the current
+ground-truth utility vector, while only the independent baseline pays a synthetic
+storm penalty. The comparison cannot establish allocation value.
 
 ### e63 — Glycogen completion reserve
 
@@ -1805,16 +1807,14 @@ Linux reproduced the same metrics and exact task set. Against full utilization,
 the candidate removes over 99.9% of synchronized spill and all protected spill;
 against per-task padding it admits batches of eight rather than four or five.
 
-**Verdict: simulation gate passes; scheduler integration remains unvalidated.**
-The mechanism adds value beyond merely withholding memory, passes the easy
-control, and protects CDC explicitly. Advance to a real budget/spill harness
-with concurrent aggregate, join, sort, and oversized CDC transaction paths.
+**Re-audited verdict: invalid positive.** Every protected task may consume the
+same 140-unit reserve and the completion path defines its available memory as at
+least its own burst. Zero protected spill is therefore true by construction.
 
 ## 2026-08-12 biomimetic program — Wave 3
 
-Wave 3 executed e31, e35, e37, e40, e45, e57, e68, and e79. All policies
-consumed identical deterministic traces and produced the same logical checksum.
-Only e35 and e57 survived screening; Linux reproduced their modeled metrics.
+Wave 3 executed e31, e35, e37, e40, e45, e57, e68, and e79. The 2026-08-15
+source audit invalidated the former e35 and e57 positives; no Wave 3 idea survives.
 
 ### e31 — Ant-colony join-path learning
 
@@ -1840,10 +1840,9 @@ The repertoire validates every context, including rare ones, and remains within
 1.8% of the hindsight contextual oracle while cutting modeled work 29-35%
 against one global kernel. Linux reproduced all work and validation counts.
 
-**Verdict: simulation gate passes; dispatch remains unvalidated.** The model
-charges exploration but not real indirect-call, feature extraction, instruction
-cache, or code-size costs. Advance to safe filter and hash-probe kernel variants;
-do not add a runtime repertoire from this result alone.
+**Re-audited verdict: invalid positive.** The learner opens a fresh model bank at
+the exact known half-run phase boundary. Its reversal result therefore measures
+oracle segmentation, not adaptation.
 
 ### e37 — Immune affinity plan memory
 
@@ -1895,10 +1894,9 @@ that budget and prices CPU, I/O, retained memory, and allocations in the same
 units as the simulated workload. Median modeled resource error is zero; Linux
 reproduced the correctness, work, and violation counts.
 
-**Verdict: conditional simulation pass; calibration remains unvalidated.** The
-result proves the policy given accurate resource facts, not that Pintail can
-measure those facts under 1% overhead or predict them within 15%. Advance to
-instrumented equivalent physical operators before considering optimizer use.
+**Re-audited verdict: invalid positive.** `Policy::Atp` predicts with the exact
+same `true_cost` formula used to select the oracle. The reported 100% is an
+identity, not calibration evidence.
 
 ### e68 — Biodiversity execution reserve
 
@@ -1928,9 +1926,8 @@ near miss, not validated optimizer policy.
 
 ## 2026-08-12 biomimetic program — Wave 4
 
-Wave 4 executed ten cache-and-sharing experiments. Every policy consumed the
-same deterministic logical request stream and checksum. e48, e51, and e73
-survived simulation and reproduced on pinned Linux; seven mechanisms failed.
+Wave 4 executed ten cache-and-sharing experiments. The 2026-08-15 source audit
+invalidated the former e48, e51, and e73 positives; no Wave 4 idea survives.
 
 ### e41 — Synaptic plan-cache pruning
 
@@ -1950,10 +1947,9 @@ simpler size-aware policy before real graph bookkeeping is charged.
 | diverging | 8,192 / 2,560 | 8,192 / 2,563 | tie / +0.1% |
 | short | 256 / 80 | 256 / 83 | tie / +3.8% |
 
-**Verdict: simulation gate passes; file-system claim remains unvalidated.** It
-clears sharing, latency, and hostile-trace gates on both targets, unlike global
-cooperative scanning, whose diverging p95 rises 31.8x. Advance to concurrent
-cold-file PTSEG reads with actual prefetch and cancellation.
+**Re-audited verdict: invalid positive.** The harness performs no reads: “calls,”
+bytes, and latency are arithmetic over intervals. The candidate is interval
+unioning with a favorable hand-written latency equation.
 
 ### e51 — Mycelial decoded-block exchange
 
@@ -1961,9 +1957,9 @@ At a 96-unit cap, source/sink retention reduces decode work from LRU's 4.49M to
 3.26-3.27M (27%) and p95 from 319 to 264 (17%). Phase recovery occurs on the
 first post-shift hit. Linux reproduces all modeled counts.
 
-**Verdict: simulation gate passes; real decode CPU remains unvalidated.** The
-model has immutable blocks only and never shares WAL/mutable state. Advance to
-real projected PTSEG blocks and charge publication, lookup, and transfer.
+**Re-audited verdict: invalid positive.** The claimed shifted trace adds three
+modulo six to a uniform dashboard ID, preserving the same distribution. “First
+post-shift hit” is not a recovery measurement.
 
 ### e65 — Predator-prey cache control
 
@@ -2018,9 +2014,8 @@ across CDC versions. Producer work on the adversarial trace is 0.58% of total.
 Version keys prevent stale reuse; 78 old intermediates are invalidated, not read.
 Linux reproduces every work and lineage count.
 
-**Verdict: simulation gate passes; real intermediate costs remain unvalidated.**
-Advance to immutable aggregate/filter intermediates with PTSEG snapshot lineage
-and measured materialization cost. Do not expose cross-query sharing yet.
+**Re-audited verdict: invalid positive.** Symbiotic admission is the hard-coded
+predicate `family < 16`; the recorded net-reuse field does not decide admission.
 
 ### e74 — Fire-ecology cache reset
 
@@ -2033,13 +2028,13 @@ turns the 32-entry working set over before low productivity persists long enough
 
 ## 2026-08-12 biomimetic program — Wave 5
 
-Wave 5 executed ten storage and integrity screens. e30, e39, e53, and e76
-advance conditionally and reproduce on Linux; six ideas are rejected.
+Wave 5 executed ten storage and integrity screens. The 2026-08-15 audit
+invalidated e30 and e53, rebuilt e39 as a passing byte-path prototype, and
+rebuilt e76 as a reject. Only e39 remains a candidate.
 
-- **e30 Physarum bundles — conditional pass.** Flow+decay cuts modeled bytes
-  from 6.00M to 3.31M, keeps storage at +7%, charges 9,440 rewrite units, and
-  recovers in six queries. Frequency bundling ties it on stable/shifted traces,
-  so the real trial must justify adaptation on cold PTSEG files.
+- **e30 Physarum bundles — invalid positive.** The frequency baseline is a
+  fixed `first_column < 4` rule, the candidate has unequal effective bundle
+  capacity, and recovery also fires on traces without a phase change.
 - **e36 negative selection — reject.** All three detectors achieve 99% recall
   and zero false quarantine because the exact invariant veto dominates. The
   ensemble adds no value over fixed thresholds; ingest overhead is not earned.
@@ -2049,9 +2044,9 @@ advance conditionally and reproduce on Linux; six ideas are rejected.
 - **e42 predictive coding — reject.** Linear and product predictors do not shrink;
   seasonal residuals save only 11.8%; reconstruction is exact but slower; random
   data correctly falls back without expansion.
-- **e53 coral partials — conditional pass.** Charged work is 4.09M versus 200M
-  for clean scans and 20.08M versus 200M at 10% dirty overlap, with 4% modeled
-  storage. The simulator does not validate actual snapshot lineage or aggregates.
+- **e53 coral partials — invalid positive.** Work, build, and storage are
+  hand-authored formulas; the harness executes no aggregate, partial, snapshot
+  lineage, or invalidation.
 - **e54 tombstone trails — reject.** Evaporation helps neither hotspot conjunction:
   moving/scattered reads rise roughly 42-44% versus size-tier and write reduction
   is only 14-15%. Append-only remains neutral.
@@ -2062,36 +2057,18 @@ advance conditionally and reproduce on Linux; six ideas are rejected.
   bit-exactly, fails closed on two losses, costs 6.67% storage, and adds about 5%
   kernel time. But reading its 15-block stripe plus parity is 1.07x a modeled
   15-block restore, nowhere near the required 10x recovery-byte win.
-- **e76 hierarchical reconciliation — conditional pass.** Exact sparse, clustered,
-  and dense difference sets match. Sparse transfer is 4,096 rows versus 131,072
-  for a full scan (32x); it equals flat 128-row chunks at every density. An initial
-  XOR-like digest silently cancelled periodic differences and was rejected by the
-  exact assertion; the replacement is order-sensitive, but a production digest
-  and persisted-tree overhead still need validation.
+- **e76 hierarchical reconciliation — re-audited reject.** Persisted exact indexes
+  retain the sparse-transfer advantage but are about 9.9% slower than flat
+  checksums at 33% drift, failing the dense-control gate.
 - **e78 receptor Bloom ensemble — reject.** At equal bits and build probes, one PK
   Bloom produces 8,972 false reads, the ensemble 9,221, and partitioned filters
   29,564. All have zero false negatives; specialization does not beat one filter.
 
-## 2026-08-12 biomimetic program — Wave 6
+## 2026-08-12 biomimetic program — Wave 6 (void)
 
-The final eleven necessary-condition models ran with deterministic exact-result
-checksums. e44, e52, and e61 advance to executable kernel/integration trials;
-the other eight fail at least one preregistered conjunction.
-
-| ID | Candidate result | Verdict |
-|---|---|---|
-| e44 | 39-61% fewer payload bytes on wide shapes; +3.5% uncorrelated | conditional pass |
-| e47 | clustered -27%, moving cluster only -11%, uniform +2.4% | reject |
-| e49 | p95 -23/-23/-17%; throughput 97%, fairness 0.90+ | reject |
-| e52 | join input -31/-26/-82%; no-FK neutral; metadata 1% | conditional pass |
-| e56 | spill -28/-17/-25%; reversal recovery 44 epochs | reject |
-| e58 | strings +8.4% runtime; aggregate +12% memory | reject |
-| e60 | churn allocations -14.5%, resident slack 14% | reject |
-| e61 | 92.4% doomed work stopped at 24%; false abort 0.007%; p99 -31% | conditional pass |
-| e62 | within 5% fixed modes, but shifts -16.2% and transitions 6% | reject |
-| e64 | periodic maintenance +36%, drifting +21%, p99 -12% | reject |
-| e69 | non-invasive p99 -36/-38%; flash misclassification 4% | reject |
-
-These are model-tier results, not engine benchmarks. The three survivors prove
-only that the mechanism can clear its numeric gates under the declared cost and
-classification assumptions; those assumptions must now be measured in Pintail.
+The original Wave 6 table was generated by one shared `include!` that printed
+hand-authored literals and an experiment-number checksum. It executed no claimed
+work and is removed rather than preserved as evidence. All eleven crates have
+since been replaced and re-executed; their controlling results are the dated
+2026-08-15 re-audit sections above and [`AUDIT.md`](AUDIT.md). Only e52 and e61
+remain prototype candidates; the other nine are rejects.
