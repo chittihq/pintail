@@ -882,85 +882,129 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
 /// Inputs that nothing links to remain a Cartesian product with the rest,
 /// which is the honest outcome: the query really did ask for one.
 fn infer_joins_from_filter(input: LogicalPlan, predicate: BoundExpr) -> LogicalPlan {
-    {
-        {
-            let LogicalPlan::CrossJoin { inputs } = input else {
-                return LogicalPlan::Filter {
-                    input: Box::new(input),
-                    predicate,
-                };
-            };
-            let mut remaining = inputs;
-            let mut conjuncts = split_conjunction(predicate);
-            // Sorted by estimated rows already, so the smallest relation seeds
-            // the tree and the build sides stay small as it grows.
-            let mut tree = remaining.remove(0);
-
-            while !remaining.is_empty() {
-                // The next input is the first that some conjunct links to what
-                // is already joined; ties go to whichever comes first, which is
-                // the cheapest by the ordering above.
-                let linked = remaining.iter().position(|candidate| {
-                    conjuncts
-                        .iter()
-                        .any(|c| links_two_sides(c, &tree, candidate))
+    let LogicalPlan::CrossJoin { inputs } = input else {
+        return LogicalPlan::Filter {
+            input: Box::new(input),
+            predicate,
+        };
+    };
+    let mut components = inputs;
+    let mut conjuncts = split_conjunction(predicate);
+    // Merge whichever pair a conjunct links, repeatedly, rather than growing one
+    // tree from the first input. Growing from the first input abandons the whole
+    // rewrite the moment that input links to nothing - a one-row `config` table
+    // crossed with a linked fact and dimension left the entire product intact.
+    while let Some((left, right)) = find_linked_pair(&components, &conjuncts) {
+        // Removed high-index-first so the low index stays valid.
+        let candidate = components.remove(right);
+        let tree = components.remove(left);
+        let mut condition: Option<BoundExpr> = None;
+        let mut kept = Vec::with_capacity(conjuncts.len());
+        for conjunct in conjuncts {
+            if joins_two_sides(&conjunct, &tree, &candidate) {
+                condition = Some(match condition {
+                    None => conjunct,
+                    Some(existing) => and_expr(existing, conjunct),
                 });
-                let Some(index) = linked else {
-                    break;
-                };
-                let candidate = remaining.remove(index);
-                let mut condition: Option<BoundExpr> = None;
-                let mut kept = Vec::with_capacity(conjuncts.len());
-                for conjunct in conjuncts {
-                    if links_two_sides(&conjunct, &tree, &candidate) {
-                        condition = Some(match condition {
-                            None => conjunct,
-                            Some(existing) => and_expr(existing, conjunct),
-                        });
-                    } else {
-                        kept.push(conjunct);
-                    }
-                }
-                conjuncts = kept;
-                tree = LogicalPlan::Join {
-                    left: Box::new(tree),
-                    right: Box::new(candidate),
-                    kind: pintail_sql::BoundJoinKind::Inner,
-                    condition,
-                };
+            } else {
+                kept.push(conjunct);
             }
+        }
+        conjuncts = kept;
+        components.push(LogicalPlan::Join {
+            left: Box::new(tree),
+            right: Box::new(candidate),
+            kind: pintail_sql::BoundJoinKind::Inner,
+            condition,
+        });
+    }
 
-            // Anything nothing linked to stays a Cartesian product, as asked.
-            if !remaining.is_empty() {
-                let mut inputs = vec![tree];
-                inputs.extend(remaining);
-                tree = LogicalPlan::CrossJoin { inputs };
-            }
-            match conjuncts.into_iter().reduce(and_expr) {
-                None => tree,
-                Some(predicate) => LogicalPlan::Filter {
-                    input: Box::new(tree),
-                    predicate,
-                },
+    let mut plan = match components.len() {
+        0 => LogicalPlan::OneRow,
+        1 => components.pop().unwrap_or(LogicalPlan::OneRow),
+        // Whatever nothing linked stays a product, because the query asked for
+        // one.
+        _ => LogicalPlan::CrossJoin { inputs: components },
+    };
+    if let Some(predicate) = conjuncts.into_iter().reduce(and_expr) {
+        plan = LogicalPlan::Filter {
+            input: Box::new(plan),
+            predicate,
+        };
+    }
+    plan
+}
+
+/// The first pair of components some conjunct joins, with `left < right`.
+fn find_linked_pair(components: &[LogicalPlan], conjuncts: &[BoundExpr]) -> Option<(usize, usize)> {
+    for left in 0..components.len() {
+        for right in (left + 1)..components.len() {
+            if conjuncts
+                .iter()
+                .any(|conjunct| joins_two_sides(conjunct, &components[left], &components[right]))
+            {
+                return Some((left, right));
             }
         }
     }
+    None
 }
 
-/// Whether a conjunct references both sides and nothing else, which is what
-/// makes it a join condition rather than a filter.
-fn links_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan) -> bool {
-    let referenced = referenced_tables(conjunct);
-    if referenced.len() < 2 {
+/// Whether a conjunct is usable as the join condition between two sides.
+///
+/// Three things must hold, and each was learned from a way this went wrong:
+///
+/// - It must be an EQUALITY. The physical join builds hash keys from equalities;
+///   handing it `a.x < b.x` turns a query that executed as a filtered product
+///   into `UnsupportedJoinCondition`.
+/// - Each operand must reference exactly one side. `a.x = b.y + c.z` names three
+///   relations and cannot be a key for this pair.
+/// - Neither operand may be volatile. A filter evaluates `RAND()` once per
+///   candidate PAIR while a hash join evaluates it once per input ROW, so
+///   `a.x = b.x + ROUND(RAND())` would quietly change how many rows come back.
+fn joins_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan) -> bool {
+    let BoundExprKind::Binary {
+        op: BinaryOp::Equal,
+        left: lhs,
+        right: rhs,
+    } = &conjunct.kind
+    else {
+        return false;
+    };
+    if is_volatile(lhs) || is_volatile(rhs) {
         return false;
     }
-    let touches_left = referenced.iter().any(|table| contains_table(left, *table));
-    let touches_right = referenced.iter().any(|table| contains_table(right, *table));
-    touches_left
-        && touches_right
-        && referenced
-            .iter()
-            .all(|table| contains_table(left, *table) || contains_table(right, *table))
+    let sides = |expr: &BoundExpr| {
+        let tables = referenced_tables(expr);
+        if tables.is_empty() {
+            return None;
+        }
+        let in_left = tables.iter().all(|table| contains_table(left, *table));
+        let in_right = tables.iter().all(|table| contains_table(right, *table));
+        match (in_left, in_right) {
+            (true, false) => Some(false),
+            (false, true) => Some(true),
+            _ => None,
+        }
+    };
+    matches!((sides(lhs), sides(rhs)), (Some(a), Some(b)) if a != b)
+}
+
+/// Whether an expression's value can differ between two evaluations of the same
+/// row, which makes it unsafe to move between a filter and a join key.
+fn is_volatile(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::Scalar { function, args } => {
+            matches!(function, ScalarFunction::Rand) || args.iter().any(is_volatile)
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => is_volatile(expr),
+        BoundExprKind::Binary { left, right, .. } => is_volatile(left) || is_volatile(right),
+        // Anything whose shape is not walked here is treated as volatile, so a
+        // new expression kind fails closed rather than silently becoming a join
+        // key.
+        BoundExprKind::Column(_) | BoundExprKind::Literal(_) => false,
+        _ => true,
+    }
 }
 
 fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
@@ -1658,5 +1702,69 @@ mod tests {
             panic!("aggregate");
         };
         assert!(matches!(*input, LogicalPlan::CrossJoin { .. }));
+    }
+
+    /// A non-equality predicate must not become a join condition.
+    ///
+    /// The physical join needs side-separable equalities to build hash keys;
+    /// handing it `a.x < b.x` turns a query that used to execute as a filtered
+    /// product into `UnsupportedJoinCondition`.
+    #[test]
+    fn an_inequality_does_not_become_a_join_condition() {
+        let plan = project_input(optimized(
+            "SELECT events.name FROM events, users WHERE events.id < users.id",
+        ));
+        let inner = match plan {
+            LogicalPlan::Filter { input, .. } => *input,
+            other => other,
+        };
+        assert!(
+            matches!(inner, LogicalPlan::CrossJoin { .. }),
+            "an inequality is not a hash-join key, so it stays a filtered product"
+        );
+    }
+
+    /// A seed relation that links to nothing must not stop the rest joining.
+    #[test]
+    fn an_unlinked_relation_does_not_block_the_others() {
+        fn has_join(plan: &LogicalPlan) -> bool {
+            match plan {
+                LogicalPlan::Join { .. } => true,
+                LogicalPlan::CrossJoin { inputs } => inputs.iter().any(has_join),
+                LogicalPlan::Filter { input, .. } | LogicalPlan::Project { input, .. } => {
+                    has_join(input)
+                }
+                _ => false,
+            }
+        }
+
+        let plan = project_input(optimized(
+            "SELECT singleton.id FROM singleton, events, users WHERE events.id = users.id",
+        ));
+        assert!(
+            has_join(&plan),
+            "b and c are linked and must join even though a links to nothing"
+        );
+    }
+
+    /// A volatile operand must not become a join key.
+    ///
+    /// A filter evaluates `RAND()` once per candidate PAIR; a hash join
+    /// evaluates it once per input ROW. Moving it would change how many rows
+    /// the query returns, silently.
+    #[test]
+    fn a_volatile_predicate_does_not_become_a_join_condition() {
+        let plan = project_input(optimized(
+            "SELECT events.name FROM events, users \
+             WHERE events.id = users.id + ROUND(RAND())",
+        ));
+        let inner = match plan {
+            LogicalPlan::Filter { input, .. } => *input,
+            other => other,
+        };
+        assert!(
+            matches!(inner, LogicalPlan::CrossJoin { .. }),
+            "a volatile operand keeps the predicate in the filter"
+        );
     }
 }
