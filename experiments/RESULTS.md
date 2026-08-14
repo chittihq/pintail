@@ -1632,29 +1632,29 @@ is infeasible.
 ### e43 — Lateral-inhibition predicate ordering
 
 Four exact predicate truth columns carried calibrated evaluation costs
-`[1, 4, 13, 3]`. The candidate samples 64 rows per 4,096-row block (1.57% of
-rows), then greedily chooses marginal newly-rejected rows per cost. “Hindsight”
+`[1, 4, 13, 3]`. The corrected candidate samples eight rows at equal strides
+through each 4,096-row block (0.20% of rows), then greedily chooses marginal
+newly-rejected rows per cost. “Hindsight”
 enumerates all 24 static orders and does not charge enumeration to the reported
 work, making it a deliberately strong baseline.
 
-| Shape | Best static work | Per-block marginal work | Delta |
-|---|---:|---:|---:|
-| independent | **4,704,825** | 4,896,916 | +4.1% |
-| correlated rejects | **6,925,765** | 7,013,902 | +1.3% |
-| anti-correlated rejects | **6,695,676** | 6,834,100 | +2.1% |
-| blockwise regime reversals | 4,972,925 | **3,743,805** | **-24.7%** |
+| Shape | Best static work | Per-block marginal work | Delta | Static / adaptive local median |
+|---|---:|---:|---:|---:|
+| independent | **4,704,825** | 5,232,864 | +11.2% | **33.9 / 68.7 ms** |
+| correlated rejects | **6,925,765** | 7,369,758 | +6.4% | **38.5 / 148.2 ms** |
+| anti-correlated rejects | **6,695,676** | 7,434,961 | +11.0% | **38.4 / 105.4 ms** |
+| blockwise regime reversals | 4,972,925 | **3,647,939** | **-26.6%** | **31.1 / 58.8 ms** |
+| misleading block prefixes | **1,160,434** | 1,186,809 | +2.3% | **22.7 / 57.8 ms** |
 
-The modeled work and exact result are identical across architectures. The
-simulator's reversal-shape elapsed loop improved from 1.003 to 0.543 ms locally
-and 0.913 to 0.600 ms on Linux. Other elapsed ratios are not evidence for the
-calibrated cost model because reading a precomputed Boolean costs the same for
-all four simulated predicates.
+The original elapsed loop returned only a policy-independent result checksum,
+allowing the optimizer to discard policy bookkeeping. The corrected benchmark
+black-boxes the complete outcome. It also replaces prefix sampling with stratified
+sampling and adds exact-answer, misleading-prefix, and drift regressions.
 
-**Verdict: simulation gate passes; engine claim remains unvalidated.** It clears
-the 20% heterogeneous-data win, 2% sample cap, and 5% stable-shape guardrail on
-calibrated work on both targets. Advance to a real typed-kernel experiment with
-cheap comparisons, JSON/string predicates, and actual cycle accounting. Do not
-add per-block reordering to Pintail from this simulation alone.
+**Re-audited verdict: reject.** The candidate still reduces calibrated work 26.6%
+under blockwise drift and resists a misleading prefix, but exceeds the 5% stable
+guardrail in three controls and is 1.9-3.9x slower than the learned-static loop.
+The earlier elapsed win was dead-code-elimination contamination.
 
 ### e77 — Retinal variable-resolution granules
 

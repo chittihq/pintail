@@ -3,11 +3,13 @@
 //! Evidence tier: deterministic policy simulation over exact predicate truth
 //! tables. `work` is calibrated predicate-cost units, not elapsed CPU time.
 
+use std::hint::black_box;
+
 use common::{Lcg, bench, check_consistency};
 
 const ROWS: usize = 600_000;
 const BLOCK: usize = 4096;
-const SAMPLE: usize = 64;
+const SAMPLE: usize = 8;
 const COST: [u64; 4] = [1, 4, 13, 3];
 
 #[derive(Clone, Copy)]
@@ -16,6 +18,7 @@ enum Shape {
     Correlated,
     AntiCorrelated,
     Drift,
+    FrontLoadedBias,
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +44,7 @@ fn main() {
         Shape::Correlated,
         Shape::AntiCorrelated,
         Shape::Drift,
+        Shape::FrontLoadedBias,
     ] {
         let rows = generate(shape);
         println!("=== {} ===", shape_name(shape));
@@ -64,14 +68,16 @@ fn main() {
             );
         }
         let results = [
-            bench("SQL", || run(&rows, Policy::Sql).checksum),
+            bench("SQL", || observed(run(&rows, Policy::Sql))),
             bench("static learned", || {
-                run(&rows, Policy::StaticLearned).checksum
+                observed(run(&rows, Policy::StaticLearned))
             }),
             bench("oracle static", || {
-                run(&rows, Policy::OracleStatic).checksum
+                observed(run(&rows, Policy::OracleStatic))
             }),
-            bench("lateral per block", || run(&rows, Policy::Lateral).checksum),
+            bench("lateral per block", || {
+                observed(run(&rows, Policy::Lateral))
+            }),
         ];
         check_consistency(&results);
         println!();
@@ -84,6 +90,7 @@ fn shape_name(shape: Shape) -> &'static str {
         Shape::Correlated => "correlated redundant rejects",
         Shape::AntiCorrelated => "anti-correlated rejects",
         Shape::Drift => "mid-query regime reversal",
+        Shape::FrontLoadedBias => "misleading block prefixes",
     }
 }
 
@@ -107,6 +114,13 @@ fn generate(shape: Shape) -> Vec<[bool; 4]> {
                     2 => [a < 95, b < 95, c < 5, random.below(100) < 95],
                     _ => [a < 95, b < 95, c < 95, random.below(100) < 5],
                 },
+                Shape::FrontLoadedBias => {
+                    if row % BLOCK < SAMPLE {
+                        [a < 95, b < 5, c < 95, random.below(100) < 95]
+                    } else {
+                        [a < 5, b < 95, c < 95, random.below(100) < 95]
+                    }
+                }
             }
         })
         .collect()
@@ -119,30 +133,47 @@ fn run(rows: &[[bool; 4]], policy: Policy) -> Outcome {
         Policy::OracleStatic => best_permutation(rows),
         Policy::Lateral => [0, 1, 2, 3],
     };
-    let mut checksum = 0xcbf2_9ce4_8422_2325_u64;
     let mut matches = 0_u64;
+    let mut matched_positions = Vec::new();
     let mut work = 0_u64;
     let mut sampled_rows = 0_u64;
 
     for (block_index, block) in rows.chunks(BLOCK).enumerate() {
         let (order, skip) = if matches!(policy, Policy::Lateral) {
-            let sample = &block[..SAMPLE.min(block.len())];
-            work += sample.len() as u64 * COST.iter().sum::<u64>();
-            sampled_rows += sample.len() as u64;
-            let order = choose_order(sample);
-            for (offset, row) in sample.iter().enumerate() {
+            // A prefix sample can be adversarially unrepresentative (sorted or
+            // clustered blocks are common in an analytical store). Sample at
+            // equal strides and remember those rows so they are not evaluated
+            // twice. All four predicate costs are charged for every sample.
+            let sample_count = SAMPLE.min(block.len());
+            let sample_offsets = (0..sample_count)
+                .map(|sample| sample * block.len() / sample_count)
+                .collect::<Vec<_>>();
+            let sample = sample_offsets
+                .iter()
+                .map(|offset| block[*offset])
+                .collect::<Vec<_>>();
+            work += sample_count as u64 * COST.iter().sum::<u64>();
+            sampled_rows += sample_count as u64;
+            let order = choose_order(&sample);
+            for (&offset, row) in sample_offsets.iter().zip(&sample) {
                 if row.iter().all(|value| *value) {
                     matches += 1;
                     let position = (block_index * BLOCK + offset) as u64;
-                    checksum = (checksum ^ position).wrapping_mul(0x100_0000_01b3);
+                    matched_positions.push(position);
                 }
             }
-            (order, sample.len())
+            (order, Some(sample_offsets))
         } else {
-            (static_order, 0)
+            (static_order, None)
         };
 
-        for (offset, row) in block.iter().enumerate().skip(skip) {
+        for (offset, row) in block.iter().enumerate() {
+            if skip
+                .as_ref()
+                .is_some_and(|offsets| offsets.binary_search(&offset).is_ok())
+            {
+                continue;
+            }
             let mut accepted = true;
             for predicate in order {
                 work += COST[predicate];
@@ -154,10 +185,16 @@ fn run(rows: &[[bool; 4]], policy: Policy) -> Outcome {
             if accepted {
                 matches += 1;
                 let position = (block_index * BLOCK + offset) as u64;
-                checksum = (checksum ^ position).wrapping_mul(0x100_0000_01b3);
+                matched_positions.push(position);
             }
         }
     }
+    matched_positions.sort_unstable();
+    let mut checksum = matched_positions
+        .into_iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |checksum, position| {
+            (checksum ^ position).wrapping_mul(0x100_0000_01b3)
+        });
     checksum ^= matches.rotate_left(19);
     Outcome {
         checksum,
@@ -165,6 +202,12 @@ fn run(rows: &[[bool; 4]], policy: Policy) -> Outcome {
         work,
         sampled_rows,
     }
+}
+
+fn observed(outcome: Outcome) -> u64 {
+    let checksum = outcome.checksum;
+    black_box(outcome);
+    checksum
 }
 
 fn choose_order(sample: &[[bool; 4]]) -> [usize; 4] {
@@ -240,4 +283,44 @@ fn all_distinct(order: [usize; 4]) -> bool {
         && order[1] != order[2]
         && order[1] != order[3]
         && order[2] != order[3]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_policy_returns_the_same_exact_rows() {
+        for shape in [
+            Shape::Independent,
+            Shape::Correlated,
+            Shape::AntiCorrelated,
+            Shape::Drift,
+            Shape::FrontLoadedBias,
+        ] {
+            let rows = generate(shape);
+            let expected = run(&rows, Policy::Sql);
+            for policy in [Policy::StaticLearned, Policy::OracleStatic, Policy::Lateral] {
+                let actual = run(&rows, policy);
+                assert_eq!(actual.matches, expected.matches);
+                assert_eq!(actual.checksum, expected.checksum);
+            }
+        }
+    }
+
+    #[test]
+    fn stratified_sampling_resists_a_misleading_prefix() {
+        let rows = generate(Shape::FrontLoadedBias);
+        let static_best = run(&rows, Policy::OracleStatic);
+        let lateral = run(&rows, Policy::Lateral);
+        assert!(lateral.work <= static_best.work * 105 / 100);
+    }
+
+    #[test]
+    fn block_adaptation_repays_sampling_under_drift() {
+        let rows = generate(Shape::Drift);
+        let static_best = run(&rows, Policy::OracleStatic);
+        let lateral = run(&rows, Policy::Lateral);
+        assert!(lateral.work * 100 <= static_best.work * 80);
+    }
 }

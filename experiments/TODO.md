@@ -92,8 +92,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     only 10.9% elapsed and scattered data regresses.
   - [x] **e34-root-index** — rejected: corrected local/systemic feedback matches
     frequency allocation but causes 4.7-5.9x more rebuild work under drift.
-  - [ ] **e43-lateral-predicates** — simulation passes on both targets (24.7% modeled
-    work saved under blockwise drift); real unequal-cost typed kernel is required.
+  - [x] **e43-lateral-predicates** — re-audited with observable benchmark state,
+    stratified samples, and a misleading-prefix control; rejected because three
+    stable shapes regress 6.4-11.2% and the adaptive loop is 1.9-3.9x slower.
   - [ ] **e77-retinal-granules** — simulation passes on both targets (28% fewer rows
     touched on moving/stationary hotspots); real PTSEG A/B is required.
   - [x] **e38-fever-overload** — rejected: CDC is protected, but query p99 is
