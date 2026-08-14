@@ -204,11 +204,13 @@ answers feed a checksum; false aborts and doomed consumption come from actual de
 The p99 is selected from 10,000 executed deterministic healthy latencies after applying
 the resource penalty caused by each policy's measured doomed work; it is not a printed
 constant. Consensus improves it 35.8% over the strongest baseline.
+Linux reproduces every decision count, consumption rate, preserved-answer checksum, and
+p99; the consensus policy loop median is 0.648 ms there.
 
-**Re-audited verdict: executable prototype passes locally.** It clears early-stop,
+**Re-audited verdict: executable prototype passes on both targets.** It clears early-stop,
 false-abort, spill-preservation, and healthy-p99 gates. The observation curves are still
-synthetic, so Linux reproduction and calibration against real Pintail operator telemetry
-are required before any containment code is proposed.
+synthetic, so calibration against real Pintail operator telemetry is required before any
+containment code is proposed.
 
 ## e01 — Filter representation
 

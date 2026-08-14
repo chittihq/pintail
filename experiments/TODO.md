@@ -181,9 +181,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [ ] **e56-vascular-memory** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e58-enzyme-batches** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e60-autophagic-buffers** — **INVALIDATED:** shared Wave 6 code prints literals.
-  - [ ] **e61-apoptotic-queries** — re-executed locally with label-free decisions, actual
-    early-stop/false-abort accounting, exact preserved answers, and computed healthy p99;
-    all prototype gates pass pending Linux and real-telemetry calibration.
+  - [ ] **e61-apoptotic-queries** — re-executed on both targets with label-free decisions,
+    actual early-stop/false-abort accounting, exact preserved answers, and computed healthy
+    p99; all prototype gates pass pending real-telemetry calibration.
   - [ ] **e62-operator-fission** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e64-circadian-maintenance** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e69-invasive-defense** — **INVALIDATED:** shared Wave 6 code prints literals.
