@@ -235,6 +235,18 @@ first reaches 14.85, 12.33, and 15.59 on the same exact workload checksums.
 cannot approach the strongest baseline's tail slowdown; the required 20% improvement is
 missed by multiples, even before the schooling loop's 2.5-3x bookkeeping time.
 
+### 2026-08-15 re-audit — e56 vascular memory
+
+Four allocators now spend one hard 1,000-unit budget across executed marginal-utility
+curves, with assertions for the 100-unit correctness floor and cap. Vascular adaptation
+recovers five epochs after reversal and beats the strongest baseline on reversal (59% less
+spill, 63% lower p95) and bursts (35%/35%). On stable curves, however, static weights are
+already optimal: vascular spill is 40.75M versus 40.70M and p95 is 2,484 versus 2,482.
+
+**Re-audited verdict: reject.** The adaptive state is useful after drift, but does not
+clear the 20%/15% conjunction against the strongest control on stable demand. This is an
+argument for change detection around static weights, not unconditional conductance.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

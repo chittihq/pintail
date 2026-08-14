@@ -180,7 +180,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [ ] **e52-join-fibers** — re-executed on both targets over real FK arrays with exact
     join checksums and an actually executed build scan; the prototype clears all numeric
     gates, pending real PTSEG lineage/invalidation costs.
-  - [ ] **e56-vascular-memory** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e56-vascular-memory** — re-executed with cap/floor assertions and observed
+    utility updates; rejected because it ties, rather than beats, static weights when stable.
   - [ ] **e58-enzyme-batches** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e60-autophagic-buffers** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e61-apoptotic-queries** — re-executed on both targets with label-free decisions,
