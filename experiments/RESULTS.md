@@ -247,6 +247,18 @@ already optimal: vascular spill is 40.75M versus 40.70M and p95 is 2,484 versus 
 clear the 20%/15% conjunction against the strongest control on stable demand. This is an
 argument for change detection around static weights, not unconditional conductance.
 
+### 2026-08-15 re-audit — e58 saturation batch sizing
+
+Each policy now chunks and checksums the same 262,144 values. Offline choice enumerates
+nine sizes; hill climb and saturation make executable cost probes whose work is charged.
+Saturation selects the offline batch for all five shapes and stays within 3% modeled
+runtime and identical peak memory. It nevertheless takes six probes to rediscover the
+unchanged 4,096-row filter batch (with no subsequent saving) and seven for decode/join.
+
+**Re-audited verdict: reject.** Steady-state selection clears the 5%/10% bounds, but the
+adaptation cannot repay inside five batches on the fixed-size control and misses the probe
+budget outright. Hill climb is no worse and usually probes less.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

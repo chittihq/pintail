@@ -182,7 +182,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     gates, pending real PTSEG lineage/invalidation costs.
   - [x] **e56-vascular-memory** — re-executed with cap/floor assertions and observed
     utility updates; rejected because it ties, rather than beats, static weights when stable.
-  - [ ] **e58-enzyme-batches** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e58-enzyme-batches** — re-executed with charged curve probes and exact chunked
+    checksums; rejected because saturation needs 6-7 probes and cannot repay on the
+    unchanged filter control.
   - [ ] **e60-autophagic-buffers** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e61-apoptotic-queries** — re-executed on both targets with label-free decisions,
     actual early-stop/false-abort accounting, exact preserved answers, and computed healthy
