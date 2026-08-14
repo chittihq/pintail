@@ -1,10 +1,12 @@
 # The next 50 experiments: a biomimetic research program
 
-Status: **screening complete (34 rejected, 16 advanced)**. All fifty experiments now have
-code, deterministic output checks, recorded results, and a screening verdict. The sixteen
-advanced items remain simulation, model, or isolated-kernel evidence; none is validated for
-engine adoption until its stated real PTSEG or integration follow-up passes. A biological
-analogy is a source of mechanisms, not evidence that the mechanism works in a database.
+Status: **evidence audit failed; re-execution in progress**. The 2026-08-15 audit
+invalidated all eleven Wave 6 results plus e36, e39, e70, e72, e76, and e78. Their
+implementations either printed authored literals, leaked oracle labels, constructed safety
+metrics, violated equal-resource comparison, panicked outside release mode, timed the wrong
+code, or contained a filter-addressing artifact. No e30-e79 promotion or adoption claim is
+valid until its harness passes the revised evidence audit. A biological analogy is a source
+of mechanisms, not evidence that the mechanism works in a database.
 
 These are e30 through e79. They deliberately exclude the mechanisms already isolated in
 e01-e29: filter representations, aggregation-table shapes, guarded Top-K heaps, join-table

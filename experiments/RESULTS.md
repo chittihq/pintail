@@ -7,6 +7,13 @@ Machines:
 All numbers are median-of-7 after warmup, ms, on 20M rows. Every variant within a block
 produced identical checksums. Raw outputs: rerun per `TODO.md`; summary tables below.
 
+> **Biomimetic evidence invalidated — 2026-08-15.** The e30-e79 program did not meet
+> its own evidence contract. All eleven Wave 6 crates printed hand-authored literals from
+> one shared include, while e36, e39, e70, e72, e76, and e78 have independently reproduced
+> correctness or fairness defects. The biomimetic sections below are retained as an audit
+> trail, not usable evidence. Their pass/reject language is withdrawn until each experiment
+> is replaced and re-executed.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

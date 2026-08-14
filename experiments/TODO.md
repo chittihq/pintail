@@ -134,22 +134,22 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     and the modeled class populations oscillate beyond the gate.
   - [x] **e66-cache-niches** — rejected: adaptive borders range from -8% to +5.5%
     against global GreedyDual, far below the 20% gate.
-  - [x] **e70-forest-gap-auction** — rejected: spill falls 24-52% but makespan only
-    4-11%, auction overhead is excessive, and starvation is weakly bounded.
+  - [ ] **e70-forest-gap-auction** — **INVALIDATED:** baselines leave substantial budget
+    unused, so the reported auction advantage is not an equal-resource comparison.
   - [x] **e71-dormant-indexes** — rejected: multi-cue germination saves memory and
     rebuild work but leaves seasonal p95 on the unindexed path.
-  - [x] **e72-seasonal-columns** — rejected: the detector never migrates the periodic
-    columns and loses badly to recency.
+  - [ ] **e72-seasonal-columns** — **INVALIDATED:** `u16` masks shift by up to 23 and
+    panic in debug; release-mode aliasing means the workload is not 24 columns.
   - [ ] **e73-symbiotic-intermediates** — simulation passes on both targets at one
     shared 12-entry cap; real immutable/versioned intermediate trial required.
   - [x] **e74-fire-cache-reset** — rejected: LRU recovers before the prolonged-low-hit
     detector fires, so controlled reset provides no gain.
   - [ ] **e30-physarum-access** — simulation passes on both targets; real cold PTSEG
     bundle/rewrite measurements required.
-  - [x] **e36-negative-selection** — rejected: it exactly matches fixed thresholds and
-    adds no measurable detection value.
-  - [ ] **e39-granule-quarantine** — simulation passes on both targets; real corruption
-    injection and persisted interval tests required.
+  - [ ] **e36-negative-selection** — **INVALIDATED:** the quarantine decision consumes
+    the ground-truth fault label and the generator injects faults into only one feature.
+  - [ ] **e39-granule-quarantine** — **INVALIDATED:** silent corruption is unreachable
+    and unaffected-range availability is 100% by construction.
   - [x] **e42-predictive-columns** — rejected: only one shape shrinks (11.8%) and decode
     is slower, missing both correlated-shape gates.
   - [ ] **e53-coral-views** — conditional simulation passes; real lineage-aware aggregate
@@ -160,18 +160,18 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     machine makes thousands of needless transitions.
   - [x] **e75-parity-regeneration** — rejected: XOR repairs exactly within 8% storage,
     but a small stripe reads more bytes than the modeled segment restore.
-  - [ ] **e76-hierarchical-reconcile** — conditional kernel pass: exact sparse transfer
-    is 32x below full scan and equal to flat chunks; persisted polling cost is unvalidated.
-  - [x] **e78-receptor-blooms** — rejected: the ensemble has 2.8% more false reads than
-    one PK Bloom at equal bits, while partitioning is 3.3x worse.
-  - [ ] **e44-foveated-topk** — model gate passes; real proof-carrying Top-K decoding required.
-  - [x] **e47-waggle-morsels** — rejected: moving-cluster completion improves only 11%.
-  - [x] **e49-schooling-control** — rejected: burst p95 improves 17%, below the 20% gate.
-  - [ ] **e52-join-fibers** — model gate passes; real fingerprint joins required.
-  - [x] **e56-vascular-memory** — rejected: reversal recovery takes 44 epochs.
-  - [x] **e58-enzyme-batches** — rejected: strings miss runtime and aggregate misses memory.
-  - [x] **e60-autophagic-buffers** — rejected: churn misses allocation and slack gates.
-  - [ ] **e61-apoptotic-queries** — model gate passes; real containment policy required.
-  - [x] **e62-operator-fission** — rejected: shift gain is 16% and transition cost 6%.
-  - [x] **e64-circadian-maintenance** — rejected: drifting maintenance improves only 21%.
-  - [x] **e69-invasive-defense** — rejected: flash-crowd misclassification is 4%.
+  - [ ] **e76-hierarchical-reconcile** — **INVALIDATED:** local bindings shadow the
+    implementations, so timing measures digesting already-produced outputs.
+  - [ ] **e78-receptor-blooms** — **INVALIDATED:** partition selection aliases the same
+    low bits as the local hash modulus, making three quarters of filter bits unreachable.
+  - [ ] **e44-foveated-topk** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e47-waggle-morsels** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e49-schooling-control** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e52-join-fibers** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e56-vascular-memory** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e58-enzyme-batches** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e60-autophagic-buffers** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e61-apoptotic-queries** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e62-operator-fission** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e64-circadian-maintenance** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [ ] **e69-invasive-defense** — **INVALIDATED:** shared Wave 6 code prints literals.
