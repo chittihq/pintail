@@ -175,9 +175,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     despite 56-88% fewer payload bytes when proof-gated fine pages activate.
   - [ ] **e47-waggle-morsels** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e49-schooling-control** — **INVALIDATED:** shared Wave 6 code prints literals.
-  - [ ] **e52-join-fibers** — re-executed locally over real FK arrays with exact join
-    checksums and an actually executed build scan; the prototype clears all numeric gates,
-    pending Linux reproduction and real PTSEG lineage/invalidation costs.
+  - [ ] **e52-join-fibers** — re-executed on both targets over real FK arrays with exact
+    join checksums and an actually executed build scan; the prototype clears all numeric
+    gates, pending real PTSEG lineage/invalidation costs.
   - [ ] **e56-vascular-memory** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e58-enzyme-batches** — **INVALIDATED:** shared Wave 6 code prints literals.
   - [ ] **e60-autophagic-buffers** — **INVALIDATED:** shared Wave 6 code prints literals.

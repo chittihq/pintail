@@ -179,11 +179,13 @@ column to build its exact segment bitset; inspected build rows feed its timed wo
 The fiber occupies 40 bytes (0.015% of the 256 KiB FK column), and its build is repaid
 well inside ten matching queries. The ordinary 512-bit-per-segment Bloom saturates on
 these 256-row segments; the exact demand fingerprint is what removes its false candidates.
+Linux reproduces every answer, input, build, and metadata count; demand-fiber medians are
+2.217, 2.520, 1.501, and 5.031 ms for star, chain, sparse, and no-FK respectively.
 
-**Re-audited verdict: executable prototype passes locally.** Exactness, input reduction,
-metadata, repayment, and no-FK fallback gates all clear. This validates only a repeated
-join-template segment bitset; Linux reproduction and a real PTSEG lineage/invalidation
-trial are still required before kernel adoption.
+**Re-audited verdict: executable prototype passes on both targets.** Exactness, input
+reduction, metadata, repayment, and no-FK fallback gates all clear. This validates only a
+repeated join-template segment bitset; a real PTSEG lineage/invalidation trial is still
+required before kernel adoption.
 
 ## e01 — Filter representation
 
