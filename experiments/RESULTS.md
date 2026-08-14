@@ -52,6 +52,26 @@ falls 97.3% and actual query outcomes establish safety and availability. This is
 PTSEG evidence: persisted interval serialization, restart recovery, and the real reader
 error path must be tested before engine adoption.
 
+### 2026-08-15 re-audit — e70 forest-gap auctions
+
+The allocator now gives every policy the same 1,000-unit budget, selects only operators
+with unmet demand, and asserts both full spend and no over-grant on every epoch. Spill is
+a quadratic cost of missing memory; the auction evaluates the exact reduction from its
+next grant quantum. Allocation decisions and workload inputs feed the measured checksum.
+
+| Trace | Equal makespan / spill | Auction makespan / spill | Auction wait | Unspent (all) |
+|---|---:|---:|---:|---:|
+| staggered | **11.53M** / 726.13M | 12.23M / **548.93M** | 6 | 0 |
+| synchronized | **10.72M** / 726.03M | 11.89M / **558.37M** | 6 | 0 |
+| skewed benefit | **9.76M** / 918.71M | 11.03M / **506.31M** | 5 | 0 |
+
+The fair comparison reverses the headline: auction makespan is 6.1-13.1% worse than
+equal redistribution, although spill falls 23.1-44.9%. Its local allocation loop is
+also 0.6-4.6% slower by median, above the 0.5% overhead budget in every trace.
+
+**Re-audited verdict: reject.** The auction clears the spill and starvation conditions,
+but fails both the makespan direction and the overhead gate after equalizing resources.
+
 ### 2026-08-15 re-audit — e72 seasonal decoded columns
 
 The replacement uses a `u32` mask with a regression test proving 24 distinct addressable

@@ -134,8 +134,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     and the modeled class populations oscillate beyond the gate.
   - [x] **e66-cache-niches** — rejected: adaptive borders range from -8% to +5.5%
     against global GreedyDual, far below the 20% gate.
-  - [ ] **e70-forest-gap-auction** — **INVALIDATED:** baselines leave substantial budget
-    unused, so the reported auction advantage is not an equal-resource comparison.
+  - [x] **e70-forest-gap-auction** — re-executed with full equal budgets, exact marginal
+    spill bids, and per-epoch cap assertions; rejected because auctions increase makespan
+    6.1-13.1% versus equal redistribution and exceed the 0.5% overhead gate.
   - [x] **e71-dormant-indexes** — rejected: multi-cue germination saves memory and
     rebuild work but leaves seasonal p95 on the unindexed path.
   - [x] **e72-seasonal-columns** — re-executed with 24 distinct `u32` column bits,
