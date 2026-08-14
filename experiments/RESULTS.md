@@ -44,10 +44,13 @@ is successful disjoint queries divided by all disjoint queries, not a range-coun
 | whole-segment rediscovery | 262,144,000 | 3/3 | 0 | 0% | 299.3 ms |
 | persisted quarantine | **7,191,552** | **3/3** | **0** | **100%** | **16.4 ms** |
 
-**Re-audited verdict: isolated byte-path gate passes locally.** Verification work falls
-97.3% and actual query outcomes establish safety and availability. This is still not PTSEG
-evidence: persisted interval serialization, restart recovery, and the real reader error path
-must be tested before engine adoption.
+Linux reproduces every byte count and query outcome; its medians are 211.9 ms for repeated
+whole-segment discovery and 11.6 ms for persisted quarantine.
+
+**Re-audited verdict: isolated byte-path gate passes on both targets.** Verification work
+falls 97.3% and actual query outcomes establish safety and availability. This is still not
+PTSEG evidence: persisted interval serialization, restart recovery, and the real reader
+error path must be tested before engine adoption.
 
 ## e01 — Filter representation
 
