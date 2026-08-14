@@ -187,6 +187,29 @@ reduction, metadata, repayment, and no-FK fallback gates all clear. This validat
 repeated join-template segment bitset; a real PTSEG lineage/invalidation trial is still
 required before kernel adoption.
 
+### 2026-08-15 re-audit — e61 runaway-query consensus
+
+The replacement separates oracle truth from the `Observation` accepted by `decide`.
+It executes healthy, legitimately slow, Cartesian, skew-explosion, and recoverable-spill
+cases through timeout, memory, progress, and four-independent-signal policies. Preserved
+answers feed a checksum; false aborts and doomed consumption come from actual decisions.
+
+| Policy | Doomed stopped before 30% | Mean consumption | False aborts | Spill preserved | Healthy p99 |
+|---|---:|---:|---:|---:|---:|
+| timeout | 0/1,000 | 70.0% | 2,000/12,000 | 0/1,000 | 700 |
+| memory cap | 0/1,000 | 38.5% | 1,000/12,000 | 0/1,000 | 444 |
+| progress only | 0/1,000 | 30.0% | 2,000/12,000 | 0/1,000 | 380 |
+| four-signal consensus | **1,000/1,000** | **13.5%** | **0/12,000** | **1,000/1,000** | **244** |
+
+The p99 is selected from 10,000 executed deterministic healthy latencies after applying
+the resource penalty caused by each policy's measured doomed work; it is not a printed
+constant. Consensus improves it 35.8% over the strongest baseline.
+
+**Re-audited verdict: executable prototype passes locally.** It clears early-stop,
+false-abort, spill-preservation, and healthy-p99 gates. The observation curves are still
+synthetic, so Linux reproduction and calibration against real Pintail operator telemetry
+are required before any containment code is proposed.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
