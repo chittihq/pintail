@@ -162,6 +162,29 @@ payload-byte target whenever its proof activates and remains exact, but its meas
 uncorrelated median is 11.8% slower, above the 5% fallback guardrail. Fine payload pages
 are promising storage work; this prototype does not justify a kernel promotion.
 
+### 2026-08-15 re-audit — e52 demand-grown join fibers
+
+The replacement executes twelve repeated joins over 256 real FK segments. Raw, Bloom,
+static-fingerprint, and demand-grown policies must produce the same match-count/sum checksum.
+The demand policy uses Bloom candidates for two observations, then really scans the FK
+column to build its exact segment bitset; inspected build rows feed its timed work digest.
+
+| Shape | Bloom input | Demand-fiber input | Reduction | Build rows / repay | Local median |
+|---|---:|---:|---:|---:|---:|
+| star | 786,432 | **294,912** | 62.5% | 49,216 / 2 queries | 1.584 ms |
+| chain | 786,432 | **351,232** | 55.3% | 43,606 / 2 queries | 1.787 ms |
+| sparse | 786,432 | **172,032** | 78.1% | 61,456 / 2 queries | 1.079 ms |
+| no declared FK | 786,432 | 786,432 | neutral | 0 / n/a | 3.534 ms |
+
+The fiber occupies 40 bytes (0.015% of the 256 KiB FK column), and its build is repaid
+well inside ten matching queries. The ordinary 512-bit-per-segment Bloom saturates on
+these 256-row segments; the exact demand fingerprint is what removes its false candidates.
+
+**Re-audited verdict: executable prototype passes locally.** Exactness, input reduction,
+metadata, repayment, and no-FK fallback gates all clear. This validates only a repeated
+join-template segment bitset; Linux reproduction and a real PTSEG lineage/invalidation
+trial are still required before kernel adoption.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
