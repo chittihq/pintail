@@ -192,5 +192,6 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     p99; all prototype gates pass pending real-telemetry calibration.
   - [x] **e62-operator-fission** — re-executed with exact global/sharded aggregation and
     charged transitions; rejected at 3.8% shift improvement and +25% tiny-work cost.
-  - [ ] **e64-circadian-maintenance** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e64-circadian-maintenance** — re-executed with bounded learned history and a
+    full-slack reactive control; rejected because forecasting ties or loses to reaction.
   - [ ] **e69-invasive-defense** — **INVALIDATED:** shared Wave 6 code prints literals.

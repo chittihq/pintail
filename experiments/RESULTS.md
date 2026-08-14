@@ -283,6 +283,18 @@ its 256-row sampling charge makes tiny work 25% worse than global.
 **Re-audited verdict: reject.** It misses both the 20% cumulative-shift target and the
 within-5% tiny control, despite exact merging and bounded transition work.
 
+### 2026-08-15 re-audit — e64 circadian maintenance
+
+The replacement executes 4,320 load/debt ticks, learns only a bounded 144-byte prior-cycle
+history, caps work at current slack, and preserves the foreground checksum. Against a fair
+debt-reactive controller that also consumes safe slack, forecast+reflex completes identical
+work on periodic/missing traces and 3.8% less on drift and random traces. Its p99 is 1-4
+units worse; forecast-only is substantially worse and breaches the modeled SLO.
+
+**Re-audited verdict: reject.** The earlier advantage came from comparing prediction with
+an artificially timid reactive threshold. Once both may use available slack, seasonal
+history adds no maintenance or p99 value.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
