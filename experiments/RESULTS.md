@@ -52,6 +52,29 @@ falls 97.3% and actual query outcomes establish safety and availability. This is
 PTSEG evidence: persisted interval serialization, restart recovery, and the real reader
 error path must be tested before engine adoption.
 
+### 2026-08-15 re-audit — e72 seasonal decoded columns
+
+The replacement uses a `u32` mask with a regression test proving 24 distinct addressable
+columns. Every policy executes the same 30,000 query answers and must match the compressed
+oracle checksum. A six-gap stability requirement prevents random recurrences from being
+treated as seasons, while a capacity-sized desired set prevents wide scans from churning.
+
+| Trace | Compressed cost | Recency cost | Seasonal cost | Seasonal migrations |
+|---|---:|---:|---:|---:|
+| periodic + probes | 3,428,600 | 1,063,510 | **868,109** | 579 |
+| drifting seasons | 3,430,112 | 1,063,960 | **857,827** | 549 |
+| random | 1,646,064 | 7,470,000 | **1,590,745** | 1 |
+| wide control | 10,080,000 | 28,801,260 | **4,562,912** | 8 |
+
+The modeled improvements over recency are 18.4% and 19.4% on the two target traces,
+just below the preregistered 20% gate. The actual policy loop is also slower locally
+(2.57 ms versus recency's 0.76 ms on the periodic trace), so the model does not conceal
+implementation overhead.
+
+**Re-audited verdict: reject.** Correcting the workload turns the original decisive loss
+into a near miss, not a pass. The random and wide controls are safe, but neither target
+trace clears the declared margin and no engine trial is justified.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

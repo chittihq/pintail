@@ -138,8 +138,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     unused, so the reported auction advantage is not an equal-resource comparison.
   - [x] **e71-dormant-indexes** — rejected: multi-cue germination saves memory and
     rebuild work but leaves seasonal p95 on the unindexed path.
-  - [ ] **e72-seasonal-columns** — **INVALIDATED:** `u16` masks shift by up to 23 and
-    panic in debug; release-mode aliasing means the workload is not 24 columns.
+  - [x] **e72-seasonal-columns** — re-executed with 24 distinct `u32` column bits,
+    oracle-identical answers, and random/wide anti-churn regressions; rejected because
+    corrected periodic and drifting gains are 18.4% and 19.4%, below the 20% gate.
   - [ ] **e73-symbiotic-intermediates** — simulation passes on both targets at one
     shared 12-entry cap; real immutable/versioned intermediate trial required.
   - [x] **e74-fire-cache-reset** — rejected: LRU recovers before the prolonged-low-hit
