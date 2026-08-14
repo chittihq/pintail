@@ -32,6 +32,23 @@ fault rotation, valid-outlier behavior, and label-independent decisions.
 gate but produces the identical decision checksum as diagonal distance. That is a tie, not
 evidence for a negative-selection ensemble; the simpler distance detector wins.
 
+### 2026-08-15 re-audit — e39 granule quarantine
+
+The replacement corrupts bytes in three of 128 immutable 512-byte granules and verifies
+stored per-granule checksums. Every query is executed: overlap must return corruption;
+disjoint ranges must return the exact checksum computed from a pristine segment. Availability
+is successful disjoint queries divided by all disjoint queries, not a range-count identity.
+
+| Policy | Verified bytes | Corrupt granules | Silent/wrong | Disjoint availability | Local median |
+|---|---:|---:|---:|---:|---:|
+| whole-segment rediscovery | 262,144,000 | 3/3 | 0 | 0% | 299.3 ms |
+| persisted quarantine | **7,191,552** | **3/3** | **0** | **100%** | **16.4 ms** |
+
+**Re-audited verdict: isolated byte-path gate passes locally.** Verification work falls
+97.3% and actual query outcomes establish safety and availability. This is still not PTSEG
+evidence: persisted interval serialization, restart recovery, and the real reader error path
+must be tested before engine adoption.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |

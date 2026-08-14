@@ -149,8 +149,9 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
   - [x] **e36-negative-selection** — re-executed without label leakage: negative selection
     reaches 100% recall and zero false quarantine but exactly ties diagonal distance, so the
     added ensemble has no qualifying value.
-  - [ ] **e39-granule-quarantine** — **INVALIDATED:** silent corruption is unreachable
-    and unaffected-range availability is 100% by construction.
+  - [ ] **e39-granule-quarantine** — re-audited byte-path kernel passes locally: three
+    injected corrupt granules are detected, all overlap fails, every disjoint answer is
+    oracle-exact, and verified bytes fall 97.3%; Linux and real PTSEG persistence remain.
   - [x] **e42-predictive-columns** — rejected: only one shape shrinks (11.8%) and decode
     is slower, missing both correlated-shape gates.
   - [ ] **e53-coral-views** — conditional simulation passes; real lineage-aware aggregate
