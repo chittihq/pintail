@@ -175,7 +175,8 @@ including the cyclic status column (defeats zone maps, as in the real benchmark)
     despite 56-88% fewer payload bytes when proof-gated fine pages activate.
   - [x] **e47-waggle-morsels** — re-executed over observable morsel yield with exact
     results; rejected because completion changes by less than 1%, missing the 15% gate.
-  - [ ] **e49-schooling-control** — **INVALIDATED:** shared Wave 6 code prints literals.
+  - [x] **e49-schooling-control** — re-executed as a 16-slot scheduler with completed-query
+    timelines; rejected because SJF p95 slowdown is 4.4-5.5x lower than schooling.
   - [ ] **e52-join-fibers** — re-executed on both targets over real FK arrays with exact
     join checksums and an actually executed build scan; the prototype clears all numeric
     gates, pending real PTSEG lineage/invalidation costs.

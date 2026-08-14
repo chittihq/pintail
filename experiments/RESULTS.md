@@ -224,6 +224,17 @@ clustered work, 1,825 versus 1,818 on moving clusters, and 6,899 versus 6,906 on
 UDF. Those changes are within 1%, far below the 15% completion gate; discovery latency
 alone does not validate the mechanism.
 
+### 2026-08-15 re-audit — e49 schooling concurrency
+
+A 16-slot discrete scheduler now completes all 160 queries and records each arrival,
+start, progress, and finish. Schooling retains 99-100% of the best throughput and Jain
+fairness stays 0.940-0.989, but its p95 slowdowns are 82.25, 54.85, and 84.13. Shortest-job
+first reaches 14.85, 12.33, and 15.59 on the same exact workload checksums.
+
+**Re-audited verdict: reject decisively.** Local cohesion behaves like equal sharing and
+cannot approach the strongest baseline's tail slowdown; the required 20% improvement is
+missed by multiples, even before the schooling loop's 2.5-3x bookkeeping time.
+
 ## e01 — Filter representation
 
 | Variant (SUM WHERE amount>t, 10% sel) | local | remote |
