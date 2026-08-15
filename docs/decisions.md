@@ -816,3 +816,36 @@ constant. It is worth the care - 11-14% is larger than every hand-written
 change in this program combined - and it is worth NOT shipping half of it,
 because the failure mode is a query with a tight ceiling failing on its first
 pull instead of returning a smaller batch.
+
+The batch-size win is per-batch fixed overhead, and it is blocked by
+per-batch parallelism. Three measurements isolate it. Raising only the scan's
+target changed nothing (153-156ms against 155ms). Raising rows in flight -
+four batches per thread per round instead of one - changed nothing (152-157ms
+against 156-159ms). Raising `DEFAULT_BATCH_ROWS` itself is worth 11-15%
+(138-141ms against 156-157ms on the join, 23-24ms against 27ms on the
+group-by). So the cost is not decode, not parallel width, and not rows in
+flight; it is what every operator pays PER BATCH - a selection mask, a column
+vector set-up, a round trip through the chain - and 4,096-row batches pay it
+sixteen times as often as 65,536-row ones.
+
+It cannot ship as the constant because the aggregate parallelises per batch. A
+round gathers one batch per thread, so rows in flight scale with batch size:
+at 65,536 the round holds sixteen times more and `agg_spill` exhausts its 24MB
+budget. Holding rows per round constant instead leaves one batch per round,
+which is no parallel width at all. Every value tried fails - 65,536, 16,384,
+12,288 and 8,192 alike - so this is the shape of the coupling, not a threshold.
+
+The change that unblocks it is within-batch parallelism: split ONE batch's rows
+into chunks across the pool instead of giving each thread a whole batch. Rows
+in flight then stay bounded by one batch while width stays at the pool size,
+and the batch target is free to rise. That is also the morsel-driven shape the
+experiment programme kept modelling in scheduling policies (e17, e47) without
+applying to the engine itself, where the execution model is bulk-synchronous
+rounds.
+
+Two smaller pieces landed on the way and are worth keeping when that work
+starts: producers now size to the budget (`affordable_batch_rows`, whose per-row
+figure must come from the same function that reserves - payload reads 33 bytes
+where the batch estimate charges 433), and the spilling join's serving loops
+need a smaller target than the rest because they charge their buffer as it
+grows and cannot stop short of the ceiling.
