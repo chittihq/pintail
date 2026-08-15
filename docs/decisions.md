@@ -764,3 +764,28 @@ measuring. The trait also carries synchronous memory planning -
 executor uses to decide whether it can afford a pull. Moving the inner stream
 onto a worker leaves those unanswerable, and guessing a memory bound is how a
 query OOMs instead of spilling.
+
+The batch size is the largest lever found, and it is one constant. Executor
+batches target 4,096 rows; ClickHouse's `max_block_size` defaults to 65,536.
+Raising ours to 65,536 measured 135-136ms against 151-159ms on the join and
+23ms against 25-26ms on the join-free group-by - 11-14% and 8-12% - which is
+more than every hand-written change in this program put together.
+
+It also explains the failures that preceded it. The build handles about
+twenty-five batches in 45ms, so a unit is 1.8ms, and four separate coordination
+schemes were each defeated by their own overhead against that unit. The units
+were not small because the work was small; they were small because the constant
+said so.
+
+It does not ship as a constant. Two spill tests fail at 65,536 AND at 16,384,
+so the exposure is not the size: a query with a tight ceiling asks for one
+batch, is quoted 2.1MB against a 1MB limit, and fails on the first pull instead
+of receiving a smaller batch. The storage scan already does the right thing -
+`planned_batch_rows` caps the target by what the budget affords - but the
+join's own output batching treats `DEFAULT_BATCH_ROWS` as a hard size and holds
+sixteen times more when the constant grows.
+
+So the work is to make the remaining producers size to the budget the way the
+scan already does, after which the constant can rise. That is also what the
+`BatchStream` contract already asks for in words: a small ceiling is a reason
+to produce a smaller batch, not to fail.
