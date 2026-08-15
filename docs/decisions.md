@@ -709,3 +709,30 @@ its probe-side counterpart exist.
 The remaining 28.9ms is per-row work independent of table size, and is NOT yet
 decomposed. It should be, before anything is written against it - the same
 discipline that turned three failures into this.
+
+Parallelising the build's inserts across partitions changed the build by
+nothing, and the reason narrows what is left. Each bin belongs to one
+partition, so the inserts touch disjoint maps and can run at once; the build
+phase read 45.9-50.6ms against 45.2-45.4ms, which is no gain and some loss.
+The granularity is why: a batch is 4,096 rows spread over 64 bins, so each
+task carries about 64 rows and the pool's per-task cost exceeds the work.
+
+Taken with the two earlier negatives - fanning key evaluation and row
+materialisation across the pool did nothing, and swapping the allocator moved
+1ms - the build's 45ms is now attributable by elimination rather than by
+guess. It is not the inserts, not the key work, not allocation, and only about
+15ms of it is hash-table size (44.4ms against 28.9ms when only key cardinality
+varies). What remains is pulling and decoding the build side's own batches:
+`next_batch` is called serially and does the zstd decompression, and nothing
+tried so far has touched it.
+
+That also explains why the aggregate's round-width fix helped the join and the
+join-free query differently. Widening the round gave the PROBE more parallel
+width; neither the build's decode nor the probe's serial gather moved, and
+those are what the scaling curve is measuring.
+
+The next thing worth trying is therefore overlap rather than more parallelism:
+decode the next round while the current one is being processed, so the serial
+decode leaves the critical path instead of being divided. If bigger work units
+are wanted for the inserts as well, they should be accumulated across a round
+of batches rather than dispatched per batch.
