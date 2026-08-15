@@ -87,7 +87,13 @@ const STAGES: Stage[] = [
       // describing a run that cannot be identified - which is how they drifted
       // to advertising 152ms where the artifact recorded 10ms.
       '"$CARGO" fmt --all --check && "$CARGO" clippy --workspace --all-targets -- -D warnings' +
-        ' && bun run benchmark/render-readme-table.ts --check',
+        ' && bun run benchmark/render-readme-table.ts --check' +
+        // The table check catches evidence nobody regenerated the README
+        // against. It does not catch evidence nobody regenerated at all: a
+        // result file committed before the code it measures looks identical to
+        // a current one, which is how the TPC-H results came to record a pass
+        // produced two days before the rule they exercise was rewritten.
+        ' && bun run benchmark/check-evidence-freshness.ts',
     ],
   },
   {
