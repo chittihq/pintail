@@ -789,3 +789,30 @@ So the work is to make the remaining producers size to the budget the way the
 scan already does, after which the constant can rise. That is also what the
 `BatchStream` contract already asks for in words: a small ceiling is a reason
 to produce a smaller batch, not to fail.
+
+The batch-size win is downstream of the scan, not in it. Raising only the
+scan's target - the one producer that already sizes to its budget - measured
+153-156ms against 155ms on the join and 26-28ms against 26ms on the join-free
+group-by. Nothing. The 11-14% from raising `DEFAULT_BATCH_ROWS` globally
+therefore comes from the producers that BUFFER rows and emit a fixed count:
+the join's output batching and the materialized-row paths, not from how much
+storage hands over at once. The likely reason the scan cannot use a larger
+target is that a segment's `block_rows` already bounds what a read yields, so
+asking for more changes nothing; that is the next thing to verify.
+
+Making those producers size to their budget was attempted and abandoned in the
+same session. Three separate attempts each fixed one site and broke another -
+`next_materialized_batch`, the cross-join producer, and top-k - because the
+per-row figure has to come from the same function that reserves. Payload alone
+reads about 33 bytes per row where `estimated_record_batch_bytes` charges 433
+with column and validity overhead, so a cap computed from the wrong estimate
+does not bind. Several operators assume a fixed batch size in their accounting,
+and changing one at a time moves the failure rather than removing it.
+
+So this is a deliberate slice rather than a patch: give the materialized
+producers one shared budget-aware sizing helper that uses the reserving
+function for its estimate, convert them together, and only then raise the
+constant. It is worth the care - 11-14% is larger than every hand-written
+change in this program combined - and it is worth NOT shipping half of it,
+because the failure mode is a query with a tight ceiling failing on its first
+pull instead of returning a smaller batch.
