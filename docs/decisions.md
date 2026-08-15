@@ -849,3 +849,27 @@ figure must come from the same function that reserves - payload reads 33 bytes
 where the batch estimate charges 433), and the spilling join's serving loops
 need a smaller target than the rest because they charge their buffer as it
 grows and cannot stop short of the ceiling.
+
+Within-batch parallelism is a prerequisite with no standalone gain, and the
+batch-size raise is blocked by a spill defect rather than by design. Chunking
+the aggregate's work by ROW RANGE instead of by batch - so parallel width comes
+from the pool rather than from how many batches a round holds - measured 27ms
+against 26-28ms and 153-158ms against 155-156ms. Nothing, which is what it
+should be: at 4,096 rows a round already holds sixteen batches, so width was
+never short. It only matters once batches are large, and it was reverted rather
+than carried as complexity with no measurement behind it.
+
+Raising the batch target then failed on `agg_spill` with a figure that did not
+move: 25,165,788 bytes used of a 25,165,824 limit, 160 requested, identical at
+8,192, 12,288, 16,384 and 65,536. Invariance is the evidence. If the batch size
+were the cost the number would track it; landing on the same terminal state
+every time points at something reserved and not released once batches exceed
+4,096 rows. Bounding the round by rows produced it, taking an eighth of the
+budget for the scan produced it, and it predates the chunking change.
+
+So the 11-15% is blocked by a latent defect in aggregate spill accounting, not
+by the design questions this program has been circling. Recorded as its own
+issue with a one-line reproduction, because a query that aggregates under a
+tight ceiling is presumably exposed today at whatever batch size its data
+produces - which makes it a correctness matter first and a performance blocker
+second.
