@@ -15,7 +15,7 @@ use super::{
     resolve_dependent_expr_subqueries, rows_to_columns,
 };
 use crate::{
-    DEFAULT_BATCH_ROWS, RecordBatch,
+    RecordBatch, SPILL_SERVE_BATCH_ROWS,
     expression::{CompiledExpr, mysql_f64, predicate_truth},
     spill,
 };
@@ -869,9 +869,9 @@ pub(super) fn next_hash_join_batch(
             memory,
         );
     }
-    let mut rows = Vec::<Vec<Value>>::with_capacity(DEFAULT_BATCH_ROWS);
+    let mut rows = Vec::<Vec<Value>>::with_capacity(SPILL_SERVE_BATCH_ROWS);
     let mut buffered_bytes = 0_usize;
-    while rows.len() < DEFAULT_BATCH_ROWS {
+    while rows.len() < SPILL_SERVE_BATCH_ROWS {
         if state.left_values.is_none()
             && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory)?
         {
@@ -933,7 +933,7 @@ pub(super) fn next_grace_join_batch(
     state: &mut HashJoinState,
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
-    let mut rows = Vec::<Vec<Value>>::with_capacity(DEFAULT_BATCH_ROWS);
+    let mut rows = Vec::<Vec<Value>>::with_capacity(SPILL_SERVE_BATCH_ROWS);
     let mut buffered_bytes = 0_usize;
     let push = |rows: &mut Vec<Vec<Value>>,
                 buffered_bytes: &mut usize,
@@ -958,7 +958,7 @@ pub(super) fn next_grace_join_batch(
         if probing_done {
             break;
         }
-        if rows.len() >= DEFAULT_BATCH_ROWS {
+        if rows.len() >= SPILL_SERVE_BATCH_ROWS {
             break;
         }
         if state.left_values.is_none()
@@ -1003,7 +1003,7 @@ pub(super) fn next_grace_join_batch(
     }
 
     // Phase C: serve partitions.
-    while rows.len() < DEFAULT_BATCH_ROWS {
+    while rows.len() < SPILL_SERVE_BATCH_ROWS {
         let grace = state.grace.as_mut().expect("grace state engaged");
         if !grace.probing_done {
             break;

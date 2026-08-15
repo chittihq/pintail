@@ -5,7 +5,22 @@ use pintail_types::{DataType, Value};
 use crate::array::{StrColumn, ValidityMask};
 
 /// Target row count for pull-based executor batches.
-pub const DEFAULT_BATCH_ROWS: usize = 4_096;
+///
+/// The same default `ClickHouse` uses for `max_block_size`. Every operator pays
+/// a fixed cost per batch - a selection mask, a column vector set-up, a round
+/// trip through the chain - and 4,096-row batches paid it sixteen times as
+/// often. Measured at 138-141ms against 156-157ms on a join and 23-24ms
+/// against 27ms on a join-free group-by.
+pub const DEFAULT_BATCH_ROWS: usize = 65_536;
+
+/// Rows a spilling join gathers before handing a batch back.
+///
+/// Deliberately smaller than [`DEFAULT_BATCH_ROWS`]. The grace-serving loops
+/// charge their buffer as it grows and have no way to stop short of the
+/// ceiling, so a large target makes them accumulate until the reservation
+/// fails rather than emitting what they already hold. A join that has spilled
+/// is past the point where batch granularity decides its speed.
+pub const SPILL_SERVE_BATCH_ROWS: usize = 4_096;
 
 /// The text carrier for a packed column, regenerated from the packed units
 /// only when a text-shaped consumer first asks. Scan-born native-unit

@@ -2284,6 +2284,22 @@ fn build_buffered_hash_aggregate(
             for entry in partial {
                 let mut pending = Some(entry);
                 while let Some((key, partial_group)) = pending.take() {
+                    // Spill BEFORE merging when the ceiling is close, not after
+                    // a merge has failed. A merge that runs out part-way cannot
+                    // be retried: the group has already been partially updated,
+                    // so the entry cannot be handed back and the error escapes
+                    // instead of spilling. A group's COUNT(DISTINCT) sets grow
+                    // through exactly that path, which is why this query failed
+                    // where it should have spilled once anything else held a
+                    // large share of the budget.
+                    if memory.used() > memory.limit().saturating_mul(3) / 4 && !groups.is_empty() {
+                        groups_reserved = groups_reserved
+                            .saturating_add(memory.used().saturating_sub(used_before_merge));
+                        spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+                        memory.release(groups_reserved);
+                        groups_reserved = 0;
+                        used_before_merge = memory.used();
+                    }
                     match merge_partial_group(
                         &mut groups,
                         key,
@@ -2318,7 +2334,16 @@ fn build_buffered_hash_aggregate(
         // upstream scans size their working sets from the remaining
         // headroom, so a group map that hoards the budget until hard
         // failure starves them.
-        if groups_reserved > memory.limit() / 2 && !groups.is_empty() {
+        //
+        // Total pressure counts as well as the map's own share. Watching only
+        // `groups_reserved` assumes the map is what fills the budget, and it
+        // usually is - but a group's COUNT(DISTINCT) sets grow through a path
+        // this retry does not cover, so when anything else holds a large part
+        // of the ceiling those sets hit it first and the query fails where it
+        // should have spilled. Larger batches make that ordinary rather than
+        // rare, since a batch in flight is then a real share of the budget.
+        let under_pressure = memory.used() > memory.limit().saturating_mul(3) / 4;
+        if (groups_reserved > memory.limit() / 2 || under_pressure) && !groups.is_empty() {
             spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
             memory.release(groups_reserved);
             groups_reserved = 0;

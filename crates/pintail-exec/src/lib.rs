@@ -12,7 +12,8 @@ pub mod spill;
 mod storage;
 
 pub use batch::{
-    BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SelectedRows, SelectionMask,
+    BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SPILL_SERVE_BATCH_ROWS,
+    SelectedRows, SelectionMask,
 };
 pub use execution::compare_collated_text;
 pub use execution::{
