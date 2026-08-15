@@ -49,6 +49,15 @@ const DEFAULT_COMPACTION_DISK_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
 const SIZE_TIER_RATIO: u64 = 4;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
 
+/// Threads available to decode projected column chunks.
+///
+/// Callers size their prefetch width from this. The decode runs in this pool,
+/// so a width below its thread count leaves threads idle for the whole scan -
+/// which is what a hardcoded width of eight did on a sixteen-thread host.
+pub fn projected_scan_width() -> usize {
+    projected_scan_pool().map_or(1, rayon::ThreadPool::current_num_threads)
+}
+
 fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
     PROJECTED_SCAN_POOL
         .get_or_init(|| {

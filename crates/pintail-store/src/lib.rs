@@ -24,5 +24,5 @@ pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, CompactionOutcome, CompactionStatus,
     DecodedColumn, FlushOutcome, IngestOutcome, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,
     ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, StorageMetrics,
-    StoreOptions, TableSnapshot, TableStore, WalSync,
+    StoreOptions, TableSnapshot, TableStore, WalSync, projected_scan_width,
 };
