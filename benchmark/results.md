@@ -1,9 +1,9 @@
 # Pintail analytical benchmark results
 
-Measured 2026-08-15T18:49:40.762Z with 20,000,000 orders.
+Measured 2026-08-15T23:34:56.698Z with 20,000,000 orders.
 
 All engines run on the docker host under identical limits (8 CPUs, 8 GB).
-Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured 2026-08-13T22:45:56.812Z.
+Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured 2026-08-15T23:30:45.751Z.
 CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing
 pintail's always-correct merge-on-read duty.
 
@@ -22,15 +22,15 @@ execute there, and ClickHouse is currently faster.
 
 | Query | MySQL | Pintail (memo) | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |
 |---|---:|---:|---:|---:|---:|---:|:--|
-| Q1: Full table count | 1,427 ms | 15 ms | 95.1× | 11 ms | 26 ms | 1.73× | yes |
-| Q2: Filtered count | 638 ms | 15 ms | 42.5× | 38 ms | 34 ms | 2.27× | yes |
-| Q3: Group by status | 35,102 ms | 14 ms | 2507.3× | 80 ms | 67 ms | 4.79× | yes |
-| Q4: Region × status breakdown | 13,236 ms | 15 ms | 882.4× | 242 ms | 244 ms | 16.27× | yes |
-| Q5: Monthly revenue (2023) | 5,590 ms | 16 ms | 349.4× | 48 ms | 52 ms | 3.25× | yes |
-| Q6: Top 10 spenders | 792,985 ms | 91 ms | 8714.1× | 276 ms | 275 ms | 3.02× | yes |
-| Q7: Regional analytics | 55,420 ms | 14 ms | 3958.6× | 172 ms | 180 ms | 12.86× | yes |
-| Q8: Join users + orders | 980,888 ms | 14 ms | 70063.4× | 303 ms | 226 ms | 16.14× | yes |
-| **Total** | **1,885,286 ms** | **194 ms** | **9718.0×** | **1,170 ms** | **1,104 ms** | **5.69×** | |
+| Q1: Full table count | 1,715 ms | 15 ms | 114.3× | 10 ms | 13 ms | 0.87× | yes |
+| Q2: Filtered count | 692 ms | 30 ms | 23.1× | 32 ms | 40 ms | 1.33× | yes |
+| Q3: Group by status | 34,411 ms | 20 ms | 1720.5× | 68 ms | 70 ms | 3.50× | yes |
+| Q4: Region × status breakdown | 13,151 ms | 19 ms | 692.2× | 183 ms | 195 ms | 10.26× | yes |
+| Q5: Monthly revenue (2023) | 5,686 ms | 13 ms | 437.4× | 41 ms | 49 ms | 3.77× | yes |
+| Q6: Top 10 spenders | 879,223 ms | 96 ms | 9158.6× | 174 ms | 175 ms | 1.82× | yes |
+| Q7: Regional analytics | 53,469 ms | 12 ms | 4455.8× | 185 ms | 157 ms | 13.08× | yes |
+| Q8: Join users + orders | 879,719 ms | 21 ms | 41891.4× | 168 ms | 165 ms | 7.86× | yes |
+| **Total** | **1,868,066 ms** | **226 ms** | **8265.8×** | **861 ms** | **864 ms** | **3.82×** | |
 
 Memo-dashboard release gate: PASS (required ≥50× and exact results; not an engine-speed gate).
 
@@ -44,10 +44,10 @@ hide an engine that has stopped accepting work.
 
 | Clients | Pintail /s | Pintail p95 | Pintail errors | CH /s | CH p95 | CH errors |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 29.7 | 165 ms | 0 | 28.3 | 171 ms | 0 |
-| 4 | 85.8 | 211 ms | 0 | 91 | 179 ms | 0 |
-| 8 | 231.1 | 168 ms | 0 | 205.8 | 171 ms | 0 |
-| 16 | 324.9 | 178 ms | 0 | 282 | 192 ms | 0 |
+| 1 | 14 | 226 ms | 0 | 24.4 | 179 ms | 0 |
+| 4 | 99.8 | 183 ms | 0 | 96.7 | 195 ms | 0 |
+| 8 | 205.3 | 175 ms | 0 | 152.7 | 192 ms | 0 |
+| 16 | 330.8 | 180 ms | 0 | 166.2 | 296 ms | 0 |
 
 ## Engine speed (memo DISABLED — both engines execute)
 
@@ -58,14 +58,14 @@ ClickHouse's execution, which is a different question.
 
 | Query | MySQL | Pintail (no memo) | CH MergeTree | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|---:|
-| Q1: Full table count | 1,427 ms | 14 ms | 11 ms | 16 ms | 1.14× |
-| Q2: Filtered count | 638 ms | 81 ms | 35 ms | 38 ms | 0.47× |
-| Q3: Group by status | 35,102 ms | 250 ms | 71 ms | 67 ms | 0.27× |
-| Q4: Region × status breakdown | 13,236 ms | 314 ms | 247 ms | 245 ms | 0.78× |
-| Q5: Monthly revenue (2023) | 5,590 ms | 269 ms | 49 ms | 46 ms | 0.17× |
-| Q6: Top 10 spenders | 792,985 ms | 799 ms | 274 ms | 253 ms | 0.32× |
-| Q7: Regional analytics | 55,420 ms | 704 ms | 148 ms | 185 ms | 0.26× |
-| Q8: Join users + orders | 980,888 ms | 712 ms | 220 ms | 208 ms | 0.29× |
+| Q1: Full table count | 1,715 ms | 14 ms | 13 ms | 12 ms | 0.86× |
+| Q2: Filtered count | 692 ms | 92 ms | 30 ms | 32 ms | 0.35× |
+| Q3: Group by status | 34,411 ms | 275 ms | 67 ms | 69 ms | 0.25× |
+| Q4: Region × status breakdown | 13,151 ms | 523 ms | 193 ms | 256 ms | 0.49× |
+| Q5: Monthly revenue (2023) | 5,686 ms | 274 ms | 40 ms | 57 ms | 0.21× |
+| Q6: Top 10 spenders | 879,223 ms | 530 ms | 181 ms | 178 ms | 0.34× |
+| Q7: Regional analytics | 53,469 ms | 690 ms | 199 ms | 251 ms | 0.36× |
+| Q8: Join users + orders | 879,719 ms | 741 ms | 177 ms | 175 ms | 0.24× |
 
 ## Novel queries (median of 5 memo-cold variants — RAW ENGINE SPEED)
 
@@ -78,10 +78,10 @@ memo entry. Excluded from the release-gate totals.
 
 | Query | MySQL | Pintail | vs MySQL | CH MergeTree | CH RMT+FINAL | vs CH | Exact |
 |---|---:|---:|---:|---:|---:|---:|:--|
-| N1: Filtered count, novel constant | 1,105 ms | 524 ms | 2.1× | 63 ms | 57 ms | 0.11× | yes |
-| N2: Group by region (novel group column) | 13,720 ms | 1,042 ms | 13.2× | 101 ms | 94 ms | 0.09× | yes |
-| N3: Monthly revenue, novel year | 8,800 ms | 276 ms | 31.9× | 127 ms | 49 ms | 0.18× | yes |
-| N4: Regional analytics, novel range | 55,912 ms | 799 ms | 70.0× | 193 ms | 194 ms | 0.24× | yes |
+| N1: Filtered count, novel constant | 1,088 ms | 523 ms | 2.1× | 68 ms | 56 ms | 0.11× | yes |
+| N2: Group by region (novel group column) | 12,970 ms | 847 ms | 15.3× | 95 ms | 96 ms | 0.11× | yes |
+| N3: Monthly revenue, novel year | 8,099 ms | 278 ms | 29.1× | 38 ms | 48 ms | 0.17× | yes |
+| N4: Regional analytics, novel range | 54,023 ms | 733 ms | 73.7× | 150 ms | 152 ms | 0.21× | yes |
 
 ## Resources during measured runs
 
@@ -91,12 +91,12 @@ MySQL shows n/a when its cold baseline came from the cache.
 
 | Query | Pintail CPU | Pintail mem | CH CPU | CH mem | MySQL CPU | MySQL mem |
 |---|---:|---:|---:|---:|---:|---:|
-| Q1: Full table count | 0% | 26 MB | 3% | 461 MB | n/a | n/a |
-| Q2: Filtered count | 0% | 38 MB | 17% | 484 MB | n/a | n/a |
-| Q3: Group by status | 0% | 119 MB | 486% | 505 MB | n/a | n/a |
-| Q4: Region × status breakdown | 3% | 166 MB | 670% | 561 MB | n/a | n/a |
-| Q5: Monthly revenue (2023) | 0% | 476 MB | 117% | 519 MB | n/a | n/a |
-| Q6: Top 10 spenders | 76% | 580 MB | 687% | 672 MB | n/a | n/a |
-| Q7: Regional analytics | 3% | 595 MB | 475% | 586 MB | n/a | n/a |
-| Q8: Join users + orders | 1% | 669 MB | 553% | 752 MB | n/a | n/a |
+| Q1: Full table count | 0% | 25 MB | 9% | 973 MB | 92% | 1,541 MB |
+| Q2: Filtered count | 8% | 36 MB | 7% | 1,009 MB | 1% | 1,541 MB |
+| Q3: Group by status | 0% | 116 MB | 488% | 1,046 MB | 85% | 1,542 MB |
+| Q4: Region × status breakdown | 0% | 139 MB | 666% | 1,139 MB | 106% | 1,553 MB |
+| Q5: Monthly revenue (2023) | 1% | 474 MB | 221% | 1,069 MB | 110% | 1,553 MB |
+| Q6: Top 10 spenders | 65% | 577 MB | 715% | 1,296 MB | 13% | 1,554 MB |
+| Q7: Regional analytics | 1% | 587 MB | 554% | 1,142 MB | 64% | 1,554 MB |
+| Q8: Join users + orders | 4% | 574 MB | 555% | 1,361 MB | 14% | 1,708 MB |
 
