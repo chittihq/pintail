@@ -568,10 +568,20 @@ impl SpilledMerge {
         column_types: &[DataType],
         memory: &MemoryTracker,
     ) -> Result<Option<RecordBatch>, ExecError> {
-        let mut rows = Vec::with_capacity(DEFAULT_BATCH_ROWS);
-        while rows.len() < DEFAULT_BATCH_ROWS {
+        // Sized to what the query can still afford. The per-row figure has to
+        // come from the function that reserves below, so it is taken from the
+        // first row once there is one - a payload-only estimate reads about a
+        // tenth of what `estimated_record_batch_bytes` charges, and a cap built
+        // on it does not bind.
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        let mut planned = DEFAULT_BATCH_ROWS;
+        while rows.len() < planned {
             let Some(row) = self.next_row()? else { break };
             rows.push(row);
+            if rows.len() == 1 {
+                let per_row = estimated_record_batch_bytes(&rows, column_types.len());
+                planned = super::affordable_batch_rows(memory, per_row);
+            }
         }
         if rows.is_empty() {
             return Ok(None);

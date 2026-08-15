@@ -2664,10 +2664,11 @@ impl PullOperator {
                     *state = Some(CrossJoinState::new(materialized));
                 }
                 let state = state.as_mut().expect("initialized above");
-                let transient =
-                    state.next_batch_memory_upper_bound(DEFAULT_BATCH_ROWS, column_types.len());
+                let per_row = state.next_batch_memory_upper_bound(1, column_types.len());
+                let planned = affordable_batch_rows(memory, per_row);
+                let transient = state.next_batch_memory_upper_bound(planned, column_types.len());
                 memory.ensure_transient(transient)?;
-                let rows = state.next_rows(DEFAULT_BATCH_ROWS);
+                let rows = state.next_rows(planned);
                 if rows.is_empty() {
                     return Ok(None);
                 }
@@ -3639,9 +3640,13 @@ fn next_materialized_batch(
     if state.position >= state.rows.len() {
         return Ok(None);
     }
+    let per_row = estimated_record_batch_bytes(
+        &state.rows[state.position..state.rows.len().min(state.position + 1)],
+        column_types.len(),
+    );
     let end = state
         .position
-        .saturating_add(DEFAULT_BATCH_ROWS)
+        .saturating_add(affordable_batch_rows(memory, per_row))
         .min(state.rows.len());
     let rows = &state.rows[state.position..end];
     memory.ensure_transient(estimated_record_batch_bytes(rows, column_types.len()))?;
@@ -3744,6 +3749,29 @@ fn reserve_vec_elements<T>(
     }
     memory.release(reserved - actual);
     Ok(actual)
+}
+
+/// Rows to plan for, given what the query has left to spend.
+///
+/// `per_row_bytes` MUST come from the same function that will reserve. That is
+/// the whole difficulty: `estimated_row_payload_bytes` reads about 33 bytes for
+/// a row that `estimated_record_batch_bytes` charges 433 for once column and
+/// validity overhead are counted, so a cap computed from the wrong estimate
+/// does not bind and the reservation still fails.
+///
+/// A fixed row count makes a tight ceiling fail on the first pull when the
+/// honest answer is a smaller batch - which is what the `BatchStream` contract
+/// already asks for, and what the storage scan already does. With a normal
+/// budget this returns the target unchanged, so it is inert until memory is
+/// actually short.
+///
+/// At least one row is always planned, so a budget below a single row fails on
+/// the real reservation with a truthful number rather than yielding nothing
+/// forever.
+pub(super) fn affordable_batch_rows(memory: &MemoryTracker, per_row_bytes: usize) -> usize {
+    let remaining = memory.limit().saturating_sub(memory.used());
+    let affordable = (remaining / per_row_bytes.max(1)).max(1);
+    DEFAULT_BATCH_ROWS.min(affordable)
 }
 
 fn reserve_hash_map_entries<K, V, S>(
@@ -5791,17 +5819,21 @@ mod tests {
         let plan = physical("SELECT name FROM events ORDER BY name LIMIT 2");
         let mut execution = Execution::start(plan, &provider, 2 * 1024, Collation::default())
             .expect("bounded top-K execution");
-        let batch = execution.next_batch().expect("pull").expect("result batch");
-        let prefixes = batch
-            .column(0)
-            .expect("names")
-            .values()
-            .iter()
-            .map(|value| match value {
-                Value::Utf8(value) => value[..2].to_owned(),
-                _ => panic!("text result"),
-            })
-            .collect::<Vec<_>>();
+        // Drained rather than read in one pull. Under a 2KB ceiling the
+        // producer now hands back as many rows as that affords, which for
+        // 200-byte values can be one at a time; delivering both in a single
+        // batch was an artifact of a fixed row count, not part of what this
+        // test pins. The property is unchanged: the correct top two survive
+        // while the eighteen losers are released as the input is consumed.
+        let mut prefixes = Vec::new();
+        while let Some(batch) = execution.next_batch().expect("pull") {
+            for value in batch.column(0).expect("names").values() {
+                match value {
+                    Value::Utf8(value) => prefixes.push(value[..2].to_owned()),
+                    _ => panic!("text result"),
+                }
+            }
+        }
         assert_eq!(prefixes, ["01", "02"]);
     }
 
