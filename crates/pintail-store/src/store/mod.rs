@@ -52,7 +52,21 @@ static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLo
 fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
     PROJECTED_SCAN_POOL
         .get_or_init(|| {
-            let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+            // Overridable, because it was not. This pool is separate from the
+            // one the executor uses, so `RAYON_NUM_THREADS` never reached it -
+            // every thread sweep taken against this engine held scans at full
+            // width while believing it was varying them, and the serial
+            // fractions that came out described only the operators above the
+            // scan. It is also a real tuning knob: two pools each sized to the
+            // machine put twice the core count of runnable threads on it
+            // whenever aggregation overlaps scanning.
+            let threads = std::env::var("PINTAIL_SCAN_THREADS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|threads| *threads > 0)
+                .unwrap_or_else(|| {
+                    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+                });
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .thread_name(|index| format!("pintail-scan-{index}"))
