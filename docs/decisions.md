@@ -736,3 +736,31 @@ decode the next round while the current one is being processed, so the serial
 decode leaves the critical path instead of being divided. If bigger work units
 are wanted for the inserts as well, they should be accumulated across a round
 of batches rather than dispatched per batch.
+
+Overlapping the build's decode with its own work is slower too, and the number
+that explains it also explains the three failures before it. Pulling the next
+batch on a scoped thread while binning and inserting the current one read
+55.5-58.2ms against 44.6-45.6ms. `std::thread::scope` spawns an OS thread per
+batch, and at roughly twenty-five batches that is about 10ms - almost exactly
+the regression.
+
+The number underneath is that the build handles about twenty-five batches in
+45ms: 1.8ms each. Every attempt so far has been a coordination scheme applied
+at that granularity - fanning out key evaluation, fanning out row
+materialisation, partitioned inserts, and now one-batch lookahead - and each
+was defeated by its own overhead against a 1.8ms unit. There is no dominant
+phase inside the build to attack; the cost is spread thinly across many small
+units, which is why eliminating candidates one at a time kept finding nothing.
+
+That rules out the whole family rather than another member of it. What is left
+is coarser granularity - accumulate the build side and dispatch ONE parallel
+pass over the partitions instead of twenty-five - or making the per-row work
+itself cheaper, of which the measured part is the hash table: 44.4ms against
+28.9ms when only key cardinality varies, everything else held fixed.
+
+A prefetching decorator around `BatchStream` was considered and rejected before
+measuring. The trait also carries synchronous memory planning -
+`retained_bytes` and `next_batch_memory_upper_bound(budget)` - which the
+executor uses to decide whether it can afford a pull. Moving the inner stream
+onto a worker leaves those unanswerable, and guessing a memory bound is how a
+query OOMs instead of spilling.
