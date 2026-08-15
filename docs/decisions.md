@@ -873,3 +873,33 @@ issue with a one-line reproduction, because a query that aggregates under a
 tight ceiling is presumably exposed today at whatever batch size its data
 produces - which makes it a correctness matter first and a performance blocker
 second.
+
+The thread sweeps measured less than they claimed, and the scan runs on its own
+pool. `projected_scan_pool` sizes itself from `available_parallelism` and is
+independent of `RAYON_NUM_THREADS`, so every sweep in this program held the
+scan at full width while varying only the aggregation and join pool. The
+figures that followed - q8 "44% serial", q3 "26% serial", and the extrapolation
+that perfect scaling would put q3 ahead of ClickHouse - describe the non-scan
+portion of those queries, not the queries. They should not be quoted as
+whole-query serial fractions.
+
+What the re-measurement does still show, on the same footing as before and so
+comparable with itself: at the raised batch target q8 scales 313ms to 139ms
+(2.25x, up from 1.96x), q3 71ms to 22ms (3.23x), and q5 55ms to 31ms (1.77x)
+with nothing gained past four threads. q5 is also the query furthest behind
+ClickHouse at 0.17x, and it is scan-and-filter heavy, which is consistent with
+its remaining cost sitting where these sweeps cannot see it.
+
+Two candidate explanations were checked and rejected. Segment pruning does not
+cap q5's width: `date_days = (id * 7) % 1825` scatters dates across every
+segment, so a one-year filter prunes none of them. And date-part extraction is
+not the cost: q5 answers in 30ms at 2M rows while the same shape grouped on the
+raw temporal column takes 142ms - a comparison that isolates group cardinality
+rather than function cost, and is recorded here as confounded rather than as
+evidence.
+
+The open question this leaves is oversubscription. Two pools each sized to the
+full core count can put thirty-two runnable threads on sixteen cores whenever
+aggregation runs while scans are in flight, which is the ordinary case. Whether
+that costs anything is unmeasured; it is the next thing to test, and it needs a
+sweep that varies BOTH pools rather than one.
