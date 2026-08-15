@@ -911,9 +911,20 @@ fn infer_joins_from_filter(input: LogicalPlan, predicate: BoundExpr) -> LogicalP
             }
         }
         conjuncts = kept;
+        // The RIGHT side is the one hashed into memory; the left one probes
+        // it. Cross-join reordering sorts inputs smallest-first, so merging in
+        // index order put the smaller relation on the left and hashed the
+        // larger - joining a five-row dimension to a twenty-million-row fact
+        // built the fact and could spill it. An unknown estimate is treated as
+        // large, so it is probed rather than built.
+        let (left, right) = if estimated_or_max(&candidate) <= estimated_or_max(&tree) {
+            (tree, candidate)
+        } else {
+            (candidate, tree)
+        };
         components.push(LogicalPlan::Join {
-            left: Box::new(tree),
-            right: Box::new(candidate),
+            left: Box::new(left),
+            right: Box::new(right),
             kind: pintail_sql::BoundJoinKind::Inner,
             condition,
         });
@@ -933,6 +944,12 @@ fn infer_joins_from_filter(input: LogicalPlan, predicate: BoundExpr) -> LogicalP
         };
     }
     plan
+}
+
+/// A plan's row estimate, with an unknown one counting as the largest so it is
+/// never chosen as the side to hold in memory.
+fn estimated_or_max(plan: &LogicalPlan) -> u64 {
+    plan.estimated_rows().unwrap_or(u64::MAX)
 }
 
 /// The first pair of components some conjunct joins, with `left < right`.
@@ -1766,5 +1783,27 @@ mod tests {
             matches!(inner, LogicalPlan::CrossJoin { .. }),
             "a volatile operand keeps the predicate in the filter"
         );
+    }
+
+    /// The smaller relation must be the one hashed.
+    ///
+    /// The right side is built into memory and the left probes it, so putting
+    /// the larger relation on the right hashes a fact table to probe it with a
+    /// dimension - the wrong way round, and the way that spills.
+    #[test]
+    fn the_smaller_relation_becomes_the_build_side() {
+        // `events` has 100 rows in the fixture, `users` 20.
+        let plan = project_input(optimized(
+            "SELECT events.name FROM events, users WHERE events.id = users.id",
+        ));
+        let LogicalPlan::Join { left, right, .. } = plan else {
+            panic!("expected an inferred join");
+        };
+        let name = |plan: &LogicalPlan| match plan {
+            LogicalPlan::Scan(scan) => scan.table.table_name.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(name(&right), "users", "the smaller side is hashed");
+        assert_eq!(name(&left), "events", "the larger side probes");
     }
 }

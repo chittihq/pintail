@@ -13,7 +13,7 @@
 /// here deliberately and visibly: same MySQL flags, same snapshot wait, same
 /// exact-result comparison.
 
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
@@ -36,8 +36,13 @@ if (scale === undefined) throw new Error(`unknown profile ${profileName}`)
 
 const log = (m: string) => console.log(`[tpch] ${m}`)
 
-async function command(args: string[]) {
-  const child = Bun.spawn(args, { cwd: repository, stdout: 'pipe', stderr: 'pipe' })
+async function command(args: string[], env?: Record<string, string>) {
+  const child = Bun.spawn(args, {
+    cwd: repository,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    ...(env ? { env } : {}),
+  })
   const [stdout, stderr, status] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -125,11 +130,17 @@ async function api<T>(path: string, options: { method?: string; body?: unknown }
 async function buildPintail(): Promise<string> {
   if (process.env.PINTAIL_BENCHMARK_BINARY) return resolve(process.env.PINTAIL_BENCHMARK_BINARY)
   log('building pintail (release)')
-  const build = Bun.spawn(['cargo', 'build', '--release', '-p', 'pintail'], {
-    cwd: repository, stdout: 'inherit', stderr: 'inherit',
+  // The `cargo` on PATH is a wrapper that redirects the target directory to a
+  // slow external volume, which makes a release build long enough to hit the
+  // harness's kill window. The repository's own instruction is to use the real
+  // binary with an explicit target directory, and this must do the same.
+  const cargo = join(process.env.HOME ?? '', '.cargo', 'bin', 'cargo')
+  const cargoEnv = { ...process.env, CARGO_TARGET_DIR: 'target' }
+  const build = Bun.spawn([cargo, 'build', '--release', '-p', 'pintail'], {
+    cwd: repository, stdout: 'inherit', stderr: 'inherit', env: cargoEnv,
   })
   if ((await build.exited) !== 0) throw new Error('pintail build failed')
-  const metadata = await command(['cargo', 'metadata', '--format-version', '1', '--no-deps'])
+  const metadata = await command([cargo, 'metadata', '--format-version', '1', '--no-deps'], cargoEnv)
   return join(JSON.parse(metadata).target_directory, 'release', 'pintail')
 }
 
@@ -285,6 +296,14 @@ async function teardown() {
   } catch {}
   pintailProcess?.kill()
   await docker('rm', '-f', mysqlName).catch(() => undefined)
+  // The replica's data directory is a temp dir holding the whole replicated
+  // dataset. Leaving it behind means every run - successful or not - keeps a
+  // full copy, and at sf1 a few runs fill the disk.
+  if (pintailDataDir) {
+    try {
+      rmSync(pintailDataDir, { recursive: true, force: true })
+    } catch {}
+  }
 }
 
 async function main() {

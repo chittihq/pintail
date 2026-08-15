@@ -105,53 +105,32 @@ impl PartitionedBuild {
         self.partitions.iter_mut().flat_map(HashMap::drain)
     }
 
-    /// Total slots across the partitions, for the growth check the grace
-    /// serve path makes before reserving.
-    pub(super) fn capacity(&self) -> usize {
-        self.partitions.iter().map(HashMap::capacity).sum()
-    }
-
-    /// Reserves in the partition a key would land in, which is the only one
-    /// that will grow for it.
-    fn reserve_for(
+    /// Reserves room for one more key in the partition it will land in.
+    ///
+    /// Splitting a batch's rows evenly across the partitions was wrong: keys
+    /// are not evenly distributed, and a batch whose rows all hash to one
+    /// partition reserved a sixty-fourth of what that partition then grew by.
+    /// The excess came from the allocator without passing the tracker, so a
+    /// skewed build could exhaust memory instead of spilling at its ceiling.
+    fn reserve_for_key(
         &mut self,
         key: &JoinHashKey,
-        additional: usize,
         entry_bytes: usize,
         transient_bytes: usize,
         memory: &MemoryTracker,
     ) -> Result<usize, ExecError> {
         let slot = self.slot(key);
+        let partition = &mut self.partitions[slot];
+        if partition.len() < partition.capacity() {
+            return Ok(0);
+        }
         reserve_hash_map_entries(
-            &mut self.partitions[slot],
-            additional,
+            partition,
+            partition.capacity().max(64),
             entry_bytes,
             transient_bytes,
             memory,
         )
-    }
-
-    /// Reserves across every partition, for a batch whose keys are not yet
-    /// known.
-    fn reserve_all(
-        &mut self,
-        additional: usize,
-        entry_bytes: usize,
-        transient_bytes: usize,
-        memory: &MemoryTracker,
-    ) -> Result<usize, ExecError> {
-        let count = self.partitions.len();
-        let mut reserved = 0_usize;
-        for partition in &mut self.partitions {
-            reserved = reserved.saturating_add(reserve_hash_map_entries(
-                partition,
-                additional.div_ceil(count),
-                entry_bytes,
-                transient_bytes,
-                memory,
-            )?);
-        }
-        Ok(reserved)
     }
 
     fn clear(&mut self) {
@@ -462,17 +441,14 @@ pub(super) fn build_hash_join_state(
     while let Some(batch) = right.next_batch(memory)? {
         let used_before_batch = memory.used();
         let batch_bytes = batch.estimated_bytes();
-        build.reserve_all(
-            batch.visible_row_count(),
-            size_of::<JoinHashKey>()
-                .saturating_add(size_of::<Vec<Vec<Value>>>())
-                .saturating_add(HASH_ENTRY_OVERHEAD),
-            batch_bytes,
-            memory,
-        )?;
         // Keys first, binned by the partition each will land in; the inserts
         // follow one partition at a time.
         let mut binned: Vec<Vec<(JoinHashKey, usize)>> = vec![Vec::new(); build.partitions()];
+        // Keys are held for the whole batch before any of them are inserted, so
+        // they are charged as they accumulate. Without this a batch of long
+        // text keys allocates every normalized key at once and passes the
+        // query's ceiling before a single per-row check runs.
+        let mut binned_bytes = 0_usize;
         for row in batch.selection().selected_rows() {
             let value = right_key.evaluate(&batch, row)?;
             if !matches!(value, Value::Null) {
@@ -502,6 +478,12 @@ pub(super) fn build_hash_join_state(
             else {
                 continue;
             };
+            let retained = key
+                .heap_bytes()
+                .saturating_add(size_of::<(JoinHashKey, usize)>());
+            memory.ensure_transient(batch_bytes.saturating_add(binned_bytes))?;
+            memory.reserve(retained)?;
+            binned_bytes = binned_bytes.saturating_add(retained);
             binned[build.slot(&key)].push((key, row));
         }
         for (key, row) in binned.into_iter().flatten() {
@@ -532,6 +514,14 @@ pub(super) fn build_hash_join_state(
                 grace.build_files[grace_partition(&key, 0)].append(&key, &values)?;
                 continue;
             }
+            build.reserve_for_key(
+                &key,
+                size_of::<JoinHashKey>()
+                    .saturating_add(size_of::<Vec<Vec<Value>>>())
+                    .saturating_add(HASH_ENTRY_OVERHEAD),
+                batch_bytes,
+                memory,
+            )?;
             memory.reserve(key_bytes)?;
             let bucket = build.entry_or_default(key);
             reserve_vec_elements(bucket, 1, 64, memory)?;
@@ -539,6 +529,7 @@ pub(super) fn build_hash_join_state(
             let values = batch_row(&batch, row)?;
             bucket.push(values);
         }
+        memory.release(binned_bytes);
         build_reserved =
             build_reserved.saturating_add(memory.used().saturating_sub(used_before_batch));
         // Proactive spill at half the ceiling, like sort and aggregation:
@@ -1031,24 +1022,24 @@ pub(super) fn next_grace_join_batch(
             let mut overflowed = false;
             let mut entries = grace.build_files[index].reader()?;
             while let Some((key, values)) = entries.next_entry()? {
-                if state.build.len() == state.build.capacity() {
-                    let growth = state.build.capacity().max(64);
-                    if state
-                        .build
-                        .reserve_for(
-                            &key,
-                            growth,
-                            size_of::<JoinHashKey>()
-                                .saturating_add(size_of::<Vec<Vec<Value>>>())
-                                .saturating_add(HASH_ENTRY_OVERHEAD),
-                            0,
-                            memory,
-                        )
-                        .is_err()
-                    {
-                        overflowed = true;
-                        break;
-                    }
+                // The partition this key lands in decides whether anything
+                // grows; comparing the summed length against the summed
+                // capacity let a full partition grow untracked while the others
+                // still had room.
+                if state
+                    .build
+                    .reserve_for_key(
+                        &key,
+                        size_of::<JoinHashKey>()
+                            .saturating_add(size_of::<Vec<Vec<Value>>>())
+                            .saturating_add(HASH_ENTRY_OVERHEAD),
+                        0,
+                        memory,
+                    )
+                    .is_err()
+                {
+                    overflowed = true;
+                    break;
                 }
                 if memory
                     .reserve(

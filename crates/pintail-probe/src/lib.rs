@@ -295,6 +295,13 @@ struct RawIndexPart {
 /// How long one table's exact count may run before it is abandoned.
 const COUNT_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long to wait for the second connection that issues `KILL QUERY`.
+///
+/// Short: the count is already over budget by the time this is needed, and a
+/// kill that cannot be issued promptly is worth abandoning rather than
+/// blocking the probe behind.
+const KILL_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// How long counting may run across the WHOLE probe before the rest of the
 /// tables fall back to statistics.
 ///
@@ -363,8 +370,13 @@ async fn count_rows_within_budget(
             // A separate connection: the one running the count cannot issue
             // this, which is the whole reason a client-side timeout without a
             // kill leaves the server scanning.
-            match pool.get_conn().await {
-                Ok(mut killer) => {
+            //
+            // Bounded, because acquiring it can block indefinitely: the count
+            // still holds its own connection, so a pool sized at one - or a
+            // server at max_connections - would leave this waiting forever and
+            // defeat both budgets it exists to enforce.
+            match tokio::time::timeout(KILL_BUDGET, pool.get_conn()).await {
+                Ok(Ok(mut killer)) => {
                     if let Err(error) = killer
                         .query_drop(format!("KILL QUERY {connection_id}"))
                         .await
@@ -374,9 +386,26 @@ async fn count_rows_within_budget(
                         );
                     }
                 }
-                Err(error) => {
+                Ok(Err(error)) => {
                     pintail_log::log_info!("probe could not open a killer connection: {error}");
                 }
+                Err(_) => {
+                    pintail_log::log_info!(
+                        "probe could not obtain a connection to kill query {connection_id} \
+                         within {}s; the source may still be scanning",
+                        KILL_BUDGET.as_secs()
+                    );
+                }
+            }
+            // The killed statement leaves an error queued on the counting
+            // connection. Reading it here keeps the protocol in step; without
+            // this the NEXT information_schema query on the same connection
+            // fails and aborts the whole probe, which is a worse outcome than
+            // the estimate this was falling back to.
+            if let Err(error) = connection.query_drop("SELECT 1").await {
+                pintail_log::log_info!(
+                    "probe connection unusable after killing query {connection_id}: {error}"
+                );
             }
             None
         }
@@ -398,7 +427,14 @@ async fn count_if_budget_remains(
     flavor: SourceFlavor,
     spent: &mut std::time::Duration,
 ) -> Option<u64> {
-    if *spent >= COUNT_TOTAL_BUDGET {
+    // Reserve enough of the total for a whole attempt, not just any remainder.
+    // Checking `spent < TOTAL` alone lets a count start at 299 seconds and run
+    // its full 35, so the "300 second" bound was really 335.
+    if spent
+        .saturating_add(COUNT_BUDGET)
+        .saturating_add(KILL_BUDGET)
+        > COUNT_TOTAL_BUDGET
+    {
         return None;
     }
     let started = std::time::Instant::now();
@@ -1067,9 +1103,9 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        COUNT_BUDGET, COUNT_TOTAL_BUDGET, RawColumn, RawIndexPart, RecommendedMode, SourceColumn,
-        SourceFlavor, SourceKey, SourceTable, choose_key, derive_capabilities, generated_flags,
-        invisible_fk_rule, map_mysql_type, usable_unique_keys,
+        COUNT_BUDGET, COUNT_TOTAL_BUDGET, KILL_BUDGET, RawColumn, RawIndexPart, RecommendedMode,
+        SourceColumn, SourceFlavor, SourceKey, SourceTable, choose_key, derive_capabilities,
+        generated_flags, invisible_fk_rule, map_mysql_type, usable_unique_keys,
     };
     use pintail_types::{DataType, KeyMode};
     use std::collections::BTreeMap;
@@ -1301,6 +1337,27 @@ mod tests {
             table.replace('`', "``")
         );
         assert_eq!(target, "`d``b`.`t``bl`");
+    }
+
+    /// The total budget must bound the wait, not merely gate the next start.
+    ///
+    /// Checking only that some budget remains lets an attempt begin at the last
+    /// moment and run its whole per-table allowance past the limit, so the
+    /// worst case is the total PLUS an attempt rather than the total.
+    #[test]
+    fn the_total_budget_leaves_room_for_the_attempt_it_admits() {
+        let almost_spent = COUNT_TOTAL_BUDGET.saturating_sub(std::time::Duration::from_secs(1));
+        assert!(
+            almost_spent
+                .saturating_add(COUNT_BUDGET)
+                .saturating_add(KILL_BUDGET)
+                > COUNT_TOTAL_BUDGET,
+            "a late attempt must be refused rather than admitted and overrun"
+        );
+        assert!(
+            COUNT_BUDGET.saturating_add(KILL_BUDGET) <= COUNT_TOTAL_BUDGET,
+            "the first table must always be allowed to try"
+        );
     }
 
     /// The per-table budget is not a bound on the wait; the total one is.

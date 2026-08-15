@@ -810,9 +810,13 @@ async function runQueries(
     // whole stage - a 47-minute run ended on one ECONNRESET with every other
     // query already measured.
     //
-    // A retry is sound for the measurement because each attempt is timed by the
-    // caller: a reset attempt never produces a sample, so the number reported
-    // is a clean run rather than one carrying a failure's latency.
+    // The retry runs INSIDE the caller's timing, so a sample that needed one
+    // carries the failed attempt's latency too. That is a contaminated sample,
+    // not a clean one - it is accepted because the alternative is losing a
+    // 47-minute stage to a single reset, and because the reported statistics
+    // are the minimum and the median over fifteen runs, which one inflated
+    // sample does not move. The retry is logged so a contaminated run is
+    // visible rather than silent.
     const attempt = async () => {
       const response = await fetch(`${clickhouseUrl}/?database=${database}`, {
         method: 'POST',
