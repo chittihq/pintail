@@ -2,6 +2,7 @@ mod encoding;
 
 use encoding::{
     compare_cells, compress_block_for_storage, decode_integer_base, decode_payload,
+    unpack_signed_into, unpack_unsigned_into,
     decoded_heap_upper_bound, decompress_block, encode_payload, hll_registers, select_encoding,
     unpack,
 };
@@ -2259,6 +2260,20 @@ enum Validity {
     Bits(Vec<bool>),
 }
 
+/// Where a bulk integer decode lands: the builder's own typed vector plus
+/// its validity, borrowed together so the append and the validity bump
+/// cannot drift apart.
+enum IntBulkDestination<'builder> {
+    Signed {
+        values: &'builder mut Vec<i64>,
+        validity: &'builder mut Validity,
+    },
+    Unsigned {
+        values: &'builder mut Vec<u64>,
+        validity: &'builder mut Validity,
+    },
+}
+
 impl Default for Validity {
     fn default() -> Self {
         Self::new()
@@ -2268,6 +2283,15 @@ impl Default for Validity {
 impl Validity {
     const fn new() -> Self {
         Self::AllValid(0)
+    }
+
+    /// Appends `additional` valid rows at once - the bulk decode paths call
+    /// this once per block instead of pushing per row.
+    fn extend_valid(&mut self, additional: usize) {
+        match self {
+            Self::AllValid(count) => *count += additional,
+            Self::Bits(bits) => bits.extend(std::iter::repeat_n(true, additional)),
+        }
     }
 
     fn push(&mut self, valid: bool) {
@@ -2523,6 +2547,21 @@ impl ColumnBuilder {
 
     /// Typed append for integer-wire decode: the same conversions as
     /// `integer_from_i128` without building a `Cell`.
+    /// The typed destination a bulk integer decode writes into, when this
+    /// builder has one. `None` sends the caller to the per-cell path.
+    fn int_bulk(&mut self) -> Option<IntBulkDestination<'_>> {
+        match self {
+            Self::Int64 { values, validity }
+            | Self::NativeUnits {
+                values, validity, ..
+            } => Some(IntBulkDestination::Signed { values, validity }),
+            Self::UInt64 { values, validity } => {
+                Some(IntBulkDestination::Unsigned { values, validity })
+            }
+            _ => None,
+        }
+    }
+
     fn push_integer(&mut self, value: i128) -> Result<(), String> {
         match self {
             Self::Int64 { values, validity }
@@ -3263,6 +3302,28 @@ fn decode_int_payload_into(
     } = sink;
     let mut decoder = Decoder::new(bytes);
     let base = decode_integer_base(&mut decoder, logical_type)?;
+    // The dominant block shape - no nulls, every row selected, int-typed
+    // destination - decodes in ONE streaming pass straight into the
+    // builder's vector: no temporary Vec<u64>, no second per-row loop, no
+    // per-value push_integer dispatch, and validity bumps once. The window
+    // measured 16ns per value across those layers (e62 follow-up).
+    if non_null_count == row_count
+        && ranges.covers_all(row_count)
+        && let Some(destination) = builder.int_bulk()
+    {
+        match destination {
+            IntBulkDestination::Signed { values, validity } => {
+                unpack_signed_into(&mut decoder, non_null_count, base, values)?;
+                validity.extend_valid(non_null_count);
+            }
+            IntBulkDestination::Unsigned { values, validity } => {
+                unpack_unsigned_into(&mut decoder, non_null_count, base, values)?;
+                validity.extend_valid(non_null_count);
+            }
+        }
+        decoder.finish()?;
+        return Ok(true);
+    }
     let normalized = unpack(&mut decoder, non_null_count)?;
     decoder.finish()?;
     let is_null = |row: usize| null_bitmap[row / 8] & (1 << (row % 8)) != 0;

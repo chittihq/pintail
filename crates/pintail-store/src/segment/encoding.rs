@@ -526,6 +526,158 @@ fn pack(values: &[u64], width: u8) -> Result<Vec<u8>, StoreError> {
     Ok(bytes)
 }
 
+
+/// LSB-first bitstream cursor over a validated payload.
+///
+/// The existing [`unpack`] builds a zeroed 16-byte window per value, copies
+/// up to 16 payload bytes into it, and converts through `u128` - per value.
+/// This reader keeps a rolling accumulator instead, refilling eight bytes at
+/// a time, so decoding a value is a shift and a mask. Same wire format, same
+/// LSB-first order.
+struct BitReader<'bytes> {
+    bytes: &'bytes [u8],
+    cursor: usize,
+    accumulator: u128,
+    live_bits: u32,
+}
+
+impl<'bytes> BitReader<'bytes> {
+    const fn new(bytes: &'bytes [u8]) -> Self {
+        Self {
+            bytes,
+            cursor: 0,
+            accumulator: 0,
+            live_bits: 0,
+        }
+    }
+
+    #[inline]
+    fn read(&mut self, width: u32, mask: u64) -> u64 {
+        while self.live_bits < width {
+            if self.cursor + 8 <= self.bytes.len() {
+                let word = u64::from_le_bytes(
+                    self.bytes[self.cursor..self.cursor + 8]
+                        .try_into()
+                        .expect("eight bytes"),
+                );
+                self.accumulator |= u128::from(word) << self.live_bits;
+                self.live_bits += 64;
+                self.cursor += 8;
+            } else if self.cursor < self.bytes.len() {
+                self.accumulator |= u128::from(self.bytes[self.cursor]) << self.live_bits;
+                self.live_bits += 8;
+                self.cursor += 1;
+            } else {
+                // Validated payloads always hold enough bits; padding in the
+                // final byte reads as zeros through the mask.
+                break;
+            }
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let value = (self.accumulator as u64) & mask;
+        self.accumulator >>= width;
+        self.live_bits = self.live_bits.saturating_sub(width);
+        value
+    }
+}
+
+/// Reads the bit-packed payload header exactly as [`unpack`] does, returning
+/// the width and the validated byte slice.
+fn unpack_header<'payload>(
+    decoder: &mut Decoder<'payload>,
+    value_count: usize,
+) -> Result<(u32, &'payload [u8]), String> {
+    let width = decoder.u8()?;
+    if width > 64 {
+        return Err(format!("invalid bit width {width}"));
+    }
+    let bytes = decoder.bytes()?;
+    let expected_bits = value_count
+        .checked_mul(usize::from(width))
+        .ok_or_else(|| "bit-packed length overflow".to_owned())?;
+    if bytes.len() != expected_bits.div_ceil(8) {
+        return Err(format!(
+            "bit-packed payload has {} bytes, expected {}",
+            bytes.len(),
+            expected_bits.div_ceil(8)
+        ));
+    }
+    Ok((u32::from(width), bytes))
+}
+
+const fn width_mask(width: u32) -> u64 {
+    if width == 64 { u64::MAX } else { (1_u64 << width) - 1 }
+}
+
+/// Decodes a bit-packed payload, adds the block base, and appends signed
+/// values straight into the destination - one pass, no temporary vector.
+///
+/// Matches the two-pass path's semantics exactly, including its overflow
+/// error strings. When the base and width prove every possible value fits,
+/// the per-value overflow checks hoist out of the loop entirely.
+pub(super) fn unpack_signed_into(
+    decoder: &mut Decoder<'_>,
+    value_count: usize,
+    base: i128,
+    out: &mut Vec<i64>,
+) -> Result<(), String> {
+    let (width, bytes) = unpack_header(decoder, value_count)?;
+    let mask = width_mask(width);
+    out.reserve(value_count);
+    let mut reader = BitReader::new(bytes);
+    let in_range = base >= i128::from(i64::MIN)
+        && base.checked_add(i128::from(mask)).is_some_and(|top| top <= i128::from(i64::MAX));
+    if in_range && width < 64 {
+        #[allow(clippy::cast_possible_truncation)]
+        let base = base as i64;
+        for _ in 0..value_count {
+            #[allow(clippy::cast_possible_wrap)]
+            let value = reader.read(width, mask) as i64;
+            out.push(base.wrapping_add(value));
+        }
+        return Ok(());
+    }
+    for _ in 0..value_count {
+        let normalized = reader.read(width, mask);
+        let value = base
+            .checked_add(i128::from(normalized))
+            .ok_or_else(|| "bit-packed integer overflow".to_owned())?;
+        out.push(i64::try_from(value).map_err(|_| "bit-packed signed integer overflow")?);
+    }
+    Ok(())
+}
+
+/// The unsigned twin of [`unpack_signed_into`].
+pub(super) fn unpack_unsigned_into(
+    decoder: &mut Decoder<'_>,
+    value_count: usize,
+    base: i128,
+    out: &mut Vec<u64>,
+) -> Result<(), String> {
+    let (width, bytes) = unpack_header(decoder, value_count)?;
+    let mask = width_mask(width);
+    out.reserve(value_count);
+    let mut reader = BitReader::new(bytes);
+    let in_range = base >= 0
+        && base.checked_add(i128::from(mask)).is_some_and(|top| top <= i128::from(u64::MAX));
+    if in_range {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let base = base as u64;
+        for _ in 0..value_count {
+            out.push(base.wrapping_add(reader.read(width, mask)));
+        }
+        return Ok(());
+    }
+    for _ in 0..value_count {
+        let normalized = reader.read(width, mask);
+        let value = base
+            .checked_add(i128::from(normalized))
+            .ok_or_else(|| "bit-packed integer overflow".to_owned())?;
+        out.push(u64::try_from(value).map_err(|_| "bit-packed unsigned integer overflow")?);
+    }
+    Ok(())
+}
+
 pub(super) fn unpack(decoder: &mut Decoder<'_>, value_count: usize) -> Result<Vec<u64>, String> {
     let width = decoder.u8()?;
     if width > 64 {
@@ -568,3 +720,91 @@ pub(super) fn unpack(decoder: &mut Decoder<'_>, value_count: usize) -> Result<Ve
     }
     Ok(values)
 }
+
+#[cfg(test)]
+mod bit_reader_tests {
+    use super::*;
+
+    /// Builds a raw bit-packed payload the way the writer lays it out:
+    /// [width u8][length-prefixed bytes], via the same Encoder the format
+    /// uses elsewhere. To stay independent of the writer, bytes are random
+    /// and both readers parse the identical buffer.
+    fn payload(width: u8, value_count: usize, seed: u64) -> Vec<u8> {
+        let bits = value_count * usize::from(width);
+        let mut bytes = vec![0_u8; bits.div_ceil(8)];
+        let mut state = seed | 1;
+        for byte in &mut bytes {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *byte = (state & 0xFF) as u8;
+        }
+        let mut framed = Vec::new();
+        framed.push(width);
+        framed.extend_from_slice(
+            &u32::try_from(bytes.len()).expect("test payload fits u32").to_le_bytes(),
+        );
+        framed.extend_from_slice(&bytes);
+        framed
+    }
+
+    #[test]
+    fn streaming_reader_matches_the_windowed_unpack() {
+        for &width in &[0_u8, 1, 3, 7, 8, 13, 24, 31, 32, 33, 63, 64] {
+            for &count in &[0_usize, 1, 2, 63, 64, 65, 2_290] {
+                let framed = payload(width, count, u64::from(width) * 31 + count as u64);
+                let expected =
+                    unpack(&mut Decoder::new(&framed), count).expect("windowed unpack");
+                let mut streamed = Vec::new();
+                unpack_unsigned_into(&mut Decoder::new(&framed), count, 0, &mut streamed)
+                    .expect("streaming unpack");
+                assert_eq!(expected, streamed, "width {width} count {count}");
+            }
+        }
+    }
+
+    #[test]
+    fn signed_bases_round_trip_against_the_two_pass_arithmetic() {
+        for &base in &[0_i128, -1, 42, i128::from(i64::MIN), i128::from(i64::MAX) - 200] {
+            let width = 8_u8;
+            let count = 200_usize;
+            let framed = payload(width, count, 7);
+            let normalized = unpack(&mut Decoder::new(&framed), count).expect("unpack");
+            let expected: Result<Vec<i64>, String> = normalized
+                .iter()
+                .map(|value| {
+                    let sum = base
+                        .checked_add(i128::from(*value))
+                        .ok_or_else(|| "bit-packed integer overflow".to_owned())?;
+                    i64::try_from(sum).map_err(|_| "bit-packed signed integer overflow".to_owned())
+                })
+                .collect();
+            let mut streamed = Vec::new();
+            let outcome =
+                unpack_signed_into(&mut Decoder::new(&framed), count, base, &mut streamed);
+            match expected {
+                Ok(values) => {
+                    outcome.expect("in-range base decodes");
+                    assert_eq!(values, streamed, "base {base}");
+                }
+                Err(message) => {
+                    assert_eq!(outcome.expect_err("overflow must error"), message);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unsigned_negative_base_errors_exactly_like_the_two_pass_path() {
+        // A negative base with a value too small to lift it back above zero
+        // must produce the same error string the old path produced.
+        let framed = payload(4, 16, 3);
+        let mut streamed = Vec::new();
+        let outcome = unpack_unsigned_into(&mut Decoder::new(&framed), 16, -1_000, &mut streamed);
+        assert_eq!(
+            outcome.expect_err("negative base under unsigned must error"),
+            "bit-packed unsigned integer overflow"
+        );
+    }
+}
+
