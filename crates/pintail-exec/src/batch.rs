@@ -757,6 +757,16 @@ pub struct SelectionMask {
 }
 
 impl SelectionMask {
+    /// Builds a mask from prefilled words. Callers produce the words in
+    /// parallel - one worker per span of whole words - so a 20M-row
+    /// comparison does not run on a single thread. Bits at or beyond `len`
+    /// in the final word must be zero.
+    #[must_use]
+    pub(crate) fn from_words(len: usize, words: Vec<u64>) -> Self {
+        debug_assert_eq!(words.len(), len.div_ceil(64));
+        Self { len, words }
+    }
+
     /// Selects every row in a mask of `len` rows.
     #[must_use]
     pub fn all(len: usize) -> Self {

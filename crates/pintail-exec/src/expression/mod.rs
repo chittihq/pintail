@@ -42,28 +42,45 @@ fn typed_comparison_mask(
     literal: &pintail_types::Value,
     collation: Collation,
 ) -> Option<SelectionMask> {
-    fn fill<T: Copy>(
+    fn fill<T: Copy + Sync>(
         values: &[T],
         validity: &ValidityMask,
-        keep: impl Fn(T) -> bool,
+        keep: impl Fn(T) -> bool + Sync,
     ) -> SelectionMask {
-        let mut mask = SelectionMask::none(values.len());
-        if validity.no_nulls() {
-            for (row, &value) in values.iter().enumerate() {
-                if keep(value) {
-                    mask.set(row, true).expect("row within mask bounds");
-                }
-            }
-        } else {
-            for (row, &value) in values.iter().enumerate() {
-                if validity.is_valid(row) && keep(value) {
-                    mask.set(row, true).expect("row within mask bounds");
-                }
-            }
-        }
-        mask
+        use rayon::prelude::*;
+        // One worker per span of whole 64-row words: each word is owned by
+        // exactly one worker, so the workers never share a write target.
+        // This loop was the WHERE clause of every typed comparison, and it
+        // ran on one thread - 35ms of a 118ms query on the 20M benchmark
+        // while fifteen threads idled.
+        const WORDS_PER_SPAN: usize = 1024;
+        let word_count = values.len().div_ceil(64);
+        let words: Vec<u64> = (0..word_count.div_ceil(WORDS_PER_SPAN))
+            .into_par_iter()
+            .flat_map_iter(|span| {
+                let first_word = span * WORDS_PER_SPAN;
+                let last_word = (first_word + WORDS_PER_SPAN).min(word_count);
+                (first_word..last_word).map(|word| {
+                    let start = word * 64;
+                    let end = (start + 64).min(values.len());
+                    let mut bits = 0_u64;
+                    if validity.no_nulls() {
+                        for (offset, value) in values[start..end].iter().enumerate() {
+                            bits |= u64::from(keep(*value)) << offset;
+                        }
+                    } else {
+                        for (offset, value) in values[start..end].iter().enumerate() {
+                            bits |= u64::from(validity.is_valid(start + offset) && keep(*value))
+                                << offset;
+                        }
+                    }
+                    bits
+                })
+            })
+            .collect();
+        SelectionMask::from_words(values.len(), words)
     }
-    fn ordered<T: Copy + PartialOrd>(
+    fn ordered<T: Copy + PartialOrd + Sync>(
         values: &[T],
         validity: &ValidityMask,
         op: BinaryOp,
