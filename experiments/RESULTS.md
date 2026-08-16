@@ -2234,3 +2234,11 @@ The lane dispatch is NOT where the remaining aggregate time goes. What
 remains ahead of it: the window buffering between pull and drain, and the
 serial batch pull itself (Codex located structural serial work there:
 batches pulled and accumulated serially before folding).
+
+Addendum: overlapping the window drain with the next batch pull via
+rayon::join (disjoint state, fifteen lines) measured noise on Q5 (118 to
+117ms) and Q6 (equal). Most pulls return an already-decoded batch from the
+ready queue; the heavy sixteen-chunk prefetch decode rarely lands inside a
+drain, so there was little serial time to reclaim. Reverted. The pull-side
+serial structure Codex flagged is real but its cost concentrates in the
+prefetch call one pull in sixteen, not in the drain boundary.
