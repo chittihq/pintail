@@ -2211,3 +2211,26 @@ matches the shape here.
 DIRECTION: the highest-value remaining work is the block-to-column path, not the
 aggregate, not the encoding, and not the operator model. Attack what happens per
 value between a verified block and a ColumnVector.
+
+## e62 follow-up 2 — typed flat-array aggregation slots: measured negative
+
+Replaced the dense date kernel's per-row lane machinery (column resolution,
+lane dispatch, AggregateState update per row per lane) with flat typed
+arrays - counts, sum units, seen, occupancy - folded into real states once
+per group at drain end. The floor loop's own shape, inside the engine.
+
+Q5, venus-003, arms interleaved, order reversed, minimums: 118-121ms before,
+125-128ms with the typed kernel, 120-122ms after also porting the
+single-civil key front into it. Slower or equal in every pairing; reverted.
+
+Mechanism, consistent with every other instruction-shaped negative this
+session: the dispatch being removed overlaps memory stalls, so deleting it
+frees nothing - while the replacement pays real new traffic. Twelve occupied
+groups keep the existing per-slot state vectors L1-resident, whereas the
+flat arrays touch four separate cache lines per row and zero-fill ~540KB per
+worker per window before any row lands.
+
+The lane dispatch is NOT where the remaining aggregate time goes. What
+remains ahead of it: the window buffering between pull and drain, and the
+serial batch pull itself (Codex located structural serial work there:
+batches pulled and accumulated serially before folding).
