@@ -830,9 +830,28 @@ async function runQueries(
     try {
       return await attempt()
     } catch (error) {
-      const reset = /ECONNRESET|socket connection was closed|fetch failed/i.test(String(error))
+      const reset = /ECONNRESET|socket connection was closed|fetch failed|ConnectionRefused|Unable to connect/i.test(
+        String(error),
+      )
       if (!reset) throw error
-      log(`  ClickHouse connection dropped (${error}); retrying once`)
+      // A dropped connection here has meant the server CRASHED, not a
+      // transient socket blip: the container restarts (policy above) but
+      // needs time to come back. Poll readiness before the second attempt,
+      // and capture the tail so the crash is diagnosable from the log.
+      log(`  ClickHouse connection dropped (${error}); waiting for the server to return`)
+      await docker('logs', '--tail', '20', clickhouseName)
+        .then((tail) => log(`  clickhouse container tail:\n${tail}`))
+        .catch(() => {})
+      const deadline = Date.now() + 90_000
+      while (Date.now() < deadline) {
+        try {
+          const ping = await fetch(`${clickhouseUrl}/ping`, { signal: AbortSignal.timeout(2_000) })
+          if (ping.ok) break
+        } catch {
+          // still down
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+      }
       return attempt()
     }
   }
@@ -1337,6 +1356,12 @@ async function main() {
     networkName,
     '--publish',
     '0:8123',
+    // ClickHouse has crashed mid-run under its memory limit three times in
+    // one day; without a restart policy the container stays dead and every
+    // retry is guaranteed ConnectionRefused. Restarted, its loaded tables
+    // survive in the container filesystem and the run can continue.
+    '--restart',
+    'on-failure:3',
     ...engineLimits,
     '--env',
     'CLICKHOUSE_PASSWORD=pintail-benchmark',
