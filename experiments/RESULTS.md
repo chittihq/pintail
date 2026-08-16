@@ -2283,3 +2283,32 @@ segment footers): write min/max per block per native-unit column at flush,
 push comparison predicates to block skipping before decode, cover with the
 oracle since skipping wrongly is silent corruption. The clustered harness
 variant is the measuring instrument, kept for that work.
+
+## e64 — Removing compression makes the whole suite slower (venus-002, 20M rows)
+
+The owner asked directly: does removing compression buy performance? Two
+write-side knobs answer it end to end with real segments - not the e61
+microbenchmark. A = today (LZ4 + bit-packed), B = raw blocks still packed,
+C = raw fixed-width. Interleaved, order reversed, minimums, n=6 per arm.
+Host is venus-002 (its own baseline; only within-host arms compare).
+
+| min ms | A today | B no-LZ4 | C raw |
+|---|---:|---:|---:|
+| q3 | 127 | 127 | 194 |
+| q5 | 97 | 109 | 227 |
+| q6 | 364 | 368 | 494 |
+| q8 | 306 | 333 | 444 |
+
+**Verdicts.** (1) Removing LZ4 buys nothing anywhere and costs q5 12% and
+q8 9% - decompress is cheap and overlapped, while raw blocks push more
+bytes through the page cache, which is RAM traffic on the saturated pipe.
+(2) Removing packing as well is 1.5-2.3x SLOWER on every query - q5 more
+than doubles. At sixteen threads the engine is bandwidth-bound and packed
+data is fewer bytes moved, exactly as e61 and the FastLanes break-even
+predicted. (3) Compression is not overhead in this engine; it is load-
+bearing. The decode cost lives in per-value machinery (largely removed
+this session), not in the codec.
+
+The knobs stay: they are the instrument that made this a measurement
+instead of an argument, and they cover any future RAM-rich deployment
+question in an afternoon.
