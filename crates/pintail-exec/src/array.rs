@@ -25,6 +25,16 @@ impl ValidityMask {
         Self { words: None, len }
     }
 
+    /// Builds a mask from a decoded column's validity. The all-valid form
+    /// costs nothing: no scan, no words, just the length.
+    #[must_use]
+    pub fn from_column_validity(validity: &pintail_store::ColumnValidity) -> Self {
+        match validity {
+            pintail_store::ColumnValidity::AllValid(count) => Self::all_valid(*count),
+            pintail_store::ColumnValidity::Bytes(bytes) => Self::from_bools(bytes),
+        }
+    }
+
     /// Builds a mask from per-row validity; collapses to the fast path when
     /// nothing is null.
     #[must_use]
@@ -382,7 +392,7 @@ impl StrColumn {
         dict_heap: &[u8],
         dict_offsets: &[usize],
         codes: &[u32],
-        validity: &[bool],
+        validity: &pintail_store::ColumnValidity,
     ) -> Self {
         Self {
             views: Vec::new(),
@@ -393,7 +403,7 @@ impl StrColumn {
                     .windows(2)
                     .map(|pair| String::from_utf8_lossy(&dict_heap[pair[0]..pair[1]]).into_owned())
                     .collect(),
-                validity: validity.to_vec(),
+                validity: validity.iter().collect(),
             }),
             lazy: Some(Box::new(std::sync::OnceLock::new())),
             enum_labels: None,

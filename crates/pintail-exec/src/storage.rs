@@ -1537,7 +1537,7 @@ fn column_vector_from_decoded(
             Ok(ColumnVector::from_typed(
                 data_type,
                 TypedValues::Int64(values),
-                ValidityMask::from_bools(&validity),
+                ValidityMask::from_column_validity(&validity),
             ))
         }
         DecodedColumn::UInt64 { values, validity }
@@ -1546,7 +1546,7 @@ fn column_vector_from_decoded(
             Ok(ColumnVector::from_typed(
                 data_type,
                 TypedValues::UInt64(values),
-                ValidityMask::from_bools(&validity),
+                ValidityMask::from_column_validity(&validity),
             ))
         }
         DecodedColumn::Float64 { bits, validity }
@@ -1555,7 +1555,7 @@ fn column_vector_from_decoded(
             Ok(ColumnVector::from_typed(
                 data_type,
                 TypedValues::Float64(bits.into_iter().map(f64::from_bits).collect()),
-                ValidityMask::from_bools(&validity),
+                ValidityMask::from_column_validity(&validity),
             ))
         }
         DecodedColumn::Utf8 {
@@ -1571,7 +1571,7 @@ fn column_vector_from_decoded(
             codes,
             validity,
         } if matches!(storage, pintail_types::DataType::Utf8) => {
-            let mask = ValidityMask::from_bools(&validity);
+            let mask = ValidityMask::from_column_validity(&validity);
             if matches!(
                 data_type,
                 pintail_types::DataType::Utf8 | pintail_types::DataType::Json
@@ -1593,8 +1593,8 @@ fn column_vector_from_decoded(
             let mut heap = Vec::new();
             let mut offsets = Vec::with_capacity(codes.len() + 1);
             offsets.push(0);
-            for (code, valid) in codes.iter().zip(&validity) {
-                if *valid {
+            for (code, valid) in codes.iter().zip(validity.iter()) {
+                if valid {
                     let code = *code as usize;
                     heap.extend_from_slice(&dict_heap[dict_offsets[code]..dict_offsets[code + 1]]);
                 }
@@ -1663,7 +1663,7 @@ fn column_vector_from_decoded(
                     text: LazyText::datetime(fsp),
                 },
             };
-            let mask = ValidityMask::from_bools(&validity);
+            let mask = ValidityMask::from_column_validity(&validity);
             Ok(ColumnVector::from_typed(data_type, typed, mask))
         }
         decoded => ColumnVector::new(data_type, decoded.into_values()).map_err(ExecError::from),
@@ -1678,7 +1678,7 @@ fn typed_from_utf8_arena_labelled(
     data_type: pintail_types::DataType,
     heap: &[u8],
     offsets: &[usize],
-    validity: &[bool],
+    validity: &pintail_store::ColumnValidity,
     enum_labels: Option<&Arc<Vec<String>>>,
 ) -> ColumnVector {
     let mut text = StrColumn::default();
@@ -1686,7 +1686,7 @@ fn typed_from_utf8_arena_labelled(
         text.push(&heap[offsets[row]..offsets[row + 1]]);
     }
     let text = text.with_enum_labels(enum_labels.map(Arc::clone));
-    let mask = ValidityMask::from_bools(validity);
+    let mask = ValidityMask::from_column_validity(validity);
     let typed = match data_type {
         pintail_types::DataType::Decimal { scale, .. } => {
             let mut packed = Vec::with_capacity(validity.len());

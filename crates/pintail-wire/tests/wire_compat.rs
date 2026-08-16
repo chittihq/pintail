@@ -231,16 +231,25 @@ fn disconnecting_clients_cancel_active_query_execution() {
             let query: std::pin::Pin<
                 Box<dyn Future<Output = Result<(), mysql_async::Error>> + Send + '_>,
             > = if prepared {
+                // A recursive CTE keeps the workload active however fast the
+                // scan gets: the previous events GROUP BY dropped under the
+                // 250ms window once the engine's decode sped up, and this
+                // test is about cancellation, not scan speed.
                 let statement = connection
                     .prep(
-                        "SELECT name, COUNT(*) FROM events \
-                         WHERE id <= ? GROUP BY name",
+                        "WITH RECURSIVE r (n) AS (SELECT 1 UNION ALL \
+                         SELECT n + 1 FROM r WHERE n < ?) \
+                         SELECT COUNT(*) FROM r",
                     )
                     .await
                     .expect("prepare cancellation workload");
-                Box::pin(connection.exec_drop(statement, (20_002_u64,)))
+                Box::pin(connection.exec_drop(statement, (1_000_000_u64,)))
             } else {
-                Box::pin(connection.query_drop("SELECT name, COUNT(*) FROM events GROUP BY name"))
+                Box::pin(connection.query_drop(
+                    "WITH RECURSIVE r (n) AS (SELECT 1 UNION ALL \
+                     SELECT n + 1 FROM r WHERE n < 1000000) \
+                     SELECT COUNT(*) FROM r",
+                ))
             };
             assert!(
                 tokio::time::timeout(Duration::from_millis(250), query)

@@ -2341,10 +2341,12 @@ impl Validity {
         }
     }
 
-    fn into_bools(self) -> Vec<bool> {
+    /// The decoded column's form, preserving all-valid as a count so a
+    /// NOT NULL column never materialises a byte per row.
+    fn into_column_validity(self) -> crate::ColumnValidity {
         match self {
-            Self::AllValid(count) => vec![true; count],
-            Self::Bits(bits) => bits,
+            Self::AllValid(count) => crate::ColumnValidity::AllValid(count),
+            Self::Bits(bits) => crate::ColumnValidity::Bytes(bits),
         }
     }
 }
@@ -2711,15 +2713,15 @@ impl ColumnBuilder {
         match self {
             Self::Int64 { values, validity } => DecodedColumn::Int64 {
                 values,
-                validity: validity.into_bools(),
+                validity: validity.into_column_validity(),
             },
             Self::UInt64 { values, validity } => DecodedColumn::UInt64 {
                 values,
-                validity: validity.into_bools(),
+                validity: validity.into_column_validity(),
             },
             Self::Float64 { bits, validity } => DecodedColumn::Float64 {
                 bits,
-                validity: validity.into_bools(),
+                validity: validity.into_column_validity(),
             },
             Self::Utf8 {
                 heap,
@@ -2728,7 +2730,7 @@ impl ColumnBuilder {
             } => DecodedColumn::Utf8 {
                 heap,
                 offsets,
-                validity: validity.into_bools(),
+                validity: validity.into_column_validity(),
             },
             Self::NativeUnits {
                 units,
@@ -2737,7 +2739,7 @@ impl ColumnBuilder {
             } => DecodedColumn::NativeUnits {
                 units,
                 values,
-                validity: validity.into_bools(),
+                validity: validity.into_column_validity(),
             },
             Self::DictUtf8 {
                 dict_heap,
@@ -2748,7 +2750,7 @@ impl ColumnBuilder {
                 dict_heap,
                 dict_offsets,
                 codes,
-                validity: validity.into_bools(),
+                validity: validity.into_column_validity(),
             },
             Self::Values(values) => DecodedColumn::Values(values),
         }

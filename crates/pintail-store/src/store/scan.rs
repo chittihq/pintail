@@ -282,6 +282,102 @@ pub type PrewhereSelect<'a> = &'a (
 /// Typed variants pad null slots with defaults and carry per-row validity so
 /// a columnar executor can adopt them without materializing per-row values;
 /// `Values` is the row-value fallback for shapes without a packed layout
+/// Per-row validity of a decoded column.
+///
+/// Every NOT NULL column - the common case - used to carry a byte per row
+/// that was uniformly true: 20MB per 20M-row column, written by the decoder
+/// and scanned again by the executor's mask builder, all to say "no nulls".
+/// All-valid is now a count, produced and consumed without touching memory
+/// per row. Columns that really hold nulls keep the byte-per-row form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ColumnValidity {
+    /// Every row is valid; this many rows.
+    AllValid(usize),
+    /// Per-row validity, `true` = non-null.
+    Bytes(Vec<bool>),
+}
+
+impl<'validity> IntoIterator for &'validity ColumnValidity {
+    type Item = bool;
+    type IntoIter = Box<dyn Iterator<Item = bool> + 'validity>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl ColumnValidity {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::AllValid(count) => *count,
+            Self::Bytes(bytes) => bytes.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn is_valid(&self, row: usize) -> bool {
+        match self {
+            Self::AllValid(count) => row < *count,
+            Self::Bytes(bytes) => bytes.get(row).copied().unwrap_or(false),
+        }
+    }
+
+    /// Rows the backing store could hold without growing.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        match self {
+            Self::AllValid(count) => *count,
+            Self::Bytes(bytes) => bytes.capacity(),
+        }
+    }
+
+    /// Whether no row is null - the executor's fast paths key off this.
+    #[must_use]
+    pub fn all_valid(&self) -> bool {
+        match self {
+            Self::AllValid(_) => true,
+            Self::Bytes(bytes) => bytes.iter().all(|valid| *valid),
+        }
+    }
+
+    #[must_use]
+    pub fn iter(&self) -> Box<dyn Iterator<Item = bool> + '_> {
+        match self {
+            Self::AllValid(count) => Box::new(std::iter::repeat_n(true, *count)),
+            Self::Bytes(bytes) => Box::new(bytes.iter().copied()),
+        }
+    }
+
+    /// Splits off the tail at `at`, mirroring `Vec::split_off` so decoded
+    /// columns slice into batches without expanding the all-valid form.
+    #[must_use]
+    pub fn split_off(&mut self, at: usize) -> Self {
+        match self {
+            Self::AllValid(count) => {
+                let tail = count.saturating_sub(at);
+                *count = at.min(*count);
+                Self::AllValid(tail)
+            }
+            Self::Bytes(bytes) => Self::Bytes(bytes.split_off(at)),
+        }
+    }
+
+    /// The byte-per-row form, for consumers not yet migrated.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<bool> {
+        match self {
+            Self::AllValid(count) => vec![true; count],
+            Self::Bytes(bytes) => bytes,
+        }
+    }
+}
+
 /// (Boolean, Binary, merged or memtable rows).
 #[derive(Clone, Debug)]
 pub enum DecodedColumn {
@@ -292,21 +388,21 @@ pub enum DecodedColumn {
         /// One packed value per row.
         values: Vec<i64>,
         /// Per-row null mask (`true` = non-null).
-        validity: Vec<bool>,
+        validity: ColumnValidity,
     },
     /// Packed unsigned integers; null slots hold zero.
     UInt64 {
         /// One packed value per row.
         values: Vec<u64>,
         /// Per-row null mask (`true` = non-null).
-        validity: Vec<bool>,
+        validity: ColumnValidity,
     },
     /// Packed IEEE-754 bit patterns; null slots hold zero.
     Float64 {
         /// One packed bit pattern per row.
         bits: Vec<u64>,
         /// Per-row null mask (`true` = non-null).
-        validity: Vec<bool>,
+        validity: ColumnValidity,
     },
     /// Fixed-width native units decoded from a PTSEG v2 column; canonical
     /// text regenerates through `units.format` only where a consumer needs
@@ -318,7 +414,7 @@ pub enum DecodedColumn {
         /// One packed unit value per row; null slots hold zero.
         values: Vec<i64>,
         /// Per-row null mask (`true` = non-null).
-        validity: Vec<bool>,
+        validity: ColumnValidity,
     },
     /// Dictionary-coded UTF-8: `codes[i]` indexes the (small) distinct-entry
     /// arena; null rows hold code 0 with `validity` false. Produced when a
@@ -332,7 +428,7 @@ pub enum DecodedColumn {
         /// One entry index per row.
         codes: Vec<u32>,
         /// Per-row null mask (`true` = non-null).
-        validity: Vec<bool>,
+        validity: ColumnValidity,
     },
     /// UTF-8 bytes in one arena; row `i` spans `heap[offsets[i]..offsets[i+1]]`
     /// and null rows span zero bytes.
@@ -342,7 +438,7 @@ pub enum DecodedColumn {
         /// `len + 1` row boundaries into `heap`.
         offsets: Vec<usize>,
         /// Per-row null mask (`true` = non-null).
-        validity: Vec<bool>,
+        validity: ColumnValidity,
     },
 }
 
@@ -510,21 +606,21 @@ impl DecodedColumn {
         Some(match self {
             Self::Values(values) => values[row].clone(),
             Self::Int64 { values, validity } => {
-                if validity[row] {
+                if validity.is_valid(row) {
                     pintail_types::Value::Int64(values[row])
                 } else {
                     pintail_types::Value::Null
                 }
             }
             Self::UInt64 { values, validity } => {
-                if validity[row] {
+                if validity.is_valid(row) {
                     pintail_types::Value::UInt64(values[row])
                 } else {
                     pintail_types::Value::Null
                 }
             }
             Self::Float64 { bits, validity } => {
-                if validity[row] {
+                if validity.is_valid(row) {
                     pintail_types::Value::Float64(pintail_types::Float64::new(f64::from_bits(
                         bits[row],
                     )))
@@ -537,7 +633,7 @@ impl DecodedColumn {
                 values,
                 validity,
             } => {
-                if validity[row] {
+                if validity.is_valid(row) {
                     let text = units
                         .format(values[row])
                         .expect("stored native units round-trip");
@@ -552,7 +648,7 @@ impl DecodedColumn {
                 codes,
                 validity,
             } => {
-                if validity[row] {
+                if validity.is_valid(row) {
                     let code = codes[row] as usize;
                     let bytes = dict_heap[dict_offsets[code]..dict_offsets[code + 1]].to_vec();
                     let text = String::from_utf8(bytes).unwrap_or_else(|error| {
@@ -568,7 +664,7 @@ impl DecodedColumn {
                 offsets,
                 validity,
             } => {
-                if validity[row] {
+                if validity.is_valid(row) {
                     let bytes = heap[offsets[row]..offsets[row + 1]].to_vec();
                     let text = String::from_utf8(bytes).unwrap_or_else(|error| {
                         String::from_utf8_lossy(error.as_bytes()).into_owned()
@@ -593,7 +689,7 @@ impl DecodedColumn {
             Self::Values(values) => values,
             Self::Int64 { values, validity } => values
                 .into_iter()
-                .zip(validity)
+                .zip(validity.iter())
                 .map(|(value, valid)| {
                     if valid {
                         pintail_types::Value::Int64(value)
@@ -604,7 +700,7 @@ impl DecodedColumn {
                 .collect(),
             Self::UInt64 { values, validity } => values
                 .into_iter()
-                .zip(validity)
+                .zip(validity.iter())
                 .map(|(value, valid)| {
                     if valid {
                         pintail_types::Value::UInt64(value)
@@ -615,7 +711,7 @@ impl DecodedColumn {
                 .collect(),
             Self::Float64 { bits, validity } => bits
                 .into_iter()
-                .zip(validity)
+                .zip(validity.iter())
                 .map(|(bits, valid)| {
                     if valid {
                         pintail_types::Value::Float64(pintail_types::Float64::new(f64::from_bits(
@@ -632,7 +728,7 @@ impl DecodedColumn {
                 validity,
             } => values
                 .into_iter()
-                .zip(validity)
+                .zip(validity.iter())
                 .map(|(value, valid)| {
                     if valid {
                         pintail_types::Value::Utf8(
@@ -650,7 +746,7 @@ impl DecodedColumn {
                 validity,
             } => codes
                 .iter()
-                .zip(validity)
+                .zip(validity.iter())
                 .map(|(code, valid)| {
                     if valid {
                         let code = *code as usize;

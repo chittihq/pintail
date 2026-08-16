@@ -2,6 +2,7 @@ mod scan;
 mod snapshot;
 
 pub use scan::{
+    ColumnValidity,
     DecodedColumn, PrewhereSelect, ProjectedColumnChunk, ProjectedRow, ProjectedScan,
     ProjectedScanStream, ProjectedValueChunk, ScanStats,
 };
