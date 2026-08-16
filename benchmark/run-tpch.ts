@@ -356,7 +356,7 @@ async function main() {
     writeFileSync(join(resultsDir, 'latest.json'), `${JSON.stringify(report, null, 2)}\n`)
     writeFileSync(
       join(resultsDir, 'latest.md'),
-      `# TPC-H — ${profileName} (scale ${scale})\n\n` +
+      `# TPC-H-derived correctness workload — ${profileName} (scale ${scale})\n\n` +
         `| query | class | status | mysql | pintail | rows |\n|---|---|---|---|---|---|\n` +
         outcomes
           .map(
