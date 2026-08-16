@@ -2252,3 +2252,10 @@ vectorised better. Sparse masks were the motivating case, but the dense fold
 work dwarfs the bit tests there, so nothing was won where it was supposed to
 win and real time was lost where masks are dense. Reverted. A hybrid (run
 mode for u64::MAX words) might salvage it; measure q3 first if attempted.
+
+Addendum 3: borrowing uncompressed payloads (Cow in decompress_block instead
+of to_vec for Compression::None) measured neutral on q5 and q3 - the
+benchmark dataset's integer blocks evidently store LZ4, so the None-path
+copy Codex flagged is not on this workload's hot path. Reverted for now;
+worth re-testing if a deployment shows None-heavy blocks, where it is a
+strict bytes-moved win.
