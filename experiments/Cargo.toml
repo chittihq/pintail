@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "common",
+    "e62-speed-of-light",
     "e61-compressed-exec-breakeven",
     "e01-filter-repr",
     "e02-aggregation",

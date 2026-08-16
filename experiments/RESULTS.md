@@ -2135,3 +2135,54 @@ cents needs 32). Narrowing those carriers to 32-bit is the same change that
 already paid when decimals went i128 to i64, applied one step further, and this
 says it is worth about 1.7x on the aggregate loop at production thread counts.
 
+## e62 — The speed of light for Q5 (20M rows, venus-003, i7-10700F 8C/16T)
+
+Every optimisation this session was aimed at a gap measured only against
+ClickHouse, which says a gap exists but not how much of it is real work. This
+measures the floor: a hand-written loop doing exactly what Q5 needs, climbing
+one layer at a time toward the engine.
+
+| min ms, 16 threads | | ratio to floor |
+|---|---:|---:|
+| 1. floor (i32 date, group ordinal known) | 15.9 | 1.00x |
+| 2. + civil date arithmetic per row | 17.8 | 1.12x |
+| 3. + i64 date column | 17.8 | 1.12x |
+| 4. + 65k batch granularity | **7.9** | 0.50x |
+| ClickHouse | 40.0 | **5.1x** |
+| Pintail engine | 159.0 | **20.1x** |
+
+(Arm 4 beats arms 1-3 because iterating batches amortises what rayon spends
+splitting a 20M-element range per row; it is the realistic floor, not an
+anomaly. Checksums identical across all four.)
+
+**Verdicts.**
+
+(1) **The gap to ClickHouse is machinery, not work.** The query's genuine work -
+filter, per-row date arithmetic, sum and count into twelve slots, at the
+executor's own batch granularity - is 7.9ms. ClickHouse carries 5.1x of
+general-engine overhead over that floor, which is what a real engine costs.
+Pintail carries 20.1x. We are not fighting memory bandwidth or arithmetic: we
+carry 4x more overhead than ClickHouse, and 148ms of our 159ms is machinery
+(decode 59, slicing 26, ingest 29, drain 20, adopt 14).
+
+(2) **Narrowing carriers to 32-bit would buy nothing, and this kills that plan
+before it was written.** Arms 2 and 3 differ only in whether the date column is
+i32 or i64 and measure identically at 17.8ms. e61's 1.72x for u32 does not
+transfer to this query: e61 varied the column summed on every kept row, while
+Q5's filter rejects four rows in five before the wide column is touched. A
+technique's benefit is a property of the access pattern, not of the width.
+
+(3) **Date arithmetic is 12% of the floor, not a bottleneck** - consistent with
+the earlier finding that a civil-from-days lookup table returned ~1% on the real
+query. Confirmed twice now by different routes.
+
+CAVEAT: the floor reads pre-materialised in-memory arrays and does not decode
+from storage, verify checksums, or handle nulls, so some of the 20.1x is
+irreducible. It bounds what is reclaimable; it does not promise it. The useful
+comparison is not Pintail against the floor but Pintail's 20.1x against
+ClickHouse's 5.1x, since both are general engines paying general-engine costs.
+
+DIRECTION: stop optimising the 7.9ms of work. Attack the 148ms of machinery -
+per-batch setup, memory accounting, operator dispatch, the decode path's
+materialisation - which is where a 2-4x lives.
+
