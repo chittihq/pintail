@@ -66,7 +66,16 @@ fn row(id: u64) -> StoredRow {
     let quantity = 1 + id % 20;
     let unit_price_cents = 1_000 + (id * 7919) % 99_000;
     let total_cents = quantity * unit_price_cents;
-    let date_days = (id * 7) % 1825;
+    // Scattered by default: (id * 7) % 1825 steps a week and wraps, so
+    // every block spans the whole range and nothing can prune. With
+    // PINTAIL_CLUSTERED_DATES set, dates instead follow insertion order -
+    // the layout real CDC order data has - so block min/max actually bound
+    // a range and the existing pruning machinery gets to work.
+    let date_days = if std::env::var_os("PINTAIL_CLUSTERED_DATES").is_some() {
+        (id * 1825) / 20_000_000
+    } else {
+        (id * 7) % 1825
+    };
     // 2020-01-01 is day 18_262 since the epoch.
     let epoch_days = 18_262 + i64::try_from(date_days).expect("day offset");
     let date = chrono::NaiveDate::from_num_days_from_ce_opt(

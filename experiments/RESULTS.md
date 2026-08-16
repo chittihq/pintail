@@ -2259,3 +2259,27 @@ benchmark dataset's integer blocks evidently store LZ4, so the None-path
 copy Codex flagged is not on this workload's hot path. Reverted for now;
 worth re-testing if a deployment shows None-heavy blocks, where it is a
 strict bytes-moved win.
+
+## e63 — Clustered dates win nothing today: non-key pruning does not exist
+
+Added PINTAIL_CLUSTERED_DATES to the profile harness: dates follow insertion
+order (the layout real CDC order data has) instead of the scattered
+(id*7)%1825. If block-level min/max pruning worked for the date column, Q5's
+one-year filter would skip ~80% of blocks on clustered data.
+
+Measured, venus-003, 20M rows: scattered 105-109ms, clustered 105-108ms.
+IDENTICAL. Perfect clustering buys zero.
+
+Verdict: the engine has no per-block column-statistics pruning for non-key
+columns. The blocks_pruned counter counts PRIMARY-KEY range pruning, and the
+prewhere path decodes predicate columns before filtering - it cannot skip a
+block it has not read. e09's 10-18x for pruning on clustered data is
+therefore entirely unrealised product headroom, and benchmark/README's note
+that "the seeded dates make pruning unmeasurable" was true but incomplete:
+pruning is unmeasurable AND unimplemented off the key.
+
+This scopes the real feature (issue #6 already names it: per-block SMAs in
+segment footers): write min/max per block per native-unit column at flush,
+push comparison predicates to block skipping before decode, cover with the
+oracle since skipping wrongly is silent corruption. The clustered harness
+variant is the measuring instrument, kept for that work.
