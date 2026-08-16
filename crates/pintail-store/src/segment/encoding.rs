@@ -16,6 +16,26 @@ use crate::{
     codec::{Decoder, Encoder},
 };
 
+/// e64 experiment knobs, write-side only. Readers handle every stored form,
+/// so segments written under these mix freely with normal ones.
+///
+/// `PINTAIL_WRITE_UNCOMPRESSED` stores every block raw - the "is LZ4
+/// costing us" question. `PINTAIL_WRITE_UNPACKED` keeps integers at fixed
+/// width instead of bit-packing - the "is packing costing us" question.
+/// They are separate because dictionary and run-length are semantic
+/// encodings the executor's fast paths key off, not compression: forcing
+/// everything to Plain would measure a broken encoding system, not the
+/// cost of compression.
+fn write_uncompressed() -> bool {
+    static CELL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| std::env::var_os("PINTAIL_WRITE_UNCOMPRESSED").is_some())
+}
+
+fn write_unpacked() -> bool {
+    static CELL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| std::env::var_os("PINTAIL_WRITE_UNPACKED").is_some())
+}
+
 pub(super) fn materially_smaller(uncompressed: usize, compressed: usize) -> bool {
     uncompressed > 0 && compressed.saturating_mul(100) <= uncompressed.saturating_mul(95)
 }
@@ -24,6 +44,11 @@ pub(super) fn compress_block_for_storage(
     compression: Compression,
     bytes: &[u8],
 ) -> Result<(Compression, Vec<u8>), StoreError> {
+    let compression = if write_uncompressed() {
+        Compression::None
+    } else {
+        compression
+    };
     match compression {
         Compression::None => Ok((Compression::None, bytes.to_vec())),
         Compression::Lz4 => Ok((Compression::Lz4, lz4_compress(bytes))),
@@ -76,13 +101,14 @@ pub(super) fn select_encoding(logical_type: LogicalType, cells: &[Cell]) -> Enco
     {
         return Encoding::Dictionary;
     }
-    if cells.len() >= 3 && is_monotonic_integer(logical_type, cells) {
+    if cells.len() >= 3 && is_monotonic_integer(logical_type, cells) && !write_unpacked() {
         return Encoding::DeltaBitPacked;
     }
     if matches!(
         logical_type,
         LogicalType::Boolean | LogicalType::Int64 | LogicalType::UInt64
-    ) {
+    ) && !write_unpacked()
+    {
         return Encoding::BitPacked;
     }
     Encoding::Plain
