@@ -976,45 +976,24 @@ fn drain_two_pass_window(
     }
     if let Some(slots) = dense.as_mut() {
         if dense_in_bounds(keys, intern_len) {
-            let columns: &[usize] = match keys {
-                TwoPassKeySource::Text { column } => &[column],
-                TwoPassKeySource::TextPair { first, second } => &[first, second],
-                _ => unreachable!("dense slots are text-keyed"),
-            };
-            // One partial per rayon worker (fold), merged pairwise
-            // (reduce): batches of the window aggregate in parallel with
-            // no per-row buffering and no hashing. Transient partials are
-            // bounded by worker count x slot table, under the scatter
-            // window's own reservation.
-            let slot_count = slots.len();
-            let folded = window
-                .par_iter()
-                .try_fold(
-                    || vec![None; slot_count],
-                    |mut acc, (batch, translations)| {
-                        two_pass_dense_batch(
-                            batch,
-                            keys,
-                            columns,
-                            translations,
-                            lanes,
-                            aggregates,
-                            &mut acc,
-                            memory,
-                        )?;
-                        Ok(acc)
-                    },
-                )
-                .try_reduce(
-                    || vec![None; slot_count],
-                    |left, right| merge_dense_slots(left, right, aggregates, memory),
-                )?;
-            let merged = merge_dense_slots(std::mem::take(slots), folded, aggregates, memory)?;
-            *slots = merged;
-            window.clear();
-            memory.release(*window_reserved);
-            *window_reserved = 0;
-            return Ok(());
+            // A date-part key indexes its slots directly, and can discover
+            // mid-fold that a value has no slot; the text keys cannot.
+            if let TwoPassKeySource::DateParts { parts } = keys {
+                if dense_date_parts_window(window, parts, lanes, aggregates, slots, memory)? {
+                    window.clear();
+                    memory.release(*window_reserved);
+                    *window_reserved = 0;
+                    return Ok(());
+                }
+                // A year outside the table's window: fall through, unify what
+                // the slots hold and finish on the scatter path.
+            } else {
+                dense_text_window(window, keys, lanes, aggregates, slots, memory)?;
+                window.clear();
+                memory.release(*window_reserved);
+                *window_reserved = 0;
+                return Ok(());
+            }
         }
         // The intern table outgrew the dense domain: unify what the dense
         // slots hold into the partition maps and continue on the classic
@@ -1173,6 +1152,107 @@ fn apply_two_pass_lane(
 /// bytes per row, re-read, hash-probe) collapses into direct indexing.
 /// Slot 0 is the NULL group for single-column keys; pairs pack their
 /// NULL-encoded side ids directly.
+/// Year the date-part dense domain starts at. Years are stored as an offset
+/// so a year fits beside a second part inside the slot cap; the other parts
+/// are already bounded (month 12, day 31, hour 23, minute and second 59).
+/// Ordinal 0 is NULL for every part, matching the `(value + 1)` packing the
+/// scatter uses.
+const DENSE_DATE_YEAR_BASE: u64 = 1900;
+/// Year ordinals run 1..=256, so 1900 through 2155.
+const DENSE_DATE_YEAR_SIDE: usize = 257;
+/// Every other supported part is under 60, so `(value + 1)` fits here.
+const DENSE_DATE_SMALL_SIDE: usize = 64;
+/// Largest date-part table built. Merging walks every slot whether or not
+/// it is occupied, so the table stays small enough that walking it costs
+/// less than the buckets it replaces.
+const DENSE_DATE_SLOT_CAP: usize = 1 << 16;
+
+/// Ordinals one part can take, or `None` for a part this table cannot hold.
+const fn dense_date_side(part: DatePart) -> Option<usize> {
+    match part {
+        DatePart::Year => Some(DENSE_DATE_YEAR_SIDE),
+        DatePart::Month | DatePart::Day | DatePart::Hour | DatePart::Minute | DatePart::Second => {
+            Some(DENSE_DATE_SMALL_SIDE)
+        }
+        _ => None,
+    }
+}
+
+/// One part's dense ordinal from its packed `(value + 1)` id, or `None` when
+/// the value falls outside the domain the table covers - a year before 1900
+/// or after 2155. The caller then abandons the dense table for the classic
+/// scatter rather than folding distinct groups together.
+fn dense_date_ordinal(part: DatePart, id: u64) -> Option<usize> {
+    if id == 0 {
+        return Some(0);
+    }
+    let side = dense_date_side(part)?;
+    let ordinal = match part {
+        DatePart::Year => usize::try_from(id.checked_sub(DENSE_DATE_YEAR_BASE)?).ok()?,
+        _ => usize::try_from(id).ok()?,
+    };
+    (ordinal >= 1 && ordinal < side).then_some(ordinal)
+}
+
+/// The packed `(value + 1)` id a dense ordinal came from.
+fn dense_date_id(part: DatePart, ordinal: usize) -> u64 {
+    if ordinal == 0 {
+        return 0;
+    }
+    match part {
+        DatePart::Year => DENSE_DATE_YEAR_BASE.saturating_add(ordinal as u64),
+        _ => ordinal as u64,
+    }
+}
+
+/// Slots a date-part key needs, or `None` when any part is unsupported or
+/// the product exceeds the cap.
+fn dense_date_slot_count(parts: [Option<(DatePart, usize)>; 2]) -> Option<usize> {
+    let mut slots = 1_usize;
+    let mut present = 0_usize;
+    for (part, _) in parts.iter().flatten() {
+        slots = slots.checked_mul(dense_date_side(*part)?)?;
+        present += 1;
+    }
+    (present > 0 && slots <= DENSE_DATE_SLOT_CAP).then_some(slots)
+}
+
+/// Mixed-radix slot for a packed date-part key, or `None` when a part falls
+/// outside the dense domain.
+fn dense_date_slot(parts: [Option<(DatePart, usize)>; 2], key_bits: u64) -> Option<usize> {
+    let present = parts.iter().flatten().count();
+    let mut slot = 0_usize;
+    for (index, (part, _)) in parts.iter().flatten().enumerate() {
+        let shift = 20 * (present - 1 - index);
+        let id = (key_bits >> shift) & 0xF_FFFF;
+        slot = slot
+            .checked_mul(dense_date_side(*part)?)?
+            .checked_add(dense_date_ordinal(*part, id)?)?;
+    }
+    Some(slot)
+}
+
+/// The inverse of [`dense_date_slot`], rebuilding the packed key a slot
+/// stands for so folded groups keep the identity the scatter path gives them.
+fn dense_date_key(parts: [Option<(DatePart, usize)>; 2], slot: usize) -> u64 {
+    let present: Vec<DatePart> = parts.iter().flatten().map(|(part, _)| *part).collect();
+    let mut ids = vec![0_u64; present.len()];
+    let mut rest = slot;
+    for (index, part) in present.iter().enumerate().rev() {
+        let side = dense_date_side(*part).expect("dense table exists for these parts");
+        ids[index] = dense_date_id(*part, rest % side);
+        rest /= side;
+    }
+    ids.into_iter().fold(0_u64, |bits, id| (bits << 20) | id)
+}
+
+/// Why a dense date-part fold stopped: a real failure, or a value outside
+/// the table's domain, which is recoverable by falling back to the scatter.
+enum DenseFold {
+    Exec(ExecError),
+    OutOfDomain,
+}
+
 type DenseGroupSlots = Vec<Option<Vec<AggregateState>>>;
 
 /// Single text column: intern ids 0..=1023 map to slots 1..=1024.
@@ -1184,7 +1264,8 @@ fn dense_slot_count(keys: TwoPassKeySource) -> Option<usize> {
     match keys {
         TwoPassKeySource::Text { .. } => Some(DENSE_TEXT_CAP + 1),
         TwoPassKeySource::TextPair { .. } => Some(DENSE_PAIR_SIDE * DENSE_PAIR_SIDE),
-        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => None,
+        TwoPassKeySource::DateParts { parts } => dense_date_slot_count(parts),
+        TwoPassKeySource::Int { .. } => None,
     }
 }
 
@@ -1194,7 +1275,11 @@ fn dense_in_bounds(keys: TwoPassKeySource, intern_len: usize) -> bool {
     match keys {
         TwoPassKeySource::Text { .. } => intern_len <= DENSE_TEXT_CAP,
         TwoPassKeySource::TextPair { .. } => intern_len + 1 < DENSE_PAIR_SIDE,
-        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => false,
+        // Date-part domains are checked per row instead: the table covers a
+        // bounded window of years and the fold abandons it when a value
+        // falls outside, which no table-wide check can predict.
+        TwoPassKeySource::DateParts { .. } => true,
+        TwoPassKeySource::Int { .. } => false,
     }
 }
 
@@ -1212,9 +1297,10 @@ fn dense_slot_index(keys: TwoPassKeySource, key_bits: u64, key_null: bool) -> us
             let second = usize::try_from(key_bits & 0xFFFF_FFFF).expect("side id fits usize");
             first * DENSE_PAIR_SIDE + second
         }
-        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => {
-            unreachable!("dense slots are text-keyed")
-        }
+        // The date-part fold indexes its own slots, because unlike text it
+        // can fail: a year outside the table's window has no slot at all.
+        TwoPassKeySource::DateParts { .. } => unreachable!("date parts index their own slots"),
+        TwoPassKeySource::Int { .. } => unreachable!("int keys have no dense table"),
     }
 }
 
@@ -1236,9 +1322,8 @@ fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
             let second = u64::try_from(index % DENSE_PAIR_SIDE).expect("slot index fits u64");
             ((first << 32) | second, false)
         }
-        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => {
-            unreachable!("dense slots are text-keyed")
-        }
+        TwoPassKeySource::DateParts { parts } => (dense_date_key(parts, index), false),
+        TwoPassKeySource::Int { .. } => unreachable!("int keys have no dense table"),
     }
 }
 
@@ -1297,6 +1382,129 @@ fn two_pass_dense_batch(
         for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
             if let Some(bits) = two_pass_lane_bits(batch, row, lane) {
                 apply_two_pass_lane(&mut states[lane_index], lane, aggregate, bits, memory)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Folds one window into the dense slots of a text or text-pair key.
+///
+/// One partial per rayon worker (fold), merged pairwise (reduce): batches of
+/// the window aggregate in parallel with no per-row buffering and no hashing.
+/// Transient partials are bounded by worker count x slot table, under the
+/// scatter window's own reservation.
+fn dense_text_window(
+    window: &[(RecordBatch, Vec<Vec<u64>>)],
+    keys: TwoPassKeySource,
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    slots: &mut DenseGroupSlots,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let columns: &[usize] = match keys {
+        TwoPassKeySource::Text { column } => &[column],
+        TwoPassKeySource::TextPair { first, second } => &[first, second],
+        _ => unreachable!("dense slots are text-keyed"),
+    };
+    let slot_count = slots.len();
+    let folded = window
+        .par_iter()
+        .try_fold(
+            || vec![None; slot_count],
+            |mut acc, (batch, translations)| {
+                two_pass_dense_batch(
+                    batch,
+                    keys,
+                    columns,
+                    translations,
+                    lanes,
+                    aggregates,
+                    &mut acc,
+                    memory,
+                )?;
+                Ok(acc)
+            },
+        )
+        .try_reduce(
+            || vec![None; slot_count],
+            |left, right| merge_dense_slots(left, right, aggregates, memory),
+        )?;
+    *slots = merge_dense_slots(std::mem::take(slots), folded, aggregates, memory)?;
+    Ok(())
+}
+
+/// Folds one window into the dense date-part slots, or reports that a value
+/// fell outside the table's domain so the caller can fall back.
+fn dense_date_parts_window(
+    window: &[(RecordBatch, Vec<Vec<u64>>)],
+    parts: [Option<(DatePart, usize)>; 2],
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    slots: &mut DenseGroupSlots,
+    memory: &MemoryTracker,
+) -> Result<bool, ExecError> {
+    let slot_count = slots.len();
+    let folded = window
+        .par_iter()
+        .try_fold(
+            || vec![None; slot_count],
+            |mut acc, (batch, _)| {
+                two_pass_dense_date_parts_batch(batch, parts, lanes, aggregates, &mut acc, memory)?;
+                Ok(acc)
+            },
+        )
+        .try_reduce(
+            || vec![None; slot_count],
+            |left, right| merge_dense_slots(left, right, aggregates, memory).map_err(DenseFold::Exec),
+        );
+    match folded {
+        Ok(folded) => {
+            *slots = merge_dense_slots(std::mem::take(slots), folded, aggregates, memory)?;
+            Ok(true)
+        }
+        Err(DenseFold::Exec(error)) => Err(error),
+        Err(DenseFold::OutOfDomain) => Ok(false),
+    }
+}
+
+/// Dense pass over one batch for a date-part key: the same part extraction
+/// the scatter does, applied straight into slots instead of buffered into
+/// buckets. Returns [`DenseFold::OutOfDomain`] when a value has no slot, so
+/// the caller can fall back rather than merge distinct groups together.
+#[allow(clippy::too_many_arguments)]
+fn two_pass_dense_date_parts_batch(
+    batch: &RecordBatch,
+    parts: [Option<(DatePart, usize)>; 2],
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    slots: &mut DenseGroupSlots,
+    memory: &MemoryTracker,
+) -> Result<(), DenseFold> {
+    for row in batch.selection().selected_rows() {
+        let mut key_bits = 0_u64;
+        for (part, column) in parts.iter().flatten() {
+            let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
+                Some(Ok(Value::UInt64(value))) => value + 1,
+                Some(Ok(Value::Null)) => 0,
+                Some(Err(error)) => return Err(DenseFold::Exec(error)),
+                _ => {
+                    return Err(DenseFold::Exec(ExecError::InvalidBatch(
+                        "date-part group key column lost its packed units",
+                    )));
+                }
+            };
+            key_bits = (key_bits << 20) | id;
+        }
+        let Some(slot) = dense_date_slot(parts, key_bits) else {
+            return Err(DenseFold::OutOfDomain);
+        };
+        let states = slots[slot]
+            .get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+        for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
+            if let Some(bits) = two_pass_lane_bits(batch, row, lane) {
+                apply_two_pass_lane(&mut states[lane_index], lane, aggregate, bits, memory)
+                    .map_err(DenseFold::Exec)?;
             }
         }
     }
@@ -1424,4 +1632,64 @@ fn two_pass_flush_sets(
     }
     *group_reserved = group_reserved.saturating_add(added.into_iter().sum());
     Ok(())
+}
+
+#[cfg(test)]
+mod dense_date_tests {
+    use super::{
+        DENSE_DATE_SLOT_CAP, DatePart, dense_date_key, dense_date_slot, dense_date_slot_count,
+    };
+
+    const YEAR_MONTH: [Option<(DatePart, usize)>; 2] =
+        [Some((DatePart::Year, 0)), Some((DatePart::Month, 1))];
+
+    fn pack(year: u64, month: u64) -> u64 {
+        // The scatter packs each part as (value + 1) in 20 bits, NULL as 0.
+        ((year + 1) << 20) | (month + 1)
+    }
+
+    #[test]
+    fn slots_round_trip_to_the_key_the_scatter_would_have_built() {
+        // The slot index and its inverse are a matched pair: a mismatch would
+        // silently attribute a group's rows to another group's key.
+        assert!(dense_date_slot_count(YEAR_MONTH).is_some_and(|n| n <= DENSE_DATE_SLOT_CAP));
+        for year in [1900, 1970, 2023, 2024, 2155] {
+            for month in 1..=12 {
+                let bits = pack(year, month);
+                let slot = dense_date_slot(YEAR_MONTH, bits).expect("inside the dense domain");
+                assert_eq!(dense_date_key(YEAR_MONTH, slot), bits, "{year}-{month}");
+            }
+        }
+    }
+
+    #[test]
+    fn distinct_keys_never_share_a_slot() {
+        let mut seen = std::collections::HashMap::new();
+        for year in 1900..=2155_u64 {
+            for month in 1..=12 {
+                let bits = pack(year, month);
+                let slot = dense_date_slot(YEAR_MONTH, bits).expect("inside the dense domain");
+                assert_eq!(seen.insert(slot, bits), None, "slot {slot} reused");
+            }
+        }
+    }
+
+    #[test]
+    fn values_outside_the_window_report_no_slot() {
+        // Out of domain must be None rather than a wrapped slot: MySQL dates
+        // reach year 9999, and folding those onto an in-range slot would
+        // merge unrelated groups.
+        for year in [0, 1, 999, 1899, 2156, 9999] {
+            assert_eq!(dense_date_slot(YEAR_MONTH, pack(year, 6)), None, "year {year}");
+        }
+    }
+
+    #[test]
+    fn nulls_take_the_zero_ordinal_and_round_trip() {
+        for bits in [0, pack(2023, 5) & !0xF_FFFF, 1] {
+            if let Some(slot) = dense_date_slot(YEAR_MONTH, bits) {
+                assert_eq!(dense_date_key(YEAR_MONTH, slot), bits);
+            }
+        }
+    }
 }
