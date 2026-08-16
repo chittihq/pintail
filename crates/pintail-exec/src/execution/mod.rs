@@ -4133,7 +4133,7 @@ impl CrossJoinState {
 }
 
 fn validate_scan_batch(batch: &RecordBatch, expected_types: &[DataType]) -> Result<(), ExecError> {
-    if batch.row_count() > DEFAULT_BATCH_ROWS {
+    if batch.row_count() > crate::batch::MAX_SCAN_BATCH_ROWS {
         return Err(ExecError::InvalidBatch(
             "scan batch exceeds the executor row target",
         ));

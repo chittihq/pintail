@@ -1452,7 +1452,13 @@ fn adopt_chunk(
     }
     let mut batches = Vec::with_capacity(row_count.div_ceil(DEFAULT_BATCH_ROWS));
     while row_count > 0 {
-        let take = row_count.min(DEFAULT_BATCH_ROWS);
+        // A chunk within the executor's ceiling passes through as one batch:
+        // splitting it copied the remainder out of every column for nothing.
+        let take = if row_count <= crate::batch::MAX_SCAN_BATCH_ROWS {
+            row_count
+        } else {
+            row_count.min(DEFAULT_BATCH_ROWS)
+        };
         let taken = columns
             .iter_mut()
             .map(|column| column.take_prefix(take))

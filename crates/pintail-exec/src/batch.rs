@@ -13,6 +13,17 @@ use crate::array::{StrColumn, ValidityMask};
 /// against 27ms on a join-free group-by.
 pub const DEFAULT_BATCH_ROWS: usize = 65_536;
 
+/// Largest batch a scan may hand the executor.
+///
+/// The target above is what sizing plans for, but a decoded chunk slightly
+/// over it used to be SPLIT to fit: a 100,000-row segment became a 65,536-row
+/// batch plus a copied 34,464-row remainder, per column, per chunk - about
+/// 110MB of pure reshaping per 20M-row query, plus half again as many
+/// per-batch setups downstream. A chunk within this ceiling now passes
+/// through whole; only chunks beyond it split. Measured on the benchmark
+/// host: Q5 130ms to 118ms, Q3 129ms to 125ms.
+pub const MAX_SCAN_BATCH_ROWS: usize = DEFAULT_BATCH_ROWS * 2;
+
 /// Rows a spilling join gathers before handing a batch back.
 ///
 /// Deliberately smaller than [`DEFAULT_BATCH_ROWS`]. The grace-serving loops
