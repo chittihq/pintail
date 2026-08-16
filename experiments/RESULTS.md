@@ -2072,3 +2072,66 @@ work and is removed rather than preserved as evidence. All eleven crates have
 since been replaced and re-executed; their controlling results are the dated
 2026-08-15 re-audit sections above and [`AUDIT.md`](AUDIT.md). Only e52 and e61
 remain prototype candidates; the other nine are rejects.
+
+## e61 — Where compressed execution actually breaks even (20M rows, 12 groups, ~1/5 kept)
+
+Contested question: FastLanes reports up to 7x end-to-end on a RAM-resident SUM
+scan and a break-even compression ratio of only 25%, while our own e23/e24/e28
+measured bit-unpacking at ~1.4% of a scan and concluded encoding wins do not
+transfer. Those measure different things — unpacking COST versus bytes moved —
+so this separates them on the Q5 shape. Remote host (venus-003, i7-10700F,
+8C/16T, 16MB L3). Minimums, checksums identical across non-permuted arms.
+
+| min ms | 1 thread | 8 threads | 16 threads |
+|---|---:|---:|---:|
+| plain i64 (baseline) | 16.2 | 7.3 | 7.4 |
+| **narrow u32, materialised** | **12.5** | **4.3** | **4.3** |
+| packed 8-bit -> materialise i64 | 34.6 | 4.4 | 4.3 |
+| packed 8-bit -> fused | 32.3 | 4.2 | 4.0 |
+| packed 32-bit -> fused | 33.6 | 4.7 | 4.4 |
+
+**Verdicts.**
+
+(1) **The thread count decides the sign of the result, exactly as FastLanes
+claims.** At one thread bit-packing LOSES badly — 32-38ms against 16.2ms plain,
+so 2.1-2.3x slower, because unpacking cost dominates and nothing else is scarce.
+At 8 and 16 threads the same packed arms WIN at ~1.7x, because RAM bandwidth
+becomes the constraint. Our earlier "encoding wins do not transfer" verdict was
+measured in the regime where it is true and does not generalise to the
+production thread count.
+
+(2) **But packing is not the lever — narrowness is.** Simply storing the column
+as u32 instead of i64, with no packing and no unpacking, matches or beats every
+packed arm at every thread count and every width: 4.3ms at 8 and 16 threads
+(1.7x over plain), and 12.5ms at one thread where it is the ONLY arm that beats
+the baseline. Packing buys nothing over a narrow native type here and costs
+2.5x when threads are scarce. The actionable form of "execute on compressed
+data" for this engine is **use the narrowest native integer that fits**, not
+bit-packing.
+
+(3) Fusing the unpack into the aggregate loop, so the expanded column never
+reaches memory, is worth a consistent but second-order 5-7% over materialising
+it (4.0 vs 4.3ms at 16 threads; 32.3 vs 34.6 at one). Real, and it agrees in
+direction with the engine's bytes-moved rule, but it is not the factor — which
+is consistent with Kersten et al. bounding fusion at +74% on the
+aggregation-bound query and -32% on the join-bound one.
+
+(4) **The lane-parallel layout did NOT reproduce.** It was 4.8-7.1ms against the
+naive layout's 4.0-4.5ms at 16 threads. This is reported as a failure to
+reproduce rather than a refutation of FastLanes: the arm permutes row order, so
+its group and filter columns are read through that permutation, and the strided
+access is a plausible confound that the original does not have. Anyone retesting
+should fix the confound before drawing a conclusion about layout.
+
+CAVEAT ON SCOPE: this is a microbenchmark over in-memory arrays. It isolates the
+aggregate loop's relationship to value width and does not include the engine's
+block reads, checksums or typed adoption, so the 1.7x is an upper bound on what
+the query would see — the same gap already observed between the profiling
+harness and the server benchmark.
+
+DIRECTLY ACTIONABLE: the engine stores date units as Vec<i64> (days since epoch
+needs 16 bits) and, after e3f4cbc, decimal units as i64 (a DECIMAL(10,2) of
+cents needs 32). Narrowing those carriers to 32-bit is the same change that
+already paid when decimals went i128 to i64, applied one step further, and this
+says it is worth about 1.7x on the aggregate loop at production thread counts.
+
