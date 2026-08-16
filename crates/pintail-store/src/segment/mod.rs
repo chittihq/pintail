@@ -2209,20 +2209,20 @@ pub(crate) struct ProjectedColumnFetch {
 enum ColumnBuilder {
     Int64 {
         values: Vec<i64>,
-        validity: Vec<bool>,
+        validity: Validity,
     },
     UInt64 {
         values: Vec<u64>,
-        validity: Vec<bool>,
+        validity: Validity,
     },
     Float64 {
         bits: Vec<u64>,
-        validity: Vec<bool>,
+        validity: Validity,
     },
     Utf8 {
         heap: Vec<u8>,
         offsets: Vec<usize>,
-        validity: Vec<bool>,
+        validity: Validity,
     },
     /// Dictionary-coded UTF-8: block dictionaries remap into one chunk
     /// dictionary and rows accumulate as u32 codes. Degrades to the arena
@@ -2231,7 +2231,7 @@ enum ColumnBuilder {
         dict_heap: Vec<u8>,
         dict_offsets: Vec<usize>,
         codes: Vec<u32>,
-        validity: Vec<bool>,
+        validity: Validity,
     },
     /// A v2 native-unit column: unit cells accumulate packed and flow to
     /// the executor untouched (step B); text regenerates only where a
@@ -2239,9 +2239,90 @@ enum ColumnBuilder {
     NativeUnits {
         units: NativeUnits,
         values: Vec<i64>,
-        validity: Vec<bool>,
+        validity: Validity,
     },
     Values(Vec<Value>),
+}
+
+/// Per-row validity while a column is being built.
+///
+/// A column with no nulls - every NOT NULL column, which is the common case -
+/// carries only a count while it is built, rather than a byte per row that is
+/// uniformly true. `DecodedColumn` still holds the byte-per-row form, so this
+/// changes how that vector is produced and not what anything downstream sees:
+/// one fill at the end instead of twenty million pushes on a 20M-row scan.
+#[derive(Clone, Debug)]
+enum Validity {
+    /// No null has been seen; this many rows, all valid.
+    AllValid(usize),
+    /// A null has been seen, so every row needs its own bit.
+    Bits(Vec<bool>),
+}
+
+impl Default for Validity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Validity {
+    const fn new() -> Self {
+        Self::AllValid(0)
+    }
+
+    fn push(&mut self, valid: bool) {
+        match self {
+            Self::AllValid(count) if valid => *count += 1,
+            // First null: pay for the vector once, then carry bits.
+            Self::AllValid(count) => {
+                let mut bits = vec![true; *count];
+                bits.push(false);
+                *self = Self::Bits(bits);
+            }
+            Self::Bits(bits) => bits.push(valid),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::AllValid(count) => *count,
+            Self::Bits(bits) => bits.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Rows the backing store could hold without growing. All-valid keeps no
+    /// per-row store, so it reports what it has.
+    fn capacity(&self) -> usize {
+        match self {
+            Self::AllValid(count) => *count,
+            Self::Bits(bits) => bits.capacity(),
+        }
+    }
+
+    /// Reserving is only meaningful once a null has forced a per-row vector.
+    fn reserve(&mut self, additional: usize) {
+        if let Self::Bits(bits) = self {
+            bits.reserve(additional);
+        }
+    }
+
+    fn iter(&self) -> Box<dyn Iterator<Item = bool> + '_> {
+        match self {
+            Self::AllValid(count) => Box::new(std::iter::repeat_n(true, *count)),
+            Self::Bits(bits) => Box::new(bits.iter().copied()),
+        }
+    }
+
+    fn into_bools(self) -> Vec<bool> {
+        match self {
+            Self::AllValid(count) => vec![true; count],
+            Self::Bits(bits) => bits,
+        }
+    }
 }
 
 impl ColumnBuilder {
@@ -2257,7 +2338,7 @@ impl ColumnBuilder {
             return Self::NativeUnits {
                 units,
                 values: Vec::with_capacity(capacity),
-                validity: Vec::with_capacity(capacity),
+                validity: Validity::new(),
             };
         }
         Self::new(logical_type, capacity)
@@ -2267,15 +2348,15 @@ impl ColumnBuilder {
         match logical_type {
             LogicalType::Int64 => Self::Int64 {
                 values: Vec::with_capacity(capacity),
-                validity: Vec::with_capacity(capacity),
+                validity: Validity::new(),
             },
             LogicalType::UInt64 => Self::UInt64 {
                 values: Vec::with_capacity(capacity),
-                validity: Vec::with_capacity(capacity),
+                validity: Validity::new(),
             },
             LogicalType::Float64 => Self::Float64 {
                 bits: Vec::with_capacity(capacity),
-                validity: Vec::with_capacity(capacity),
+                validity: Validity::new(),
             },
             LogicalType::Utf8 => {
                 let mut offsets = Vec::with_capacity(capacity.saturating_add(1));
@@ -2283,7 +2364,7 @@ impl ColumnBuilder {
                 Self::Utf8 {
                     heap: Vec::new(),
                     offsets,
-                    validity: Vec::with_capacity(capacity),
+                    validity: Validity::new(),
                 }
             }
             LogicalType::Boolean | LogicalType::Binary | LogicalType::PrimaryKey => {
@@ -2385,7 +2466,7 @@ impl ColumnBuilder {
                 dict_heap: Vec::new(),
                 dict_offsets: vec![0],
                 codes: Vec::with_capacity(capacity),
-                validity: Vec::with_capacity(capacity),
+                validity: Validity::new(),
             };
         }
         let Self::DictUtf8 {
@@ -2509,7 +2590,7 @@ impl ColumnBuilder {
             let mut offsets = Vec::with_capacity(codes.len() + 1);
             offsets.push(0);
             for (code, valid) in codes.iter().zip(validity.iter()) {
-                if *valid {
+                if valid {
                     let code = *code as usize;
                     heap.extend_from_slice(&dict_heap[dict_offsets[code]..dict_offsets[code + 1]]);
                 }
@@ -2589,9 +2670,18 @@ impl ColumnBuilder {
 
     fn finish(self) -> DecodedColumn {
         match self {
-            Self::Int64 { values, validity } => DecodedColumn::Int64 { values, validity },
-            Self::UInt64 { values, validity } => DecodedColumn::UInt64 { values, validity },
-            Self::Float64 { bits, validity } => DecodedColumn::Float64 { bits, validity },
+            Self::Int64 { values, validity } => DecodedColumn::Int64 {
+                values,
+                validity: validity.into_bools(),
+            },
+            Self::UInt64 { values, validity } => DecodedColumn::UInt64 {
+                values,
+                validity: validity.into_bools(),
+            },
+            Self::Float64 { bits, validity } => DecodedColumn::Float64 {
+                bits,
+                validity: validity.into_bools(),
+            },
             Self::Utf8 {
                 heap,
                 offsets,
@@ -2599,7 +2689,7 @@ impl ColumnBuilder {
             } => DecodedColumn::Utf8 {
                 heap,
                 offsets,
-                validity,
+                validity: validity.into_bools(),
             },
             Self::NativeUnits {
                 units,
@@ -2608,7 +2698,7 @@ impl ColumnBuilder {
             } => DecodedColumn::NativeUnits {
                 units,
                 values,
-                validity,
+                validity: validity.into_bools(),
             },
             Self::DictUtf8 {
                 dict_heap,
@@ -2619,7 +2709,7 @@ impl ColumnBuilder {
                 dict_heap,
                 dict_offsets,
                 codes,
-                validity,
+                validity: validity.into_bools(),
             },
             Self::Values(values) => DecodedColumn::Values(values),
         }
