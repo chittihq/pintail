@@ -1644,7 +1644,7 @@ fn column_vector_from_decoded(
             }
             let typed = match units {
                 pintail_store::NativeUnits::Decimal { scale } => TypedValues::Decimal128 {
-                    values: values.into_iter().map(i128::from).collect(),
+                    values: crate::batch::DecimalUnits::Narrow(values),
                     scale,
                     text: LazyText::decimal(scale),
                 },
@@ -1702,7 +1702,7 @@ fn typed_from_utf8_arena_labelled(
             }
             if homogeneous {
                 TypedValues::Decimal128 {
-                    values: packed,
+                    values: crate::batch::DecimalUnits::Wide(packed),
                     scale,
                     text: LazyText::ready(text),
                 }

@@ -121,6 +121,55 @@ impl LazyText {
     }
 }
 
+/// Scaled decimal units, kept at the width they arrived in.
+///
+/// PTSEG v2 emits 64-bit units and the aggregate lanes narrow straight back
+/// to 64 bits when they read them, so widening a whole column on adoption
+/// allocated and copied a vector twice the size for values that were never
+/// wider than 64 bits - 320MB per pass on a 20M-row scan. Columns parsed
+/// from text can genuinely exceed 64 bits, so that width stays.
+///
+/// Readers see `i128` either way, so the two widths cannot disagree about a
+/// value: the width is a storage choice, not a semantic one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DecimalUnits {
+    /// Units that fit 64 bits, as the store emits them.
+    Narrow(Vec<i64>),
+    /// Units needing the full width, as text parsing can produce.
+    Wide(Vec<i128>),
+}
+
+impl DecimalUnits {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Narrow(values) => values.len(),
+            Self::Wide(values) => values.len(),
+        }
+    }
+
+    pub(crate) fn get(&self, row: usize) -> Option<i128> {
+        match self {
+            Self::Narrow(values) => values.get(row).copied().map(i128::from),
+            Self::Wide(values) => values.get(row).copied(),
+        }
+    }
+
+    pub(crate) fn iter(&self) -> Box<dyn Iterator<Item = i128> + '_> {
+        match self {
+            Self::Narrow(values) => Box::new(values.iter().copied().map(i128::from)),
+            Self::Wide(values) => Box::new(values.iter().copied()),
+        }
+    }
+
+    /// Bytes the backing vector holds, for memory accounting.
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        match self {
+            Self::Narrow(values) => values.capacity() * size_of::<i64>(),
+            Self::Wide(values) => values.capacity() * size_of::<i128>(),
+        }
+    }
+}
+
 /// Packed physical values for homogeneous batches, built once at vector
 /// construction so kernels never re-match `Value` per row
 /// (docs/decisions.md, "Executor moves to typed packed arrays").
@@ -136,7 +185,7 @@ pub(crate) enum TypedValues {
     /// for the aggregation kernels that consume it next.
     #[allow(dead_code)] // scale consumed by the upcoming typed SUM/AVG kernels
     Decimal128 {
-        values: Vec<i128>,
+        values: DecimalUnits,
         scale: u8,
         /// Canonical text carrier, regenerated on demand.
         text: LazyText,
@@ -177,7 +226,7 @@ impl TypedValues {
                 };
                 for (row, value) in values.iter().enumerate() {
                     if validity.is_valid(row) {
-                        let formatted = pintail_types::format_decimal_scaled(*value, scale);
+                        let formatted = pintail_types::format_decimal_scaled(value, scale);
                         column.push(formatted.as_bytes());
                     } else {
                         column.push(&[]);
@@ -248,7 +297,7 @@ impl TypedValues {
     /// One row's scaled/packed integer units, when this vector carries them.
     pub(crate) fn units_at(&self, row: usize) -> Option<i128> {
         match self {
-            Self::Decimal128 { values, .. } => values.get(row).copied(),
+            Self::Decimal128 { values, .. } => values.get(row),
             Self::Temporal { units, .. } => units.get(row).copied().map(i128::from),
             _ => None,
         }
@@ -268,7 +317,7 @@ impl TypedValues {
     pub(crate) fn format_unit(&self, row: usize) -> Option<String> {
         match self {
             Self::Decimal128 { values, scale, .. } => Some(pintail_types::format_decimal_scaled(
-                *values.get(row)?,
+                values.get(row)?,
                 *scale,
             )),
             Self::Temporal { units, text } => {
@@ -309,7 +358,7 @@ impl TypedValues {
             }
             Self::Float64(values) => values.get(row).copied(),
             Self::Decimal128 { values, scale, .. } => {
-                let value = *values.get(row)?;
+                let value = values.get(row)?;
                 #[allow(clippy::cast_precision_loss)]
                 Some(value as f64 / POW10[usize::from(*scale).min(18)])
             }
@@ -438,7 +487,7 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
         // Decimal outranks the Utf8 carrier: kernels get scaled integers; the
         // text views ride along for lazy row-value materialization.
         utf8.take().map(|text| TypedValues::Decimal128 {
-            values: packed,
+            values: DecimalUnits::Wide(packed),
             scale,
             text: LazyText::ready(text),
         })
@@ -634,7 +683,7 @@ impl ColumnVector {
                 },
                 _,
             )) => {
-                packed.capacity() * size_of::<i128>()
+                packed.capacity_bytes()
                     + text.built().map_or(0, crate::array::StrColumn::byte_size)
             }
             Some((TypedValues::Temporal { units, text }, _)) => {
@@ -1133,7 +1182,10 @@ mod typed_projection_tests {
             panic!("expected decimal projection, got {typed:?}");
         };
         assert_eq!(*scale, 4);
-        assert_eq!(values, &[1_234_500, 0, -1, 70_000]);
+        assert_eq!(
+            values.iter().collect::<Vec<i128>>(),
+            vec![1_234_500, 0, -1, 70_000]
+        );
         assert!(!validity.is_valid(1));
         assert_eq!(validity.count_valid(), 3);
     }
