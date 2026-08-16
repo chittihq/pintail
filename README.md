@@ -102,14 +102,14 @@ measure of what a dashboard refresh costs, and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
-| Full table count | 1,715 ms | 21 ms | 15 ms |
-| Filtered count | 692 ms | 14 ms | 33 ms |
-| Group by status | 34,411 ms | 13 ms | 72 ms |
-| Region × status breakdown | 13,151 ms | 15 ms | 244 ms |
-| Monthly revenue (2023) | 5,686 ms | 15 ms | 50 ms |
-| Top 10 spenders | 879,223 ms | 104 ms | 184 ms |
-| Regional analytics | 53,469 ms | 14 ms | 158 ms |
-| Join users + orders | 879,719 ms | 17 ms | 234 ms |
+| Full table count | 1,563 ms | 19 ms | 19 ms |
+| Filtered count | 587 ms | 14 ms | 32 ms |
+| Group by status | 35,782 ms | 12 ms | 65 ms |
+| Region × status breakdown | 13,290 ms | 20 ms | 244 ms |
+| Monthly revenue (2023) | 5,562 ms | 14 ms | 47 ms |
+| Top 10 spenders | 810,282 ms | 98 ms | 245 ms |
+| Regional analytics | 57,104 ms | 13 ms | 173 ms |
+| Join users + orders | 834,387 ms | 14 ms | 203 ms |
 
 **Novel queries — raw engine speed.** The same shapes with constants the memo
 has never seen, so both engines actually execute. **ClickHouse is faster here.**
@@ -118,10 +118,10 @@ win it.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Filtered count, novel constant | 1,088 ms | 589 ms | 57 ms | 0.10× |
-| Group by region (novel group column) | 12,970 ms | 1,048 ms | 100 ms | 0.10× |
-| Monthly revenue, novel year | 8,099 ms | 147 ms | 53 ms | 0.36× |
-| Regional analytics, novel range | 54,023 ms | 638 ms | 183 ms | 0.29× |
+| Filtered count, novel constant | 1,130 ms | 408 ms | 180 ms | 0.44× |
+| Group by region (novel group column) | 14,081 ms | 887 ms | 90 ms | 0.10× |
+| Monthly revenue, novel year | 9,202 ms | 136 ms | 95 ms | 0.70× |
+| Regional analytics, novel range | 57,980 ms | 516 ms | 178 ms | 0.34× |
 
 ClickHouse is measured in both configurations: plain `MergeTree` for its
 raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is
@@ -136,12 +136,12 @@ them with:
 
 Caveats worth stating plainly: one synthetic dataset and eight query shapes,
 on a shared host, measured as
-`warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-08-15T23:30:45.751Z`. Enough to characterise these
+`warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-08-16T18:01:03.714Z`. Enough to characterise these
 queries and not enough to support a general claim about either engine. MySQL
 runs with a 1 GB buffer pool, so its column is a baseline being escaped
 rather than a tuned competitor.
 
-<sub>Generated from `benchmark/results.json` (2026-08-16T16:00:48.670Z) by
+<sub>Generated from `benchmark/results.json` (2026-08-16T18:04:52.030Z) by
 `benchmark/render-readme-table.ts` — do not edit by hand.</sub>
 
 <!-- benchmark:end -->
