@@ -1481,6 +1481,60 @@ fn two_pass_dense_date_parts_batch(
     slots: &mut DenseGroupSlots,
     memory: &MemoryTracker,
 ) -> Result<(), DenseFold> {
+    // The Q5 shape - two calendar parts over ONE Date32 column - pays for
+    // two civil conversions and two column resolutions per row on the
+    // generic path below, when a single conversion yields year, month and
+    // day together and the column never changes within a batch. This front
+    // handles exactly that shape; everything else falls through unchanged.
+    if let [Some((first_part, first_column)), Some((second_part, second_column))] = parts
+        && first_column == second_column
+        && matches!(
+            first_part,
+            DatePart::Year | DatePart::Month | DatePart::Day
+        )
+        && matches!(
+            second_part,
+            DatePart::Year | DatePart::Month | DatePart::Day
+        )
+        && let Some(vector) = batch.column(first_column)
+        && vector.data_type() == DataType::Date32
+        && let Some((crate::batch::TypedValues::Temporal { units, .. }, validity)) =
+            vector.typed()
+    {
+        let pick = |part: DatePart, year: i64, month: i64, day: i64| -> u64 {
+            let value = match part {
+                DatePart::Year => year,
+                DatePart::Month => month,
+                _ => day,
+            };
+            // Matches evaluate_units_date_part: out-of-range clamps to 0,
+            // then the scatter packing adds one.
+            u64::try_from(value).unwrap_or(0) + 1
+        };
+        for row in batch.selection().selected_rows() {
+            let key_bits = if validity.is_valid(row) {
+                let day_units = *units.get(row).ok_or(DenseFold::Exec(
+                    ExecError::InvalidBatch("date-part group key column ended before its rows"),
+                ))?;
+                let (year, month, day) = pintail_types::civil_from_days(day_units);
+                (pick(first_part, year, month, day) << 20) | pick(second_part, year, month, day)
+            } else {
+                0
+            };
+            let Some(slot) = dense_date_slot(parts, key_bits) else {
+                return Err(DenseFold::OutOfDomain);
+            };
+            let states = slots[slot]
+                .get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+            for (lane_index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
+                if let Some(bits) = two_pass_lane_bits(batch, row, lane) {
+                    apply_two_pass_lane(&mut states[lane_index], lane, aggregate, bits, memory)
+                        .map_err(DenseFold::Exec)?;
+                }
+            }
+        }
+        return Ok(());
+    }
     for row in batch.selection().selected_rows() {
         let mut key_bits = 0_u64;
         for (part, column) in parts.iter().flatten() {
