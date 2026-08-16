@@ -552,7 +552,6 @@ fn pack(values: &[u64], width: u8) -> Result<Vec<u8>, StoreError> {
     Ok(bytes)
 }
 
-
 /// LSB-first bitstream cursor over a validated payload.
 ///
 /// The existing [`unpack`] builds a zeroed 16-byte window per value, copies
@@ -632,7 +631,11 @@ fn unpack_header<'payload>(
 }
 
 const fn width_mask(width: u32) -> u64 {
-    if width == 64 { u64::MAX } else { (1_u64 << width) - 1 }
+    if width == 64 {
+        u64::MAX
+    } else {
+        (1_u64 << width) - 1
+    }
 }
 
 /// Decodes a bit-packed payload, adds the block base, and appends signed
@@ -652,7 +655,9 @@ pub(super) fn unpack_signed_into(
     out.reserve(value_count);
     let mut reader = BitReader::new(bytes);
     let in_range = base >= i128::from(i64::MIN)
-        && base.checked_add(i128::from(mask)).is_some_and(|top| top <= i128::from(i64::MAX));
+        && base
+            .checked_add(i128::from(mask))
+            .is_some_and(|top| top <= i128::from(i64::MAX));
     if in_range && width < 64 {
         #[allow(clippy::cast_possible_truncation)]
         let base = base as i64;
@@ -685,7 +690,9 @@ pub(super) fn unpack_unsigned_into(
     out.reserve(value_count);
     let mut reader = BitReader::new(bytes);
     let in_range = base >= 0
-        && base.checked_add(i128::from(mask)).is_some_and(|top| top <= i128::from(u64::MAX));
+        && base
+            .checked_add(i128::from(mask))
+            .is_some_and(|top| top <= i128::from(u64::MAX));
     if in_range {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let base = base as u64;
@@ -768,7 +775,9 @@ mod bit_reader_tests {
         let mut framed = Vec::new();
         framed.push(width);
         framed.extend_from_slice(
-            &u32::try_from(bytes.len()).expect("test payload fits u32").to_le_bytes(),
+            &u32::try_from(bytes.len())
+                .expect("test payload fits u32")
+                .to_le_bytes(),
         );
         framed.extend_from_slice(&bytes);
         framed
@@ -779,8 +788,7 @@ mod bit_reader_tests {
         for &width in &[0_u8, 1, 3, 7, 8, 13, 24, 31, 32, 33, 63, 64] {
             for &count in &[0_usize, 1, 2, 63, 64, 65, 2_290] {
                 let framed = payload(width, count, u64::from(width) * 31 + count as u64);
-                let expected =
-                    unpack(&mut Decoder::new(&framed), count).expect("windowed unpack");
+                let expected = unpack(&mut Decoder::new(&framed), count).expect("windowed unpack");
                 let mut streamed = Vec::new();
                 unpack_unsigned_into(&mut Decoder::new(&framed), count, 0, &mut streamed)
                     .expect("streaming unpack");
@@ -791,7 +799,13 @@ mod bit_reader_tests {
 
     #[test]
     fn signed_bases_round_trip_against_the_two_pass_arithmetic() {
-        for &base in &[0_i128, -1, 42, i128::from(i64::MIN), i128::from(i64::MAX) - 200] {
+        for &base in &[
+            0_i128,
+            -1,
+            42,
+            i128::from(i64::MIN),
+            i128::from(i64::MAX) - 200,
+        ] {
             let width = 8_u8;
             let count = 200_usize;
             let framed = payload(width, count, 7);
@@ -833,4 +847,3 @@ mod bit_reader_tests {
         );
     }
 }
-

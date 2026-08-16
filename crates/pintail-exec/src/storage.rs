@@ -19,12 +19,10 @@ use rayon::prelude::*;
 
 use crate::execution::MemoryScope;
 use crate::{
-
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
     array::{StrColumn, ValidityMask},
     batch::{LazyText, TypedValues, parse_date_days, parse_datetime_micros, parse_decimal_scaled},
 };
-
 
 /// Storage scan provider backed by reader-pinned table snapshots.
 pub struct SnapshotScanProvider<'snapshot> {
@@ -1628,11 +1626,13 @@ fn column_vector_from_decoded(
                 (
                     pintail_store::NativeUnits::Decimal { .. },
                     pintail_types::DataType::Decimal { .. }
-                ) | (pintail_store::NativeUnits::Date, pintail_types::DataType::Date32)
-                    | (
-                        pintail_store::NativeUnits::DateTime { .. },
-                        pintail_types::DataType::DateTime64 { .. }
-                    )
+                ) | (
+                    pintail_store::NativeUnits::Date,
+                    pintail_types::DataType::Date32
+                ) | (
+                    pintail_store::NativeUnits::DateTime { .. },
+                    pintail_types::DataType::DateTime64 { .. }
+                )
             );
             if !agrees {
                 // Unit kind and schema type disagree (defensive): fall back

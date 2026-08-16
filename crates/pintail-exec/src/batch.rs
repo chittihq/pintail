@@ -694,8 +694,7 @@ impl ColumnVector {
                 },
                 _,
             )) => {
-                packed.capacity_bytes()
-                    + text.built().map_or(0, crate::array::StrColumn::byte_size)
+                packed.capacity_bytes() + text.built().map_or(0, crate::array::StrColumn::byte_size)
             }
             Some((TypedValues::Temporal { units, text }, _)) => {
                 units.capacity() * size_of::<i64>()

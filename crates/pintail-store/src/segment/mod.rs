@@ -2,9 +2,8 @@ mod encoding;
 
 use encoding::{
     compare_cells, compress_block_for_storage, decode_integer_base, decode_payload,
-    unpack_signed_into, unpack_unsigned_into,
     decoded_heap_upper_bound, decompress_block, encode_payload, hll_registers, select_encoding,
-    unpack,
+    unpack, unpack_signed_into, unpack_unsigned_into,
 };
 
 use std::{
