@@ -2186,3 +2186,28 @@ DIRECTION: stop optimising the 7.9ms of work. Attack the 148ms of machinery -
 per-batch setup, memory accounting, operator dispatch, the decode path's
 materialisation - which is where a 2-4x lives.
 
+## e62 follow-up — inside the 148ms of machinery: it is block decode, not I/O
+
+Instrumented the store's integer fast path on venus-003, Q5, 20M rows, three
+iterations, CPU time summed across threads.
+
+| phase | CPU |
+|---|---:|
+| block file read + allocate + copy | 65 ms |
+| block decode into builders | **1,897 ms** |
+
+Decode is 29x the I/O. Per iteration that is ~632ms of CPU for 40M values, so
+about **16 nanoseconds per value** - against e62's specialised loop, which does
+the ENTIRE query in 126ms of CPU. Block decode alone costs five times the whole
+ideal query.
+
+This locates the machinery precisely. It is not disk, not the file format, not
+the read pattern: it is the per-value work of turning a decoded block into the
+engine's in-memory columns - checksum, unpack, validity construction and the
+per-row pushes into builders. e24 separately measured unpacking at ~1.4% and the
+checksum at 4% of a scan, which leaves the builder path as the residue, and that
+matches the shape here.
+
+DIRECTION: the highest-value remaining work is the block-to-column path, not the
+aggregate, not the encoding, and not the operator model. Attack what happens per
+value between a verified block and a ColumnVector.
