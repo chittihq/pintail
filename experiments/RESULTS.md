@@ -2242,3 +2242,13 @@ ready queue; the heavy sixteen-chunk prefetch decode rarely lands inside a
 drain, so there was little serial time to reclaim. Reverted. The pull-side
 serial structure Codex flagged is real but its cost concentrates in the
 prefetch call one pull in sixteen, not in the drain boundary.
+
+Addendum 2: a word-skipping SelectedRows iterator (skip zero words whole,
+pop set bits via trailing_zeros) measured q5 flat and q3 REGRESSED 10%
+(120-123ms to 132-137ms). On dense all-ones masks - every unfiltered scan -
+the trailing_zeros/clear-lowest-bit chain carries a loop-serial dependency
+through the current word, where the old test-per-row loop had none and
+vectorised better. Sparse masks were the motivating case, but the dense fold
+work dwarfs the bit tests there, so nothing was won where it was supposed to
+win and real time was lost where masks are dense. Reverted. A hybrid (run
+mode for u64::MAX words) might salvage it; measure q3 first if attempted.
