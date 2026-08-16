@@ -2,8 +2,8 @@
   "workload": "tpch-v1",
   "profile": "ci",
   "scale": 0.01,
-  "startedAt": "2026-08-15T23:48:37.534Z",
-  "finishedAt": "2026-08-15T23:49:31.145Z",
+  "startedAt": "2026-08-16T18:11:07.554Z",
+  "finishedAt": "2026-08-16T18:12:03.392Z",
   "counts": {
     "region": 5,
     "nation": 25,
@@ -19,32 +19,32 @@
       "id": "q01-pricing-summary",
       "class": "scan-aggregate",
       "status": "ok",
-      "mysqlMs": 105,
-      "pintailMs": 192,
+      "mysqlMs": 585,
+      "pintailMs": 217,
       "rows": 6
     },
     {
       "id": "q03-shipping-priority",
       "class": "join-topn",
       "status": "ok",
-      "mysqlMs": 41,
-      "pintailMs": 51,
+      "mysqlMs": 20,
+      "pintailMs": 54,
       "rows": 10
     },
     {
       "id": "q05-local-supplier-volume",
       "class": "join-wide",
       "status": "ok",
-      "mysqlMs": 169,
-      "pintailMs": 65,
+      "mysqlMs": 82,
+      "pintailMs": 61,
       "rows": 5
     },
     {
       "id": "q10-returned-item-reporting",
       "class": "join-high-cardinality",
       "status": "ok",
-      "mysqlMs": 26,
-      "pintailMs": 47,
+      "mysqlMs": 11,
+      "pintailMs": 40,
       "rows": 20
     }
   ],
