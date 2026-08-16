@@ -19,10 +19,12 @@ use rayon::prelude::*;
 
 use crate::execution::MemoryScope;
 use crate::{
+
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
     array::{StrColumn, ValidityMask},
     batch::{LazyText, TypedValues, parse_date_days, parse_datetime_micros, parse_decimal_scaled},
 };
+
 
 /// Storage scan provider backed by reader-pinned table snapshots.
 pub struct SnapshotScanProvider<'snapshot> {
@@ -1609,38 +1611,27 @@ fn column_vector_from_decoded(
             // representation — no text parse, and no text formatting either:
             // the carrier regenerates lazily only if a text-shaped consumer
             // (output, group keys) ever asks.
-            let typed = match (units, data_type) {
+            // Whether the unit kind and the schema type agree is settled
+            // before the packed integers are touched. Deciding it inside the
+            // conversion meant the temporal arms had to clone them, because
+            // the defensive arm below still needed them to rebuild the
+            // column - so every temporal column copied its whole values
+            // vector on a path that then threw the original away.
+            let agrees = matches!(
+                (units, data_type),
                 (
-                    pintail_store::NativeUnits::Decimal { scale },
-                    pintail_types::DataType::Decimal { .. },
-                ) => Some(TypedValues::Decimal128 {
-                    values: values.iter().copied().map(i128::from).collect(),
-                    scale,
-                    text: LazyText::decimal(scale),
-                }),
-                (pintail_store::NativeUnits::Date, pintail_types::DataType::Date32) => {
-                    Some(TypedValues::Temporal {
-                        units: values.clone(),
-                        text: LazyText::date(),
-                    })
-                }
-                (
-                    pintail_store::NativeUnits::DateTime { fsp },
-                    pintail_types::DataType::DateTime64 { .. },
-                ) => Some(TypedValues::Temporal {
-                    units: values.clone(),
-                    text: LazyText::datetime(fsp),
-                }),
-                _ => None,
-            };
-            match typed {
-                Some(typed) => {
-                    let mask = ValidityMask::from_bools(&validity);
-                    Ok(ColumnVector::from_typed(data_type, typed, mask))
-                }
+                    pintail_store::NativeUnits::Decimal { .. },
+                    pintail_types::DataType::Decimal { .. }
+                ) | (pintail_store::NativeUnits::Date, pintail_types::DataType::Date32)
+                    | (
+                        pintail_store::NativeUnits::DateTime { .. },
+                        pintail_types::DataType::DateTime64 { .. }
+                    )
+            );
+            if !agrees {
                 // Unit kind and schema type disagree (defensive): fall back
                 // to row values.
-                None => ColumnVector::new(
+                return ColumnVector::new(
                     data_type,
                     DecodedColumn::NativeUnits {
                         units,
@@ -1649,8 +1640,25 @@ fn column_vector_from_decoded(
                     }
                     .into_values(),
                 )
-                .map_err(ExecError::from),
+                .map_err(ExecError::from);
             }
+            let typed = match units {
+                pintail_store::NativeUnits::Decimal { scale } => TypedValues::Decimal128 {
+                    values: values.into_iter().map(i128::from).collect(),
+                    scale,
+                    text: LazyText::decimal(scale),
+                },
+                pintail_store::NativeUnits::Date => TypedValues::Temporal {
+                    units: values,
+                    text: LazyText::date(),
+                },
+                pintail_store::NativeUnits::DateTime { fsp } => TypedValues::Temporal {
+                    units: values,
+                    text: LazyText::datetime(fsp),
+                },
+            };
+            let mask = ValidityMask::from_bools(&validity);
+            Ok(ColumnVector::from_typed(data_type, typed, mask))
         }
         decoded => ColumnVector::new(data_type, decoded.into_values()).map_err(ExecError::from),
     }
