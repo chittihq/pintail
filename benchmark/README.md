@@ -32,7 +32,26 @@ carry deterministic tie-break keys so the comparison is well-posed).
   block pruning behavior is inspectable per run.
 - **Host variance caveat**: the host may carry unrelated load; ClickHouse's
   own totals swing between runs, so cross-run comparisons should use the
-  same-run pintail/ClickHouse ratio, not absolute times.
+  same-run pintail/ClickHouse ratio, not absolute times. A single before/after
+  pair across two runs cannot attribute a change: interleave the arms within
+  one run and compare per-arm minimums.
+- **What this dataset cannot show.** `seed.sql` dates every order by
+  `DATE_ADD('2020-01-01', INTERVAL MOD(generated_id * 7, 1825) DAY)`. Seven and
+  1825 share no factor, so consecutive rows step a week through a five-year
+  range and wrap, and every block holds very nearly all 1825 distinct dates.
+  Block minimum and maximum therefore span the whole range everywhere: a
+  one-year filter prunes nothing, measured as 0 of 8,736 blocks pruned on Q5.
+  Range-based late materialization fares no better, since the fifth of rows a
+  year selects are spread evenly through every block rather than gathered.
+
+  Both techniques are central to a columnar engine and both score zero here,
+  so this benchmark reads as raw scan and decode throughput. That is a fair
+  contest - ClickHouse reads the same rows - but it means clustering, zone
+  maps and ordered layouts cannot register, while real order data, whose
+  dates track insertion, would reward all three (e09: "pruning value is
+  entirely a function of data clustering"). Do not conclude from a flat
+  result here that such work is worthless; conclude that this dataset cannot
+  measure it.
 
 ## Run
 
