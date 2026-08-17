@@ -31,12 +31,31 @@ pub(crate) enum DdlAction {
     Create { table: String },
 }
 
-/// The table an `ALTER TABLE` names, read lexically.
+/// What one DDL statement means for the tracked schema.
+///
+/// Object names qualified to a DIFFERENT schema are dropped during
+/// classification rather than filtered by the caller, because the two
+/// mistakes they invite are severe and opposite: `DROP TABLE other_db.t`
+/// routed by its bare table name orphans the tracked `t`, and
+/// `CREATE TABLE other_db.t` reaches the auto-include path, is absent from
+/// the tracked schema's probe, and errors the stream without advancing the
+/// checkpoint - which retries the same statement forever.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ParsedDdl {
+    pub(crate) actions: Vec<DdlAction>,
+    /// Whether any surviving action named the tracked schema EXPLICITLY.
+    /// The caller's session-schema gate cannot see this on its own: a
+    /// statement like `DROP TABLE app.t` issued from a session sitting in
+    /// another schema is still the tracked schema's DDL.
+    pub(crate) names_tracked_schema: bool,
+}
+
+/// The `(schema, table)` an `ALTER TABLE` names, read lexically.
 ///
 /// The statements this is used for are precisely the ones the SQL parser
 /// rejects, so it cannot help here. Handles the optional `IF EXISTS`, the
 /// schema qualifier, and backtick quoting.
-fn alter_table_target(statement: &str) -> Option<String> {
+fn alter_table_target(statement: &str) -> Option<(Option<String>, String)> {
     let rest = statement
         .trim_start()
         .get("ALTER TABLE".len()..)?
@@ -45,6 +64,7 @@ fn alter_table_target(statement: &str) -> Option<String> {
         .strip_prefix("IF EXISTS")
         .or_else(|| rest.strip_prefix("if exists"))
         .map_or(rest, str::trim_start);
+    let mut schema = None;
     let mut name = String::new();
     let mut chars = rest.chars().peekable();
     let mut quoted = false;
@@ -57,16 +77,16 @@ fn alter_table_target(statement: &str) -> Option<String> {
                 }
             }
             // A qualifier means what came before was the schema, not the table.
-            '.' if !quoted => name.clear(),
+            '.' if !quoted => schema = Some(std::mem::take(&mut name)),
             c if !quoted && (c.is_whitespace() || c == '(') => break,
             c => name.push(c),
         }
     }
-    (!name.is_empty()).then_some(name)
+    (!name.is_empty()).then_some((schema, name))
 }
 
 #[allow(clippy::too_many_lines)] // linear DDL-statement classification table
-pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
+pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, CdcError> {
     let normalized = statement.trim_start().to_ascii_uppercase();
     if ![
         "ALTER TABLE",
@@ -79,7 +99,7 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
     .iter()
     .any(|prefix| normalized.starts_with(prefix))
     {
-        return Ok(Vec::new());
+        return Ok(ParsedDdl::default());
     }
     // `ALTER TABLE ... CONVERT TO CHARACTER SET ...` is valid MySQL that
     // sqlparser 0.62 cannot parse, so it arrived here as a hard error and
@@ -100,21 +120,32 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
             || normalized.contains(" CONVERT TO CHARSET"))
     {
         return Ok(alter_table_target(statement)
-            .map(|table| {
-                vec![DdlAction::Alter {
-                    table,
-                    kind: AlterKind::IndexOnly,
-                }]
+            .map(|(schema, table)| {
+                let foreign = schema
+                    .as_deref()
+                    .is_some_and(|schema| !schema.eq_ignore_ascii_case(database));
+                if foreign {
+                    return ParsedDdl::default();
+                }
+                ParsedDdl {
+                    actions: vec![DdlAction::Alter {
+                        table,
+                        kind: AlterKind::IndexOnly,
+                    }],
+                    names_tracked_schema: schema.is_some(),
+                }
             })
             .unwrap_or_default());
     }
     let statements = Parser::parse_sql(&MySqlDialect {}, statement)
         .map_err(|error| CdcError::Ddl(format!("cannot parse DDL `{statement}`: {error}")))?;
-    let mut actions = Vec::new();
+    let mut parsed = ParsedDdl::default();
     for statement in statements {
         match statement {
             Statement::AlterTable(alter) => {
-                let table = table_name(&alter.name)?;
+                let Some(table) = table_in_schema(&alter.name, database, &mut parsed)? else {
+                    continue;
+                };
                 let kind =
                     if alter.operations.iter().all(|operation| {
                         matches!(
@@ -188,13 +219,14 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
                     } else {
                         AlterKind::RequiresResnapshot
                     };
-                actions.push(DdlAction::Alter { table, kind });
+                parsed.actions.push(DdlAction::Alter { table, kind });
             }
             Statement::Truncate(truncate) => {
                 for target in truncate.table_names {
-                    actions.push(DdlAction::Truncate {
-                        table: table_name(&target.name)?,
-                    });
+                    let Some(table) = table_in_schema(&target.name, database, &mut parsed)? else {
+                        continue;
+                    };
+                    parsed.actions.push(DdlAction::Truncate { table });
                 }
             }
             Statement::Drop {
@@ -203,20 +235,26 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
                 ..
             } => {
                 for name in names {
-                    actions.push(DdlAction::Drop {
-                        table: table_name(&name)?,
-                    });
+                    let Some(table) = table_in_schema(&name, database, &mut parsed)? else {
+                        continue;
+                    };
+                    parsed.actions.push(DdlAction::Drop { table });
                 }
             }
             Statement::CreateTable(create) if !create.temporary => {
-                actions.push(DdlAction::Create {
-                    table: table_name(&create.name)?,
-                });
+                let Some(table) = table_in_schema(&create.name, database, &mut parsed)? else {
+                    continue;
+                };
+                parsed.actions.push(DdlAction::Create { table });
             }
             Statement::RenameTable(renames) => {
                 for rename in renames {
-                    actions.push(DdlAction::Alter {
-                        table: table_name(&rename.old_name)?,
+                    let Some(table) = table_in_schema(&rename.old_name, database, &mut parsed)?
+                    else {
+                        continue;
+                    };
+                    parsed.actions.push(DdlAction::Alter {
+                        table,
                         kind: AlterKind::RequiresResnapshot,
                     });
                 }
@@ -224,11 +262,21 @@ pub(crate) fn parse_ddl(statement: &str) -> Result<Vec<DdlAction>, CdcError> {
             _ => {}
         }
     }
-    Ok(actions)
+    Ok(parsed)
 }
 
-fn table_name(name: &ObjectName) -> Result<String, CdcError> {
-    name.0
+/// Resolves a DDL object name against the tracked schema.
+///
+/// `None` means the name is qualified to a different schema and the action
+/// must not exist: routing it by bare table name would apply another
+/// schema's DDL to a tracked table of the same name.
+fn table_in_schema(
+    name: &ObjectName,
+    database: &str,
+    parsed: &mut ParsedDdl,
+) -> Result<Option<String>, CdcError> {
+    let table = name
+        .0
         .last()
         .and_then(|part| part.as_ident())
         .map(|identifier| identifier.value.clone())
@@ -236,7 +284,22 @@ fn table_name(name: &ObjectName) -> Result<String, CdcError> {
             CdcError::Ddl(format!(
                 "DDL object name `{name}` is not a table identifier"
             ))
-        })
+        })?;
+    if name.0.len() > 1 {
+        let schema = name.0[..name.0.len() - 1]
+            .last()
+            .and_then(|part| part.as_ident())
+            .ok_or_else(|| {
+                CdcError::Ddl(format!(
+                    "DDL object name `{name}` has a schema qualifier that is not an identifier"
+                ))
+            })?;
+        if !schema.value.eq_ignore_ascii_case(database) {
+            return Ok(None);
+        }
+        parsed.names_tracked_schema = true;
+    }
+    Ok(Some(table))
 }
 
 #[cfg(test)]
@@ -249,10 +312,11 @@ mod convert_charset_tests {
         let actions = parse_ddl(
             "ALTER TABLE `chitti_lms`.`AIGeneratedFeed` \
              CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
+            "chitti_lms",
         )
         .expect("a statement MySQL accepts must not fail schema tracking");
         assert_eq!(
-            actions,
+            actions.actions,
             vec![DdlAction::Alter {
                 table: "AIGeneratedFeed".to_owned(),
                 kind: AlterKind::IndexOnly,
@@ -269,9 +333,9 @@ mod convert_charset_tests {
             "ALTER TABLE `shop`.`orders` CONVERT TO CHARSET utf8mb4",
             "alter table orders convert to character set utf8mb4",
         ] {
-            let actions = parse_ddl(statement).expect(statement);
+            let actions = parse_ddl(statement, "shop").expect(statement);
             assert_eq!(
-                actions,
+                actions.actions,
                 vec![DdlAction::Alter {
                     table: "orders".to_owned(),
                     kind: AlterKind::IndexOnly,
@@ -285,8 +349,12 @@ mod convert_charset_tests {
     /// words, or a real column change would be classified as metadata.
     #[test]
     fn an_ordinary_alter_still_takes_the_parser() {
-        let actions = parse_ddl("ALTER TABLE orders ADD COLUMN coupon VARCHAR(24) NULL")
-            .expect("ordinary DDL still parses");
+        let actions = parse_ddl(
+            "ALTER TABLE orders ADD COLUMN coupon VARCHAR(24) NULL",
+            "app",
+        )
+        .expect("ordinary DDL still parses");
+        let actions = actions.actions;
         assert!(
             !actions.is_empty()
                 && actions
@@ -305,21 +373,30 @@ mod tests {
     #[test]
     fn classifies_supported_mysql_schema_changes() {
         assert_eq!(
-            parse_ddl("ALTER TABLE `app`.`events` ADD COLUMN note TEXT NULL").unwrap(),
+            parse_ddl(
+                "ALTER TABLE `app`.`events` ADD COLUMN note TEXT NULL",
+                "app"
+            )
+            .unwrap()
+            .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::AddOrDropColumns,
             }]
         );
         assert_eq!(
-            parse_ddl("ALTER TABLE events DROP COLUMN note").unwrap(),
+            parse_ddl("ALTER TABLE events DROP COLUMN note", "app")
+                .unwrap()
+                .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::AddOrDropColumns,
             }]
         );
         assert_eq!(
-            parse_ddl("ALTER TABLE events RENAME COLUMN note TO memo").unwrap(),
+            parse_ddl("ALTER TABLE events RENAME COLUMN note TO memo", "app")
+                .unwrap()
+                .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::RenameColumns(vec![("note".to_owned(), "memo".to_owned())]),
@@ -328,14 +405,21 @@ mod tests {
         // MODIFY and same-name CHANGE classify as in-place candidates; the
         // handler still quarantines unless the change is storage-compatible.
         assert_eq!(
-            parse_ddl("ALTER TABLE events MODIFY COLUMN note BIGINT").unwrap(),
+            parse_ddl("ALTER TABLE events MODIFY COLUMN note BIGINT", "app")
+                .unwrap()
+                .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
             }]
         );
         assert_eq!(
-            parse_ddl("ALTER TABLE events CHANGE COLUMN note note VARCHAR(200)").unwrap(),
+            parse_ddl(
+                "ALTER TABLE events CHANGE COLUMN note note VARCHAR(200)",
+                "app"
+            )
+            .unwrap()
+            .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
@@ -347,7 +431,7 @@ mod tests {
             "ALTER TABLE events ADD UNIQUE KEY unique_note (note)",
         ] {
             assert_eq!(
-                parse_ddl(ddl).unwrap(),
+                parse_ddl(ddl, "app").unwrap().actions,
                 vec![DdlAction::Alter {
                     table: "events".to_owned(),
                     kind: AlterKind::IndexOnly,
@@ -361,7 +445,7 @@ mod tests {
             "ALTER TABLE events MODIFY COLUMN note BIGINT, ADD COLUMN extra INT",
         ] {
             assert_eq!(
-                parse_ddl(ddl).unwrap(),
+                parse_ddl(ddl, "app").unwrap().actions,
                 vec![DdlAction::Alter {
                     table: "events".to_owned(),
                     kind: AlterKind::RequiresResnapshot,
@@ -373,13 +457,17 @@ mod tests {
     #[test]
     fn extracts_create_drop_and_truncate_tables() {
         assert_eq!(
-            parse_ddl("TRUNCATE TABLE app.events").unwrap(),
+            parse_ddl("TRUNCATE TABLE app.events", "app")
+                .unwrap()
+                .actions,
             vec![DdlAction::Truncate {
                 table: "events".to_owned(),
             }]
         );
         assert_eq!(
-            parse_ddl("DROP TABLE app.events, app.audit").unwrap(),
+            parse_ddl("DROP TABLE app.events, app.audit", "app")
+                .unwrap()
+                .actions,
             vec![
                 DdlAction::Drop {
                     table: "events".to_owned(),
@@ -390,28 +478,78 @@ mod tests {
             ]
         );
         assert_eq!(
-            parse_ddl("CREATE TABLE app.created (id BIGINT PRIMARY KEY)").unwrap(),
+            parse_ddl("CREATE TABLE app.created (id BIGINT PRIMARY KEY)", "app")
+                .unwrap()
+                .actions,
             vec![DdlAction::Create {
                 table: "created".to_owned(),
             }]
         );
         assert!(
-            parse_ddl("CREATE TEMPORARY TABLE scratch (id INT)")
+            parse_ddl("CREATE TEMPORARY TABLE scratch (id INT)", "app")
                 .unwrap()
+                .actions
                 .is_empty()
         );
-        assert!(parse_ddl("COMMIT").unwrap().is_empty());
+        assert!(parse_ddl("COMMIT", "app").unwrap().actions.is_empty());
         assert!(
-            parse_ddl("CREATE USER example IDENTIFIED BY 'secret'")
+            parse_ddl("CREATE USER example IDENTIFIED BY 'secret'", "app")
                 .unwrap()
+                .actions
                 .is_empty()
         );
         assert_eq!(
-            parse_ddl("RENAME TABLE events TO archived_events").unwrap(),
+            parse_ddl("RENAME TABLE events TO archived_events", "app")
+                .unwrap()
+                .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::RequiresResnapshot,
             }]
+        );
+    }
+
+    #[test]
+    fn foreign_schema_ddl_produces_no_actions() {
+        // Both directions of the mistake this exists to prevent: a DROP that
+        // would orphan the tracked table of the same name, and a CREATE that
+        // would reach auto-include, miss the tracked probe, and wedge the
+        // stream on a permanent error.
+        for ddl in [
+            "DROP TABLE other_db.events",
+            "CREATE TABLE other_db.events (id INT PRIMARY KEY)",
+            "TRUNCATE TABLE other_db.events",
+            "ALTER TABLE other_db.events ADD COLUMN note TEXT NULL",
+            "ALTER TABLE `other_db`.`events` CONVERT TO CHARACTER SET utf8mb4",
+        ] {
+            let parsed = parse_ddl(ddl, "app").expect(ddl);
+            assert!(parsed.actions.is_empty(), "{ddl}");
+            assert!(!parsed.names_tracked_schema, "{ddl}");
+        }
+        // A mixed DROP keeps only the tracked half.
+        let parsed = parse_ddl("DROP TABLE app.events, other_db.events", "app").unwrap();
+        assert_eq!(
+            parsed.actions,
+            vec![DdlAction::Drop {
+                table: "events".to_owned(),
+            }]
+        );
+        assert!(parsed.names_tracked_schema);
+    }
+
+    #[test]
+    fn an_explicit_tracked_qualifier_is_reported() {
+        // The caller's session-schema gate needs this to accept
+        // `DROP TABLE app.t` issued from a session sitting elsewhere.
+        assert!(
+            parse_ddl("DROP TABLE app.events", "app")
+                .unwrap()
+                .names_tracked_schema
+        );
+        assert!(
+            !parse_ddl("DROP TABLE events", "app")
+                .unwrap()
+                .names_tracked_schema
         );
     }
 }

@@ -666,10 +666,17 @@ async fn run_cdc_inner(
                     if normalized == "ROLLBACK" {
                         pending = PendingTransaction::default();
                     }
-                    let actions = parse_ddl(&statement)?;
-                    let tracks_schema = !actions.is_empty()
+                    let parsed = parse_ddl(&statement, &report.database)?;
+                    // Session schema is the default routing; an explicit
+                    // qualifier on the statement overrides it in both
+                    // directions - `other_db.t` from a tracked session was
+                    // already dropped during classification, and `tracked.t`
+                    // from a foreign session is still this schema's DDL.
+                    let tracks_schema = !parsed.actions.is_empty()
                         && (query.schema().is_empty()
-                            || query.schema().eq_ignore_ascii_case(&report.database));
+                            || query.schema().eq_ignore_ascii_case(&report.database)
+                            || parsed.names_tracked_schema);
+                    let actions = parsed.actions;
                     if tracks_schema && pending.has_mutations() {
                         let outcome = commit_pending(
                             &mut targets,
