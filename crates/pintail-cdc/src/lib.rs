@@ -385,6 +385,7 @@ async fn run_cdc_inner(
     let mut pending = PendingTransaction::default();
     let mut commits = 0_usize;
     let mut mutations = 0_usize;
+    let mut events_read = 0_usize;
     let mut reconnect_attempts = 0_usize;
     let mut resnapshot_attempted = false;
     let resnapshot_context = AutoResnapshotContext {
@@ -455,6 +456,7 @@ async fn run_cdc_inner(
             let event = match event {
                 Ok(event) => {
                     reconnect_attempts = 0;
+                    events_read += 1;
                     event
                 }
                 Err(error) => {
@@ -720,6 +722,12 @@ async fn run_cdc_inner(
                 .is_some_and(|maximum| commits >= maximum)
             {
                 stream.close().await?;
+                pintail_log::log_debug!(
+                    "cdc cycle done db={database_id} events={events_read} commits={commits} \
+                     mutations={mutations} pos={}:{}",
+                    position.file,
+                    position.pos
+                );
                 return finish_result(commits, mutations, &position, targets);
             }
         }
@@ -774,6 +782,17 @@ async fn run_cdc_inner(
                 "binlog stream ended inside a source transaction".to_owned(),
             ));
         }
+        // The one line that separates "the stream delivered nothing" from
+        // "the stream delivered events this cycle declined to act on" - the
+        // two are indistinguishable from outside, and a cycle that reads
+        // zero events while the binlog is growing is a wedge that otherwise
+        // logs nothing at all.
+        pintail_log::log_debug!(
+            "cdc cycle done db={database_id} events={events_read} commits={commits} \
+             mutations={mutations} pos={}:{}",
+            position.file,
+            position.pos
+        );
         return finish_result(commits, mutations, &position, targets);
     }
 }
