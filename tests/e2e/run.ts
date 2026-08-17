@@ -1556,6 +1556,39 @@ async function reprobe(database = databaseId) {
   await api(`/api/databases/${database}/probe`)
 }
 
+/// Everything the control plane can say about why a table has not arrived.
+async function replicationDiagnostics(database = databaseId): Promise<string> {
+  const [detail, tables, activity] = await Promise.all([
+    api<unknown>(`/api/databases/${database}`).catch((error) => String(error)),
+    api<TableSummary[]>(`/api/tables?db=${database}`)
+      .then((rows) => rows.map((row) => `${row.name}:${row.state}`))
+      .catch((error) => String(error)),
+    api<unknown[]>(`/api/activity?db=${database}&limit=6`).catch((error) => String(error)),
+  ])
+  return JSON.stringify({ database: detail, tables, activity })
+}
+
+/// Waits for a table created mid-stream to be adopted by the replica.
+///
+/// The quiet retry is diagnostic, not padding: the harness polls the wire
+/// while it waits, so a table that only appears once the queries stop points
+/// at the supervisor being starved rather than at the adoption itself.
+async function waitForAdoption(
+  table: string,
+  rows: number,
+): Promise<{ status: CheckResult['status']; detail?: string }> {
+  const arrived = async () => (await replicaCount(table)) === rows
+  if (await waitUntil(arrived, 120_000, 5_000)) return { status: 'PASS' }
+  await Bun.sleep(45_000)
+  if (await arrived()) {
+    return {
+      status: 'WARN',
+      detail: `${table} was adopted only after 45s with no query on the wire`,
+    }
+  }
+  return { status: 'FAIL', detail: `${table} was never adopted: ${await replicationDiagnostics()}` }
+}
+
 /// Writes a row into `orders` and waits for the replica to agree, which is the
 /// question these phases actually care about: whether the rest of the database
 /// still replicates after the destructive operation.
@@ -1578,9 +1611,9 @@ async function phaseDropTableCdc() {
   try {
     await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`)
     await sql(`INSERT INTO ${table} VALUES (1, 'one'), (2, 'two'), (3, 'three')`)
-    const seeded = await waitUntil(async () => (await replicaCount(table)) === 3, 180_000)
-    record(phase, 'drop-table:replicates before the drop', seeded ? 'PASS' : 'FAIL')
-    if (!seeded) return
+    const seeded = await waitForAdoption(table, 3)
+    record(phase, 'drop-table:replicates before the drop', seeded.status, seeded.detail)
+    if (seeded.status === 'FAIL') return
 
     await sql(`DROP TABLE ${table}`)
     const orphaned = await waitUntil(
@@ -1599,7 +1632,9 @@ async function phaseDropTableCdc() {
       phase,
       'drop-table:the rest of the database keeps replicating',
       survived ? 'PASS' : 'FAIL',
-      survived ? undefined : `orders never caught up after ${table} was dropped`,
+      survived
+        ? undefined
+        : `orders never caught up after ${table} was dropped: ${await replicationDiagnostics()}`,
     )
 
     // Retention is deliberate, but it also means the replica keeps answering
@@ -1634,9 +1669,9 @@ async function phaseDropTableRecreate() {
   try {
     await sql(create)
     await sql(`INSERT INTO ${table} VALUES (1, 'first-life'), (2, 'first-life')`)
-    const seeded = await waitUntil(async () => (await replicaCount(table)) === 2, 180_000)
-    record(phase, 'recreate:first generation replicates', seeded ? 'PASS' : 'FAIL')
-    if (!seeded) return
+    const seeded = await waitForAdoption(table, 2)
+    record(phase, 'recreate:first generation replicates', seeded.status, seeded.detail)
+    if (seeded.status === 'FAIL') return
 
     await sql(`DROP TABLE ${table}`)
     // Wait for the orphan to land before recreating: within one CDC run the
@@ -1668,6 +1703,7 @@ async function phaseDropTableRecreate() {
       phase,
       'recreate:the rest of the database keeps replicating',
       survived ? 'PASS' : 'FAIL',
+      survived ? undefined : await replicationDiagnostics(),
     )
   } finally {
     await sql(`DROP TABLE IF EXISTS ${table}`)
@@ -1686,18 +1722,26 @@ async function phaseDropTablePolling() {
       await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`)
       await sql(`INSERT INTO ${table} VALUES (1, 'a'), (2, 'b'), (3, 'c')`)
     }
-    const seeded = await waitUntil(
-      async () =>
-        (await replicaCount(dropped)) === 3 && (await replicaCount(truncated)) === 3,
-      180_000,
+    const first = await waitForAdoption(dropped, 3)
+    const second = await waitForAdoption(truncated, 3)
+    const seeded = first.status === 'FAIL' || second.status === 'FAIL' ? 'FAIL' : first.status
+    record(
+      phase,
+      'polling:fixtures replicate before the mode switch',
+      seeded,
+      first.detail ?? second.detail,
     )
-    record(phase, 'polling:fixtures replicate before the mode switch', seeded ? 'PASS' : 'FAIL')
-    if (!seeded) return
+    if (seeded === 'FAIL') return
 
     await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'polling' } })
     try {
       const healthy = await ordersStillReplicate()
-      record(phase, 'polling:database is healthy before the drop', healthy ? 'PASS' : 'FAIL')
+      record(
+        phase,
+        'polling:database is healthy before the drop',
+        healthy ? 'PASS' : 'FAIL',
+        healthy ? undefined : await replicationDiagnostics(),
+      )
 
       // A truncated table leaves no chunk for the cheap probe to find changed,
       // so the rows only disappear on a reconciling cycle. That is bounded by
@@ -1773,10 +1817,10 @@ async function phaseDropDatabase() {
     // the other schema has somewhere wrong to land.
     await sql(`CREATE TABLE ${shadow} (id INT PRIMARY KEY, label VARCHAR(32) NOT NULL)`)
     await sql(`INSERT INTO ${shadow} VALUES (1, 'main-schema')`)
-    const shadowed = await waitUntil(async () => (await replicaCount(shadow)) === 1, 180_000)
-    record(phase, 'cross-schema:same-named table replicates first', shadowed ? 'PASS' : 'FAIL')
+    const shadowed = await waitForAdoption(shadow, 1)
+    record(phase, 'cross-schema:same-named table replicates first', shadowed.status, shadowed.detail)
 
-    if (shadowed) {
+    if (shadowed.status !== 'FAIL') {
       await sql(`DROP TABLE ${source}.${shadow}`)
       await sql(`INSERT INTO ${shadow} VALUES (2, 'written after the other schema was dropped')`)
       const isolated = await waitUntil(async () => (await replicaCount(shadow)) === 2, 90_000)
