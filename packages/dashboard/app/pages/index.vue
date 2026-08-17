@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, ChevronRight, Database, HardDrive, RefreshCw, 
 import { dotToneClass, formatDate, formatNumber, modeOf, stateTone } from '@/lib/format'
 import type { VitalsSample } from '@/composables/useVitals'
 
-const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, alertCount, loadControlPlane } = useControlPlane()
+const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, alertCount, loading, loadControlPlane } = useControlPlane()
 
 // One sample per second, for as long as this page is open. The stream is
 // stopped on unmount so a backgrounded tab is not held open against the server.
@@ -147,7 +147,7 @@ const memoryCaption = computed(() => {
     <div class="grid gap-4 md:grid-cols-2">
       <Card class="p-4">
         <div class="mb-4 flex items-center justify-between gap-3"><h2 class="text-base font-semibold">Database lag posture</h2><Button variant="link" size="sm" as-child><NuxtLink to="/databases">View all</NuxtLink></Button></div>
-        <div v-if="!databases.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 text-center">
+        <div v-if="!databases.length && !loading" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 text-center">
           <Database :size="24" /><strong class="text-foreground">No source connected</strong><span class="max-w-sm text-sm">Add MySQL to begin the first mirror.</span>
           <Button as-child><NuxtLink to="/databases/new">Add database</NuxtLink></Button>
         </div>

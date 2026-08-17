@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Database, Pause, Play, Plus, Trash2 } from '@lucide/vue'
+import { Database, LoaderCircle, Pause, Play, Plus, Trash2 } from '@lucide/vue'
 import { dotToneClass, formatDate, messageOf, modeOf, stateTone } from '@/lib/format'
 import type { DatabaseRecord } from '@/types/pintail'
 
-const { databases, statuses, setMode, removeDatabase, error } = useControlPlane()
+const { databases, statuses, loading, setMode, removeDatabase, error } = useControlPlane()
 
 const deleteCandidate = ref<DatabaseRecord | null>(null)
 const deleteText = ref('')
@@ -34,7 +34,14 @@ async function confirmRemove() {
       <Button as-child><NuxtLink to="/databases/new"><Plus /> Add database</NuxtLink></Button>
     </header>
     <Card class="overflow-hidden p-0">
-      <div v-if="!databases.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center">
+      <!-- An empty cache also looks like this while a workspace switch is
+           reloading, so the wizard only appears once loading has settled -
+           flashing it at someone whose databases are two round trips away
+           reads as data loss. -->
+      <div v-if="!databases.length && loading" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center p-6 text-center">
+        <LoaderCircle class="animate-spin" :size="24" />
+      </div>
+      <div v-else-if="!databases.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center">
         <Database :size="30" /><h2 class="text-foreground font-semibold">No databases yet</h2><p class="max-w-md text-sm">Connect a source, inspect its capabilities, and choose the tables to mirror.</p>
         <Button as-child><NuxtLink to="/databases/new">Start the connection wizard</NuxtLink></Button>
       </div>

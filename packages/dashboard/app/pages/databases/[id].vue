@@ -79,7 +79,6 @@ async function onTableAction(table: TableSummary, action: 'resync' | 'reconcile'
   tableAction.value = `${table.name}:${action}`
   try {
     await runTableAction(databaseId.value, table, action)
-    if (action === 'resync') detailTab.value = 'snapshot'
     await loadDatabaseDetail()
   } catch {
     // error already recorded by runTableAction
@@ -149,7 +148,7 @@ function describeTable(table: TableSummary) {
                 <TableCell><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></TableCell>
                 <TableCell class="font-mono">{{ table.rows.toLocaleString() }}</TableCell>
                 <TableCell class="font-mono">v{{ table.schema_version }}</TableCell>
-                <TableCell class="text-muted-foreground">{{ table.last_error || '—' }}</TableCell>
+                <TableCell class="text-muted-foreground"><span class="block max-w-72 truncate" :title="table.last_error || undefined">{{ table.last_error || '—' }}</span></TableCell>
                 <TableCell>
                   <div class="flex items-center gap-1">
                     <Button variant="link" size="sm" :disabled="Boolean(tableAction)" @click="onTableAction(table, 'reconcile')">

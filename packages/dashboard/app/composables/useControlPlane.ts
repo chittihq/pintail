@@ -151,6 +151,11 @@ export function useControlPlane() {
 
   async function enterWorkspace(response: { token: string, workspace: Workspace }) {
     stopEventStream()
+    // The empty caches below are indistinguishable from a workspace with no
+    // databases, and the pages key their empty states on exactly that - so
+    // the whole span from here to the reload completing must read as
+    // loading, or the connection wizard flashes on every switch.
+    loading.value = true
     setToken(response.token)
     session.value = await request<Session>('/session')
     databases.value = []
