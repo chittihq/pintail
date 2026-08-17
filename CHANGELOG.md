@@ -4,6 +4,88 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.1-rc15] - 2026-08-17
+
+### Performance
+
+The cache-disabled track - every query measured with the result memo off,
+which is the like-for-like comparison against ClickHouse - now runs at a
+geometric mean of 0.55x ClickHouse's MergeTree over the eight analytical
+queries. Q4 (region x status breakdown) is FASTER than ClickHouse at 1.35x,
+190ms against 251ms, and Q1 (full table count) is at parity. Q5 fell from
+274ms to 161ms across this window and Q3 from 284ms to 189ms.
+
+One measurement caveat is load-bearing and belongs next to those numbers:
+this release's benchmark is the first run on a dedicated host. Every previous
+bank shared a machine with a live deployment, which suppressed the older
+figures by an amount nobody had quantified, so the improvement against
+earlier releases is real but smaller than the raw geomeans suggest. Only
+same-run Pintail/ClickHouse ratios are comparable, as benchmark/README.md
+has always said.
+
+The gains came from removing work rather than computing faster, which is
+worth recording because the opposite was tried repeatedly and measured at
+nothing:
+
+- Bit-packed integer blocks decode in a single streaming pass. The old path
+  built a zeroed sixteen-byte window per value and converted through u128,
+  then a second per-row loop re-read the temporary vector, re-checked
+  overflow and dispatched every value through a match. Two passes and five
+  layers for one add and one store.
+- A decoded chunk passes through as one batch. Segments decode as
+  100,000-row chunks against a 65,536-row batch target, so every chunk was
+  split and the remainder copied out of every column - about 110MB of pure
+  reshaping per 20M-row query.
+- Comparison masks fill in parallel. The WHERE clause ran its comparison
+  loop on one thread: forty million date comparisons while fifteen cores
+  idled, 35ms of a 118ms query.
+- A column with no nulls carries a count instead of a byte per row, end to
+  end from the segment builder to the executor's mask. The typed adoption
+  phase fell from 14ms to 1.4ms.
+- Date-part groups accumulate in dense slots instead of being buffered into
+  partition buckets and read back, and both parts of a two-part key come
+  from one civil-calendar conversion.
+- Decimal units keep the width the store emits. They were widened to i128 on
+  adoption and narrowed straight back to i64 by the aggregate lane that
+  reads them - 320MB allocated and copied per pass between two points that
+  both wanted 64 bits.
+- Each aggregation worker gets several hash partitions rather than one, so a
+  partition's map fits a core's private cache, and the scan decodes one
+  segment per scan-pool thread rather than a hardcoded eight.
+
+### Added
+
+- `GROUP BY` and `WHERE` can express a join the way SQL-89 does: equality
+  predicates between two relations in a `WHERE` clause are inferred as join
+  conditions, so `FROM a, b WHERE a.id = b.a_id` plans as a hash join
+  instead of a cross product. Inference is refused for anything not provably
+  side-separable, and for volatile expressions.
+- The validation pipeline fails when banked evidence predates the code it
+  measures. Benchmark results, TPC-H results, the production workload and
+  the e2e gate are all checked by commit ancestry, because a release once
+  shipped a README table describing an earlier run and nothing caught it.
+- A TPC-H-derived correctness workload covering four query shapes the
+  analytical suite lacks - multi-way joins, top-N over a join,
+  high-cardinality join grouping - each verified byte-exact against MySQL.
+  It is a correctness gate, not a performance benchmark, and its artifact
+  now says so.
+- The row-count probe counts exactly, abandoning a count that exceeds thirty
+  seconds and falling back to statistics rather than hanging the caller.
+- The scan pool's width is settable.
+
+### Fixed
+
+- The benchmark survives a ClickHouse crash mid-run. The container had no
+  restart policy and the retry fired immediately, so a crashed server
+  guaranteed ConnectionRefused and lost the whole stage; two runs died that
+  way in one day. The container now restarts, the retry waits for the server
+  to answer, and the container tail is captured at the moment of the drop.
+- Buffered batches are sized to what the query can still afford, which is
+  what unblocked raising the batch target to 65,536 rows: the aggregate's
+  spill path could not retry mid-merge and failed at every size above 4,096.
+- Nine findings from an external review, and a join inference that could
+  admit an unsafe equality.
+
 ## [0.0.1-rc14] - 2026-08-13
 
 ### Added
