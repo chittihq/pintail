@@ -70,7 +70,7 @@ function auditDetail(event: AuditEvent) {
       <div class="grid gap-3 sm:grid-cols-2">
         <div v-for="record in deadLetters" :key="record.id" data-testid="dead-letter" class="rounded-md border p-3">
           <div class="flex justify-between gap-3"><strong class="text-sm">{{ record.table || 'Database event' }}</strong><span class="text-muted-foreground text-xs">{{ formatDate(record.created_at) }}</span></div>
-          <p class="text-destructive mt-1 text-sm">{{ record.error }}</p>
+          <p class="text-destructive mt-1 text-sm break-words">{{ record.error }}</p>
           <pre class="bg-muted text-muted-foreground mt-2 max-h-48 overflow-auto rounded p-2.5 text-xs">{{ JSON.stringify(record.event, null, 2) }}</pre>
           <div class="mt-2 flex items-center gap-2">
             <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>

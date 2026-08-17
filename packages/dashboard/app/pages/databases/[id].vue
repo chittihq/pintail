@@ -200,7 +200,7 @@ function describeTable(table: TableSummary) {
             <div v-if="!deadLetters.filter((item) => item.database_id === database?.id).length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 text-center"><Check :size="24" /><strong class="text-foreground">No rejected events</strong><span class="max-w-sm text-sm">Decoder and storage errors appear here.</span></div>
             <div v-for="record in deadLetters.filter((item) => item.database_id === database?.id)" :key="record.id" class="border-b py-3 last:border-0">
               <strong class="text-sm">{{ record.table || 'database' }}</strong>
-              <p class="text-destructive mt-1 text-sm">{{ record.error }}</p>
+              <p class="text-destructive mt-1 text-sm break-words">{{ record.error }}</p>
               <div class="mt-2 flex items-center gap-2">
                 <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
                 <Button variant="link" size="sm" @click="discardDlq(record)">Discard</Button>
