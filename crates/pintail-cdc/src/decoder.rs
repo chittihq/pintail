@@ -1,7 +1,7 @@
 use chrono::{Datelike as _, Timelike as _, Utc};
 use mysql_async::{
     Value as MysqlValue,
-    binlog::{row::BinlogRow, value::BinlogValue},
+    binlog::{events::OptionalMetaExtractor, row::BinlogRow, value::BinlogValue},
 };
 use pintail_probe::{SourceColumn, SourceTable};
 use pintail_snapshot::map_mysql_value;
@@ -9,20 +9,135 @@ use pintail_types::{KeyMode, KeyPart, PrimaryKey, Value};
 
 use crate::CdcError;
 
-pub(crate) fn decode_row(table: &SourceTable, row: BinlogRow) -> Result<Vec<Value>, CdcError> {
-    if row.len() != table.columns.len() {
+/// How a row image's columns line up with the schema it is decoded against.
+///
+/// The two agree on width for every row a healthy stream sees, and `Positional`
+/// is that case: column *i* of the image is column *i* of the schema, which is
+/// the only reading available when `binlog_row_metadata` is MINIMAL.
+///
+/// They stop agreeing whenever the stream is behind a schema change - an ALTER
+/// that landed while the stream was disconnected, or several that landed faster
+/// than it caught up. The row images written before the change are historical
+/// and narrower, and no amount of re-probing makes them wider. Under FULL
+/// metadata the table map names its own columns, so those rows can still be
+/// placed exactly: `ByName` carries, for each image position, the schema column
+/// it holds. Columns the image predates are absent rather than guessed.
+pub(crate) enum RowAlignment {
+    Positional,
+    ByName {
+        /// Schema column index per image position; `None` where the image
+        /// carries a column the schema no longer has.
+        image_to_schema: Vec<Option<usize>>,
+    },
+}
+
+impl RowAlignment {
+    /// Works out how `table_map`'s row images map onto `table`.
+    ///
+    /// An error here means the row cannot be placed at all, which is the
+    /// signal to re-probe and try again against a fresher schema.
+    pub(crate) fn resolve(
+        table: &SourceTable,
+        table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
+    ) -> Result<Self, CdcError> {
+        let image_columns = usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
+        if image_columns == table.columns.len() {
+            return Ok(Self::Positional);
+        }
+        let metadata = OptionalMetaExtractor::new(table_map.iter_optional_meta())
+            .map_err(|error| CdcError::Decode(format!("{}: {error}", table.name)))?;
+        let names = metadata
+            .iter_column_name()
+            .map(|name| name.map(|name| name.name().into_owned()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CdcError::Decode(format!("{}: {error}", table.name)))?;
+        if names.len() != image_columns {
+            return Err(CdcError::Decode(format!(
+                "{} row image contains {image_columns} columns against a {}-column schema, and \
+                 binlog_row_metadata does not name them",
+                table.name,
+                table.columns.len()
+            )));
+        }
+        let image_to_schema = names
+            .iter()
+            .map(|name| {
+                table
+                    .columns
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(name))
+            })
+            .collect::<Vec<_>>();
+        // A column the image predates takes the value MySQL gave it when the
+        // ALTER ran, and NULL is the only one this can reconstruct without the
+        // declared default. Refusing the others keeps the row honest: the
+        // caller quarantines for resync rather than storing a wrong value.
+        for (index, column) in table.columns.iter().enumerate() {
+            if image_to_schema.contains(&Some(index)) {
+                continue;
+            }
+            if !column.nullable {
+                return Err(CdcError::Decode(format!(
+                    "{}.{} is absent from a {image_columns}-column row image and is NOT NULL",
+                    table.name, column.name
+                )));
+            }
+            if table
+                .key
+                .columns
+                .iter()
+                .any(|key| key.eq_ignore_ascii_case(&column.name))
+            {
+                return Err(CdcError::Decode(format!(
+                    "{}.{} is a key column absent from a {image_columns}-column row image",
+                    table.name, column.name
+                )));
+            }
+        }
+        Ok(Self::ByName { image_to_schema })
+    }
+}
+
+pub(crate) fn decode_row(
+    table: &SourceTable,
+    row: BinlogRow,
+    alignment: &RowAlignment,
+) -> Result<Vec<Value>, CdcError> {
+    let image_to_schema = match alignment {
+        RowAlignment::Positional => {
+            if row.len() != table.columns.len() {
+                return Err(CdcError::Decode(format!(
+                    "{} row image contains {} columns; FULL metadata/image requires {}",
+                    table.name,
+                    row.len(),
+                    table.columns.len()
+                )));
+            }
+            return row
+                .unwrap()
+                .into_iter()
+                .zip(&table.columns)
+                .map(|(value, column)| decode_value(&table.name, column, value))
+                .collect();
+        }
+        RowAlignment::ByName { image_to_schema } => image_to_schema,
+    };
+    if row.len() != image_to_schema.len() {
         return Err(CdcError::Decode(format!(
-            "{} row image contains {} columns; FULL metadata/image requires {}",
+            "{} row image contains {} columns; its table map declared {}",
             table.name,
             row.len(),
-            table.columns.len()
+            image_to_schema.len()
         )));
     }
-    row.unwrap()
-        .into_iter()
-        .zip(&table.columns)
-        .map(|(value, column)| decode_value(&table.name, column, value))
-        .collect()
+    let mut values = vec![Value::Null; table.columns.len()];
+    for (value, target) in row.unwrap().into_iter().zip(image_to_schema) {
+        let Some(index) = *target else {
+            continue;
+        };
+        values[index] = decode_value(&table.name, &table.columns[index], value)?;
+    }
+    Ok(values)
 }
 
 pub(crate) fn physical_key(table: &SourceTable, values: &[Value]) -> Result<PrimaryKey, CdcError> {

@@ -42,7 +42,7 @@ use thiserror::Error;
 
 use crate::{
     ddl::{AlterKind, DdlAction, parse_ddl},
-    decoder::{decode_row, insert_key, physical_key},
+    decoder::{RowAlignment, decode_row, insert_key, physical_key},
     gtid::MysqlGtidSet,
 };
 
@@ -345,7 +345,7 @@ async fn run_cdc_inner(
     // Tables whose drift heal already failed once. A source that keeps
     // disagreeing must not be re-probed per row: one attempt, then the
     // decoder's quarantine path owns it.
-    let mut drift_heals: BTreeSet<usize> = BTreeSet::new();
+    let mut drift_heals: BTreeSet<(usize, usize)> = BTreeSet::new();
     for (name, &index) in &target_indexes {
         if let Some(stored) = metadata.setting(&fence_key(database_id, name))?
             && let Some((file, position_text)) = stored.rsplit_once(':')
@@ -522,37 +522,44 @@ async fn run_cdc_inner(
                             &targets[target_index].source.name.to_ascii_lowercase(),
                         ))?;
                     }
-                    // A row image whose width disagrees with the probed
-                    // schema means a schema change reached the table without
-                    // reaching this stream as DDL. Heal it here rather than
-                    // letting the decoder refuse the row and mark the whole
-                    // table for resnapshot.
-                    if !fenced && !blocked_targets.contains(&target_index) {
+                    // Placing the row image against the tracked schema is what
+                    // detects a missed schema change: it succeeds for every
+                    // row a caught-up stream sees, and the ways it fails are
+                    // the ways DDL can reach the table without reaching this
+                    // stream. Re-probe on that failure rather than on a width
+                    // comparison - once several ALTERs have landed the widths
+                    // disagree even on rows that place perfectly well.
+                    let live = !fenced && !blocked_targets.contains(&target_index);
+                    let mut alignment = live
+                        .then(|| RowAlignment::resolve(&targets[target_index].source, table_map))
+                        .and_then(Result::ok);
+                    if live && alignment.is_none() {
                         let row_columns =
                             usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
-                        if row_columns != targets[target_index].source.columns.len()
-                            && drift_heals.insert(target_index)
-                        {
-                            let healed = heal_schema_drift(
+                        // One probe per table per row width. A source that is
+                        // genuinely broken keeps failing on the same width, and
+                        // must not probe-storm MySQL once per row it sends.
+                        if drift_heals.insert((target_index, row_columns)) {
+                            heal_schema_drift(
                                 pool,
                                 &report.database,
                                 database_id,
                                 &mut targets[target_index],
                                 &mut metadata,
-                                row_columns,
+                                table_map,
                             )
                             .await;
-                            if healed {
-                                drift_heals.remove(&target_index);
-                            }
+                            alignment =
+                                RowAlignment::resolve(&targets[target_index].source, table_map)
+                                    .ok();
                         }
                     }
-                    if !fenced
-                        && !blocked_targets.contains(&target_index)
-                        && decode_rows_event(
+                    if let Some(alignment) = alignment {
+                        if decode_rows_event(
                             &rows_event,
                             table_map,
                             &targets[target_index].source,
+                            &alignment,
                             target_index,
                             &position,
                             event_position,
@@ -561,8 +568,18 @@ async fn run_cdc_inner(
                             &metadata,
                             &mut pending,
                             options.max_transaction_bytes,
-                        )?
-                    {
+                        )? {
+                            blocked_targets.insert(target_index);
+                        }
+                    } else if live {
+                        // The row cannot be placed even against a freshly
+                        // probed schema. Resync is the honest outcome; storing
+                        // a guessed column layout would be worse.
+                        metadata.mark_table_needs_resync(
+                            database_id,
+                            &targets[target_index].source.name,
+                            "row image does not align with any probed schema",
+                        )?;
                         blocked_targets.insert(target_index);
                     }
                     position.pos = event_position;
@@ -1593,25 +1610,27 @@ async fn heal_schema_drift(
     database_id: &str,
     target: &mut CdcTarget,
     metadata: &mut MetaStore,
-    row_columns: usize,
-) -> bool {
+    table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
+) {
     let table = target.source.name.clone();
     let previous = target.source.columns.len();
-    match adopt_drifted_schema(pool, database, database_id, target, metadata, row_columns).await {
+    let row_columns = usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
+    match adopt_drifted_schema(pool, database, database_id, target, metadata, table_map).await {
         Ok(()) => {
             pintail_log::log_info!(
-                "cdc drift healed db={database_id} table={table} columns={previous}->{row_columns}"
+                "cdc drift healed db={database_id} table={table} schema={previous}->{} for a \
+                 {row_columns}-column row image",
+                target.source.columns.len()
             );
-            true
         }
         Err(reason) => {
             // A declined heal ends in quarantine, and the operator's first
             // question is which of the several ways it could decline actually
             // fired. Saying so here costs one line per drift.
             pintail_log::log_error!(
-                "cdc drift declined db={database_id} table={table} columns={previous}->{row_columns}: {reason}"
+                "cdc drift declined db={database_id} table={table} schema={previous} row image \
+                 {row_columns}: {reason}"
             );
-            false
         }
     }
 }
@@ -1622,7 +1641,7 @@ async fn adopt_drifted_schema(
     database_id: &str,
     target: &mut CdcTarget,
     metadata: &mut MetaStore,
-    row_columns: usize,
+    table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
 ) -> Result<(), String> {
     let refreshed = probe_source(pool, database)
         .await
@@ -1630,16 +1649,12 @@ async fn adopt_drifted_schema(
     let source = find_source_table(&refreshed, &target.source.name)
         .cloned()
         .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
-    // Only adopt a schema that actually explains the row in hand. A probe
-    // that still disagrees means the drift is something else - a rename, a
-    // table swapped underneath - and guessing would corrupt column identity.
-    if source.columns.len() != row_columns {
-        return Err(format!(
-            "probe reports {} columns, row image has {row_columns}",
-            source.columns.len()
-        ));
-    }
     let source = stabilize_source_table(&target.source, source)?;
+    // Only adopt a schema that actually explains the row in hand. A probe the
+    // row still cannot be placed against means the drift is something else - a
+    // rename, a table swapped underneath - and guessing would silently corrupt
+    // column identity, which is worse than the resync this declines into.
+    RowAlignment::resolve(&source, table_map).map_err(|error| error.to_string())?;
     // From here the work is exactly what the DDL path performs, because the
     // outcome has to be indistinguishable from having seen the statement:
     // carrying the new column list on the source alone would keep the stream
@@ -1679,6 +1694,7 @@ fn decode_rows_event(
     rows_event: &RowsEventData<'_>,
     table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
     source: &SourceTable,
+    alignment: &RowAlignment,
     target_index: usize,
     position: &StreamPosition,
     event_position: u64,
@@ -1712,6 +1728,7 @@ fn decode_rows_event(
         };
         if let Err(error) = decode_row_pair(
             source,
+            alignment,
             target_index,
             row,
             position,
@@ -1757,8 +1774,10 @@ fn discard_target_mutations(pending: &mut PendingTransaction, target_index: usiz
     pending.retained_bytes = pending.retained_bytes.saturating_sub(removed_bytes);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_row_pair(
     source: &SourceTable,
+    alignment: &RowAlignment,
     target_index: usize,
     (before, after): (Option<BinlogRow>, Option<BinlogRow>),
     position: &StreamPosition,
@@ -1768,7 +1787,7 @@ fn decode_row_pair(
 ) -> Result<(), CdcError> {
     match (before, after) {
         (None, Some(after)) => {
-            let values = decode_row(source, after)?;
+            let values = decode_row(source, after, alignment)?;
             let version = position.version(event_position, pending.ordinal)?;
             let key = insert_key(source, &values, version)?;
             push_mutations(
@@ -1787,7 +1806,7 @@ fn decode_row_pair(
                     source.name
                 )));
             }
-            let values = decode_row(source, before)?;
+            let values = decode_row(source, before, alignment)?;
             let key = physical_key(source, &values)?;
             push_mutations(
                 pending,
@@ -1810,8 +1829,8 @@ fn decode_row_pair(
                     source.name
                 )));
             }
-            let before_values = decode_row(source, before)?;
-            let after_values = decode_row(source, after)?;
+            let before_values = decode_row(source, before, alignment)?;
+            let after_values = decode_row(source, after, alignment)?;
             let before_key = physical_key(source, &before_values)?;
             let after_key = physical_key(source, &after_values)?;
             let mut mutations = Vec::with_capacity(2);
