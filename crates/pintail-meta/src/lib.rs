@@ -874,7 +874,23 @@ impl MetaStore {
     ///
     /// Returns an error when the state cannot be persisted.
     pub fn begin_table_resnapshot(&self, database_id: &str, table_name: &str) -> Result<()> {
-        self.connection
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin table resnapshot")?;
+        // The chunk journal is how a snapshot resumes: chunks recorded
+        // completed are skipped. Emptying the store without clearing it makes
+        // the copy a no-op that still reports the previous run's totals - a
+        // resnapshot that says it moved 200 rows and leaves the table empty.
+        transaction
+            .execute(
+                "DELETE FROM snapshot_chunks WHERE db_id = ?1 AND table_name = ?2",
+                (database_id, table_name),
+            )
+            .with_context(|| {
+                format!("failed to clear the chunk journal for {database_id}.{table_name}")
+            })?;
+        transaction
             .execute(
                 "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
                    last_error = NULL WHERE db_id = ?1 AND name = ?2",
@@ -883,7 +899,9 @@ impl MetaStore {
             .with_context(|| {
                 format!("failed to start a resnapshot of {database_id}.{table_name}")
             })?;
-        Ok(())
+        transaction
+            .commit()
+            .context("failed to commit table resnapshot start")
     }
 
     /// Returns one table to a replicating state once its snapshot is durable.

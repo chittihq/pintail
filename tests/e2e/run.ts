@@ -1273,7 +1273,14 @@ async function phaseControlPlane() {
       const rows = await pintailQuery(`SELECT COUNT(*) FROM ${table}`)
       return String(rows[0][0])
     }
+    // `orders` is in here deliberately. An earlier version of this check
+    // pinned only the OTHER tables and passed while orders was left empty -
+    // the store was cleared for the recopy and the chunk journal still said
+    // every chunk was done, so the copy no-opped and reported the previous
+    // run's totals. A resnapshot must leave the table it recopies identical,
+    // not merely leave the others alone.
     const before = {
+      orders: await countOf('orders'),
       customers: await countOf('customers'),
       order_items: await countOf('order_items'),
     }
@@ -1304,13 +1311,26 @@ async function phaseControlPlane() {
       }
       await Bun.sleep(2_000)
     }
-    for (const [table, expected] of Object.entries(before)) {
-      const actual = await countOf(table)
-      if (actual !== expected) {
+    // The recopied table reappears asynchronously, so give the counts a
+    // window to settle rather than reading them the instant the job reports
+    // done.
+    const settled = Date.now() + 60_000
+    for (;;) {
+      const actual: Record<string, string> = {}
+      for (const table of Object.keys(before)) actual[table] = await countOf(table)
+      const changed = Object.entries(before).filter(
+        ([table, expected]) => actual[table] !== expected,
+      )
+      if (changed.length === 0) break
+      if (Date.now() > settled) {
         throw new Error(
-          `resync of orders changed ${table}: ${expected} rows before, ${actual} after`,
+          `resync of orders left tables changed: ` +
+            changed
+              .map(([table, expected]) => `${table} ${expected} before, ${actual[table]} after`)
+              .join('; '),
         )
       }
+      await Bun.sleep(2_000)
     }
   })
   await check('keyless policy: ambiguity quarantines and exact multiplicity repairs', async () => {
