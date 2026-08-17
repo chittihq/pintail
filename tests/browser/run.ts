@@ -547,6 +547,25 @@ async function main() {
     await page!.getByText(DATABASE).first().waitFor({ timeout: 15_000 })
   })
 
+  await check('View opens a data preview without leaving the tables list', async () => {
+    // The preview reads through the query engine - the same merge-on-read
+    // path the SQL console uses - so the assertion is on a seeded VALUE, not
+    // just on the dialog appearing: a dialog that opened but queried the
+    // wrong table or database would show the right title over wrong rows.
+    await page!.goto(`${pintailUrl}/databases`)
+    await page!.getByRole('link', { name: DATABASE }).first().click()
+    await page!.getByRole('row', { name: /events/ }).getByRole('button', { name: 'View' }).click()
+    const dialog = page!.getByRole('dialog')
+    await dialog.getByRole('heading', { name: 'events' }).waitFor({ timeout: 15_000 })
+    await dialog.getByText('49.90').waitFor({ timeout: 15_000 })
+    await dialog.getByText(/First 4 rows/).waitFor()
+    await page!.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+    // And the operator is still where they acted from: the tables list, not
+    // the snapshot tab and not another page.
+    await page!.getByRole('button', { name: 'View' }).first().waitFor()
+  })
+
   await check('an empty table list explains itself', async () => {
     // Regression for a wizard that rendered an empty bordered box with
     // Review & start disabled and no reason given. The cause is almost never

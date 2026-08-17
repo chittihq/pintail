@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, ChevronRight, HardDrive, LoaderCircle, Pause, Play, Radio, RefreshCw, Table2, X } from '@lucide/vue'
+import { AlertTriangle, Check, ChevronRight, Eye, HardDrive, LoaderCircle, Pause, Play, Radio, RefreshCw, Table2, X } from '@lucide/vue'
 import { useIntervalFn } from '@vueuse/core'
-import { formatDate, formatNumber, messageOf, modeOf, snapshotPercent, stateTone } from '@/lib/format'
-import type { SnapshotStatus, TableSummary } from '@/types/pintail'
+import { displayValue, formatDate, formatNumber, messageOf, modeOf, snapshotPercent, stateTone } from '@/lib/format'
+import type { QueryResponse, SnapshotStatus, TableSummary } from '@/types/pintail'
 
 const route = useRoute()
 const router = useRouter()
@@ -73,6 +73,37 @@ async function resnapshot() {
   await forceSnapshot(database.value.id)
   detailTab.value = 'snapshot'
   await loadDatabaseDetail()
+}
+
+const viewTable = ref<TableSummary | null>(null)
+const viewResult = ref<QueryResponse | null>(null)
+const viewError = ref('')
+
+async function openView(table: TableSummary) {
+  viewTable.value = table
+  viewResult.value = null
+  viewError.value = ''
+  try {
+    // The wire quoting rule: a backtick inside an identifier doubles.
+    const identifier = table.name.replaceAll('`', '``')
+    viewResult.value = await request<QueryResponse>('/query', {
+      method: 'POST',
+      body: JSON.stringify({
+        db: databaseId.value,
+        sql: `SELECT * FROM \`${identifier}\` LIMIT 100`,
+      }),
+    })
+  } catch (failure) {
+    viewError.value = messageOf(failure)
+  }
+}
+
+function closeView(open: boolean) {
+  if (!open) {
+    viewTable.value = null
+    viewResult.value = null
+    viewError.value = ''
+  }
 }
 
 async function onTableAction(table: TableSummary, action: 'resync' | 'reconcile') {
@@ -151,6 +182,9 @@ function describeTable(table: TableSummary) {
                 <TableCell class="text-muted-foreground"><span class="block max-w-72 truncate" :title="table.last_error || undefined">{{ table.last_error || '—' }}</span></TableCell>
                 <TableCell>
                   <div class="flex items-center gap-1">
+                    <Button variant="link" size="sm" title="First 100 rows as the query engine serves them" @click="openView(table)">
+                      <Eye /> View
+                    </Button>
                     <Button variant="link" size="sm" :disabled="Boolean(tableAction)" @click="onTableAction(table, 'reconcile')">
                       <LoaderCircle v-if="tableAction === `${table.name}:reconcile`" class="animate-spin" /> Reconcile
                     </Button>
@@ -285,4 +319,39 @@ function describeTable(table: TableSummary) {
       <Button variant="link" as-child><NuxtLink to="/databases">Back to databases</NuxtLink></Button>
     </div>
   </section>
+  <Dialog :open="Boolean(viewTable)" @update:open="closeView">
+    <DialogContent class="sm:max-w-5xl">
+      <DialogHeader>
+        <DialogTitle class="font-mono">{{ viewTable?.name }}</DialogTitle>
+        <DialogDescription>
+          <template v-if="viewResult">
+            First {{ viewResult.rows.length }} rows as the query engine serves them ·
+            {{ viewResult.stats.duration_ms }}ms
+          </template>
+          <template v-else-if="viewError">The query engine refused the read.</template>
+          <template v-else>Reading…</template>
+        </DialogDescription>
+      </DialogHeader>
+      <p v-if="viewError" class="text-destructive text-sm break-words">{{ viewError }}</p>
+      <div v-else-if="!viewResult" class="grid min-h-40 place-content-center"><LoaderCircle class="animate-spin" /></div>
+      <div v-else-if="!viewResult.rows.length" class="text-muted-foreground grid min-h-40 place-content-center text-sm">The table is empty.</div>
+      <div v-else class="max-h-[60vh] overflow-auto rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead v-for="field in viewResult.fields" :key="field.name" class="bg-background sticky top-0 z-10"><span>{{ field.name }}</span><small class="text-muted-foreground mt-0.5 block font-normal normal-case">{{ typeof field.data_type === 'string' ? field.data_type : 'typed' }}</small></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="(row, rowIndex) in viewResult.rows" :key="rowIndex">
+              <TableCell v-for="(value, valueIndex) in row" :key="valueIndex" class="text-nowrap font-mono text-xs" :class="{ 'text-muted-foreground italic': value === null }">{{ displayValue(value) }}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" as-child><NuxtLink :to="`/sql?db=${databaseId}&describe=${encodeURIComponent(viewTable?.name ?? '')}`">Open in SQL Console</NuxtLink></Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
