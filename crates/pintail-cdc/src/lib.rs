@@ -1595,44 +1595,72 @@ async fn heal_schema_drift(
     metadata: &mut MetaStore,
     row_columns: usize,
 ) -> bool {
-    let Ok(refreshed) = probe_source(pool, database).await else {
-        return false;
-    };
-    let Some(source) = find_source_table(&refreshed, &target.source.name).cloned() else {
-        return false;
-    };
+    let table = target.source.name.clone();
+    let previous = target.source.columns.len();
+    match adopt_drifted_schema(pool, database, database_id, target, metadata, row_columns).await {
+        Ok(()) => {
+            pintail_log::log_info!(
+                "cdc drift healed db={database_id} table={table} columns={previous}->{row_columns}"
+            );
+            true
+        }
+        Err(reason) => {
+            // A declined heal ends in quarantine, and the operator's first
+            // question is which of the several ways it could decline actually
+            // fired. Saying so here costs one line per drift.
+            pintail_log::log_error!(
+                "cdc drift declined db={database_id} table={table} columns={previous}->{row_columns}: {reason}"
+            );
+            false
+        }
+    }
+}
+
+async fn adopt_drifted_schema(
+    pool: &Pool,
+    database: &str,
+    database_id: &str,
+    target: &mut CdcTarget,
+    metadata: &mut MetaStore,
+    row_columns: usize,
+) -> Result<(), String> {
+    let refreshed = probe_source(pool, database)
+        .await
+        .map_err(|error| format!("re-probe failed: {error}"))?;
+    let source = find_source_table(&refreshed, &target.source.name)
+        .cloned()
+        .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
     // Only adopt a schema that actually explains the row in hand. A probe
     // that still disagrees means the drift is something else - a rename, a
     // table swapped underneath - and guessing would corrupt column identity.
     if source.columns.len() != row_columns {
-        return false;
+        return Err(format!(
+            "probe reports {} columns, row image has {row_columns}",
+            source.columns.len()
+        ));
     }
-    let Ok(source) = stabilize_source_table(&target.source, source) else {
-        return false;
-    };
+    let source = stabilize_source_table(&target.source, source)?;
     // From here the work is exactly what the DDL path performs, because the
     // outcome has to be indistinguishable from having seen the statement:
     // carrying the new column list on the source alone would keep the stream
     // decoding while every query still resolved against the old schema.
-    let Ok(version) = next_schema_version(target.store.schema().version()) else {
-        return false;
-    };
-    let Ok(schema) = source.table_schema_with_version(version) else {
-        return false;
-    };
-    if target.store.evolve_schema(schema).is_err() {
-        return false;
-    }
-    let Ok(columns_json) = serde_json::to_string(&source.columns) else {
-        return false;
-    };
+    let version =
+        next_schema_version(target.store.schema().version()).map_err(|error| error.to_string())?;
+    let schema = source
+        .table_schema_with_version(version)
+        .map_err(|error| error.to_string())?;
+    target
+        .store
+        .evolve_schema(schema)
+        .map_err(|error| error.to_string())?;
+    let columns_json = serde_json::to_string(&source.columns).map_err(|error| error.to_string())?;
     // The history has no statement to quote - that is the whole point of this
     // path - so it records how the change was learned instead.
     let statement = format!(
         "-- schema drift adopted from source probe ({} columns)",
         source.columns.len()
     );
-    if metadata
+    metadata
         .record_schema_history(
             database_id,
             &source.name,
@@ -1641,12 +1669,9 @@ async fn heal_schema_drift(
             &columns_json,
             &Utc::now().to_rfc3339(),
         )
-        .is_err()
-    {
-        return false;
-    }
+        .map_err(|error| error.to_string())?;
     target.source = source;
-    true
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
