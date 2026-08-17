@@ -528,15 +528,17 @@ async fn run_cdc_inner(
                     // letting the decoder refuse the row and mark the whole
                     // table for resnapshot.
                     if !fenced && !blocked_targets.contains(&target_index) {
-                        let row_columns = usize::try_from(table_map.columns_count())
-                            .unwrap_or(usize::MAX);
+                        let row_columns =
+                            usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
                         if row_columns != targets[target_index].source.columns.len()
                             && drift_heals.insert(target_index)
                         {
                             let healed = heal_schema_drift(
                                 pool,
                                 &report.database,
+                                database_id,
                                 &mut targets[target_index],
+                                &mut metadata,
                                 row_columns,
                             )
                             .await;
@@ -1588,7 +1590,9 @@ impl PendingTransaction {
 async fn heal_schema_drift(
     pool: &Pool,
     database: &str,
+    database_id: &str,
     target: &mut CdcTarget,
+    metadata: &mut MetaStore,
     row_columns: usize,
 ) -> bool {
     let Ok(refreshed) = probe_source(pool, database).await else {
@@ -1603,13 +1607,46 @@ async fn heal_schema_drift(
     if source.columns.len() != row_columns {
         return false;
     }
-    match stabilize_source_table(&target.source, source) {
-        Ok(source) => {
-            target.source = source;
-            true
-        }
-        Err(_) => false,
+    let Ok(source) = stabilize_source_table(&target.source, source) else {
+        return false;
+    };
+    // From here the work is exactly what the DDL path performs, because the
+    // outcome has to be indistinguishable from having seen the statement:
+    // carrying the new column list on the source alone would keep the stream
+    // decoding while every query still resolved against the old schema.
+    let Ok(version) = next_schema_version(target.store.schema().version()) else {
+        return false;
+    };
+    let Ok(schema) = source.table_schema_with_version(version) else {
+        return false;
+    };
+    if target.store.evolve_schema(schema).is_err() {
+        return false;
     }
+    let Ok(columns_json) = serde_json::to_string(&source.columns) else {
+        return false;
+    };
+    // The history has no statement to quote - that is the whole point of this
+    // path - so it records how the change was learned instead.
+    let statement = format!(
+        "-- schema drift adopted from source probe ({} columns)",
+        source.columns.len()
+    );
+    if metadata
+        .record_schema_history(
+            database_id,
+            &source.name,
+            version,
+            Some(&statement),
+            &columns_json,
+            &Utc::now().to_rfc3339(),
+        )
+        .is_err()
+    {
+        return false;
+    }
+    target.source = source;
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
