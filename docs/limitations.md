@@ -361,6 +361,12 @@ worth refusing.
   writable target root; glob patterns and dashboard rule editing are not
   implemented. DROP TABLE retains the replica as an orphan with no operator
   purge action.
+- A dropped source DATABASE is surfaced, not modelled: replication fails
+  loudly (`Unknown database` connection errors, database state `error`) and a
+  re-probe correctly refuses, but the statement itself never reaches the
+  stream - the runner's connections fail before the binlog event could be
+  read - so no table is orphaned and the replica keeps serving the retained
+  rows as current until an operator acts.
 
 ## HTTP API and dashboard
 
