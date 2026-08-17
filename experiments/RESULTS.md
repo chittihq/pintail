@@ -2309,6 +2309,9 @@ predicted. (3) Compression is not overhead in this engine; it is load-
 bearing. The decode cost lives in per-value machinery (largely removed
 this session), not in the codec.
 
-The knobs stay: they are the instrument that made this a measurement
-instead of an argument, and they cover any future RAM-rich deployment
-question in an afternoon.
+The knobs were REMOVED from the engine once this answered (rc15). They were
+write-side scaffolding for a question now settled, and a released binary
+should not carry a switch that makes its own storage slower. Reinstating them
+is a ten-line change against compress_block_for_storage and select_encoding
+if a RAM-rich deployment ever reopens the question; this table is the reason
+it should not need to.
