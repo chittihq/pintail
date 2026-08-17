@@ -497,24 +497,31 @@ async function main() {
 
   await check('a workspace switch never flashes the connection wizard', async () => {
     // enterWorkspace clears the database cache before it reloads, and the
-    // databases page keyed its empty state on the cache alone - so every
-    // switch flashed "No databases yet / Start the connection wizard" at an
-    // operator whose databases were two round trips away. Locally the reload
-    // completes in milliseconds and no assertion after settling can see it,
-    // so the reload is held open by delaying /api/databases and the page is
-    // inspected mid-window.
-    await page!.goto(`${pintailUrl}/databases`)
-    await page!.getByText(DATABASE).first().waitFor({ timeout: 15_000 })
-
+    // databases page keyed its empty state on the cache alone - so a switch
+    // started from /databases flashed "No databases yet / Start the
+    // connection wizard" for the whole reload, then navigated away. (The
+    // switcher's redirect to Overview fires only AFTER the reload, which is
+    // why the flash happens on the page the operator is still looking at.)
+    // Locally the reload completes in milliseconds and no assertion after
+    // settling can see it, so the reload is held open by delaying
+    // /api/databases and the page inspected mid-window.
+    //
     // Leg 1: a workspace with nothing in it must still end at the wizard -
     // the fix must not suppress the genuine empty state.
     await page!.getByRole('button', { name: 'Pintail' }).click()
     await page!.getByRole('menuitem', { name: 'Browser gate workspace' }).click()
+    await page!
+      .getByRole('button', { name: 'Pintail' })
+      .filter({ hasText: 'Browser gate workspace' })
+      .waitFor({ timeout: 15_000 })
+    await page!.getByRole('link', { name: 'Databases', exact: true }).click()
     await page!.getByText('Start the connection wizard').waitFor({ timeout: 15_000 })
 
-    // Leg 2: switch back with the reload held open. The wizard from the
-    // empty workspace must leave the moment the switch starts, not linger
-    // until the rows arrive to displace it.
+    // Leg 2: switch back to the populated workspace with the reload held
+    // open. The redirect to Overview only fires after the reload completes,
+    // so mid-window we are still on /databases - exactly where the flash
+    // showed. The wizard must leave the moment the switch starts, not
+    // linger until the redirect displaces it.
     await page!.route('**/api/databases', async (route) => {
       await Bun.sleep(700)
       await route.continue()
@@ -527,10 +534,17 @@ async function main() {
       if (body.includes('Start the connection wizard') || body.includes('No databases yet')) {
         throw new Error('the connection wizard is showing mid-switch to a populated workspace')
       }
-      await page!.getByText(DATABASE).first().waitFor({ timeout: 15_000 })
     } finally {
       await page!.unroute('**/api/databases')
     }
+    // Settle where the next check expects to be: back in the populated
+    // workspace, on the databases list, rows visible.
+    await page!
+      .getByRole('button', { name: 'Pintail' })
+      .filter({ hasText: 'My workspace' })
+      .waitFor({ timeout: 15_000 })
+    await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+    await page!.getByText(DATABASE).first().waitFor({ timeout: 15_000 })
   })
 
   await check('an empty table list explains itself', async () => {
