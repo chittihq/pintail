@@ -245,6 +245,50 @@ fn cdc_reconciliation_preserves_stream_mode_and_binlog_checkpoint() {
     assert_eq!(mode, ("streaming".to_owned(), "cdc".to_owned()));
 }
 
+#[test]
+fn probing_a_streaming_database_keeps_it_scheduled() {
+    let workspace = tempfile::tempdir().expect("metadata workspace");
+    let path = workspace.path().join("pintail-meta.db");
+    let mut store = MetaStore::open(&path).expect("metadata");
+    register_source(&store);
+
+    // Onboarding: the first probe advances 'created' to 'probed'.
+    store
+        .update_database_probe("source", "{}", "cdc", "2026-07-30T00:30:00Z")
+        .expect("first probe");
+    let state = |store: &MetaStore| {
+        store
+            .database("source")
+            .expect("read database")
+            .expect("database")
+            .state
+    };
+    assert_eq!(state(&store), "probed");
+
+    store
+        .commit_cdc_checkpoint(
+            "source",
+            &SnapshotCheckpointRecord {
+                kind: "filepos".to_owned(),
+                gtid_set: None,
+                binlog_file: Some("mysql-bin.000001".to_owned()),
+                binlog_pos: Some(4),
+            },
+            &["events".to_owned()],
+            "2026-07-30T01:00:00Z",
+        )
+        .expect("reach streaming");
+    assert_eq!(state(&store), "streaming");
+
+    // A probe of a live database is an inventory refresh. Writing 'probed'
+    // here removed it from the supervisor's schedule - which only picks up
+    // streaming/polling/error - so replication stopped silently, for good.
+    store
+        .update_database_probe("source", "{}", "cdc", "2026-07-30T02:00:00Z")
+        .expect("re-probe");
+    assert_eq!(state(&store), "streaming");
+}
+
 fn register_source(store: &MetaStore) {
     store
         .upsert_database("source", "app", b"mysql://source", "2026-07-30T00:00:00Z")

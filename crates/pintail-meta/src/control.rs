@@ -1031,11 +1031,21 @@ impl MetaStore {
         if !matches!(effective_mode, "cdc" | "polling") {
             bail!("effective database mode must be cdc or polling");
         }
+        // 'probed' is an onboarding state: it advances 'created' toward the
+        // first snapshot. On a database that is already replicating, a probe
+        // is an inventory refresh, and writing 'probed' over 'streaming' or
+        // 'polling' silently removes it from the supervisor's schedule - the
+        // supervisor only picks up streaming/polling/error, so one probe of a
+        // healthy database stopped its replication for good, with every table
+        // still reporting streaming (found by the drop-table e2e phases, which
+        // re-probe to surface a drop and wedged the whole fixture).
         let changed = self
             .connection
             .execute(
                 "UPDATE databases SET probe_json = ?2, effective_mode = ?3, \
-                   state = 'probed', updated_at = ?4 WHERE id = ?1",
+                   state = CASE WHEN state IN ('created', 'probed') THEN 'probed' \
+                     ELSE state END, \
+                   updated_at = ?4 WHERE id = ?1",
                 (id, probe_json, effective_mode, now),
             )
             .context("failed to persist database probe")?;
