@@ -1258,6 +1258,61 @@ async function phaseControlPlane() {
       }
     }
   })
+  await check('resync recopies only the table it names', async () => {
+    // The endpoint takes a table name and used to resnapshot the whole
+    // database, which on a large source is hours of copying to repair one
+    // table. It now snapshots just that table behind its own binlog fence, so
+    // what this asserts is the SCOPE, not the outcome - a full-database
+    // resnapshot also ends with correct data, just far more slowly.
+    //
+    // A database-wide snapshot puts every table into 'snapshotting' and
+    // rewrites its rows; a per-table one leaves the others alone. So the
+    // observable is the other tables' row counts holding steady across the
+    // operation, and the accepted job naming the one table it will touch.
+    const countOf = async (table: string) => {
+      const rows = await pintailQuery(`SELECT COUNT(*) FROM ${table}`)
+      return String(rows[0][0])
+    }
+    const before = {
+      customers: await countOf('customers'),
+      order_items: await countOf('order_items'),
+    }
+    let accepted: { run_id: string; state: string; table: string } | undefined
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        accepted = await api<{ run_id: string; state: string; table: string }>(
+          `/api/databases/${databaseId}/tables/orders/resync`,
+          { method: 'POST' },
+        )
+        break
+      } catch (error) {
+        if (!String(error).includes('409') || attempt >= 20) throw error
+        await Bun.sleep(2_000)
+      }
+    }
+    if (accepted.table !== 'orders' || accepted.state !== 'snapshotting') {
+      throw new Error(`expected a per-table snapshot job, got ${JSON.stringify(accepted)}`)
+    }
+    const deadline = Date.now() + 120_000
+    for (;;) {
+      const status = await api<{ state: string; tables?: Array<{ name: string; last_error?: string }> }>(
+        `/api/databases/${databaseId}/snapshot/status`,
+      )
+      if (status.state === 'streaming' || status.state === 'polling') break
+      if (status.state === 'error' || Date.now() > deadline) {
+        throw new Error(`per-table resync did not settle: ${JSON.stringify(status)}`)
+      }
+      await Bun.sleep(2_000)
+    }
+    for (const [table, expected] of Object.entries(before)) {
+      const actual = await countOf(table)
+      if (actual !== expected) {
+        throw new Error(
+          `resync of orders changed ${table}: ${expected} rows before, ${actual} after`,
+        )
+      }
+    }
+  })
   await check('keyless policy: ambiguity quarantines and exact multiplicity repairs', async () => {
     // A table with no primary or unique key replicates inserts, but a CDC
     // UPDATE cannot be targeted and must flag the table needs_resync under

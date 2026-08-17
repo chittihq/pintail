@@ -1267,8 +1267,17 @@ async fn apply_ddl_actions(
 }
 
 /// Settings key persisting a mid-stream snapshot fence across runner cycles.
-fn fence_key(database_id: &str, table: &str) -> String {
+///
+/// Public because a single-table resnapshot is performed outside this crate
+/// and must record its fence under the same key the stream reads, or the
+/// events it just copied replay over it.
+#[must_use]
+pub fn snapshot_fence_key(database_id: &str, table: &str) -> String {
     format!("cdc_snapshot_fence:{database_id}:{table}")
+}
+
+fn fence_key(database_id: &str, table: &str) -> String {
+    snapshot_fence_key(database_id, table)
 }
 
 fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a SourceTable> {

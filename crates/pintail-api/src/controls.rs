@@ -10,15 +10,10 @@ use mysql_async::{Opts, Pool};
 use pintail_meta::DatabaseRecord;
 use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
 use pintail_probe::ProbeReport;
+use pintail_snapshot::{SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot};
 use serde::Serialize;
 
-use crate::{
-    ApiState, audit,
-    auth::AuthPrincipal,
-    error::ApiError,
-    events::ApiEvent,
-    snapshot::{self, AcceptedSnapshot},
-};
+use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, events::ApiEvent, snapshot};
 
 #[derive(Serialize)]
 pub(crate) struct AcceptedReconcile {
@@ -27,21 +22,279 @@ pub(crate) struct AcceptedReconcile {
     table: String,
 }
 
-/// Starts a safe full-database resnapshot from a table action.
+/// Recopies one table from the source, leaving the rest of the database
+/// replicating.
 ///
-/// Snapshot handoff checkpoints belong to the database, not an individual
-/// table. Reusing the database-wide snapshot path prevents older binlog events
-/// from overwriting a freshly captured table.
+/// This used to resnapshot the whole database, on the grounds that a snapshot
+/// handoff checkpoint belongs to the database rather than a table - true, but
+/// it is not the only way to stop older binlog events overwriting freshly
+/// copied rows. The stream already skips events at or before a per-table
+/// snapshot fence, which is how a table auto-included mid-stream is made safe,
+/// and recording that fence here buys the same protection for one table
+/// without stopping the other tables' replication or re-copying them.
+///
+/// The fence must come from the position captured under THIS snapshot's read
+/// lock, not the database's preserved handoff position, which sits behind the
+/// data actually copied.
 pub(crate) async fn resync(
     Extension(principal): Extension<AuthPrincipal>,
     State(state): State<ApiState>,
     Path((database_id, table_name)): Path<(String, String)>,
-) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
+) -> Result<(StatusCode, Json<AcceptedReconcile>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
     crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
-    snapshot::start_forced(Extension(principal), State(state), Path(database_id)).await
+    state.acquire_job(&database_id)?;
+
+    let run_id = crate::state::random_identifier("run_", 16);
+    let metadata = match state.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            state.release_job(&database_id);
+            return Err(ApiError::internal(error));
+        }
+    };
+    let started = metadata
+        .start_sync_run(
+            &run_id,
+            &database_id,
+            Some(&table_name),
+            "resnapshot",
+            &Utc::now().to_rfc3339(),
+        )
+        .and_then(|()| metadata.begin_table_resnapshot(&database_id, &table_name));
+    drop(metadata);
+    if let Err(error) = started {
+        state.release_job(&database_id);
+        return Err(ApiError::internal(error));
+    }
+
+    let job_state = state.clone();
+    let job_database_id = database_id.clone();
+    let job_table_name = table_name.clone();
+    let job_run_id = run_id.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name(format!("pintail-resnapshot-{database_id}"))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => runtime.block_on(complete_table_resnapshot_job(
+                    job_state,
+                    job_database_id,
+                    job_table_name,
+                    job_run_id,
+                )),
+                Err(error) => finish_table_resnapshot(
+                    &job_state,
+                    &job_database_id,
+                    &job_table_name,
+                    &job_run_id,
+                    Err(error.to_string()),
+                    0,
+                ),
+            }
+        })
+    {
+        let message = format!("could not start resnapshot worker: {error}");
+        finish_table_resnapshot(
+            &state,
+            &database_id,
+            &table_name,
+            &run_id,
+            Err(message.clone()),
+            0,
+        );
+        return Err(ApiError::unavailable(message));
+    }
+
+    audit::record(
+        &state,
+        &principal,
+        "resnapshot.table",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"table": table_name.clone()})),
+    );
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedReconcile {
+            run_id,
+            state: "snapshotting",
+            table: table_name,
+        }),
+    ))
+}
+
+async fn complete_table_resnapshot_job(
+    state: ApiState,
+    database_id: String,
+    table_name: String,
+    run_id: String,
+) {
+    let started = Instant::now();
+    let result = run_table_resnapshot_job(&state, &database_id, &table_name).await;
+    finish_table_resnapshot(
+        &state,
+        &database_id,
+        &table_name,
+        &run_id,
+        result,
+        duration_ms(started),
+    );
+}
+
+async fn run_table_resnapshot_job(
+    state: &ApiState,
+    database_id: &str,
+    table_name: &str,
+) -> Result<u64, String> {
+    let metadata = state.metadata().map_err(display)?;
+    let database = metadata
+        .database(database_id)
+        .map_err(display)?
+        .ok_or_else(|| "database does not exist".to_owned())?;
+    if database.mode == "paused" {
+        return Err("resume the database before resnapshotting a table".to_owned());
+    }
+    let report = decode_probe(&database)?;
+    let mut source = report
+        .tables
+        .iter()
+        .find(|source| source.name.eq_ignore_ascii_case(table_name))
+        .cloned()
+        .ok_or_else(|| format!("table {table_name} is absent from the latest probe"))?;
+    let directory = snapshot::table_directory(
+        &state
+            .data_dir()
+            .map_err(display)?
+            .join("databases")
+            .join(database_id)
+            .join("tables"),
+        &source.name,
+    );
+    let mut store = snapshot::open_tracked_store(&metadata, database_id, &mut source, directory)?;
+    // Drop what is there before recopying, so the snapshot is the table rather
+    // than the table merged onto its own stale rows.
+    store.reset_for_resnapshot().map_err(display)?;
+    let target = SnapshotTarget::new(source, store).map_err(display)?;
+    let metadata_path = state.metadata_path().map_err(display)?.to_path_buf();
+    drop(metadata);
+
+    let dsn = state
+        .decrypt_dsn(&database.encrypted_dsn)
+        .map_err(display)?;
+    let options = Opts::from_url(&dsn).map_err(display)?;
+    let pool = Pool::new(options);
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        database_id,
+        &report,
+        vec![target],
+        SnapshotOptions::default(),
+    )
+    .await
+    .map_err(display);
+    pool.disconnect().await.map_err(display)?;
+    let snapshot = snapshot?;
+
+    let rows = snapshot
+        .tables
+        .iter()
+        .map(|outcome| outcome.rows)
+        .sum::<u64>();
+    let fence = match &snapshot.captured_position {
+        SnapshotPosition::Gtid {
+            file: Some(file),
+            position: Some(position),
+            ..
+        }
+        | SnapshotPosition::FilePosition { file, position } => Some((file.clone(), *position)),
+        SnapshotPosition::Gtid { .. } | SnapshotPosition::Unavailable => None,
+    };
+    let metadata = state.metadata().map_err(display)?;
+    match fence {
+        Some((file, position)) => metadata
+            .set_setting(
+                &pintail_cdc::snapshot_fence_key(database_id, &table_name.to_ascii_lowercase()),
+                &format!("{file}:{position}"),
+            )
+            .map_err(display)?,
+        // Without a fence the stream would replay events this snapshot has
+        // already copied. Deletes and updates would land again harmlessly on a
+        // keyed table, but an append-keyed one would duplicate, so refuse
+        // rather than leave that to chance.
+        None => {
+            return Err(
+                "source did not report a binlog position for the snapshot, so the table \
+                 cannot be fenced against replaying its own rows"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(rows)
+}
+
+fn finish_table_resnapshot(
+    state: &ApiState,
+    database_id: &str,
+    table_name: &str,
+    run_id: &str,
+    result: Result<u64, String>,
+    elapsed_ms: u64,
+) {
+    match result {
+        Ok(rows) => {
+            if let Ok(metadata) = state.metadata() {
+                let _ = metadata.finish_sync_run(run_id, "completed", rows, 0, elapsed_ms, None);
+                let state_name = metadata
+                    .database(database_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|database| database.effective_mode)
+                    .map_or("streaming", |mode| {
+                        if mode == "polling" {
+                            "polling"
+                        } else {
+                            "streaming"
+                        }
+                    });
+                let _ = metadata.finish_table_resnapshot(database_id, table_name, state_name);
+            }
+            state.publish(ApiEvent {
+                kind: "resnapshot.completed".to_owned(),
+                database_id: Some(database_id.to_owned()),
+                table: Some(table_name.to_owned()),
+                message: format!("{table_name} resnapshot completed"),
+                rows: Some(rows),
+                bytes: Some(0),
+                eta_seconds: None,
+                at: Utc::now().to_rfc3339(),
+            });
+        }
+        Err(error) => {
+            if let Ok(metadata) = state.metadata() {
+                let _ = metadata.finish_sync_run(run_id, "error", 0, 0, elapsed_ms, Some(&error));
+                // Back to needs_resync, not to streaming: the store was
+                // emptied before the copy, so a failed resnapshot leaves the
+                // table incomplete and it must not be read as current.
+                let _ = metadata.mark_table_needs_resync(database_id, table_name, &error);
+            }
+            state.publish(ApiEvent {
+                kind: "resnapshot.error".to_owned(),
+                database_id: Some(database_id.to_owned()),
+                table: Some(table_name.to_owned()),
+                message: error,
+                rows: None,
+                bytes: None,
+                eta_seconds: None,
+                at: Utc::now().to_rfc3339(),
+            });
+        }
+    }
+    state.release_job(database_id);
 }
 
 pub(crate) async fn reconcile(

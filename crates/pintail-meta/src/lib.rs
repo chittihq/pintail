@@ -861,6 +861,54 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Puts one table into `snapshotting`, leaving the rest of the database
+    /// alone.
+    ///
+    /// Deliberately narrower than [`MetaStore::reset_for_resnapshot`]: that one
+    /// clears the database's chunk journal and source checkpoint, which every
+    /// other table's stream is reading. A single-table resnapshot keeps both,
+    /// and is made safe against replaying its own history by the per-table
+    /// snapshot fence the caller records instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be persisted.
+    pub fn begin_table_resnapshot(&self, database_id: &str, table_name: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
+                   last_error = NULL WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name),
+            )
+            .with_context(|| {
+                format!("failed to start a resnapshot of {database_id}.{table_name}")
+            })?;
+        Ok(())
+    }
+
+    /// Returns one table to a replicating state once its snapshot is durable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be persisted.
+    pub fn finish_table_resnapshot(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        state: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET state = ?3, last_error = NULL \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name, state),
+            )
+            .with_context(|| {
+                format!("failed to finish the resnapshot of {database_id}.{table_name}")
+            })?;
+        Ok(())
+    }
+
     /// Returns included tables whose CDC stream must wait for a new snapshot.
     ///
     /// # Errors
