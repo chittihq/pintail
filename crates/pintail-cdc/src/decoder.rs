@@ -2,6 +2,7 @@ use chrono::{Datelike as _, Timelike as _, Utc};
 use mysql_async::{
     Value as MysqlValue,
     binlog::{events::OptionalMetaExtractor, row::BinlogRow, value::BinlogValue},
+    consts::ColumnType,
 };
 use pintail_probe::{SourceColumn, SourceTable};
 use pintail_snapshot::map_mysql_value;
@@ -47,6 +48,95 @@ pub(crate) enum UnknownColumn {
     Ignore,
 }
 
+/// The binlog column type a probed declaration is written as.
+///
+/// Deliberately partial. Anything this is not certain of returns `None`, which
+/// abandons type matching for the whole row rather than risking a confident
+/// wrong answer - and an unrecognised declaration matches nothing anywhere, so
+/// a gap here costs a resync, never a corrupted row.
+fn binlog_column_type(column: &SourceColumn) -> Option<ColumnType> {
+    // `get_column_type` resolves ENUM and SET from their metadata rather than
+    // reporting the STRING they are stored as, so these compare directly.
+    Some(match column.mysql_data_type.to_ascii_lowercase().as_str() {
+        "tinyint" => ColumnType::MYSQL_TYPE_TINY,
+        "smallint" => ColumnType::MYSQL_TYPE_SHORT,
+        "mediumint" => ColumnType::MYSQL_TYPE_INT24,
+        "int" | "integer" => ColumnType::MYSQL_TYPE_LONG,
+        "bigint" => ColumnType::MYSQL_TYPE_LONGLONG,
+        "float" => ColumnType::MYSQL_TYPE_FLOAT,
+        "double" | "real" => ColumnType::MYSQL_TYPE_DOUBLE,
+        "decimal" | "numeric" => ColumnType::MYSQL_TYPE_NEWDECIMAL,
+        "year" => ColumnType::MYSQL_TYPE_YEAR,
+        "date" => ColumnType::MYSQL_TYPE_DATE,
+        "time" => ColumnType::MYSQL_TYPE_TIME2,
+        "datetime" => ColumnType::MYSQL_TYPE_DATETIME2,
+        "timestamp" => ColumnType::MYSQL_TYPE_TIMESTAMP2,
+        "char" | "binary" => ColumnType::MYSQL_TYPE_STRING,
+        "varchar" | "varbinary" => ColumnType::MYSQL_TYPE_VARCHAR,
+        "tinytext" | "tinyblob" | "text" | "blob" | "mediumtext" | "mediumblob" | "longtext"
+        | "longblob" => ColumnType::MYSQL_TYPE_BLOB,
+        "enum" => ColumnType::MYSQL_TYPE_ENUM,
+        "set" => ColumnType::MYSQL_TYPE_SET,
+        "json" => ColumnType::MYSQL_TYPE_JSON,
+        "bit" => ColumnType::MYSQL_TYPE_BIT,
+        "geometry" | "point" | "linestring" | "polygon" | "multipoint" | "multilinestring"
+        | "multipolygon" | "geometrycollection" => ColumnType::MYSQL_TYPE_GEOMETRY,
+        _ => return None,
+    })
+}
+
+/// Places a nameless row image on `schema` by matching column types, when
+/// exactly one placement is possible.
+///
+/// MINIMAL metadata names no columns, but it still records each column's type,
+/// and a row image is always an order-preserving subsequence of the schema it
+/// predates: `ADD COLUMN` inserts, it never reorders what is already there. So
+/// the question is how many ways the image's type sequence embeds in the
+/// schema's. Exactly one means the placement is determined and the row can be
+/// decoded; more than one means the drift is genuinely ambiguous - three
+/// consecutive `INT` columns added mid-table look the same from any of three
+/// positions - and the caller resyncs rather than picking.
+///
+/// Counting embeddings directly avoids enumerating them: `ways[i][j]` is the
+/// number of ways the image's first `i` columns embed in the schema's first
+/// `j`, saturating at two because "more than one" is all the caller needs.
+fn embed_by_type(image: &[ColumnType], schema: &[ColumnType]) -> Option<Vec<usize>> {
+    if image.len() > schema.len() {
+        return None;
+    }
+    let mut ways = vec![vec![0_u8; schema.len() + 1]; image.len() + 1];
+    for slot in &mut ways[0] {
+        *slot = 1;
+    }
+    for taken in 1..=image.len() {
+        for offered in 1..=schema.len() {
+            let skipped = ways[taken][offered - 1];
+            let matched = if image[taken - 1] == schema[offered - 1] {
+                ways[taken - 1][offered - 1]
+            } else {
+                0
+            };
+            ways[taken][offered] = skipped.saturating_add(matched).min(2);
+        }
+    }
+    if ways[image.len()][schema.len()] != 1 {
+        return None;
+    }
+    // One embedding exists, so walking back from the end is deterministic:
+    // at each step exactly one of "skip this schema column" and "match it"
+    // leads anywhere.
+    let mut placement = vec![0_usize; image.len()];
+    let mut offered = schema.len();
+    for taken in (1..=image.len()).rev() {
+        while ways[taken][offered - 1] == ways[taken][offered] {
+            offered -= 1;
+        }
+        placement[taken - 1] = offered - 1;
+        offered -= 1;
+    }
+    Some(placement)
+}
+
 impl RowAlignment {
     /// Works out how `table_map`'s row images map onto `table`.
     ///
@@ -68,23 +158,41 @@ impl RowAlignment {
             .map(|name| name.map(|name| name.name().into_owned()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| CdcError::Decode(format!("{}: {error}", table.name)))?;
-        if names.len() != image_columns {
-            return Err(CdcError::Decode(format!(
-                "{} row image contains {image_columns} columns against a {}-column schema, and \
-                 binlog_row_metadata does not name them",
-                table.name,
-                table.columns.len()
-            )));
-        }
-        let image_to_schema = names
-            .iter()
-            .map(|name| {
-                table
-                    .columns
-                    .iter()
-                    .position(|column| column.name.eq_ignore_ascii_case(name))
-            })
-            .collect::<Vec<_>>();
+        let image_to_schema = if names.len() == image_columns {
+            names
+                .iter()
+                .map(|name| {
+                    table
+                        .columns
+                        .iter()
+                        .position(|column| column.name.eq_ignore_ascii_case(name))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            // MINIMAL metadata: no names, so fall back to the types, which it
+            // does record.
+            let image_types = (0..image_columns)
+                .map(|index| table_map.get_column_type(index).ok().flatten())
+                .collect::<Option<Vec<_>>>();
+            let schema_types = table
+                .columns
+                .iter()
+                .map(binlog_column_type)
+                .collect::<Option<Vec<_>>>();
+            let placement = image_types
+                .zip(schema_types)
+                .and_then(|(image, schema)| embed_by_type(&image, &schema))
+                .ok_or_else(|| {
+                    CdcError::Decode(format!(
+                        "{} row image contains {image_columns} columns against a {}-column \
+                         schema, and binlog_row_metadata=MINIMAL names no columns to place them \
+                         by; their types do not identify one placement either",
+                        table.name,
+                        table.columns.len()
+                    ))
+                })?;
+            placement.into_iter().map(Some).collect::<Vec<_>>()
+        };
         if unknown == UnknownColumn::Reject
             && let Some(orphan) = names
                 .iter()
@@ -426,8 +534,9 @@ fn key_part(value: &Value) -> Option<KeyPart> {
 
 #[cfg(test)]
 mod tests {
-    use super::{adapt_binlog_value, declaration_labels, set_bits, transcode_text};
+    use super::{adapt_binlog_value, declaration_labels, embed_by_type, set_bits, transcode_text};
     use mysql_async::Value as MysqlValue;
+    use mysql_async::consts::ColumnType;
     use pintail_probe::SourceColumn;
     use pintail_types::DataType;
 
@@ -525,5 +634,91 @@ mod tests {
             transcode_text(&latin, &[0x80]).expect("cp1252 extension"),
             "€"
         );
+    }
+
+    /// Exercises the placement `embed_by_type` exists for: a MINIMAL row image
+    /// written before an `ADD COLUMN`, against the schema that followed it.
+    ///
+    /// These assert the property that matters - a placement is returned only
+    /// when it is the ONLY one - because the failure mode here is not an error
+    /// but a confidently wrong answer, which writes real values into the wrong
+    /// columns and passes every later check.
+    mod type_placement {
+        use super::{ColumnType, embed_by_type};
+
+        const INT: ColumnType = ColumnType::MYSQL_TYPE_LONG;
+        const TEXT: ColumnType = ColumnType::MYSQL_TYPE_VARCHAR;
+        const DATE: ColumnType = ColumnType::MYSQL_TYPE_DATE;
+        const BIG: ColumnType = ColumnType::MYSQL_TYPE_LONGLONG;
+
+        #[test]
+        fn identical_sequences_place_one_to_one() {
+            assert_eq!(
+                embed_by_type(&[INT, TEXT, DATE], &[INT, TEXT, DATE]),
+                Some(vec![0, 1, 2])
+            );
+        }
+
+        #[test]
+        fn a_column_appended_after_the_image_was_written() {
+            // The production shape: ALTER ... ADD COLUMN, then the older rows.
+            assert_eq!(
+                embed_by_type(&[INT, TEXT], &[INT, TEXT, DATE]),
+                Some(vec![0, 1])
+            );
+        }
+
+        #[test]
+        fn a_column_inserted_in_the_middle_is_found_by_type() {
+            // `ADD COLUMN ... AFTER` is exactly the case positional decoding
+            // gets wrong, and the one type matching earns its keep on.
+            assert_eq!(
+                embed_by_type(&[INT, DATE], &[INT, TEXT, DATE]),
+                Some(vec![0, 2])
+            );
+        }
+
+        #[test]
+        fn several_columns_added_at_once_still_place() {
+            assert_eq!(
+                embed_by_type(&[INT, BIG], &[INT, TEXT, DATE, BIG]),
+                Some(vec![0, 3])
+            );
+        }
+
+        #[test]
+        fn a_repeated_type_around_the_gap_is_refused() {
+            // Two INTs against three: the missing one could be any of the
+            // three, so there is no determined answer and none is invented.
+            assert_eq!(embed_by_type(&[INT, INT], &[INT, INT, INT]), None);
+        }
+
+        #[test]
+        fn an_ambiguous_insertion_point_is_refused() {
+            // The TEXT could be either of the schema's two.
+            assert_eq!(embed_by_type(&[INT, TEXT], &[INT, TEXT, TEXT]), None);
+        }
+
+        #[test]
+        fn an_image_that_does_not_embed_at_all_is_refused() {
+            assert_eq!(embed_by_type(&[INT, BIG], &[INT, TEXT, DATE]), None);
+        }
+
+        #[test]
+        fn an_image_wider_than_the_schema_is_refused() {
+            // A drop the schema has already adopted; the extra value has no
+            // home and the caller decides what that means.
+            assert_eq!(embed_by_type(&[INT, TEXT, DATE], &[INT, TEXT]), None);
+        }
+
+        #[test]
+        fn placements_are_strictly_increasing() {
+            // Order preservation is the assumption the whole method rests on:
+            // ADD COLUMN inserts, it never reorders what is already there.
+            let placement = embed_by_type(&[INT, TEXT, BIG], &[INT, DATE, TEXT, DATE, BIG])
+                .expect("this image embeds exactly once");
+            assert!(placement.windows(2).all(|pair| pair[0] < pair[1]));
+            assert_eq!(placement, vec![0, 2, 4]);
+        }
     }
 }

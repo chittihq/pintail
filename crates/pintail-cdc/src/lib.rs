@@ -588,6 +588,18 @@ async fn run_cdc_inner(
                             // operator needs to see that rather than a bare
                             // "needs resync".
                             let reason = error.to_string();
+                            // The end of the line for this table, and the only
+                            // place that says so. A heal that was skipped
+                            // because its width had already been tried logs
+                            // nothing of its own, so without this the table
+                            // just stops replicating with no stated cause.
+                            pintail_log::log_error!(
+                                "cdc drift unrecoverable db={database_id} table={} at {}:{}: \
+                                 {reason}",
+                                targets[target_index].source.name,
+                                position.file,
+                                event_position
+                            );
                             record_dlq(
                                 &metadata,
                                 database_id,
