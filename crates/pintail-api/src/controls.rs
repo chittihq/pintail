@@ -174,6 +174,14 @@ async fn run_table_resnapshot_job(
             .join("tables"),
         &source.name,
     );
+    // The snapshot-to-stream handoff checkpoint belongs to the database, and
+    // every other table's stream starts from it. A snapshot run owns that
+    // checkpoint - it is written for the database being copied wholesale - so
+    // copying one table mid-stream must put back exactly what it found, or the
+    // tables this operation was supposed to leave alone fail to start with
+    // "polling checkpoint cannot start CDC". Measured: the control-plane gate
+    // passes at 138 checks without this and fails four with it.
+    let preserved_checkpoint = metadata.snapshot_checkpoint(database_id).map_err(display)?;
     let mut store = snapshot::open_tracked_store(&metadata, database_id, &mut source, directory)?;
     // Drop what is there before recopying, so the snapshot is the table rather
     // than the table merged onto its own stale rows.
@@ -215,6 +223,23 @@ async fn run_table_resnapshot_job(
         SnapshotPosition::Gtid { .. } | SnapshotPosition::Unavailable => None,
     };
     let metadata = state.metadata().map_err(display)?;
+    if let Some(checkpoint) = preserved_checkpoint
+        && metadata.snapshot_checkpoint(database_id).map_err(display)? != Some(checkpoint.clone())
+        // Only gtid and filepos can be restored; a 'polling' checkpoint is not
+        // one a CDC stream starts from anyway, so there is nothing to put back.
+        && matches!(checkpoint.kind.as_str(), "gtid" | "filepos")
+    {
+        metadata
+            .upsert_snapshot_checkpoint(
+                database_id,
+                &checkpoint.kind,
+                checkpoint.gtid_set.as_deref(),
+                checkpoint.binlog_file.as_deref(),
+                checkpoint.binlog_pos,
+                &Utc::now().to_rfc3339(),
+            )
+            .map_err(display)?;
+    }
     match fence {
         Some((file, position)) => metadata
             .set_setting(
