@@ -275,7 +275,7 @@ export function useControlPlane() {
         { method: 'POST' },
       )
       if (action === 'resync') {
-        toast('Safe mirror-wide resnapshot accepted; tables share one source checkpoint')
+        toast(`${table.name} resnapshot accepted; other tables keep replicating`)
       } else {
         toast(`${table.name} reconciliation accepted`)
       }

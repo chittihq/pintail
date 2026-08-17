@@ -155,7 +155,7 @@ function describeTable(table: TableSummary) {
                     <Button variant="link" size="sm" :disabled="Boolean(tableAction)" @click="onTableAction(table, 'reconcile')">
                       <LoaderCircle v-if="tableAction === `${table.name}:reconcile`" class="animate-spin" /> Reconcile
                     </Button>
-                    <Button variant="link" size="sm" :disabled="Boolean(tableAction)" title="Starts a mirror-wide resnapshot because all tables share one source checkpoint" @click="onTableAction(table, 'resync')">
+                    <Button variant="link" size="sm" :disabled="Boolean(tableAction)" title="Recopies only this table from the source, behind its own binlog fence" @click="onTableAction(table, 'resync')">
                       <LoaderCircle v-if="tableAction === `${table.name}:resync`" class="animate-spin" /> Resync
                     </Button>
                   </div>
