@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-16T16:45:04.711Z.
+Measured 2026-08-17T18:32:44.521Z.
 
-**736 passed, 0 failed, 13 documented-gap warnings.**
+**1136 passed, 0 failed, 23 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -346,6 +346,134 @@ Measured 2026-08-16T16:45:04.711Z.
 | ddl | query:general_ci: joining on a collated column | PASS |  |
 | ddl | query:general_ci: representative spelling of a collated group | PASS |  |
 | ddl | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| schema-drift-minimal | converge:audit_log | PASS |  |
+| schema-drift-minimal | converge:counters | PASS |  |
+| schema-drift-minimal | converge:customers | PASS |  |
+| schema-drift-minimal | converge:order_items | PASS |  |
+| schema-drift-minimal | converge:orders | PASS |  |
+| schema-drift-minimal | converge:shipments | PASS |  |
+| schema-drift-minimal | converge:information_schema.columns | PASS |  |
+| schema-drift-minimal | query:point lookup by key | PASS |  |
+| schema-drift-minimal | query:range scan with compound predicate | PASS |  |
+| schema-drift-minimal | query:inner join with aggregation | PASS |  |
+| schema-drift-minimal | query:left join preserves unmatched rows | PASS |  |
+| schema-drift-minimal | query:right join preserves unmatched rows | PASS |  |
+| schema-drift-minimal | query:three-way join through items | PASS |  |
+| schema-drift-minimal | query:union all across sources | PASS |  |
+| schema-drift-minimal | query:intersect customer identifiers | PASS |  |
+| schema-drift-minimal | query:except customer identifiers | PASS |  |
+| schema-drift-minimal | query:group by with having | PASS |  |
+| schema-drift-minimal | query:conditional decimal sum keeps the fraction | PASS |  |
+| schema-drift-minimal | query:distinct count and min max | PASS |  |
+| schema-drift-minimal | query:uncorrelated in-subquery | PASS |  |
+| schema-drift-minimal | query:correlated exists with inner predicate | PASS |  |
+| schema-drift-minimal | query:correlated scalar aggregate | PASS |  |
+| schema-drift-minimal | query:correlated scalar unique lookup | PASS |  |
+| schema-drift-minimal | query:scalar subquery threshold | PASS |  |
+| schema-drift-minimal | query:non-recursive cte | PASS |  |
+| schema-drift-minimal | query:bounded recursive cte | PASS |  |
+| schema-drift-minimal | query:date bucketing | PASS |  |
+| schema-drift-minimal | query:string functions and like | PASS |  |
+| schema-drift-minimal | query:looker symmetric key helpers | PASS |  |
+| schema-drift-minimal | query:json constructor preserves json versus text | PASS |  |
+| schema-drift-minimal | query:json aggregate embeds documents | PASS |  |
+| schema-drift-minimal | query:regular expression read transforms | PASS |  |
+| schema-drift-minimal | query:case expression buckets | PASS |  |
+| schema-drift-minimal | query:null handling | PASS |  |
+| schema-drift-minimal | query:coalesce and ifnull | PASS |  |
+| schema-drift-minimal | query:enum and set filters | PASS |  |
+| schema-drift-minimal | query:unsigned boundary readback | PASS |  |
+| schema-drift-minimal | query:derived table | PASS |  |
+| schema-drift-minimal | query:group_concat single expression | PASS |  |
+| schema-drift-minimal | query:window ranking per group | PASS |  |
+| schema-drift-minimal | query:window share of total over grouped output | PASS |  |
+| schema-drift-minimal | query:window running total | PASS |  |
+| schema-drift-minimal | query:decimal column average beyond simple sum | PASS |  |
+| schema-drift-minimal | query:json extract filter on customer meta | PASS |  |
+| schema-drift-minimal | query:fan-out join group concat line products | PASS |  |
+| schema-drift-minimal | query:outer join customers without recent orders | PASS |  |
+| schema-drift-minimal | query:set op union distinct tiers and statuses | PASS |  |
+| schema-drift-minimal | query:temporal convert and date_format grain | PASS |  |
+| schema-drift-minimal | query:correlated not exists open orders | PASS |  |
+| schema-drift-minimal | query:window lag payment-shaped totals | PASS |  |
+| schema-drift-minimal | query:multi-key join items to orders | PASS |  |
+| schema-drift-minimal | query:between and null-safe coalesce on balance | PASS |  |
+| schema-drift-minimal | query:intersect all-style customer buyers | PASS |  |
+| schema-drift-minimal | query:derived table status revenue share | PASS |  |
+| schema-drift-minimal | query:general_ci: equality folds ASCII case | PASS |  |
+| schema-drift-minimal | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| schema-drift-minimal | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| schema-drift-minimal | query:general_ci: every supplementary character compares equal | PASS |  |
+| schema-drift-minimal | query:general_ci: grouping partitions by collated equality | PASS |  |
+| schema-drift-minimal | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| schema-drift-minimal | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| schema-drift-minimal | query:general_ci: joining on a collated column | PASS |  |
+| schema-drift-minimal | query:general_ci: representative spelling of a collated group | PASS |  |
+| schema-drift-minimal | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| schema-drift-unseen | converge:audit_log | PASS |  |
+| schema-drift-unseen | converge:counters | PASS |  |
+| schema-drift-unseen | converge:customers | PASS |  |
+| schema-drift-unseen | converge:order_items | PASS |  |
+| schema-drift-unseen | converge:orders | PASS |  |
+| schema-drift-unseen | converge:shipments | PASS |  |
+| schema-drift-unseen | converge:information_schema.columns | PASS |  |
+| schema-drift-unseen | query:point lookup by key | PASS |  |
+| schema-drift-unseen | query:range scan with compound predicate | PASS |  |
+| schema-drift-unseen | query:inner join with aggregation | PASS |  |
+| schema-drift-unseen | query:left join preserves unmatched rows | PASS |  |
+| schema-drift-unseen | query:right join preserves unmatched rows | PASS |  |
+| schema-drift-unseen | query:three-way join through items | PASS |  |
+| schema-drift-unseen | query:union all across sources | PASS |  |
+| schema-drift-unseen | query:intersect customer identifiers | PASS |  |
+| schema-drift-unseen | query:except customer identifiers | PASS |  |
+| schema-drift-unseen | query:group by with having | PASS |  |
+| schema-drift-unseen | query:conditional decimal sum keeps the fraction | PASS |  |
+| schema-drift-unseen | query:distinct count and min max | PASS |  |
+| schema-drift-unseen | query:uncorrelated in-subquery | PASS |  |
+| schema-drift-unseen | query:correlated exists with inner predicate | PASS |  |
+| schema-drift-unseen | query:correlated scalar aggregate | PASS |  |
+| schema-drift-unseen | query:correlated scalar unique lookup | PASS |  |
+| schema-drift-unseen | query:scalar subquery threshold | PASS |  |
+| schema-drift-unseen | query:non-recursive cte | PASS |  |
+| schema-drift-unseen | query:bounded recursive cte | PASS |  |
+| schema-drift-unseen | query:date bucketing | PASS |  |
+| schema-drift-unseen | query:string functions and like | PASS |  |
+| schema-drift-unseen | query:looker symmetric key helpers | PASS |  |
+| schema-drift-unseen | query:json constructor preserves json versus text | PASS |  |
+| schema-drift-unseen | query:json aggregate embeds documents | PASS |  |
+| schema-drift-unseen | query:regular expression read transforms | PASS |  |
+| schema-drift-unseen | query:case expression buckets | PASS |  |
+| schema-drift-unseen | query:null handling | PASS |  |
+| schema-drift-unseen | query:coalesce and ifnull | PASS |  |
+| schema-drift-unseen | query:enum and set filters | PASS |  |
+| schema-drift-unseen | query:unsigned boundary readback | PASS |  |
+| schema-drift-unseen | query:derived table | PASS |  |
+| schema-drift-unseen | query:group_concat single expression | PASS |  |
+| schema-drift-unseen | query:window ranking per group | PASS |  |
+| schema-drift-unseen | query:window share of total over grouped output | PASS |  |
+| schema-drift-unseen | query:window running total | PASS |  |
+| schema-drift-unseen | query:decimal column average beyond simple sum | PASS |  |
+| schema-drift-unseen | query:json extract filter on customer meta | PASS |  |
+| schema-drift-unseen | query:fan-out join group concat line products | PASS |  |
+| schema-drift-unseen | query:outer join customers without recent orders | PASS |  |
+| schema-drift-unseen | query:set op union distinct tiers and statuses | PASS |  |
+| schema-drift-unseen | query:temporal convert and date_format grain | PASS |  |
+| schema-drift-unseen | query:correlated not exists open orders | PASS |  |
+| schema-drift-unseen | query:window lag payment-shaped totals | PASS |  |
+| schema-drift-unseen | query:multi-key join items to orders | PASS |  |
+| schema-drift-unseen | query:between and null-safe coalesce on balance | PASS |  |
+| schema-drift-unseen | query:intersect all-style customer buyers | PASS |  |
+| schema-drift-unseen | query:derived table status revenue share | PASS |  |
+| schema-drift-unseen | query:general_ci: equality folds ASCII case | PASS |  |
+| schema-drift-unseen | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| schema-drift-unseen | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| schema-drift-unseen | query:general_ci: every supplementary character compares equal | PASS |  |
+| schema-drift-unseen | query:general_ci: grouping partitions by collated equality | PASS |  |
+| schema-drift-unseen | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| schema-drift-unseen | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| schema-drift-unseen | query:general_ci: joining on a collated column | PASS |  |
+| schema-drift-unseen | query:general_ci: representative spelling of a collated group | PASS |  |
+| schema-drift-unseen | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
@@ -626,6 +754,7 @@ Measured 2026-08-16T16:45:04.711Z.
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
+| control-plane | api:resync recopies only the table it names | PASS |  |
 | control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
@@ -693,6 +822,287 @@ Measured 2026-08-16T16:45:04.711Z.
 | control-plane | query:general_ci: joining on a collated column | PASS |  |
 | control-plane | query:general_ci: representative spelling of a collated group | PASS |  |
 | control-plane | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-table-cdc | drop-table:replicates before the drop | PASS |  |
+| drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
+| drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
+| drop-table-cdc | drop-table:orphan is retired without an operator re-probe | WARN | DROP TABLE retains the replica as an orphan and does not refresh the stored probe report, so the table stays in the replica catalog until an operator re-probes (3 rows still served) |
+| drop-table-cdc | drop-table:re-probe retires the orphan from the catalog | PASS |  |
+| drop-table-cdc | converge:audit_log | PASS |  |
+| drop-table-cdc | converge:counters | PASS |  |
+| drop-table-cdc | converge:customers | PASS |  |
+| drop-table-cdc | converge:keyless_log | PASS |  |
+| drop-table-cdc | converge:order_items | PASS |  |
+| drop-table-cdc | converge:orders | PASS |  |
+| drop-table-cdc | converge:shipments | PASS |  |
+| drop-table-cdc | converge:information_schema.columns | PASS |  |
+| drop-table-cdc | query:point lookup by key | PASS |  |
+| drop-table-cdc | query:range scan with compound predicate | PASS |  |
+| drop-table-cdc | query:inner join with aggregation | PASS |  |
+| drop-table-cdc | query:left join preserves unmatched rows | PASS |  |
+| drop-table-cdc | query:right join preserves unmatched rows | PASS |  |
+| drop-table-cdc | query:three-way join through items | PASS |  |
+| drop-table-cdc | query:union all across sources | PASS |  |
+| drop-table-cdc | query:intersect customer identifiers | PASS |  |
+| drop-table-cdc | query:except customer identifiers | PASS |  |
+| drop-table-cdc | query:group by with having | PASS |  |
+| drop-table-cdc | query:conditional decimal sum keeps the fraction | PASS |  |
+| drop-table-cdc | query:distinct count and min max | PASS |  |
+| drop-table-cdc | query:uncorrelated in-subquery | PASS |  |
+| drop-table-cdc | query:correlated exists with inner predicate | PASS |  |
+| drop-table-cdc | query:correlated scalar aggregate | PASS |  |
+| drop-table-cdc | query:correlated scalar unique lookup | PASS |  |
+| drop-table-cdc | query:scalar subquery threshold | PASS |  |
+| drop-table-cdc | query:non-recursive cte | PASS |  |
+| drop-table-cdc | query:bounded recursive cte | PASS |  |
+| drop-table-cdc | query:date bucketing | PASS |  |
+| drop-table-cdc | query:string functions and like | PASS |  |
+| drop-table-cdc | query:looker symmetric key helpers | PASS |  |
+| drop-table-cdc | query:json constructor preserves json versus text | PASS |  |
+| drop-table-cdc | query:json aggregate embeds documents | PASS |  |
+| drop-table-cdc | query:regular expression read transforms | PASS |  |
+| drop-table-cdc | query:case expression buckets | PASS |  |
+| drop-table-cdc | query:null handling | PASS |  |
+| drop-table-cdc | query:coalesce and ifnull | PASS |  |
+| drop-table-cdc | query:enum and set filters | PASS |  |
+| drop-table-cdc | query:unsigned boundary readback | PASS |  |
+| drop-table-cdc | query:derived table | PASS |  |
+| drop-table-cdc | query:group_concat single expression | PASS |  |
+| drop-table-cdc | query:window ranking per group | PASS |  |
+| drop-table-cdc | query:window share of total over grouped output | PASS |  |
+| drop-table-cdc | query:window running total | PASS |  |
+| drop-table-cdc | query:decimal column average beyond simple sum | PASS |  |
+| drop-table-cdc | query:json extract filter on customer meta | PASS |  |
+| drop-table-cdc | query:fan-out join group concat line products | PASS |  |
+| drop-table-cdc | query:outer join customers without recent orders | PASS |  |
+| drop-table-cdc | query:set op union distinct tiers and statuses | PASS |  |
+| drop-table-cdc | query:temporal convert and date_format grain | PASS |  |
+| drop-table-cdc | query:correlated not exists open orders | PASS |  |
+| drop-table-cdc | query:window lag payment-shaped totals | PASS |  |
+| drop-table-cdc | query:multi-key join items to orders | PASS |  |
+| drop-table-cdc | query:between and null-safe coalesce on balance | PASS |  |
+| drop-table-cdc | query:intersect all-style customer buyers | PASS |  |
+| drop-table-cdc | query:derived table status revenue share | PASS |  |
+| drop-table-cdc | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-table-cdc | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| drop-table-cdc | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-table-cdc | query:general_ci: every supplementary character compares equal | PASS |  |
+| drop-table-cdc | query:general_ci: grouping partitions by collated equality | PASS |  |
+| drop-table-cdc | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| drop-table-cdc | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-table-cdc | query:general_ci: joining on a collated column | PASS |  |
+| drop-table-cdc | query:general_ci: representative spelling of a collated group | PASS |  |
+| drop-table-cdc | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-table-recreate | recreate:first generation replicates | PASS |  |
+| drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
+| drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
+| drop-table-recreate | converge:audit_log | PASS |  |
+| drop-table-recreate | converge:counters | PASS |  |
+| drop-table-recreate | converge:customers | PASS |  |
+| drop-table-recreate | converge:keyless_log | PASS |  |
+| drop-table-recreate | converge:order_items | PASS |  |
+| drop-table-recreate | converge:orders | PASS |  |
+| drop-table-recreate | converge:shipments | PASS |  |
+| drop-table-recreate | converge:information_schema.columns | PASS |  |
+| drop-table-recreate | query:point lookup by key | PASS |  |
+| drop-table-recreate | query:range scan with compound predicate | PASS |  |
+| drop-table-recreate | query:inner join with aggregation | PASS |  |
+| drop-table-recreate | query:left join preserves unmatched rows | PASS |  |
+| drop-table-recreate | query:right join preserves unmatched rows | PASS |  |
+| drop-table-recreate | query:three-way join through items | PASS |  |
+| drop-table-recreate | query:union all across sources | PASS |  |
+| drop-table-recreate | query:intersect customer identifiers | PASS |  |
+| drop-table-recreate | query:except customer identifiers | PASS |  |
+| drop-table-recreate | query:group by with having | PASS |  |
+| drop-table-recreate | query:conditional decimal sum keeps the fraction | PASS |  |
+| drop-table-recreate | query:distinct count and min max | PASS |  |
+| drop-table-recreate | query:uncorrelated in-subquery | PASS |  |
+| drop-table-recreate | query:correlated exists with inner predicate | PASS |  |
+| drop-table-recreate | query:correlated scalar aggregate | PASS |  |
+| drop-table-recreate | query:correlated scalar unique lookup | PASS |  |
+| drop-table-recreate | query:scalar subquery threshold | PASS |  |
+| drop-table-recreate | query:non-recursive cte | PASS |  |
+| drop-table-recreate | query:bounded recursive cte | PASS |  |
+| drop-table-recreate | query:date bucketing | PASS |  |
+| drop-table-recreate | query:string functions and like | PASS |  |
+| drop-table-recreate | query:looker symmetric key helpers | PASS |  |
+| drop-table-recreate | query:json constructor preserves json versus text | PASS |  |
+| drop-table-recreate | query:json aggregate embeds documents | PASS |  |
+| drop-table-recreate | query:regular expression read transforms | PASS |  |
+| drop-table-recreate | query:case expression buckets | PASS |  |
+| drop-table-recreate | query:null handling | PASS |  |
+| drop-table-recreate | query:coalesce and ifnull | PASS |  |
+| drop-table-recreate | query:enum and set filters | PASS |  |
+| drop-table-recreate | query:unsigned boundary readback | PASS |  |
+| drop-table-recreate | query:derived table | PASS |  |
+| drop-table-recreate | query:group_concat single expression | PASS |  |
+| drop-table-recreate | query:window ranking per group | PASS |  |
+| drop-table-recreate | query:window share of total over grouped output | PASS |  |
+| drop-table-recreate | query:window running total | PASS |  |
+| drop-table-recreate | query:decimal column average beyond simple sum | PASS |  |
+| drop-table-recreate | query:json extract filter on customer meta | PASS |  |
+| drop-table-recreate | query:fan-out join group concat line products | PASS |  |
+| drop-table-recreate | query:outer join customers without recent orders | PASS |  |
+| drop-table-recreate | query:set op union distinct tiers and statuses | PASS |  |
+| drop-table-recreate | query:temporal convert and date_format grain | PASS |  |
+| drop-table-recreate | query:correlated not exists open orders | PASS |  |
+| drop-table-recreate | query:window lag payment-shaped totals | PASS |  |
+| drop-table-recreate | query:multi-key join items to orders | PASS |  |
+| drop-table-recreate | query:between and null-safe coalesce on balance | PASS |  |
+| drop-table-recreate | query:intersect all-style customer buyers | PASS |  |
+| drop-table-recreate | query:derived table status revenue share | PASS |  |
+| drop-table-recreate | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-table-recreate | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| drop-table-recreate | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-table-recreate | query:general_ci: every supplementary character compares equal | PASS |  |
+| drop-table-recreate | query:general_ci: grouping partitions by collated equality | PASS |  |
+| drop-table-recreate | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| drop-table-recreate | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-table-recreate | query:general_ci: joining on a collated column | PASS |  |
+| drop-table-recreate | query:general_ci: representative spelling of a collated group | PASS |  |
+| drop-table-recreate | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
+| drop-table-polling | polling:database is healthy before the drop | PASS |  |
+| drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_7d6bc68287f78a592c13a0a816ebe016","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"polling","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-17T18:18:55.438619+00:00","updated_at":"2026-08-17T18:25:54.653710+00:00"},"tables":11,"rows":781} |
+| drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
+| drop-table-polling | converge:audit_log | PASS |  |
+| drop-table-polling | converge:counters | PASS |  |
+| drop-table-polling | converge:customers | PASS |  |
+| drop-table-polling | converge:keyless_log | PASS |  |
+| drop-table-polling | converge:order_items | PASS |  |
+| drop-table-polling | converge:orders | PASS |  |
+| drop-table-polling | converge:shipments | PASS |  |
+| drop-table-polling | converge:information_schema.columns | PASS |  |
+| drop-table-polling | query:point lookup by key | PASS |  |
+| drop-table-polling | query:range scan with compound predicate | PASS |  |
+| drop-table-polling | query:inner join with aggregation | PASS |  |
+| drop-table-polling | query:left join preserves unmatched rows | PASS |  |
+| drop-table-polling | query:right join preserves unmatched rows | PASS |  |
+| drop-table-polling | query:three-way join through items | PASS |  |
+| drop-table-polling | query:union all across sources | PASS |  |
+| drop-table-polling | query:intersect customer identifiers | PASS |  |
+| drop-table-polling | query:except customer identifiers | PASS |  |
+| drop-table-polling | query:group by with having | PASS |  |
+| drop-table-polling | query:conditional decimal sum keeps the fraction | PASS |  |
+| drop-table-polling | query:distinct count and min max | PASS |  |
+| drop-table-polling | query:uncorrelated in-subquery | PASS |  |
+| drop-table-polling | query:correlated exists with inner predicate | PASS |  |
+| drop-table-polling | query:correlated scalar aggregate | PASS |  |
+| drop-table-polling | query:correlated scalar unique lookup | PASS |  |
+| drop-table-polling | query:scalar subquery threshold | PASS |  |
+| drop-table-polling | query:non-recursive cte | PASS |  |
+| drop-table-polling | query:bounded recursive cte | PASS |  |
+| drop-table-polling | query:date bucketing | PASS |  |
+| drop-table-polling | query:string functions and like | PASS |  |
+| drop-table-polling | query:looker symmetric key helpers | PASS |  |
+| drop-table-polling | query:json constructor preserves json versus text | PASS |  |
+| drop-table-polling | query:json aggregate embeds documents | PASS |  |
+| drop-table-polling | query:regular expression read transforms | PASS |  |
+| drop-table-polling | query:case expression buckets | PASS |  |
+| drop-table-polling | query:null handling | PASS |  |
+| drop-table-polling | query:coalesce and ifnull | PASS |  |
+| drop-table-polling | query:enum and set filters | PASS |  |
+| drop-table-polling | query:unsigned boundary readback | PASS |  |
+| drop-table-polling | query:derived table | PASS |  |
+| drop-table-polling | query:group_concat single expression | PASS |  |
+| drop-table-polling | query:window ranking per group | PASS |  |
+| drop-table-polling | query:window share of total over grouped output | PASS |  |
+| drop-table-polling | query:window running total | PASS |  |
+| drop-table-polling | query:decimal column average beyond simple sum | PASS |  |
+| drop-table-polling | query:json extract filter on customer meta | PASS |  |
+| drop-table-polling | query:fan-out join group concat line products | PASS |  |
+| drop-table-polling | query:outer join customers without recent orders | PASS |  |
+| drop-table-polling | query:set op union distinct tiers and statuses | PASS |  |
+| drop-table-polling | query:temporal convert and date_format grain | PASS |  |
+| drop-table-polling | query:correlated not exists open orders | PASS |  |
+| drop-table-polling | query:window lag payment-shaped totals | PASS |  |
+| drop-table-polling | query:multi-key join items to orders | PASS |  |
+| drop-table-polling | query:between and null-safe coalesce on balance | PASS |  |
+| drop-table-polling | query:intersect all-style customer buyers | PASS |  |
+| drop-table-polling | query:derived table status revenue share | PASS |  |
+| drop-table-polling | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-table-polling | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| drop-table-polling | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-table-polling | query:general_ci: every supplementary character compares equal | PASS |  |
+| drop-table-polling | query:general_ci: grouping partitions by collated equality | PASS |  |
+| drop-table-polling | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| drop-table-polling | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-table-polling | query:general_ci: joining on a collated column | PASS |  |
+| drop-table-polling | query:general_ci: representative spelling of a collated group | PASS |  |
+| drop-table-polling | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-database | cross-schema:same-named table replicates first | PASS |  |
+| drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
+| drop-database | drop-database:second database snapshots | PASS |  |
+| drop-database | drop-database:second database serves its rows | PASS |  |
+| drop-database | drop-database:the deleted source is surfaced, not served silently | PASS |  |
+| drop-database | drop-database:re-probing a deleted source fails loudly | PASS |  |
+| drop-database | drop-database:polling reports the deleted source as an error | PASS |  |
+| drop-database | drop-database:reads against a deleted source do not claim to be current | WARN | 3 rows are still served from the replica of a database MySQL no longer has, with nothing on the read path marking them stale |
+| drop-database | converge:audit_log | PASS |  |
+| drop-database | converge:counters | PASS |  |
+| drop-database | converge:customers | PASS |  |
+| drop-database | converge:keyless_log | PASS |  |
+| drop-database | converge:order_items | PASS |  |
+| drop-database | converge:orders | PASS |  |
+| drop-database | converge:shipments | PASS |  |
+| drop-database | converge:information_schema.columns | PASS |  |
+| drop-database | query:point lookup by key | PASS |  |
+| drop-database | query:range scan with compound predicate | PASS |  |
+| drop-database | query:inner join with aggregation | PASS |  |
+| drop-database | query:left join preserves unmatched rows | PASS |  |
+| drop-database | query:right join preserves unmatched rows | PASS |  |
+| drop-database | query:three-way join through items | PASS |  |
+| drop-database | query:union all across sources | PASS |  |
+| drop-database | query:intersect customer identifiers | PASS |  |
+| drop-database | query:except customer identifiers | PASS |  |
+| drop-database | query:group by with having | PASS |  |
+| drop-database | query:conditional decimal sum keeps the fraction | PASS |  |
+| drop-database | query:distinct count and min max | PASS |  |
+| drop-database | query:uncorrelated in-subquery | PASS |  |
+| drop-database | query:correlated exists with inner predicate | PASS |  |
+| drop-database | query:correlated scalar aggregate | PASS |  |
+| drop-database | query:correlated scalar unique lookup | PASS |  |
+| drop-database | query:scalar subquery threshold | PASS |  |
+| drop-database | query:non-recursive cte | PASS |  |
+| drop-database | query:bounded recursive cte | PASS |  |
+| drop-database | query:date bucketing | PASS |  |
+| drop-database | query:string functions and like | PASS |  |
+| drop-database | query:looker symmetric key helpers | PASS |  |
+| drop-database | query:json constructor preserves json versus text | PASS |  |
+| drop-database | query:json aggregate embeds documents | PASS |  |
+| drop-database | query:regular expression read transforms | PASS |  |
+| drop-database | query:case expression buckets | PASS |  |
+| drop-database | query:null handling | PASS |  |
+| drop-database | query:coalesce and ifnull | PASS |  |
+| drop-database | query:enum and set filters | PASS |  |
+| drop-database | query:unsigned boundary readback | PASS |  |
+| drop-database | query:derived table | PASS |  |
+| drop-database | query:group_concat single expression | PASS |  |
+| drop-database | query:window ranking per group | PASS |  |
+| drop-database | query:window share of total over grouped output | PASS |  |
+| drop-database | query:window running total | PASS |  |
+| drop-database | query:decimal column average beyond simple sum | PASS |  |
+| drop-database | query:json extract filter on customer meta | PASS |  |
+| drop-database | query:fan-out join group concat line products | PASS |  |
+| drop-database | query:outer join customers without recent orders | PASS |  |
+| drop-database | query:set op union distinct tiers and statuses | PASS |  |
+| drop-database | query:temporal convert and date_format grain | PASS |  |
+| drop-database | query:correlated not exists open orders | PASS |  |
+| drop-database | query:window lag payment-shaped totals | PASS |  |
+| drop-database | query:multi-key join items to orders | PASS |  |
+| drop-database | query:between and null-safe coalesce on balance | PASS |  |
+| drop-database | query:intersect all-style customer buyers | PASS |  |
+| drop-database | query:derived table status revenue share | PASS |  |
+| drop-database | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-database | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| drop-database | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-database | query:general_ci: every supplementary character compares equal | PASS |  |
+| drop-database | query:general_ci: grouping partitions by collated equality | PASS |  |
+| drop-database | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| drop-database | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-database | query:general_ci: joining on a collated column | PASS |  |
+| drop-database | query:general_ci: representative spelling of a collated group | PASS |  |
+| drop-database | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
