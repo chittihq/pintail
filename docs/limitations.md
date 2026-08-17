@@ -299,6 +299,13 @@ worth refusing.
   reinterpreted at their declared width because MINIMAL row events omit the
   SIGNEDNESS field. `binlog_format=ROW` and `binlog_row_image=FULL` are hard
   requirements; a non-FULL row image demotes the source to polling.
+- A schema change that never reaches the stream as DDL is repaired by
+  re-probing the source, but under MINIMAL metadata that repair only covers a
+  stream lagging a single change. The row images written before it are
+  narrower than the refreshed schema and MINIMAL names no columns, so there is
+  nothing to place them against; the table is flagged for resync instead.
+  Under FULL metadata the table map names its own columns and any lag is
+  repaired without one.
 - Versions reserve 16 bits for the intra-transaction mutation ordinal, GTID
   sequences must fit 48 bits, and file/position versions support a 16-bit
   numeric file suffix and 32-bit event offset. A source transaction above

@@ -31,14 +31,31 @@ pub(crate) enum RowAlignment {
     },
 }
 
+/// What an image column with no column of that name in the schema means.
+///
+/// It is genuinely ambiguous, and only a re-probe separates the two readings:
+/// either the schema is stale and has not learned the column yet, or the
+/// column really was dropped and this image predates the drop. So the question
+/// is asked twice. `Reject` is the first ask, against the schema in hand,
+/// where an unplaceable column is the drift signal that triggers the probe.
+/// `Ignore` is the second, against a schema just refreshed from the source: if
+/// the column is still unknown there, it is gone from the table and the value
+/// this image carries for it has nowhere to go.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnknownColumn {
+    Reject,
+    Ignore,
+}
+
 impl RowAlignment {
     /// Works out how `table_map`'s row images map onto `table`.
     ///
-    /// An error here means the row cannot be placed at all, which is the
-    /// signal to re-probe and try again against a fresher schema.
+    /// An error here means the row cannot be placed against this schema, which
+    /// is the signal to re-probe and try again against a fresher one.
     pub(crate) fn resolve(
         table: &SourceTable,
         table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
+        unknown: UnknownColumn,
     ) -> Result<Self, CdcError> {
         let image_columns = usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
         if image_columns == table.columns.len() {
@@ -68,6 +85,17 @@ impl RowAlignment {
                     .position(|column| column.name.eq_ignore_ascii_case(name))
             })
             .collect::<Vec<_>>();
+        if unknown == UnknownColumn::Reject
+            && let Some(orphan) = names
+                .iter()
+                .zip(&image_to_schema)
+                .find_map(|(name, target)| target.is_none().then_some(name))
+        {
+            return Err(CdcError::Decode(format!(
+                "{}.{orphan} is in the row image but not in the tracked schema",
+                table.name
+            )));
+        }
         // A column the image predates takes the value MySQL gave it when the
         // ALTER ran, and NULL is the only one this can reconstruct without the
         // declared default. Refusing the others keeps the row honest: the

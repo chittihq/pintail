@@ -42,7 +42,7 @@ use thiserror::Error;
 
 use crate::{
     ddl::{AlterKind, DdlAction, parse_ddl},
-    decoder::{RowAlignment, decode_row, insert_key, physical_key},
+    decoder::{RowAlignment, UnknownColumn, decode_row, insert_key, physical_key},
     gtid::MysqlGtidSet,
 };
 
@@ -530,10 +530,14 @@ async fn run_cdc_inner(
                     // comparison - once several ALTERs have landed the widths
                     // disagree even on rows that place perfectly well.
                     let live = !fenced && !blocked_targets.contains(&target_index);
-                    let mut alignment = live
-                        .then(|| RowAlignment::resolve(&targets[target_index].source, table_map))
-                        .and_then(Result::ok);
-                    if live && alignment.is_none() {
+                    let mut alignment = live.then(|| {
+                        RowAlignment::resolve(
+                            &targets[target_index].source,
+                            table_map,
+                            UnknownColumn::Reject,
+                        )
+                    });
+                    if matches!(alignment, Some(Err(_))) {
                         let row_columns =
                             usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
                         // One probe per table per row width. A source that is
@@ -549,38 +553,61 @@ async fn run_cdc_inner(
                                 table_map,
                             )
                             .await;
-                            alignment =
-                                RowAlignment::resolve(&targets[target_index].source, table_map)
-                                    .ok();
+                            alignment = Some(RowAlignment::resolve(
+                                &targets[target_index].source,
+                                table_map,
+                                UnknownColumn::Ignore,
+                            ));
                         }
                     }
-                    if let Some(alignment) = alignment {
-                        if decode_rows_event(
-                            &rows_event,
-                            table_map,
-                            &targets[target_index].source,
-                            &alignment,
-                            target_index,
-                            &position,
-                            event_position,
-                            event_type,
-                            database_id,
-                            &metadata,
-                            &mut pending,
-                            options.max_transaction_bytes,
-                        )? {
+                    match alignment {
+                        Some(Ok(alignment)) => {
+                            if decode_rows_event(
+                                &rows_event,
+                                table_map,
+                                &targets[target_index].source,
+                                &alignment,
+                                target_index,
+                                &position,
+                                event_position,
+                                event_type,
+                                database_id,
+                                &metadata,
+                                &mut pending,
+                                options.max_transaction_bytes,
+                            )? {
+                                blocked_targets.insert(target_index);
+                            }
+                        }
+                        Some(Err(error)) => {
+                            // The row cannot be placed even against a freshly
+                            // probed schema. Resync is the honest outcome, and
+                            // the reason travels with it: under MINIMAL
+                            // metadata this is where a stream that fell more
+                            // than one schema change behind ends up, and the
+                            // operator needs to see that rather than a bare
+                            // "needs resync".
+                            let reason = error.to_string();
+                            record_dlq(
+                                &metadata,
+                                database_id,
+                                &targets[target_index].source.name,
+                                &position,
+                                EventLocation {
+                                    position: event_position,
+                                    event_type,
+                                    row_index: 0,
+                                },
+                                &reason,
+                            )?;
+                            metadata.mark_table_needs_resync(
+                                database_id,
+                                &targets[target_index].source.name,
+                                &reason,
+                            )?;
                             blocked_targets.insert(target_index);
                         }
-                    } else if live {
-                        // The row cannot be placed even against a freshly
-                        // probed schema. Resync is the honest outcome; storing
-                        // a guessed column layout would be worse.
-                        metadata.mark_table_needs_resync(
-                            database_id,
-                            &targets[target_index].source.name,
-                            "row image does not align with any probed schema",
-                        )?;
-                        blocked_targets.insert(target_index);
+                        None => {}
                     }
                     position.pos = event_position;
                     if non_transactional && rows_event.flags().contains(RowsEventFlags::STMT_END) {
@@ -1654,7 +1681,8 @@ async fn adopt_drifted_schema(
     // row still cannot be placed against means the drift is something else - a
     // rename, a table swapped underneath - and guessing would silently corrupt
     // column identity, which is worse than the resync this declines into.
-    RowAlignment::resolve(&source, table_map).map_err(|error| error.to_string())?;
+    RowAlignment::resolve(&source, table_map, UnknownColumn::Ignore)
+        .map_err(|error| error.to_string())?;
     // From here the work is exactly what the DDL path performs, because the
     // outcome has to be indistinguishable from having seen the statement:
     // carrying the new column list on the source alone would keep the stream

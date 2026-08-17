@@ -675,6 +675,34 @@ async function phaseDdl() {
   await sql(`INSERT INTO audit_log VALUES ('after truncate')`)
 }
 
+async function phaseSchemaDriftMinimal() {
+  // The same missed schema change, under the metadata setting production
+  // actually runs. `binlog_row_metadata=MINIMAL` omits the column names from
+  // every table map, so a row image can only be read positionally and the
+  // replica has nothing to align a mismatched width against. Re-probing is
+  // the only repair available, and it works precisely when the refreshed
+  // schema and the row in hand agree on width - which is the production
+  // shape: one ALTER, then the next INSERT.
+  //
+  // Written events carry whatever metadata was in force when they were
+  // written, so this phase restores FULL before it ends and converges on its
+  // own. Everything it produced stays MINIMAL regardless.
+  await sql(`SET GLOBAL binlog_row_metadata = 'MINIMAL'`)
+  try {
+    await sql(`SET sql_log_bin = 0`)
+    await sql(`ALTER TABLE orders ADD COLUMN minimal_note VARCHAR(32) NULL`)
+    await sql(`SET sql_log_bin = 1`)
+    await sql(
+      `INSERT INTO orders (customer_id, status, total, placed_on, minimal_note) VALUES ` +
+        `(2, 'pending', 19.99, '2025-07-30', 'after-minimal-add')`,
+    )
+    await sql(`UPDATE orders SET minimal_note = 'seen' WHERE id % 6 = 0`)
+    await sql(`DELETE FROM orders WHERE status = 'cancelled' AND total < 0`)
+  } finally {
+    await sql(`SET GLOBAL binlog_row_metadata = 'FULL'`)
+  }
+}
+
 async function phaseSchemaDriftUnseen() {
   // A schema change the CDC stream never sees as DDL.
   //
@@ -1528,6 +1556,7 @@ async function main() {
     ['crud', phaseCrud],
     ['type-edges', phaseTypeEdges],
     ['ddl', phaseDdl],
+    ['schema-drift-minimal', phaseSchemaDriftMinimal],
     ['schema-drift-unseen', phaseSchemaDriftUnseen],
     ['churn', phaseChurn],
     ['spill', phaseSpill],
