@@ -1783,7 +1783,33 @@ async function phaseDropTablePolling() {
     } finally {
       // Leaving the database in polling mode would cascade into every later
       // phase, exactly as the control-plane mode check guards against.
+      const runs = () =>
+        api<Array<{ id: string; kind: string; status: string }>>(
+          `/api/activity?db=${databaseId}&limit=50`,
+        )
+      const seen = new Set((await runs()).map((run) => run.id))
       await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'cdc' } })
+      // Returning to cdc after polling rebuilds the handoff with a forced
+      // snapshot on the next supervisor cadence, and the tables read as
+      // empty while they are being recopied. That is the documented shape
+      // of a forced resync, not a defect - but the phase must not end
+      // before the rebuild has come and gone, or the corpus sweep (and any
+      // later phase) lands inside the empty window. The mode switch itself
+      // reports 'streaming' with the polling-era rows still present, so
+      // waiting on state alone returns before the rebuild even starts;
+      // only a snapshot run that did not exist before the switch proves it
+      // ran.
+      const rebuilt = Date.now() + 240_000
+      for (;;) {
+        const done = (await runs()).some(
+          (run) => !seen.has(run.id) && run.kind === 'snapshot' && run.status === 'completed',
+        )
+        if (done && (await replicaCount('customers')) > 0) break
+        if (Date.now() > rebuilt) {
+          throw new Error('the CDC handoff rebuild never ran after the polling switch')
+        }
+        await Bun.sleep(2_000)
+      }
     }
   } finally {
     await sql(`DROP TABLE IF EXISTS ${dropped}`)
