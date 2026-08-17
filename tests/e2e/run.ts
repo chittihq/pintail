@@ -1490,6 +1490,414 @@ async function phaseControlPlane() {
 }
 
 // ---------------------------------------------------------------------------
+// Destructive lifecycle: what a dropped table or a dropped database does to
+// the replica, in both replication modes.
+//
+// These phases assert inside themselves rather than leaning on the convergence
+// sweep, and each restores the fixture before it returns. A dropped table is
+// retained as an orphan, so it stays in the replica's catalog after MySQL has
+// forgotten it; leaving one behind would make every later phase's
+// information_schema comparison fail for a reason that has nothing to do with
+// that phase.
+//
+// A check records PASS for the behaviour Pintail should have and WARN for a
+// divergence that docs/limitations.md records as a known gap, so a fix flips it
+// to PASS rather than needing the assertion rewritten.
+
+async function waitUntil(
+  predicate: () => Promise<boolean>,
+  timeoutMs: number,
+  pollMs = 2_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate().catch(() => false)) return true
+    if (Date.now() >= deadline) return false
+    await Bun.sleep(pollMs)
+  }
+}
+
+function record(phase: string, check: string, status: CheckResult['status'], detail?: string) {
+  results.push({ phase, check, status, detail })
+  if (status !== 'PASS') log(`${status} ${check}${detail ? ` — ${detail}` : ''}`)
+}
+
+/// Replica row count, or undefined when the replica has no such table.
+async function replicaCount(table: string): Promise<number | undefined> {
+  try {
+    const rows = await pintailQuery(`SELECT COUNT(*) FROM \`${table}\``)
+    return Number(rows[0][0])
+  } catch {
+    return undefined
+  }
+}
+
+async function sourceCount(table: string): Promise<number> {
+  const rows = await mysqlRows(`SELECT COUNT(*) FROM \`${table}\``)
+  return Number(rows[0][0])
+}
+
+interface TableSummary {
+  name: string
+  state: string
+  rows: number
+  last_error?: string
+}
+
+async function tableSummary(table: string, database = databaseId): Promise<TableSummary | undefined> {
+  const tables = await api<TableSummary[]>(`/api/tables?db=${database}`)
+  return tables.find((candidate) => candidate.name.toLowerCase() === table.toLowerCase())
+}
+
+/// Re-probing is the only operator action that retires an orphan: the stored
+/// probe report is the table inventory the query engine builds its catalog
+/// from, and DROP TABLE does not refresh it.
+async function reprobe(database = databaseId) {
+  await api(`/api/databases/${database}/probe`)
+}
+
+/// Writes a row into `orders` and waits for the replica to agree, which is the
+/// question these phases actually care about: whether the rest of the database
+/// still replicates after the destructive operation.
+async function ordersStillReplicate(timeoutMs = 120_000): Promise<boolean> {
+  await sql(
+    `INSERT INTO orders (customer_id, status, total, placed_on) VALUES ` +
+      `(12, 'pending', 3.21, '2025-08-14')`,
+  )
+  const expected = await sourceCount('orders')
+  return waitUntil(async () => (await replicaCount('orders')) === expected, timeoutMs)
+}
+
+const RETENTION_GAP =
+  'DROP TABLE retains the replica as an orphan and does not refresh the stored ' +
+  'probe report, so the table stays in the replica catalog until an operator re-probes'
+
+async function phaseDropTableCdc() {
+  const phase = 'drop-table-cdc'
+  const table = 'lifecycle_cdc_drop'
+  try {
+    await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`)
+    await sql(`INSERT INTO ${table} VALUES (1, 'one'), (2, 'two'), (3, 'three')`)
+    const seeded = await waitUntil(async () => (await replicaCount(table)) === 3, 180_000)
+    record(phase, 'drop-table:replicates before the drop', seeded ? 'PASS' : 'FAIL')
+    if (!seeded) return
+
+    await sql(`DROP TABLE ${table}`)
+    const orphaned = await waitUntil(
+      async () => (await tableSummary(table))?.state === 'excluded',
+      120_000,
+    )
+    record(
+      phase,
+      'drop-table:source drop marks the table orphaned',
+      orphaned ? 'PASS' : 'FAIL',
+      orphaned ? undefined : `state is ${JSON.stringify(await tableSummary(table))}`,
+    )
+
+    const survived = await ordersStillReplicate()
+    record(
+      phase,
+      'drop-table:the rest of the database keeps replicating',
+      survived ? 'PASS' : 'FAIL',
+      survived ? undefined : `orders never caught up after ${table} was dropped`,
+    )
+
+    // Retention is deliberate, but it also means the replica keeps answering
+    // for a table the source no longer has - including through
+    // information_schema, where MySQL and Pintail now disagree.
+    const retained = await replicaCount(table)
+    record(
+      phase,
+      'drop-table:orphan is retired without an operator re-probe',
+      retained === undefined ? 'PASS' : 'WARN',
+      retained === undefined ? undefined : `${RETENTION_GAP} (${retained} rows still served)`,
+    )
+
+    await reprobe()
+    const retired = await waitUntil(async () => (await replicaCount(table)) === undefined, 60_000)
+    record(
+      phase,
+      'drop-table:re-probe retires the orphan from the catalog',
+      retired ? 'PASS' : 'FAIL',
+      retired ? undefined : 'the orphan is still queryable after a fresh probe',
+    )
+  } finally {
+    await sql(`DROP TABLE IF EXISTS ${table}`)
+    await reprobe()
+  }
+}
+
+async function phaseDropTableRecreate() {
+  const phase = 'drop-table-recreate'
+  const table = 'lifecycle_recreate'
+  const create = `CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`
+  try {
+    await sql(create)
+    await sql(`INSERT INTO ${table} VALUES (1, 'first-life'), (2, 'first-life')`)
+    const seeded = await waitUntil(async () => (await replicaCount(table)) === 2, 180_000)
+    record(phase, 'recreate:first generation replicates', seeded ? 'PASS' : 'FAIL')
+    if (!seeded) return
+
+    await sql(`DROP TABLE ${table}`)
+    // Wait for the orphan to land before recreating: within one CDC run the
+    // target stays blocked, so a create in the same cycle would be measuring
+    // the block rather than what happens on the cycles after it.
+    await waitUntil(async () => (await tableSummary(table))?.state === 'excluded', 120_000)
+
+    await sql(create)
+    await sql(`INSERT INTO ${table} VALUES (10, 'second-life'), (11, 'second-life')`)
+    const expected = await sourceCount(table)
+    const converged = await waitUntil(async () => {
+      const diff = await tableDiff(table)
+      return diff === undefined
+    }, 120_000)
+    const actual = await replicaCount(table)
+    record(
+      phase,
+      'recreate:a table recreated under the same name replicates as a new table',
+      converged ? 'PASS' : 'WARN',
+      converged
+        ? undefined
+        : `the source has ${expected} rows and the replica ${actual ?? 'no table'}: the ` +
+          'orphaned store is reused instead of being resnapshotted, because the CREATE ' +
+          'handler skips any name it already tracks',
+    )
+
+    const survived = await ordersStillReplicate()
+    record(
+      phase,
+      'recreate:the rest of the database keeps replicating',
+      survived ? 'PASS' : 'FAIL',
+    )
+  } finally {
+    await sql(`DROP TABLE IF EXISTS ${table}`)
+    await reprobe()
+  }
+}
+
+async function phaseDropTablePolling() {
+  const phase = 'drop-table-polling'
+  const dropped = 'lifecycle_poll_drop'
+  const truncated = 'lifecycle_poll_truncate'
+  try {
+    // Polling only visits tables the stored probe already names, so both
+    // fixtures have to be adopted by CDC before the mode switch.
+    for (const table of [dropped, truncated]) {
+      await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`)
+      await sql(`INSERT INTO ${table} VALUES (1, 'a'), (2, 'b'), (3, 'c')`)
+    }
+    const seeded = await waitUntil(
+      async () =>
+        (await replicaCount(dropped)) === 3 && (await replicaCount(truncated)) === 3,
+      180_000,
+    )
+    record(phase, 'polling:fixtures replicate before the mode switch', seeded ? 'PASS' : 'FAIL')
+    if (!seeded) return
+
+    await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'polling' } })
+    try {
+      const healthy = await ordersStillReplicate()
+      record(phase, 'polling:database is healthy before the drop', healthy ? 'PASS' : 'FAIL')
+
+      // A truncated table leaves no chunk for the cheap probe to find changed,
+      // so the rows only disappear on a reconciling cycle. That is bounded by
+      // the database's reconcile interval, not by the poll interval.
+      await sql(`TRUNCATE TABLE ${truncated}`)
+      const emptied = await waitUntil(async () => (await replicaCount(truncated)) === 0, 180_000)
+      record(
+        phase,
+        'polling:TRUNCATE empties the replica',
+        emptied ? 'PASS' : 'WARN',
+        emptied
+          ? undefined
+          : `the replica still holds ${await replicaCount(truncated)} rows: polling sees a ` +
+            'truncate only through reconciliation, so the replica reads high until the ' +
+            "database's reconcile interval elapses",
+      )
+
+      await sql(`DROP TABLE ${dropped}`)
+      const unaffected = await ordersStillReplicate(90_000)
+      const status = await api<unknown>(`/api/databases/${databaseId}/status`)
+      record(
+        phase,
+        'polling:one dropped table does not stop the other tables',
+        unaffected ? 'PASS' : 'WARN',
+        unaffected
+          ? undefined
+          : 'the whole poll cycle aborts on the first table that fails, so every other ' +
+            `table stops replicating too: ${JSON.stringify(status)}`,
+      )
+
+      await reprobe()
+      const recovered = await ordersStillReplicate()
+      record(
+        phase,
+        'polling:re-probe restores replication for the surviving tables',
+        recovered ? 'PASS' : 'FAIL',
+        recovered ? undefined : `still stalled: ${JSON.stringify(status)}`,
+      )
+    } finally {
+      // Leaving the database in polling mode would cascade into every later
+      // phase, exactly as the control-plane mode check guards against.
+      await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'cdc' } })
+    }
+  } finally {
+    await sql(`DROP TABLE IF EXISTS ${dropped}`)
+    await sql(`DROP TABLE IF EXISTS ${truncated}`)
+    await reprobe()
+  }
+}
+
+async function phaseDropDatabase() {
+  const phase = 'drop-database'
+  const source = 'e2e_lifecycle_db'
+  const shadow = 'lifecycle_shadow'
+  const host = await dockerHost()
+  const mysqlPort = await publishedPort(mysqlName, 3306)
+  let secondary = ''
+  try {
+    await sql(`DROP DATABASE IF EXISTS ${source}`)
+    await sql(`CREATE DATABASE ${source} DEFAULT CHARACTER SET utf8mb4`)
+    // A qualified CREATE/DROP is attributed in the binlog to the session's
+    // current schema, not to the schema in the statement, and Pintail routes
+    // DDL by that attribution. Building the second database from the main
+    // session would therefore hand its DDL to the main database's stream.
+    await sql(`USE ${source}`)
+    await sql(`CREATE TABLE widgets (id INT PRIMARY KEY, label VARCHAR(32) NOT NULL)`)
+    await sql(`CREATE TABLE ${shadow} (id INT PRIMARY KEY, label VARCHAR(32) NOT NULL)`)
+    await sql(`INSERT INTO widgets VALUES (1, 'a'), (2, 'b'), (3, 'c')`)
+    await sql(`INSERT INTO ${shadow} VALUES (1, 'other-schema')`)
+    await sql(`USE ${DATABASE}`)
+
+    // Same table name in the replicated database, so a DDL statement aimed at
+    // the other schema has somewhere wrong to land.
+    await sql(`CREATE TABLE ${shadow} (id INT PRIMARY KEY, label VARCHAR(32) NOT NULL)`)
+    await sql(`INSERT INTO ${shadow} VALUES (1, 'main-schema')`)
+    const shadowed = await waitUntil(async () => (await replicaCount(shadow)) === 1, 180_000)
+    record(phase, 'cross-schema:same-named table replicates first', shadowed ? 'PASS' : 'FAIL')
+
+    if (shadowed) {
+      await sql(`DROP TABLE ${source}.${shadow}`)
+      await sql(`INSERT INTO ${shadow} VALUES (2, 'written after the other schema was dropped')`)
+      const isolated = await waitUntil(async () => (await replicaCount(shadow)) === 2, 90_000)
+      record(
+        phase,
+        'cross-schema:dropping another schema\'s table leaves this one replicating',
+        isolated ? 'PASS' : 'WARN',
+        isolated
+          ? undefined
+          : 'DDL is matched on the bare table name and routed by the session schema, so ' +
+            `DROP TABLE ${source}.${shadow} orphaned ${DATABASE}.${shadow}: ` +
+            JSON.stringify(await tableSummary(shadow)),
+      )
+    }
+
+    const created = await api<{ id: string }>('/api/databases', {
+      method: 'POST',
+      body: {
+        name: source,
+        dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${source}`,
+        mode: 'cdc',
+      },
+    })
+    secondary = created.id
+    await reprobe(secondary)
+    await api(`/api/databases/${secondary}/snapshot`, { method: 'POST', body: { force: false } })
+    const snapshotted = await waitUntil(async () => {
+      const status = await api<{ state: string }>(`/api/databases/${secondary}/snapshot/status`)
+      return status.state === 'streaming' || status.state === 'polling'
+    }, 180_000)
+    record(phase, 'drop-database:second database snapshots', snapshotted ? 'PASS' : 'FAIL')
+    if (!snapshotted) return
+
+    const before = await api<{ count: number }>(`/api/tables/widgets/count?db=${secondary}`)
+    record(
+      phase,
+      'drop-database:second database serves its rows',
+      before.count === 3 ? 'PASS' : 'FAIL',
+      before.count === 3 ? undefined : `expected 3 rows, got ${before.count}`,
+    )
+
+    await sql(`DROP DATABASE ${source}`)
+    // Several supervisor cadences: whatever Pintail is going to notice, it has
+    // noticed by now.
+    const flagged = await waitUntil(async () => {
+      const detail = await api<{ state: string }>(`/api/databases/${secondary}`)
+      if (detail.state === 'error') return true
+      const tables = await api<TableSummary[]>(`/api/tables?db=${secondary}`)
+      return tables.every((table) => table.state === 'excluded')
+    }, 90_000)
+    const observed = {
+      database: await api<{ state: string }>(`/api/databases/${secondary}`),
+      tables: await api<TableSummary[]>(`/api/tables?db=${secondary}`),
+    }
+    record(
+      phase,
+      'drop-database:the deleted source is surfaced, not served silently',
+      flagged ? 'PASS' : 'WARN',
+      flagged
+        ? undefined
+        : 'DROP DATABASE is not classified as DDL at all, so no table is orphaned and ' +
+          `nothing records the loss: ${JSON.stringify(observed)}`,
+    )
+
+    let probeRefused = false
+    try {
+      await reprobe(secondary)
+    } catch {
+      probeRefused = true
+    }
+    record(
+      phase,
+      'drop-database:re-probing a deleted source fails loudly',
+      probeRefused ? 'PASS' : 'FAIL',
+      probeRefused ? undefined : 'the probe succeeded against a database that no longer exists',
+    )
+
+    await api(`/api/databases/${secondary}/mode`, { method: 'POST', body: { mode: 'polling' } })
+    const pollingNoticed = await waitUntil(async () => {
+      const detail = await api<{ state: string }>(`/api/databases/${secondary}`)
+      return detail.state === 'error'
+    }, 90_000)
+    record(
+      phase,
+      'drop-database:polling reports the deleted source as an error',
+      pollingNoticed ? 'PASS' : 'WARN',
+      pollingNoticed
+        ? undefined
+        : `polling kept reporting a healthy database: ${JSON.stringify(
+            await api<unknown>(`/api/databases/${secondary}`),
+          )}`,
+    )
+
+    const stillServed = await api<{ count: number }>(`/api/tables/widgets/count?db=${secondary}`)
+      .then((response) => response.count)
+      .catch(() => undefined)
+    record(
+      phase,
+      'drop-database:reads against a deleted source do not claim to be current',
+      stillServed === undefined ? 'PASS' : 'WARN',
+      stillServed === undefined
+        ? undefined
+        : `${stillServed} rows are still served from the replica of a database MySQL no ` +
+          'longer has, with nothing on the read path marking them stale',
+    )
+  } finally {
+    await sql(`USE ${DATABASE}`)
+    if (secondary) {
+      try {
+        await api(`/api/databases/${secondary}`, { method: 'DELETE' })
+      } catch (error) {
+        log(`cleanup: could not delete the throwaway database: ${error}`)
+      }
+    }
+    await sql(`DROP DATABASE IF EXISTS ${source}`)
+    await sql(`DROP TABLE IF EXISTS ${shadow}`)
+    await reprobe()
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Boot.
 
 async function buildPintail(): Promise<string> {
@@ -1638,6 +2046,14 @@ async function main() {
     ['pooling', phasePooling],
     ['restart', phaseRestart],
     ['control-plane', phaseControlPlane],
+    ['drop-table-cdc', phaseDropTableCdc],
+    ['drop-table-recreate', phaseDropTableRecreate],
+    ['drop-table-polling', phaseDropTablePolling],
+    ['drop-database', phaseDropDatabase],
+    // Last: the rename gap leaves the replica holding a table under a name
+    // MySQL no longer uses, and the lifecycle phases re-probe, which would
+    // retire that table from the catalog and turn the documented metadata
+    // divergence into an undocumented one.
     ['ddl-documented-gaps', phaseDdlDocumentedGaps],
   ]
   const selected = process.env.E2E_PHASES?.split(',').map((phase) => phase.trim())
