@@ -75,6 +75,32 @@ fn supervise_once(state: &ApiState) {
             }
             continue;
         }
+        // A polling cycle overwrites the source checkpoint with a polling
+        // one, and CDC can never start from that - so a database switched
+        // from polling back to cdc has no position to resume from and every
+        // cycle would fail with "polling checkpoint cannot start CDC". The
+        // only honest handoff is a fresh snapshot: resuming from any older
+        // binlog position would skip the interval polling covered, and there
+        // is no per-table shortcut because every table shares the position.
+        // (This previously worked only by accident, when the old
+        // whole-database resync endpoint happened to run right after a mode
+        // switch and rebuilt the checkpoint as a side effect.)
+        if database.effective_mode.as_deref() == Some("cdc")
+            && let Ok(metadata) = state.metadata()
+            && let Ok(Some(checkpoint)) = metadata.snapshot_checkpoint(&database.id)
+            && checkpoint.kind == "polling"
+        {
+            // A begin failure means the job is already active or the
+            // control plane hiccupped; the next cadence retries.
+            if let Ok(run_id) = crate::snapshot::begin_snapshot_job(state, &database.id, true) {
+                state.publish(ApiEvent::database(
+                    "resync.auto",
+                    &database.id,
+                    format!("rebuilding the CDC handoff after polling via snapshot {run_id}"),
+                ));
+            }
+            continue;
+        }
         if state.acquire_job(&database.id).is_err() {
             continue;
         }
