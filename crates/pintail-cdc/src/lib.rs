@@ -553,12 +553,19 @@ async fn run_cdc_inner(
                                 table_map,
                             )
                             .await;
-                            alignment = Some(RowAlignment::resolve(
-                                &targets[target_index].source,
-                                table_map,
-                                UnknownColumn::Ignore,
-                            ));
                         }
+                        // Re-ask whether or not the probe ran. The two are
+                        // independent: the probe refreshes the schema, while
+                        // the second ask accepts a column the image carries
+                        // and the schema has genuinely dropped. An image older
+                        // than an adopted DROP needs only the latter, and
+                        // tying it to the probe stranded exactly that case
+                        // once the width had been tried.
+                        alignment = Some(RowAlignment::resolve(
+                            &targets[target_index].source,
+                            table_map,
+                            UnknownColumn::Ignore,
+                        ));
                     }
                     match alignment {
                         Some(Ok(alignment)) => {
