@@ -524,7 +524,10 @@ async function main() {
     // linger until the redirect displaces it.
     await page!.route('**/api/databases', async (route) => {
       await Bun.sleep(700)
-      await route.continue()
+      // The delay can outlive the unroute below; a route torn down
+      // mid-sleep has already been handled, and the throw would land as an
+      // unhandled rejection that fails the run after every check passed.
+      await route.continue().catch(() => {})
     })
     try {
       await page!.getByRole('button', { name: 'Pintail' }).click()
