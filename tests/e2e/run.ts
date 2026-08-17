@@ -675,6 +675,59 @@ async function phaseDdl() {
   await sql(`INSERT INTO audit_log VALUES ('after truncate')`)
 }
 
+async function phaseSchemaDriftUnseen() {
+  // A schema change the CDC stream never sees as DDL.
+  //
+  // Production hit this three days running: a hand-written
+  // `ALTER TABLE Payment ADD COLUMN` landed, and the next INSERT arrived as a
+  // row image one column wider than the probed schema. The decoder refused
+  // the row - correctly, since it cannot know which column is which - and
+  // marked the whole table for a full resnapshot. Every such row was dropped
+  // until someone resynced.
+  //
+  // `sql_log_bin = 0` reproduces it exactly: the ALTER never enters the
+  // binlog, so no DDL reaches the stream, while the row images that follow
+  // carry the new width. The replica must re-probe, adopt the schema and keep
+  // the rows - WITHOUT resnapshotting the table, which on a large table is
+  // hours of copying to learn about one column.
+  const widen = async (column: string, type: string) => {
+    await sql(`SET sql_log_bin = 0`)
+    await sql(`ALTER TABLE orders ADD COLUMN ${column} ${type}`)
+    await sql(`SET sql_log_bin = 1`)
+  }
+
+  await widen('unseen_note', 'VARCHAR(32) NULL')
+  await sql(
+    `INSERT INTO orders (customer_id, status, total, placed_on, unseen_note) VALUES ` +
+      `(3, 'pending', 31.50, '2025-08-01', 'after-hidden-add')`,
+  )
+  await sql(`UPDATE orders SET unseen_note = 'touched' WHERE id % 7 = 0`)
+
+  // Stress: repeated invisible widenings interleaved with continuous writes
+  // on the same table, so the heal runs against a moving schema rather than
+  // a single quiet change. Each round adds a column the stream never hears
+  // about and then writes through it immediately.
+  for (let round = 0; round < 4; round += 1) {
+    await widen(`drift_${round}`, 'INT NULL')
+    await sql(
+      `INSERT INTO orders (customer_id, status, total, placed_on, drift_${round}) VALUES ` +
+        `(4, 'shipped', ${10 + round}.25, '2025-08-0${round + 2}', ${round * 11})`,
+    )
+    await sql(`UPDATE orders SET drift_${round} = ${round} WHERE id % 5 = 0`)
+    await sql(`DELETE FROM orders WHERE status = 'cancelled' AND total < 0`)
+  }
+
+  // A drop the stream also never sees: the row image narrows, which is the
+  // same defect mirrored, and must heal the same way.
+  await sql(`SET sql_log_bin = 0`)
+  await sql(`ALTER TABLE orders DROP COLUMN drift_0`)
+  await sql(`SET sql_log_bin = 1`)
+  await sql(
+    `INSERT INTO orders (customer_id, status, total, placed_on) VALUES ` +
+      `(5, 'delivered', 88.88, '2025-08-09')`,
+  )
+}
+
 async function phaseDdlDocumentedGaps() {
   // Table rename is documented as quarantine; type changes are not part of
   // the DDL gate. Exercise both so regressions in the documented behavior
@@ -1475,6 +1528,7 @@ async function main() {
     ['crud', phaseCrud],
     ['type-edges', phaseTypeEdges],
     ['ddl', phaseDdl],
+    ['schema-drift-unseen', phaseSchemaDriftUnseen],
     ['churn', phaseChurn],
     ['spill', phaseSpill],
     ['pooling', phasePooling],

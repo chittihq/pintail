@@ -342,6 +342,10 @@ async fn run_cdc_inner(
     // duplicate — keyed tables merely upsert, but the fence is exact for
     // both).
     let mut snapshot_fences: HashMap<usize, (String, u64)> = HashMap::new();
+    // Tables whose drift heal already failed once. A source that keeps
+    // disagreeing must not be re-probed per row: one attempt, then the
+    // decoder's quarantine path owns it.
+    let mut drift_heals: BTreeSet<usize> = BTreeSet::new();
     for (name, &index) in &target_indexes {
         if let Some(stored) = metadata.setting(&fence_key(database_id, name))?
             && let Some((file, position_text)) = stored.rsplit_once(':')
@@ -517,6 +521,29 @@ async fn run_cdc_inner(
                             database_id,
                             &targets[target_index].source.name.to_ascii_lowercase(),
                         ))?;
+                    }
+                    // A row image whose width disagrees with the probed
+                    // schema means a schema change reached the table without
+                    // reaching this stream as DDL. Heal it here rather than
+                    // letting the decoder refuse the row and mark the whole
+                    // table for resnapshot.
+                    if !fenced && !blocked_targets.contains(&target_index) {
+                        let row_columns = usize::try_from(table_map.columns_count())
+                            .unwrap_or(usize::MAX);
+                        if row_columns != targets[target_index].source.columns.len()
+                            && drift_heals.insert(target_index)
+                        {
+                            let healed = heal_schema_drift(
+                                pool,
+                                &report.database,
+                                &mut targets[target_index],
+                                row_columns,
+                            )
+                            .await;
+                            if healed {
+                                drift_heals.remove(&target_index);
+                            }
+                        }
                     }
                     if !fenced
                         && !blocked_targets.contains(&target_index)
@@ -1536,6 +1563,52 @@ impl PendingTransaction {
                 .filter(|mutation| !self.discarded_targets.contains(&mutation.target_index)),
         );
         Ok(mutations)
+    }
+}
+
+/// Reconciles a table whose binlog row image has more or fewer columns than
+/// the probed schema, without resnapshotting it.
+///
+/// The DDL stream is the normal way a schema change arrives, and when it does
+/// this never fires. But that path has single points of failure - the
+/// statement landing while the stream was disconnected, a form the parser
+/// cannot classify, a topology where the DDL never reaches this stream - and
+/// every one of them shows up here instead, as a row image the decoder
+/// refuses because it cannot know which column is which. Production hit this
+/// three days running on a hand-written `ALTER TABLE ... ADD COLUMN`, and
+/// each occurrence marked the table for a full resnapshot: the whole table
+/// re-copied because one column appeared.
+///
+/// Re-probing and adopting the refreshed schema costs one round trip and
+/// keeps the stream running. It succeeds exactly when `stabilize_source_table`
+/// says the change is storage-compatible - an added or dropped column, which
+/// is the common case - and when it does not, the caller's existing path
+/// quarantines for resync as before. Healing is therefore strictly a
+/// shortcut around work that would otherwise happen anyway.
+async fn heal_schema_drift(
+    pool: &Pool,
+    database: &str,
+    target: &mut CdcTarget,
+    row_columns: usize,
+) -> bool {
+    let Ok(refreshed) = probe_source(pool, database).await else {
+        return false;
+    };
+    let Some(source) = find_source_table(&refreshed, &target.source.name).cloned() else {
+        return false;
+    };
+    // Only adopt a schema that actually explains the row in hand. A probe
+    // that still disagrees means the drift is something else - a rename, a
+    // table swapped underneath - and guessing would corrupt column identity.
+    if source.columns.len() != row_columns {
+        return false;
+    }
+    match stabilize_source_table(&target.source, source) {
+        Ok(source) => {
+            target.source = source;
+            true
+        }
+        Err(_) => false,
     }
 }
 
