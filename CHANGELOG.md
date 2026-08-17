@@ -4,7 +4,91 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.0.1-rc15] - 2026-08-17
+## [0.0.1] - 2026-08-18
+
+First stable tag. Folds in the performance work that was headed for an
+rc15 that never shipped, together with the replication hardening that
+followed it and made this the release instead.
+
+### Fixed
+
+- A schema change that never reaches the stream as DDL no longer costs the
+  table a full resnapshot. This is the shape of a real outage: a
+  hand-written `ALTER TABLE ... ADD COLUMN` on the source, no DDL in the
+  stream, and every subsequent row image refused as one column wider than
+  the probed schema - three days of dropped rows. The stream now treats an
+  unplaceable row image as the signal to re-probe and adopts the refreshed
+  schema in place when it is storage-compatible, exactly as if the
+  statement had been seen. Under `binlog_row_metadata=FULL` a lagging image
+  is placed by the column names the table map carries; under MINIMAL, which
+  names nothing, it is placed by its column-type sequence when exactly one
+  placement exists, and refused - never guessed - when more than one does.
+  Both regimes are stress-tested end to end, including four invisible
+  widenings under live traffic and an invisible DROP COLUMN.
+- Re-probing a live database silently stopped its replication for good.
+  `probed` is an onboarding state, and writing it over `streaming` removed
+  the database from the supervisor's schedule with every table still
+  reporting healthy. A probe of a replicating database is now an inventory
+  refresh and leaves the lifecycle state alone.
+- Switching a database from polling back to CDC only ever worked by
+  accident. Every polling cycle overwrites the shared source checkpoint
+  with one CDC cannot start from, and the old whole-database resync
+  happened to rebuild it as a side effect. The supervisor now schedules
+  that rebuild deliberately, so the transition heals without an operator
+  knowing the checkpoint semantics.
+- DDL is routed by the schema the statement names, not by the bare table
+  name. `DROP TABLE other_db.t` from a session in the tracked schema
+  orphaned the tracked `t`, and `CREATE TABLE other_db.t` errored the
+  stream without advancing the checkpoint - retrying forever. Foreign-
+  qualified names now produce no action, and an explicit tracked qualifier
+  is honored even from a session sitting in another schema.
+
+- The benchmark survives a ClickHouse crash mid-run. The container had no
+  restart policy and the retry fired immediately, so a crashed server
+  guaranteed ConnectionRefused and lost the whole stage; two runs died that
+  way in one day. The container now restarts, the retry waits for the server
+  to answer, and the container tail is captured at the moment of the drop.
+- Buffered batches are sized to what the query can still afford, which is
+  what unblocked raising the batch target to 65,536 rows: the aggregate's
+  spill path could not retry mid-merge and failed at every size above 4,096.
+- Nine findings from an external review, and a join inference that could
+  admit an unsafe equality.
+
+### Added
+
+- `POST /databases/{id}/tables/{name}/resync` recopies one table instead of
+  resnapshotting the whole database. The recopied table gets its own binlog
+  fence - the same mechanism that protects a table auto-included
+  mid-stream - so the other tables keep replicating untouched. On a large
+  source this is the difference between minutes and hours to repair one
+  table.
+- The replication log says what happened when something declines: a drift
+  heal that refuses states its reason, a quarantined table states the
+  decode error that condemned it, and every clean CDC cycle records the
+  events it read and the position it reached - a cycle that reads nothing
+  while the binlog grows is a wedge, and it used to be invisible.
+- The e2e gate covers destructive lifecycle shapes in both replication
+  modes: a table dropped under CDC, dropped and recreated under the same
+  name, dropped under polling (including recovery by re-probe), and a
+  second registered database whose source is dropped outright.
+
+- `GROUP BY` and `WHERE` can express a join the way SQL-89 does: equality
+  predicates between two relations in a `WHERE` clause are inferred as join
+  conditions, so `FROM a, b WHERE a.id = b.a_id` plans as a hash join
+  instead of a cross product. Inference is refused for anything not provably
+  side-separable, and for volatile expressions.
+- The validation pipeline fails when banked evidence predates the code it
+  measures. Benchmark results, TPC-H results, the production workload and
+  the e2e gate are all checked by commit ancestry, because a release once
+  shipped a README table describing an earlier run and nothing caught it.
+- A TPC-H-derived correctness workload covering four query shapes the
+  analytical suite lacks - multi-way joins, top-N over a join,
+  high-cardinality join grouping - each verified byte-exact against MySQL.
+  It is a correctness gate, not a performance benchmark, and its artifact
+  now says so.
+- The row-count probe counts exactly, abandoning a count that exceeds thirty
+  seconds and falling back to statistics rather than hanging the caller.
+- The scan pool's width is settable.
 
 ### Performance
 
@@ -53,38 +137,13 @@ nothing:
   partition's map fits a core's private cache, and the scan decodes one
   segment per scan-pool thread rather than a hardcoded eight.
 
-### Added
+### Known limitations
 
-- `GROUP BY` and `WHERE` can express a join the way SQL-89 does: equality
-  predicates between two relations in a `WHERE` clause are inferred as join
-  conditions, so `FROM a, b WHERE a.id = b.a_id` plans as a hash join
-  instead of a cross product. Inference is refused for anything not provably
-  side-separable, and for volatile expressions.
-- The validation pipeline fails when banked evidence predates the code it
-  measures. Benchmark results, TPC-H results, the production workload and
-  the e2e gate are all checked by commit ancestry, because a release once
-  shipped a README table describing an earlier run and nothing caught it.
-- A TPC-H-derived correctness workload covering four query shapes the
-  analytical suite lacks - multi-way joins, top-N over a join,
-  high-cardinality join grouping - each verified byte-exact against MySQL.
-  It is a correctness gate, not a performance benchmark, and its artifact
-  now says so.
-- The row-count probe counts exactly, abandoning a count that exceeds thirty
-  seconds and falling back to statistics rather than hanging the caller.
-- The scan pool's width is settable.
-
-### Fixed
-
-- The benchmark survives a ClickHouse crash mid-run. The container had no
-  restart policy and the retry fired immediately, so a crashed server
-  guaranteed ConnectionRefused and lost the whole stage; two runs died that
-  way in one day. The container now restarts, the retry waits for the server
-  to answer, and the container tail is captured at the moment of the drop.
-- Buffered batches are sized to what the query can still afford, which is
-  what unblocked raising the batch target to 65,536 rows: the aggregate's
-  spill path could not retry mid-merge and failed at every size above 4,096.
-- Nine findings from an external review, and a join inference that could
-  admit an unsafe equality.
+- Under MINIMAL metadata a stream lagging more than one schema change, with
+  no unique type placement, is flagged for resync rather than guessed at.
+- A dropped source database is surfaced - loud connection errors, database
+  state `error` - but not modelled; retained rows keep serving until an
+  operator acts. `docs/limitations.md` records both.
 
 ## [0.0.1-rc14] - 2026-08-13
 
