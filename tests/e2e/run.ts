@@ -1363,7 +1363,12 @@ async function phaseControlPlane() {
         )
         break
       } catch (error) {
-        if (!String(error).includes('409') || attempt >= 20) throw error
+        // The 409 is correct: one replication job per database at a time.
+        // This check follows others that leave a job running, and on a
+        // loaded host the slot can stay held for well over a minute, so the
+        // budget is generous rather than marginal - a tight one turns host
+        // load into a product failure.
+        if (!String(error).includes('409') || attempt >= 60) throw error
         await Bun.sleep(2_000)
       }
     }
