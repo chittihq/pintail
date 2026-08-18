@@ -728,6 +728,15 @@ pub(super) fn compare_sort_values(
                 Ordering::Less
             }
         }
+        // An ENUM against a plain string orders by the label text; ENUM
+        // pairs fall through to derived Ord below, which compares the
+        // declaration index first - MySQL's rule.
+        (Value::Enum { label, .. }, Value::Utf8(text)) => {
+            order_direction(compare_utf8_mysql(label, text, collation), key.ascending)
+        }
+        (Value::Utf8(text), Value::Enum { label, .. }) => {
+            order_direction(compare_utf8_mysql(text, label, collation), key.ascending)
+        }
         (Value::Utf8(left), Value::Utf8(right)) => {
             // Canonical decimal text orders numerically; lexical ordering
             // would put "9.00" after "10.00". Unparseable text (shouldn't

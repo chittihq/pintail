@@ -71,6 +71,12 @@ pub struct BoundColumn {
     /// Source text collation, preserved through derived layouts. `None` is a
     /// non-text value or a synthetic expression using the connection default.
     pub collation: Option<String>,
+    /// Declared ENUM labels in declaration order, when the source column is
+    /// an ENUM. `MySQL` compares an ENUM to a string constant by the
+    /// constant's declared ordinal, and the binder is the only layer that
+    /// still knows both the column's declaration and which side of a
+    /// comparison is the constant.
+    pub enum_labels: Option<std::sync::Arc<Vec<String>>>,
     /// Whether this reference resolves in an enclosing query scope rather
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.

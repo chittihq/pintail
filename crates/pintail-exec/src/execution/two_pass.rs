@@ -309,11 +309,31 @@ pub(super) fn build_streaming_two_pass_aggregate(
     let mut window: Vec<(RecordBatch, Vec<Vec<u64>>)> = Vec::new();
     let mut window_reserved = 0_usize;
     let mut window_rows = 0_usize;
+    // Declared ENUM labels per text key column, captured from the first
+    // batch that carries them. The intern table holds label TEXT only, so
+    // without this the finalize below rebuilds every group key as a plain
+    // string and the declaration index - which is what MySQL orders an
+    // ENUM by - is erased exactly here (#251).
+    let mut key_enum_labels: [Option<std::sync::Arc<Vec<String>>>; 2] = [None, None];
+    let key_columns: [Option<usize>; 2] = match keys {
+        TwoPassKeySource::Text { column } => [Some(column), None],
+        TwoPassKeySource::TextPair { first, second } => [Some(first), Some(second)],
+        TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => [None, None],
+    };
     let mut batch = Some(first);
     loop {
         let Some(current) = batch.take() else {
             break;
         };
+        for (slot, key_column) in key_columns.iter().enumerate() {
+            if let Some(column) = key_column
+                && key_enum_labels[slot].is_none()
+                && let Some(vector) = current.column(*column)
+                && let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed()
+            {
+                key_enum_labels[slot] = strings.declared_enum_labels().cloned();
+            }
+        }
         // String sources prepare their (tiny, per-distinct-value) dictionary
         // translations serially, then scatter rows in parallel from the
         // read-only tables; batches whose strings decoded without codes
@@ -490,14 +510,29 @@ pub(super) fn build_streaming_two_pass_aggregate(
     let finalized = maps
         .into_par_iter()
         .map(|map| -> Result<(Vec<Vec<Value>>, usize), ExecError> {
-            let interned = |id: u64| {
-                Value::Utf8(
-                    intern
-                        .as_ref()
-                        .expect("text keys carry an intern table")
-                        .values[usize::try_from(id).expect("intern id fits usize")]
-                    .clone(),
-                )
+            let interned = |id: u64, labels: Option<&std::sync::Arc<Vec<String>>>| {
+                let text = intern
+                    .as_ref()
+                    .expect("text keys carry an intern table")
+                    .values[usize::try_from(id).expect("intern id fits usize")]
+                .clone();
+                // An ENUM group key rebuilds with its declaration index so
+                // the ORDER BY above sorts it by ordinal, MySQL's rule; a
+                // label absent from the declaration stays a plain string.
+                labels
+                    .and_then(|labels| {
+                        labels
+                            .iter()
+                            .position(|declared| declared == &text)
+                            .and_then(|position| u16::try_from(position + 1).ok())
+                    })
+                    .map_or_else(
+                        || Value::Utf8(text.clone()),
+                        |index| Value::Enum {
+                            index,
+                            label: text.clone(),
+                        },
+                    )
             };
             let mut rows = Vec::with_capacity(map.len());
             let mut payload = 0_usize;
@@ -508,14 +543,18 @@ pub(super) fn build_streaming_two_pass_aggregate(
                         row.push(two_pass_key_value(bits, null, group_type));
                     }
                     TwoPassKeySource::Text { .. } => {
-                        row.push(if null { Value::Null } else { interned(bits) });
+                        row.push(if null {
+                            Value::Null
+                        } else {
+                            interned(bits, key_enum_labels[0].as_ref())
+                        });
                     }
                     TwoPassKeySource::TextPair { .. } => {
-                        for id in [bits >> 32, bits & 0xFFFF_FFFF] {
+                        for (slot, id) in [bits >> 32, bits & 0xFFFF_FFFF].into_iter().enumerate() {
                             row.push(if id == 0 {
                                 Value::Null
                             } else {
-                                interned(id - 1)
+                                interned(id - 1, key_enum_labels[slot].as_ref())
                             });
                         }
                     }

@@ -228,13 +228,13 @@ export const differentialQueries: DifferentialQuery[] = [
     // evaluated after grouping. Their workarounds - ORDER BY alias and
     // ORDER BY ordinal - already worked, which is what proved the aggregate
     // itself was reachable and only the expression form was not.
-    // Tie-broken on customer_id rather than status: status is an ENUM, and
-    // ordering by one is a separate divergence (MySQL sorts by declared
-    // ordinal, Pintail by label) that would mask what this case is for.
+    // Tie-broken on status, an ENUM: the tie order proves the declared
+    // ordinal governs the sort (it was retargeted to customer_id while
+    // ENUM ordering diverged, and restored with the ordinal fix).
     name: 'order by an expression over an aggregate',
     sql:
-      'SELECT customer_id, COUNT(*) AS c FROM orders GROUP BY customer_id ' +
-      'ORDER BY COALESCE(COUNT(*), 0) DESC, customer_id LIMIT 25',
+      'SELECT status, COUNT(*) AS c FROM orders GROUP BY status ' +
+      'ORDER BY COALESCE(COUNT(*), 0) DESC, status',
     tables: ['orders'],
   },
   {
@@ -253,8 +253,8 @@ export const differentialQueries: DifferentialQuery[] = [
     // rather than left dangling.
     name: 'order by an aggregate absent from the select list',
     sql:
-      'SELECT customer_id FROM orders GROUP BY customer_id ' +
-      'ORDER BY SUM(total) DESC, customer_id LIMIT 25',
+      'SELECT status FROM orders GROUP BY status ' +
+      'ORDER BY SUM(total) DESC, status',
     tables: ['orders'],
   },
   {
@@ -634,5 +634,59 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers'],
     documentedGap:
       'a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)',
+  },
+  {
+    // MySQL orders an ENUM by its DECLARED ordinal - for orders.status that
+    // is pending, processing, shipped, delivered, cancelled - never by the
+    // label text. The whole family below pins the ordinal rule across every
+    // surface it governs; label ordering passes none of them, because the
+    // declaration order and the alphabetical order disagree everywhere.
+    name: 'enum: order by ascends by declared ordinal',
+    sql: 'SELECT id, status FROM orders ORDER BY status, id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: order by descends by declared ordinal',
+    sql: 'SELECT id, status FROM orders ORDER BY status DESC, id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: min and max follow the ordinal',
+    sql: 'SELECT MIN(status), MAX(status) FROM orders',
+    tables: ['orders'],
+  },
+  {
+    // A string constant in a range predicate coerces to its declared
+    // ordinal: > 'processing' keeps shipped, delivered AND cancelled.
+    name: 'enum: a greater-than range compares ordinals',
+    sql: "SELECT COUNT(*) FROM orders WHERE status > 'processing'",
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: a less-than range compares ordinals',
+    sql: "SELECT COUNT(*) FROM orders WHERE status < 'delivered'",
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: between spans the declared interval',
+    sql: "SELECT COUNT(*) FROM orders WHERE status BETWEEN 'processing' AND 'delivered'",
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: distinct orders by ordinal',
+    sql: 'SELECT DISTINCT status FROM orders ORDER BY status',
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: a limited sort keeps the lowest ordinals',
+    sql: 'SELECT id, status FROM orders ORDER BY status, id LIMIT 5',
+    tables: ['orders'],
+  },
+  {
+    name: 'enum: a window order walks the ordinal',
+    sql:
+      'SELECT id, status, ROW_NUMBER() OVER (ORDER BY status, id) AS r ' +
+      'FROM orders ORDER BY r LIMIT 40',
+    tables: ['orders'],
   },
 ]

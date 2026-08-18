@@ -1318,6 +1318,7 @@ fn build_prewhere_spec(
             data_type: column.data_type(),
             nullable: column.is_nullable(),
             collation: column.collation().map(str::to_owned),
+            enum_labels: None,
             outer: false,
             using_shadowed: false,
         });

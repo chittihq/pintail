@@ -320,6 +320,12 @@ impl StrColumn {
         self
     }
 
+    /// The declared ENUM labels this column carries, if any.
+    #[must_use]
+    pub(crate) fn declared_enum_labels(&self) -> Option<&std::sync::Arc<Vec<String>>> {
+        self.enum_labels.as_ref()
+    }
+
     /// The one-based declaration index of `label`, when this column is an
     /// ENUM and the label is declared.
     ///
@@ -327,7 +333,7 @@ impl StrColumn {
     /// string: it cannot be ordered by an index it does not have, and
     /// inventing one would order it confidently and wrongly.
     #[must_use]
-    fn enum_index_of(&self, label: &str) -> Option<u16> {
+    pub(crate) fn enum_index_of(&self, label: &str) -> Option<u16> {
         self.enum_labels.as_ref().and_then(|labels| {
             labels
                 .iter()

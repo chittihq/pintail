@@ -726,7 +726,18 @@ fn materialize_values(typed: &TypedValues, validity: &ValidityMask) -> Vec<Value
             TypedValues::Float64(packed) => {
                 Value::Float64(pintail_types::Float64::new(packed[row]))
             }
-            TypedValues::Utf8(column) => Value::Utf8(str_column_string(column, row)),
+            // An ENUM-labelled column materializes its declaration index
+            // alongside the label, mirroring ColumnArray::value_at: this is
+            // the batch currency the sort, aggregate and predicate row paths
+            // actually consume, and rebuilding a plain Value::Utf8 here is
+            // what made ORDER BY on an ENUM alphabetical (#251).
+            TypedValues::Utf8(column) => {
+                let text = str_column_string(column, row);
+                match column.enum_index_of(&text) {
+                    Some(index) => Value::Enum { index, label: text },
+                    None => Value::Utf8(text),
+                }
+            }
             TypedValues::Decimal128 { .. } | TypedValues::Temporal { .. } => {
                 Value::Utf8(str_column_string(
                     typed

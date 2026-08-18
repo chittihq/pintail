@@ -3338,6 +3338,7 @@ fn build_operator(
                     data_type: data_type.unwrap_or(DataType::Utf8),
                     nullable,
                     collation: None,
+                    enum_labels: None,
                     outer: false,
                     using_shadowed: false,
                 };
@@ -3417,6 +3418,7 @@ fn build_operator(
                         data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                         nullable: projection.expr.nullable,
                         collation: None,
+                        enum_labels: None,
                         outer: false,
                         using_shadowed: false,
                     },

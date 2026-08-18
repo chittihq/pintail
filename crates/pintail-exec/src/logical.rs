@@ -261,6 +261,7 @@ impl LogicalPlanner {
                     data_type: window.data_type.unwrap_or(DataType::Utf8),
                     nullable: window.nullable,
                     collation: None,
+                    enum_labels: None,
                     outer: false,
                     using_shadowed: false,
                 })

@@ -299,7 +299,10 @@ fn encode_group_value(
             out.push(4);
             out.extend_from_slice(&number.get().to_bits().to_le_bytes());
         }
-        Value::Utf8(text) => {
+        // An ENUM groups and joins by its label, under the SAME tag as a
+        // plain string: MySQL compares an ENUM to a text column by string,
+        // and a distinct tag would keep equal labels from ever colliding.
+        Value::Utf8(text) | Value::Enum { label: text, .. } => {
             out.push(5);
             let start = out.len();
             keys.append(text, collation, out);
@@ -310,15 +313,6 @@ fn encode_group_value(
             out.push(6);
             out.extend_from_slice(bytes);
             let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-            out.extend_from_slice(&length.to_le_bytes());
-        }
-        // An ENUM groups by its label, matching how it compares and how the
-        // row-shaped key treated it.
-        Value::Enum { label, .. } => {
-            out.push(7);
-            let start = out.len();
-            keys.append(label, collation, out);
-            let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
             out.extend_from_slice(&length.to_le_bytes());
         }
     }
@@ -1311,6 +1305,10 @@ pub(super) fn normalized_join_key(
 pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> Value {
     match value {
         Value::Utf8(value) => Value::Utf8(normalized_collation_text(&value, collation)),
+        // An ENUM hashes and matches as its label: MySQL compares an ENUM to
+        // a string column by string, so `enum_col = varchar_col` keys must
+        // collide with the plain-text side.
+        Value::Enum { label, .. } => Value::Utf8(normalized_collation_text(&label, collation)),
         value => value,
     }
 }

@@ -228,6 +228,7 @@ impl<'catalog> Binder<'catalog> {
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: true,
                 collation: anchor.result_collation(&projection.expr),
+                enum_labels: None,
                 outer: false,
                 using_shadowed: false,
             })
@@ -1647,6 +1648,9 @@ impl<'catalog> Binder<'catalog> {
                 data_type: column.data_type(),
                 nullable: column.is_nullable(),
                 collation: column.collation().map(str::to_owned),
+                enum_labels: column
+                    .enum_labels()
+                    .map(|labels| std::sync::Arc::new(labels.to_vec())),
                 outer: false,
                 using_shadowed: false,
             })
@@ -1694,6 +1698,7 @@ impl<'catalog> Binder<'catalog> {
                 data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
                 nullable: projection.expr.nullable,
                 collation: input.result_collation(&projection.expr),
+                enum_labels: None,
                 outer: false,
                 using_shadowed: false,
             })
@@ -2842,6 +2847,7 @@ fn bind_unary(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn bind_binary(
     left: &Expr,
     operator: &BinaryOperator,
@@ -2944,6 +2950,14 @@ fn bind_binary(
     if is_exact_decimal_comparison(op, &left, &right) {
         return Ok(bind_exact_decimal_comparison(op, left, right));
     }
+    let (left, right) = match op {
+        BinaryOp::Less | BinaryOp::LessOrEqual | BinaryOp::Greater | BinaryOp::GreaterOrEqual => {
+            let right = coerce_enum_range_literal(&left, right);
+            let left = coerce_enum_range_literal(&right, left);
+            (left, right)
+        }
+        _ => (left, right),
+    };
 
     Ok(BoundExpr {
         nullable: left.nullable || right.nullable,
@@ -2954,6 +2968,37 @@ fn bind_binary(
             right: Box::new(right),
         },
     })
+}
+
+/// `MySQL` orders an ENUM against a string constant by the constant's declared
+/// ordinal, not its spelling: `status > 'processing'` keeps every status
+/// declared after `processing`, wherever the labels fall alphabetically. The
+/// literal side of a range comparison against an ENUM column therefore
+/// rewrites into its `Value::Enum` ordinal here, where both the declaration
+/// and the constant are still visible. A spelling absent from the
+/// declaration coerces to `MySQL`'s error ordinal 0, which orders before
+/// every declared member. Equality deliberately keeps the text form: labels
+/// are unique, so text equality is already exact and keeps the vectorized
+/// kernels on their fast path.
+pub(super) fn coerce_enum_range_literal(anchor: &BoundExpr, literal: BoundExpr) -> BoundExpr {
+    let BoundExprKind::Column(column) = &anchor.kind else {
+        return literal;
+    };
+    let Some(labels) = &column.enum_labels else {
+        return literal;
+    };
+    let BoundExprKind::Literal(Value::Utf8(text)) = literal.kind else {
+        return literal;
+    };
+    let index = labels
+        .iter()
+        .position(|declared| declared == &text)
+        .and_then(|position| u16::try_from(position + 1).ok())
+        .unwrap_or(0);
+    BoundExpr {
+        kind: BoundExprKind::Literal(Value::Enum { index, label: text }),
+        ..literal
+    }
 }
 
 fn is_collation_sensitive_binary(operator: &BinaryOperator) -> bool {
