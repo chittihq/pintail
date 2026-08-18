@@ -718,6 +718,18 @@ async fn run_cdc_inner(
                     mutations += outcome;
                     emit_progress(&progress, commits, mutations, &position)?;
                 }
+                // A connection replays its preamble before any replication
+                // progress: a fake rotate, then the format description at the
+                // head of the file. Their log_pos describes the FILE, not how
+                // far this stream has read, so adopting it rewinds the resume
+                // point to the beginning - observed as
+                // "cdc cycle done ... events=2 commits=0 pos=mysql-bin.000003:127"
+                // on every idle cycle. Nothing persists today because those
+                // cycles commit nothing, but the safety rests on "a commit
+                // cannot follow a preamble-only read", which nothing states
+                // or tests. A checkpoint at 127 replays the whole binlog, and
+                // on an append-keyed table that duplicates every row.
+                EventData::FormatDescriptionEvent(_) => {}
                 _ => {
                     if event_position > 0 {
                         position.pos = event_position;
