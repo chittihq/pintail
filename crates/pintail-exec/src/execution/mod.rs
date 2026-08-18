@@ -791,9 +791,10 @@ fn grouping_collation(keys: &[BoundExpr], fallback: Collation) -> Result<Collati
         };
         match resolved {
             Some(existing) if existing != collation => {
-                return Err(ExecError::InvalidPhysicalPlan(
-                    "grouping keys use more than one text collation",
-                ));
+                return Err(ExecError::MixedGroupingCollation {
+                    held: existing.mysql_name(),
+                    found: collation.mysql_name(),
+                });
             }
             _ => resolved = Some(collation),
         }

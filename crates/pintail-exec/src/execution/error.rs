@@ -31,6 +31,15 @@ pub enum ExecError {
     },
     /// A physical plan violates an internal layout invariant.
     InvalidPhysicalPlan(&'static str),
+    /// Grouping keys disagree on text collation. Names both, because the
+    /// operator cannot act on the fact that they differ - only on WHICH they
+    /// are, and Pintail does not otherwise expose a column's collation.
+    MixedGroupingCollation {
+        /// The collation established by an earlier key.
+        held: &'static str,
+        /// The collation a later key brought.
+        found: &'static str,
+    },
     /// A source returned a malformed batch.
     InvalidBatch(&'static str),
     /// A compiled expression cannot find its stable input column.
@@ -128,6 +137,12 @@ impl fmt::Display for ExecError {
             Self::QueryTimedOut => formatter
                 .write_str("query execution was interrupted after max_execution_time elapsed"),
             Self::QueryCancelled => formatter.write_str("query execution was cancelled"),
+            Self::MixedGroupingCollation { held, found } => write!(
+                formatter,
+                "grouping keys use more than one text collation: {held} and {found}. \
+                 A grouping folds its whole key tuple into one entry, so every text \
+                 key must compare by the same rules"
+            ),
             Self::InvalidPhysicalPlan(message) => {
                 write!(formatter, "invalid physical plan: {message}")
             }
