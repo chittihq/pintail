@@ -1,51 +1,51 @@
 {
   "workload": "tpch-v1",
-  "profile": "ci",
-  "scale": 0.01,
-  "startedAt": "2026-08-18T17:58:34.116Z",
-  "finishedAt": "2026-08-18T17:59:01.488Z",
+  "profile": "smoke",
+  "scale": 0.0005,
+  "startedAt": "2026-08-18T20:17:06.742Z",
+  "finishedAt": "2026-08-18T20:17:21.780Z",
   "counts": {
     "region": 5,
     "nation": 25,
-    "supplier": 100,
-    "part": 2000,
-    "partsupp": 8000,
-    "customer": 1500,
-    "orders": 15000,
-    "lineitem": 60101
+    "supplier": 5,
+    "part": 100,
+    "partsupp": 400,
+    "customer": 75,
+    "orders": 750,
+    "lineitem": 3017
   },
   "queries": [
     {
       "id": "q01-pricing-summary",
       "class": "scan-aggregate",
       "status": "ok",
-      "mysqlMs": 142,
-      "pintailMs": 192,
+      "mysqlMs": 45,
+      "pintailMs": 41,
       "rows": 6
     },
     {
       "id": "q03-shipping-priority",
       "class": "join-topn",
       "status": "ok",
-      "mysqlMs": 23,
-      "pintailMs": 53,
-      "rows": 10
+      "mysqlMs": 11,
+      "pintailMs": 10,
+      "rows": 2
     },
     {
       "id": "q05-local-supplier-volume",
       "class": "join-wide",
       "status": "ok",
-      "mysqlMs": 27,
-      "pintailMs": 59,
-      "rows": 5
+      "mysqlMs": 16,
+      "pintailMs": 8,
+      "rows": 2
     },
     {
       "id": "q10-returned-item-reporting",
       "class": "join-high-cardinality",
       "status": "ok",
-      "mysqlMs": 20,
-      "pintailMs": 44,
-      "rows": 20
+      "mysqlMs": 13,
+      "pintailMs": 7,
+      "rows": 13
     }
   ],
   "gate": {
