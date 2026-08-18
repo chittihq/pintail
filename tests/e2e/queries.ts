@@ -126,6 +126,38 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers', 'orders'],
   },
   {
+    // Chitti LMS PT-2: an ORDER BY expression over an aggregate. Neither an
+    // output name nor a source column, so it needs a hidden projection
+    // evaluated after grouping. Their workarounds - ORDER BY alias and
+    // ORDER BY ordinal - already worked, which is what proved the aggregate
+    // itself was reachable and only the expression form was not.
+    name: 'order by an expression over an aggregate',
+    sql:
+      'SELECT status, COUNT(*) AS c FROM orders GROUP BY status ' +
+      'ORDER BY COALESCE(COUNT(*), 0) DESC, status',
+    tables: ['orders'],
+  },
+  {
+    // The real shape from health-section-students: a whole tree over several
+    // different aggregates, not a single wrapped call.
+    name: 'order by a tree over several aggregates',
+    sql:
+      'SELECT o.customer_id, COUNT(*) AS orders_count FROM orders o ' +
+      'GROUP BY o.customer_id ' +
+      'ORDER BY (LEAST(30, COUNT(*) * 3.0) + LEAST(20, COALESCE(SUM(o.total), 0) / 100)) DESC, ' +
+      '  o.customer_id LIMIT 25',
+    tables: ['orders'],
+  },
+  {
+    // An aggregate that appears ONLY in ORDER BY must still be computed
+    // rather than left dangling.
+    name: 'order by an aggregate absent from the select list',
+    sql:
+      'SELECT status FROM orders GROUP BY status ' +
+      'ORDER BY SUM(total) DESC, status',
+    tables: ['orders'],
+  },
+  {
     name: 'group by with having',
     sql:
       'SELECT customer_id, COUNT(*) AS n, ROUND(AVG(total), 2) AS avg_total ' +

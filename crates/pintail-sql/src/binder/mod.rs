@@ -4064,13 +4064,48 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
             if order.with_fill.is_some() {
                 return Err(BindError::InvalidOrderBy(order.to_string()));
             }
-            let index = resolve_order_index(
+            let index = match resolve_order_index(
                 &order.expr,
                 visible,
                 &mut bound.projection,
                 &bound.tables,
                 allow_hidden,
-            )?;
+            ) {
+                Ok(index) => index,
+                // A grouped query can sort by an EXPRESSION over its
+                // aggregates - `ORDER BY COALESCE(COUNT(*), 0)` - which is
+                // neither an output name nor a source column, so the lookups
+                // above cannot reach it. `allow_hidden` is false here for
+                // good reason: a hidden SOURCE column is unsound once rows
+                // have been grouped away. A hidden column evaluated in the
+                // post-aggregation scope is not, and is exactly what MySQL
+                // sorts by. Binding it here also registers any aggregate it
+                // introduces, so COUNT(*) that appears only in ORDER BY is
+                // computed rather than dangling.
+                Err(BindError::InvalidOrderBy(_))
+                    if !bound.group_by.is_empty() || !bound.aggregates.is_empty() =>
+                {
+                    let mut expr = bind_aggregate_expr(
+                        &order.expr,
+                        &bound.tables,
+                        &mut bound.aggregates,
+                        None,
+                    )?;
+                    // Same rule the select list obeys: every column in the
+                    // expression must be grouped or aggregated. `ORDER BY id`
+                    // over `GROUP BY name` is still meaningless and still
+                    // rejects - reported as an invalid ORDER BY, because that
+                    // is the clause the author has to fix.
+                    rewrite_group_references(&mut expr, &bound.group_by)
+                        .map_err(|_| BindError::InvalidOrderBy(order.expr.to_string()))?;
+                    bound.projection.push(BoundProjection {
+                        name: format!("<order-{}>", bound.projection.len()),
+                        expr,
+                    });
+                    bound.projection.len() - 1
+                }
+                Err(error) => return Err(error),
+            };
             if bound
                 .projection
                 .get(index)
