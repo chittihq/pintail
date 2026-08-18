@@ -689,4 +689,30 @@ export const differentialQueries: DifferentialQuery[] = [
       'FROM orders ORDER BY r LIMIT 40',
     tables: ['orders'],
   },
+  {
+    // Grouping keys of two collations answers, each key folded by its own
+    // rules (the 0.0.3 refusal a customer hit on sectionName+schoolName).
+    // Wrapped in a count so the assertion is fold arithmetic, not the
+    // representative spelling documented as gap #10.
+    name: 'collation: mixed grouping answers with per-key folds',
+    sql:
+      'SELECT COUNT(*) AS groups FROM ' +
+      '(SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tier) g',
+    tables: ['customers'],
+  },
+  {
+    // Each DISTINCT folds under its own column's collation in one query:
+    // legacy_label under general_ci, name under 0900_ai_ci.
+    name: 'collation: distinct counts fold per column collation',
+    sql: 'SELECT COUNT(DISTINCT legacy_label) AS ci_folds, COUNT(DISTINCT name) AS ai_folds FROM customers',
+    tables: ['customers'],
+  },
+  {
+    name: 'collation: regrouping a mixed grouping stays exact',
+    sql:
+      'SELECT tier, COUNT(*) AS n FROM ' +
+      '(SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tier) g ' +
+      'GROUP BY tier ORDER BY tier',
+    tables: ['customers'],
+  },
 ]

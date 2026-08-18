@@ -775,31 +775,40 @@ enum JoinKeyMode {
 /// The collation one key compares under: its own, falling back to the plan's
 /// where the key reads no text (an integer key, or one whose operands span
 /// two collations - which the binder refuses before it reaches here).
-/// The one collation a grouping folds its keys under.
+/// The collation each grouping key folds under, plus the single shared
+/// collation when every text key agrees.
 ///
-/// # Errors
-///
-/// Returns [`ExecError::InvalidPhysicalPlan`] when the keys span more than one
-/// collation, which the interner cannot represent: it folds a whole key tuple
-/// into a single entry, so there is nowhere to record that one column of the
-/// tuple compares by different rules than the next.
-fn grouping_collation(keys: &[BoundExpr], fallback: Collation) -> Result<Collation, ExecError> {
+/// Grouping never compares one key column AGAINST another - each key column
+/// is its own equivalence relation - so keys of two collations are
+/// answerable, each folded by its own rules. The uniform collation, when it
+/// exists, is what the specialized aggregation paths (dictionary codes,
+/// two-pass interning, the fused join) key their single shared tables on;
+/// mixed keys route to the general per-key path instead of being refused.
+fn grouping_key_collations(
+    keys: &[BoundExpr],
+    fallback: Collation,
+) -> (Vec<Collation>, Option<Collation>) {
+    let per_key: Vec<Collation> = keys
+        .iter()
+        .map(|key| key_collation_of(key, fallback))
+        .collect();
     let mut resolved: Option<Collation> = None;
+    let mut mixed = false;
     for key in keys {
         let Some(collation) = key.text_collation().and_then(Collation::from_mysql_name) else {
             continue;
         };
         match resolved {
-            Some(existing) if existing != collation => {
-                return Err(ExecError::MixedGroupingCollation {
-                    held: existing.mysql_name(),
-                    found: collation.mysql_name(),
-                });
-            }
+            Some(existing) if existing != collation => mixed = true,
             _ => resolved = Some(collation),
         }
     }
-    Ok(resolved.unwrap_or(fallback))
+    let uniform = if mixed {
+        None
+    } else {
+        Some(resolved.unwrap_or(fallback))
+    };
+    (per_key, uniform)
 }
 
 fn key_collation_of(key: &BoundExpr, fallback: Collation) -> Collation {
@@ -2600,6 +2609,10 @@ enum PullOperator {
         /// is an equivalence relation over text, so it has to be decided once
         /// for the operator rather than per batch.
         collation: Collation,
+        /// Each grouping key's own collation, in key order. Uniform keys
+        /// repeat one collation; mixed keys are what the general path folds
+        /// per key.
+        key_collations: Vec<Collation>,
     },
     Project {
         input: Box<Self>,
@@ -2835,10 +2848,16 @@ impl PullOperator {
                 column_types,
                 state,
                 collation,
+                key_collations,
             } => {
                 if state.is_none() {
                     *state = Some(build_hash_aggregate(
-                        input, group_by, aggregates, memory, *collation,
+                        input,
+                        group_by,
+                        aggregates,
+                        memory,
+                        *collation,
+                        key_collations,
                     )?);
                 }
                 next_materialized_batch(
@@ -3362,21 +3381,21 @@ fn build_operator(
                     aggregate.nullable,
                 )
             }));
-            // Grouping decides row identity across ALL its keys at once - the
-            // interner folds a whole key tuple into one entry - so unlike a
-            // sort, which compares key by key, this operator needs one
-            // collation. Taken from the group keys themselves, so a grouping
-            // on general_ci columns works inside a query whose other operators
-            // use a different one.
-            //
-            // Keys spanning two collations within a single grouping is the one
-            // case still refused: answering it needs per-key folding the
-            // interner does not have, and guessing which of the two applies
-            // would silently merge groups that MySQL keeps apart.
-            let group_collation = grouping_collation(&group_by, collation)?;
+            // Each grouping key folds under ITS OWN collation - grouping
+            // never compares one key column against another, so keys of two
+            // collations are answerable, exactly as a sort orders each key
+            // by its own rules. The uniform collation, when the keys share
+            // one, keeps the specialized single-table paths eligible; mixed
+            // keys take the general per-key path.
+            let (key_collations, uniform_key_collation) =
+                grouping_key_collations(&group_by, collation);
+            let group_collation = uniform_key_collation.unwrap_or(collation);
             let group_by = group_by
                 .iter()
-                .map(|expression| CompiledExpr::compile(expression, &columns, group_collation))
+                .zip(&key_collations)
+                .map(|(expression, key_collation)| {
+                    CompiledExpr::compile(expression, &columns, *key_collation)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let aggregates = aggregates
                 .iter()
@@ -3390,6 +3409,7 @@ fn build_operator(
                     column_types,
                     state: None,
                     collation: group_collation,
+                    key_collations,
                 },
                 output_columns,
             ))

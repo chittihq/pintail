@@ -64,6 +64,15 @@ impl CompiledAggregate {
             .expr
             .as_ref()
             .and_then(|expression| expression.data_type);
+        // COUNT(DISTINCT col) folds col's values under COL's collation: a
+        // general_ci column PAD-folds 'red' and 'red ' into one distinct
+        // value whatever collation the rest of the plan resolved.
+        let collation = aggregate
+            .expr
+            .as_ref()
+            .and_then(pintail_sql::BoundExpr::text_collation)
+            .and_then(Collation::from_mysql_name)
+            .unwrap_or(collation);
         Ok(Self {
             collation,
             function: aggregate.function,
@@ -1340,6 +1349,7 @@ pub(super) fn build_hash_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
     collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<MaterializedRows, ExecError> {
     // Storage predicates are ALSO compiled into Filter operators above the
     // scan (belt and braces), so a filtered plan is Filter(..(Scan)). Those
@@ -1483,8 +1493,14 @@ pub(super) fn build_hash_aggregate(
                 stream: Box::new(OneShotStream { batch: Some(batch) }),
                 expected_types: delta.types.clone(),
             };
-            let delta_rows =
-                build_hash_aggregate_scan(&mut one_shot, group_by, aggregates, memory, collation)?;
+            let delta_rows = build_hash_aggregate_scan(
+                &mut one_shot,
+                group_by,
+                aggregates,
+                memory,
+                collation,
+                key_collations,
+            )?;
             let merged = merge_finished_aggregate_rows(
                 base,
                 delta_rows.rows,
@@ -1516,7 +1532,14 @@ pub(super) fn build_hash_aggregate(
         }
         return Ok(MaterializedRows { rows, position: 0 });
     }
-    let result = build_hash_aggregate_scan(input, group_by, aggregates, memory, collation)?;
+    let result = build_hash_aggregate_scan(
+        input,
+        group_by,
+        aggregates,
+        memory,
+        collation,
+        key_collations,
+    )?;
     if let Some(key) = memo_key
         && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
     {
@@ -1917,6 +1940,7 @@ fn build_hash_aggregate_scan(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
     collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<MaterializedRows, ExecError> {
     if group_by.is_empty()
         && !aggregates.is_empty()
@@ -1947,7 +1971,11 @@ fn build_hash_aggregate_scan(
             .iter()
             .map(CompiledExpr::column_index)
             .collect::<Option<Vec<_>>>();
-        if let Some(group_columns) = direct_columns.as_deref()
+        // The fused join path keys ONE shared table for the whole key
+        // tuple, so it stays on uniform-collation keys; mixed keys take the
+        // general per-key path below.
+        if key_collations.windows(2).all(|pair| pair[0] == pair[1])
+            && let Some(group_columns) = direct_columns.as_deref()
             && let Some(rows) = build_fused_inner_join_aggregate(
                 input,
                 group_columns,
@@ -1971,6 +1999,7 @@ fn build_hash_aggregate_scan(
                 aggregates,
                 memory,
                 collation,
+                key_collations,
             );
         }
         if let Some(group_columns) = direct_columns {
@@ -1981,6 +2010,7 @@ fn build_hash_aggregate_scan(
                 aggregates,
                 memory,
                 collation,
+                key_collations,
             );
         }
     }
@@ -2041,7 +2071,10 @@ fn build_hash_aggregate_scan(
             let key = values
                 .iter()
                 .cloned()
-                .map(|value| normalized_hash_key(value, collation).unwrap_or(Value::Null))
+                .zip(key_collations)
+                .map(|(value, collation)| {
+                    normalized_hash_key(value, *collation).unwrap_or(Value::Null)
+                })
                 .collect::<Vec<_>>();
             if groups.len() == groups.capacity() {
                 let growth = groups.capacity().max(1);
@@ -2137,6 +2170,7 @@ fn date_part_key_source(
 }
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn build_buffered_hash_aggregate(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
@@ -2144,6 +2178,7 @@ fn build_buffered_hash_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
     collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<MaterializedRows, ExecError> {
     let Some(first_batch) = input.next_batch(memory)? else {
         return Ok(MaterializedRows {
@@ -2183,6 +2218,7 @@ fn build_buffered_hash_aggregate(
         Some([first, second]) => {
             utf8_column(first)
                 && utf8_column(second)
+                && key_collations.windows(2).all(|pair| pair[0] == pair[1])
                 && two_pass_lanes(aggregates, &first_batch).is_some()
         }
         _ => false,
@@ -2203,6 +2239,7 @@ fn build_buffered_hash_aggregate(
             aggregates,
             memory,
             collation,
+            key_collations,
         );
     }
 
@@ -2271,11 +2308,21 @@ fn build_buffered_hash_aggregate(
                 direct_columns.map_or_else(
                     || {
                         build_local_expression_groups(
-                            batch, group_by, aggregates, memory, collation,
+                            batch,
+                            group_by,
+                            aggregates,
+                            memory,
+                            key_collations,
                         )
                     },
                     |columns| {
-                        build_local_direct_groups(batch, columns, aggregates, memory, collation)
+                        build_local_direct_groups(
+                            batch,
+                            columns,
+                            aggregates,
+                            memory,
+                            key_collations,
+                        )
                     },
                 )
             })
@@ -3271,6 +3318,8 @@ fn build_local_fused_join_groups(
             }
         }
     }
+    // Uniform by construction: the fused path is gated to keys that share
+    // one collation before it is attempted.
     Ok(groups
         .into_iter()
         .map(|group| {
@@ -3297,7 +3346,7 @@ fn build_local_dictionary_groups(
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
-    collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<Option<HashMap<Vec<Value>, AggregateGroup>>, ExecError> {
     struct DictAggregate {
         function: AggregateFunction,
@@ -3517,7 +3566,8 @@ fn build_local_dictionary_groups(
         let key = values
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, collation))
+            .zip(key_collations)
+            .map(|(value, collation)| normalized_collation_value(value, *collation))
             .collect();
         let group = AggregateGroup {
             values,
@@ -3548,11 +3598,15 @@ fn build_local_direct_groups(
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
-    collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
-    if let Some(groups) =
-        build_local_dictionary_groups(batch, group_columns, aggregates, parent_memory, collation)?
-    {
+    if let Some(groups) = build_local_dictionary_groups(
+        batch,
+        group_columns,
+        aggregates,
+        parent_memory,
+        key_collations,
+    )? {
         return Ok(groups);
     }
     let mut groups = Vec::<AggregateGroup>::new();
@@ -3572,7 +3626,7 @@ fn build_local_direct_groups(
             })
             .or_else(|| {
                 groups.iter().position(|group| {
-                    direct_group_matches(&group.values, batch, row, group_columns, collation)
+                    direct_group_matches(&group.values, batch, row, group_columns, key_collations)
                 })
             });
         let group_index = existing.unwrap_or_else(|| {
@@ -3608,7 +3662,8 @@ fn build_local_direct_groups(
                 .values
                 .iter()
                 .cloned()
-                .map(|value| normalized_collation_value(value, collation))
+                .zip(key_collations)
+                .map(|(value, collation)| normalized_collation_value(value, *collation))
                 .collect();
             (key, group)
         })
@@ -3620,7 +3675,7 @@ fn build_local_expression_groups(
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
-    collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     let memory = parent_memory.unbounded_worker();
@@ -3636,7 +3691,8 @@ fn build_local_expression_groups(
         let key = values
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, collation))
+            .zip(key_collations)
+            .map(|(value, collation)| normalized_collation_value(value, *collation))
             .collect::<Vec<_>>();
         let group = groups.entry(key).or_insert_with(|| AggregateGroup {
             values,
@@ -3673,6 +3729,7 @@ fn finish_aggregate_groups(
 }
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn build_direct_column_aggregate(
     input: &mut PullOperator,
     mut first_batch: Option<RecordBatch>,
@@ -3680,6 +3737,7 @@ fn build_direct_column_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
     collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<MaterializedRows, ExecError> {
     // Single-int-column inputs with eligible lanes take the streaming
     // two-pass partitioned path (e13: 4.2-8.9x); ineligible aggregate
@@ -3723,7 +3781,11 @@ fn build_direct_column_aggregate(
                     None
                 }
             }
-            [first, second] if typed_text(first) && typed_text(second) => {
+            [first, second]
+                if typed_text(first)
+                    && typed_text(second)
+                    && key_collations.windows(2).all(|pair| pair[0] == pair[1]) =>
+            {
                 Some(TwoPassKeySource::TextPair { first, second })
             }
             _ => None,
@@ -3752,8 +3814,17 @@ fn build_direct_column_aggregate(
             // Value-hashmap fallback on real 20M-row inputs. Scattering
             // (key bits, lane bits) as batches arrive costs the exact
             // 8*(1+lanes)+1 bytes/row and never falls back.
+            // Text keys intern under the KEY's collation; the plan fallback
+            // only reaches the intern when the key carries no text.
+            let intern_collation = key_collations.first().copied().unwrap_or(collation);
             return build_streaming_two_pass_aggregate(
-                input, head, keys, &lanes, aggregates, memory, collation,
+                input,
+                head,
+                keys,
+                &lanes,
+                aggregates,
+                memory,
+                intern_collation,
             );
         }
         pending.push_front(head);
@@ -3805,7 +3876,7 @@ fn build_direct_column_aggregate(
                                 &batch,
                                 row,
                                 group_columns,
-                                collation,
+                                key_collations,
                             )
                         })
                     })
@@ -3904,20 +3975,26 @@ pub(super) fn direct_group_matches(
     batch: &RecordBatch,
     row: usize,
     columns: &[usize],
-    collation: Collation,
+    key_collations: &[Collation],
 ) -> bool {
-    values.iter().zip(columns).all(|(grouped, column)| {
-        direct_group_value(batch, row, *column).is_ok_and(|candidate| match (grouped, candidate) {
-            (Value::Utf8(left), Value::Utf8(right)) => {
-                if left.is_ascii() && right.is_ascii() {
-                    left.eq_ignore_ascii_case(right)
-                } else {
-                    compare_utf8_mysql(left, right, collation) == Ordering::Equal
+    values
+        .iter()
+        .zip(columns)
+        .zip(key_collations)
+        .all(|((grouped, column), collation)| {
+            direct_group_value(batch, row, *column).is_ok_and(|candidate| {
+                match (grouped, candidate) {
+                    (Value::Utf8(left), Value::Utf8(right)) => {
+                        if left.is_ascii() && right.is_ascii() {
+                            left.eq_ignore_ascii_case(right)
+                        } else {
+                            compare_utf8_mysql(left, right, *collation) == Ordering::Equal
+                        }
+                    }
+                    _ => grouped == candidate,
                 }
-            }
-            _ => grouped == candidate,
+            })
         })
-    })
 }
 
 pub(super) fn direct_group_matches_exact(
