@@ -4,6 +4,38 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.2] - 2026-08-18
+
+Dashboard only. No engine, replication or storage changes.
+
+### Added
+
+- A **View** action on every row of a database's tables list opens the
+  first 100 rows in a dialog, read through the query engine rather than a
+  separate path - so merge-on-read visibility, typed fields, NULL
+  rendering and value formatting are identical to the SQL console, and a
+  footer link carries the table into that console for anything deeper.
+
+### Fixed
+
+- Switching workspaces flashed the connection wizard at operators whose
+  databases were still loading. The switch clears the database cache
+  before it reloads, and the empty states keyed on the cache alone, so
+  "No databases yet" rendered for the width of two round trips - which
+  reads as data loss, not as loading. An empty workspace still reaches
+  the wizard; a populated one no longer passes through it.
+- A long replication error stretched its column until the Reconcile and
+  Resync buttons left the screen. Table errors truncate with the full
+  text on hover, and dead-letter errors wrap instead of running past the
+  viewport.
+- Resync no longer jumps the view from the Tables tab to Snapshot. The
+  action is requested from the tables list, and the operator is usually
+  still reading it.
+- The Resync button described itself as a mirror-wide resnapshot, which
+  0.0.1 had already made per-table. The tooltip and toast now say what it
+  does - the old warning was the one most likely to talk an operator out
+  of the cheap repair.
+
 ## [0.0.1] - 2026-08-18
 
 First stable tag. Folds in the performance work that was headed for an
