@@ -513,6 +513,7 @@ impl<'catalog> Binder<'catalog> {
             }
         }
         let mut zero_folds: Vec<String> = Vec::new();
+        let mut scalar_correlations: Vec<ScalarCorrelation> = Vec::new();
         for item in &mut projection_items {
             let (original, alias) = match item {
                 SelectItem::UnnamedExpr(expr) => (expr.clone(), None),
@@ -525,11 +526,12 @@ impl<'catalog> Binder<'catalog> {
             if self.bind_query(subquery, ctes).is_ok() {
                 continue;
             }
-            let Ok((replacement, counts)) =
+            let Ok((replacement, counts, correlation)) =
                 self.decorrelate_scalar(subquery, &mut from, &mut tables, ctes)
             else {
                 continue;
             };
+            scalar_correlations.push(correlation);
             if counts
                 && let Expr::CompoundIdentifier(identifiers) = &replacement
                 && let Some(relation) = identifiers.first()
@@ -581,7 +583,7 @@ impl<'catalog> Binder<'catalog> {
                 }
             }
         }
-        let group_by = bind_group_by(
+        let mut group_by = bind_group_by(
             &select.group_by,
             &projection_items,
             &expression_tables,
@@ -648,6 +650,42 @@ impl<'catalog> Binder<'catalog> {
             aggregates.clear();
         }
         if !group_by.is_empty() || !aggregates.is_empty() {
+            // A correlated scalar whose keys are ALL grouping keys has exactly
+            // one value per group, so referencing it is legal and MySQL
+            // answers it. Adding that value to the grouping set cannot split a
+            // group for the same reason it is legal - it is functionally
+            // determined by keys already present. A scalar correlating on
+            // anything else keeps refusing: it genuinely has several values
+            // per group, and returning an arbitrary one would be silently
+            // wrong where today's error is merely unhelpful.
+            let grouped: Vec<(pintail_catalog::TableId, u32)> = group_by
+                .iter()
+                .filter_map(|key| match &key.kind {
+                    BoundExprKind::Column(column) => Some((column.table_id, column.column_id)),
+                    _ => None,
+                })
+                .collect();
+            for correlation in &scalar_correlations {
+                if !correlation.complete
+                    || correlation.outer.is_empty()
+                    || !correlation
+                        .outer
+                        .iter()
+                        .all(|key| grouped.iter().any(|group| group == key))
+                {
+                    continue;
+                }
+                // Bind the value column directly rather than hunting it in
+                // the projection: a COUNT subquery is wrapped by the
+                // zero-fold rewrite, so it is not the projection root.
+                let reference = Expr::CompoundIdentifier(vec![
+                    Ident::new(correlation.alias.clone()),
+                    Ident::new(SCALAR_VALUE_COLUMN),
+                ]);
+                if let Ok(value) = bind_expr(&reference, &tables, None) {
+                    group_by.push(value);
+                }
+            }
             for item in &mut projection {
                 rewrite_group_references(&mut item.expr, &group_by)?;
             }
@@ -948,7 +986,7 @@ impl<'catalog> Binder<'catalog> {
         from: &mut [BoundFrom],
         tables: &mut Vec<BoundTable>,
         ctes: &[BoundCte],
-    ) -> Result<(Expr, bool), BindError> {
+    ) -> Result<(Expr, bool, ScalarCorrelation), BindError> {
         let unsupported = || BindError::UnsupportedSubquery(subquery.to_string());
         let SetExpr::Select(inner) = subquery.body.as_ref() else {
             return Err(unsupported());
@@ -1064,6 +1102,7 @@ impl<'catalog> Binder<'catalog> {
                 Vec::new(),
             );
         }
+        let outer_scope = tables.clone();
         let alias = format!("{SCALAR_TABLE_PREFIX}{}", tables.len());
         let input = self.bind_query(&derived_query, ctes)?;
         let derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
@@ -1104,9 +1143,34 @@ impl<'catalog> Binder<'catalog> {
             table: derived,
             condition: Some(condition),
         });
+        // The OUTER half of each correlation key. Physical identity, not
+        // the whole expression: GROUP BY binds against the table list AFTER
+        // this derived table joins it, so two bindings of the same column
+        // are equal in meaning and not necessarily in structure.
+        let outer = keys
+            .iter()
+            .filter_map(
+                |(_, outer_side)| match bind_expr(outer_side, &outer_scope, None) {
+                    Ok(BoundExpr {
+                        kind: BoundExprKind::Column(column),
+                        ..
+                    }) => Some((column.table_id, column.column_id)),
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        let complete = outer.len() == keys.len();
         Ok((
-            Expr::CompoundIdentifier(vec![Ident::new(alias), Ident::new(SCALAR_VALUE_COLUMN)]),
+            Expr::CompoundIdentifier(vec![
+                Ident::new(alias.clone()),
+                Ident::new(SCALAR_VALUE_COLUMN),
+            ]),
             counts,
+            ScalarCorrelation {
+                alias,
+                outer,
+                complete,
+            },
         ))
     }
 
@@ -3861,6 +3925,18 @@ const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
 /// Prefix of the derived table a decorrelated scalar subquery becomes.
 const SCALAR_TABLE_PREFIX: &str = "__scalar_";
 
+/// What a decorrelated scalar subquery correlates on, by physical identity.
+struct ScalarCorrelation {
+    /// The derived table the subquery became.
+    alias: String,
+    /// `(table, column)` of each correlation key's outer side.
+    outer: Vec<(pintail_catalog::TableId, u32)>,
+    /// Whether every key resolved to a plain column. A key that did not is
+    /// not provably functionally determined, so the whole subquery is left
+    /// to the ordinary refusal.
+    complete: bool,
+}
+
 /// Everything one FROM clause contributes to binding: the join structure,
 /// the resolution scope, and the unqualified-`*` expansion order.
 struct BoundFromScope {
@@ -4668,6 +4744,35 @@ mod tests {
             ),
             "functional-dependency analysis is not implemented; if this now \
              passes, the limitation in docs/limitations.md is stale",
+        );
+    }
+
+    /// Chitti LMS PT-3, both directions. The negative case is the
+    /// load-bearing one: accepting it would return an arbitrary value per
+    /// group, which is worse than the refusal it replaces.
+    #[test]
+    fn a_scalar_correlating_on_a_grouping_key_is_accepted() {
+        // Qualified throughout, as the reported query is: decorrelation
+        // exposes the correlation key on the derived table, so a BARE column
+        // name would collide with the outer one.
+        bind(
+            "SELECT s.id, (SELECT COUNT(*) FROM Events e WHERE e.id = s.id) AS total, \
+             COUNT(*) AS c FROM Events s GROUP BY s.id",
+        )
+        .expect("a scalar correlating only on the grouping key has one value per group");
+    }
+
+    #[test]
+    fn a_scalar_correlating_off_the_grouping_key_still_refuses() {
+        assert!(
+            matches!(
+                bind(
+                    "SELECT s.id, (SELECT COUNT(*) FROM Events e WHERE e.name = s.name) \
+                     AS total, COUNT(*) AS c FROM Events s GROUP BY s.id",
+                ),
+                Err(BindError::UngroupedSubquery)
+            ),
+            "a scalar correlating off the grouping key has several values per group"
         );
     }
 
