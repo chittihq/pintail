@@ -188,7 +188,15 @@ impl ReplicaEngine {
         &self,
         database_id: &str,
     ) -> Result<std::sync::Arc<LoadedReplica>, QueryError> {
+        // Every query pays this before it plans anything, and on a miss it
+        // pays a reload of EVERY table's store - so on a replica under
+        // active CDC, where any commit changes the stamp, a trivial query
+        // can cost more in setup than in execution. That is invisible
+        // without a number, and it is the number to ask an operator for
+        // when a cheap query is inexplicably slow.
+        let stamp_started = Instant::now();
         let stamp = self.replica_stamp(database_id);
+        let stamped = stamp_started.elapsed();
         if let Some(cached) = self
             .cache
             .lock()
@@ -196,9 +204,22 @@ impl ReplicaEngine {
             .get(database_id)
             .filter(|cached| cached.stamp == stamp)
         {
+            pintail_log::log_debug!(
+                "query setup db={database_id} stamp={:.1}ms files={} replica=cached",
+                stamped.as_secs_f64() * 1_000.0,
+                stamp.len()
+            );
             return Ok(std::sync::Arc::clone(&cached.replica));
         }
+        let load_started = Instant::now();
         let replica = std::sync::Arc::new(self.load_replica(database_id)?);
+        pintail_log::log_debug!(
+            "query setup db={database_id} stamp={:.1}ms files={} replica=reloaded in {:.1}ms tables={}",
+            stamped.as_secs_f64() * 1_000.0,
+            stamp.len(),
+            load_started.elapsed().as_secs_f64() * 1_000.0,
+            replica.targets.len()
+        );
         self.cache.lock().expect("replica cache lock").insert(
             database_id.to_owned(),
             CachedReplica {
