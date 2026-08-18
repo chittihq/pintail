@@ -890,15 +890,22 @@ impl MetaStore {
             .with_context(|| {
                 format!("failed to clear the chunk journal for {database_id}.{table_name}")
             })?;
-        transaction
+        // NOCASE, and loud when nothing matched: the API validates the table
+        // name case-insensitively, so a name that differs only in case
+        // reached here, updated zero rows, and left the table flagged
+        // needs_resync while the snapshot itself ran and reported success.
+        let changed = transaction
             .execute(
                 "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
-                   last_error = NULL WHERE db_id = ?1 AND name = ?2",
+                   last_error = NULL WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name),
             )
             .with_context(|| {
                 format!("failed to start a resnapshot of {database_id}.{table_name}")
             })?;
+        if changed == 0 {
+            bail!("{database_id}.{table_name} is not a tracked table");
+        }
         transaction
             .commit()
             .context("failed to commit table resnapshot start")
@@ -915,15 +922,19 @@ impl MetaStore {
         table_name: &str,
         state: &str,
     ) -> Result<()> {
-        self.connection
+        let changed = self
+            .connection
             .execute(
                 "UPDATE tables SET state = ?3, last_error = NULL \
-                 WHERE db_id = ?1 AND name = ?2",
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name, state),
             )
             .with_context(|| {
                 format!("failed to finish the resnapshot of {database_id}.{table_name}")
             })?;
+        if changed == 0 {
+            bail!("{database_id}.{table_name} is not a tracked table");
+        }
         Ok(())
     }
 

@@ -286,7 +286,25 @@ fn finish_table_resnapshot(
                             "streaming"
                         }
                     });
-                let _ = metadata.finish_table_resnapshot(database_id, table_name, state_name);
+                // Not swallowed: if the table never leaves 'needs_resync'
+                // the copy might as well not have happened, and the
+                // operator watching the row is entitled to know the
+                // difference between a resnapshot that failed and one that
+                // succeeded without clearing the flag.
+                if let Err(failure) =
+                    metadata.finish_table_resnapshot(database_id, table_name, state_name)
+                {
+                    state.publish(ApiEvent {
+                        kind: "resnapshot.error".to_owned(),
+                        database_id: Some(database_id.to_owned()),
+                        table: Some(table_name.to_owned()),
+                        message: format!("{table_name} recopied but stayed flagged: {failure}"),
+                        rows: Some(rows),
+                        bytes: Some(0),
+                        eta_seconds: None,
+                        at: Utc::now().to_rfc3339(),
+                    });
+                }
             }
             state.publish(ApiEvent {
                 kind: "resnapshot.completed".to_owned(),
