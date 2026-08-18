@@ -1547,9 +1547,12 @@ async function phaseControlPlane() {
     const dsn =
       `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}` +
       '?multipleStatements=true&dateStrings=date'
+    // `name` IS the source schema, not a label - the probe reads it rather
+    // than the DSN's path, so a placeholder here would find zero tables and
+    // prove nothing about where the pool points.
     const created = await api<{ id: string }>('/api/databases', {
       method: 'POST',
-      body: { name: 'e2e_client_dsn', dsn, mode: 'cdc' },
+      body: { name: DATABASE, dsn, mode: 'cdc' },
     })
     try {
       // Registration alone proves only that the string parsed. Probing
