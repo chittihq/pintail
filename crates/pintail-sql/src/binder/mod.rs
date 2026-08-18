@@ -4117,6 +4117,21 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                     });
                     bound.projection.len() - 1
                 }
+                // The same need without aggregation: an ungrouped query
+                // sorting by an expression over a column it did not select,
+                // `ORDER BY COALESCE(score, 0)`. The hidden-column path
+                // already exists for a bare column here; an expression over
+                // one is the same thing with a computation attached, and is
+                // sound for the same reason - the projection is still a
+                // row-per-row mapping of one scope.
+                Err(BindError::InvalidOrderBy(_)) if allow_hidden => {
+                    let expr = bind_expr(&order.expr, &bound.tables, None)?;
+                    bound.projection.push(BoundProjection {
+                        name: format!("<order-{}>", bound.projection.len()),
+                        expr,
+                    });
+                    bound.projection.len() - 1
+                }
                 Err(error) => return Err(error),
             };
             if bound
