@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T06:56:13.182Z.
+Measured 2026-08-18T08:50:57.850Z.
 
-**1256 passed, 1 failed, 24 documented-gap warnings.**
+**1383 passed, 0 failed, 24 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -24,6 +24,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | snapshot | query:union all across sources | PASS |  |
 | snapshot | query:intersect customer identifiers | PASS |  |
 | snapshot | query:except customer identifiers | PASS |  |
+| snapshot | query:order by an expression over an aggregate | PASS |  |
+| snapshot | query:order by a tree over several aggregates | PASS |  |
+| snapshot | query:order by an aggregate absent from the select list | PASS |  |
 | snapshot | query:group by with having | PASS |  |
 | snapshot | query:conditional decimal sum keeps the fraction | PASS |  |
 | snapshot | query:distinct count and min max | PASS |  |
@@ -114,6 +117,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | orm-compat | query:union all across sources | PASS |  |
 | orm-compat | query:intersect customer identifiers | PASS |  |
 | orm-compat | query:except customer identifiers | PASS |  |
+| orm-compat | query:order by an expression over an aggregate | PASS |  |
+| orm-compat | query:order by a tree over several aggregates | PASS |  |
+| orm-compat | query:order by an aggregate absent from the select list | PASS |  |
 | orm-compat | query:group by with having | PASS |  |
 | orm-compat | query:conditional decimal sum keeps the fraction | PASS |  |
 | orm-compat | query:distinct count and min max | PASS |  |
@@ -180,6 +186,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | crud | query:union all across sources | PASS |  |
 | crud | query:intersect customer identifiers | PASS |  |
 | crud | query:except customer identifiers | PASS |  |
+| crud | query:order by an expression over an aggregate | PASS |  |
+| crud | query:order by a tree over several aggregates | PASS |  |
+| crud | query:order by an aggregate absent from the select list | PASS |  |
 | crud | query:group by with having | PASS |  |
 | crud | query:conditional decimal sum keeps the fraction | PASS |  |
 | crud | query:distinct count and min max | PASS |  |
@@ -246,6 +255,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | type-edges | query:union all across sources | PASS |  |
 | type-edges | query:intersect customer identifiers | PASS |  |
 | type-edges | query:except customer identifiers | PASS |  |
+| type-edges | query:order by an expression over an aggregate | PASS |  |
+| type-edges | query:order by a tree over several aggregates | PASS |  |
+| type-edges | query:order by an aggregate absent from the select list | PASS |  |
 | type-edges | query:group by with having | PASS |  |
 | type-edges | query:conditional decimal sum keeps the fraction | PASS |  |
 | type-edges | query:distinct count and min max | PASS |  |
@@ -313,6 +325,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | ddl | query:union all across sources | PASS |  |
 | ddl | query:intersect customer identifiers | PASS |  |
 | ddl | query:except customer identifiers | PASS |  |
+| ddl | query:order by an expression over an aggregate | PASS |  |
+| ddl | query:order by a tree over several aggregates | PASS |  |
+| ddl | query:order by an aggregate absent from the select list | PASS |  |
 | ddl | query:group by with having | PASS |  |
 | ddl | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl | query:distinct count and min max | PASS |  |
@@ -380,6 +395,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | schema-drift-minimal | query:union all across sources | PASS |  |
 | schema-drift-minimal | query:intersect customer identifiers | PASS |  |
 | schema-drift-minimal | query:except customer identifiers | PASS |  |
+| schema-drift-minimal | query:order by an expression over an aggregate | PASS |  |
+| schema-drift-minimal | query:order by a tree over several aggregates | PASS |  |
+| schema-drift-minimal | query:order by an aggregate absent from the select list | PASS |  |
 | schema-drift-minimal | query:group by with having | PASS |  |
 | schema-drift-minimal | query:conditional decimal sum keeps the fraction | PASS |  |
 | schema-drift-minimal | query:distinct count and min max | PASS |  |
@@ -447,6 +465,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | schema-drift-unseen | query:union all across sources | PASS |  |
 | schema-drift-unseen | query:intersect customer identifiers | PASS |  |
 | schema-drift-unseen | query:except customer identifiers | PASS |  |
+| schema-drift-unseen | query:order by an expression over an aggregate | PASS |  |
+| schema-drift-unseen | query:order by a tree over several aggregates | PASS |  |
+| schema-drift-unseen | query:order by an aggregate absent from the select list | PASS |  |
 | schema-drift-unseen | query:group by with having | PASS |  |
 | schema-drift-unseen | query:conditional decimal sum keeps the fraction | PASS |  |
 | schema-drift-unseen | query:distinct count and min max | PASS |  |
@@ -520,6 +541,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | churn | query:union all across sources | PASS |  |
 | churn | query:intersect customer identifiers | PASS |  |
 | churn | query:except customer identifiers | PASS |  |
+| churn | query:order by an expression over an aggregate | PASS |  |
+| churn | query:order by a tree over several aggregates | PASS |  |
+| churn | query:order by an aggregate absent from the select list | PASS |  |
 | churn | query:group by with having | PASS |  |
 | churn | query:conditional decimal sum keeps the fraction | PASS |  |
 | churn | query:distinct count and min max | PASS |  |
@@ -592,6 +616,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | execution-budget | query:union all across sources | PASS |  |
 | execution-budget | query:intersect customer identifiers | PASS |  |
 | execution-budget | query:except customer identifiers | PASS |  |
+| execution-budget | query:order by an expression over an aggregate | PASS |  |
+| execution-budget | query:order by a tree over several aggregates | PASS |  |
+| execution-budget | query:order by an aggregate absent from the select list | PASS |  |
 | execution-budget | query:group by with having | PASS |  |
 | execution-budget | query:conditional decimal sum keeps the fraction | PASS |  |
 | execution-budget | query:distinct count and min max | PASS |  |
@@ -663,6 +690,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | spill | query:union all across sources | PASS |  |
 | spill | query:intersect customer identifiers | PASS |  |
 | spill | query:except customer identifiers | PASS |  |
+| spill | query:order by an expression over an aggregate | PASS |  |
+| spill | query:order by a tree over several aggregates | PASS |  |
+| spill | query:order by an aggregate absent from the select list | PASS |  |
 | spill | query:group by with having | PASS |  |
 | spill | query:conditional decimal sum keeps the fraction | PASS |  |
 | spill | query:distinct count and min max | PASS |  |
@@ -733,6 +763,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | pooling | query:union all across sources | PASS |  |
 | pooling | query:intersect customer identifiers | PASS |  |
 | pooling | query:except customer identifiers | PASS |  |
+| pooling | query:order by an expression over an aggregate | PASS |  |
+| pooling | query:order by a tree over several aggregates | PASS |  |
+| pooling | query:order by an aggregate absent from the select list | PASS |  |
 | pooling | query:group by with having | PASS |  |
 | pooling | query:conditional decimal sum keeps the fraction | PASS |  |
 | pooling | query:distinct count and min max | PASS |  |
@@ -800,6 +833,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | restart | query:union all across sources | PASS |  |
 | restart | query:intersect customer identifiers | PASS |  |
 | restart | query:except customer identifiers | PASS |  |
+| restart | query:order by an expression over an aggregate | PASS |  |
+| restart | query:order by a tree over several aggregates | PASS |  |
+| restart | query:order by an aggregate absent from the select list | PASS |  |
 | restart | query:group by with having | PASS |  |
 | restart | query:conditional decimal sum keeps the fraction | PASS |  |
 | restart | query:distinct count and min max | PASS |  |
@@ -861,7 +897,7 @@ Measured 2026-08-18T06:56:13.182Z.
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
 | control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
-| control-plane | api:a connection string carrying client driver options registers | FAIL | Error: POST /api/databases returned 500: {"error":"failed to register source database db_826f1144eb369194d57817e782f61477"} |
+| control-plane | api:a connection string carrying client driver options registers | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
@@ -883,6 +919,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | control-plane | query:union all across sources | PASS |  |
 | control-plane | query:intersect customer identifiers | PASS |  |
 | control-plane | query:except customer identifiers | PASS |  |
+| control-plane | query:order by an expression over an aggregate | PASS |  |
+| control-plane | query:order by a tree over several aggregates | PASS |  |
+| control-plane | query:order by an aggregate absent from the select list | PASS |  |
 | control-plane | query:group by with having | PASS |  |
 | control-plane | query:conditional decimal sum keeps the fraction | PASS |  |
 | control-plane | query:distinct count and min max | PASS |  |
@@ -931,6 +970,78 @@ Measured 2026-08-18T06:56:13.182Z.
 | control-plane | query:general_ci: joining on a collated column | PASS |  |
 | control-plane | query:general_ci: representative spelling of a collated group | PASS |  |
 | control-plane | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
+| snapshot-ddl-window | converge:audit_log | PASS |  |
+| snapshot-ddl-window | converge:counters | PASS |  |
+| snapshot-ddl-window | converge:customers | PASS |  |
+| snapshot-ddl-window | converge:keyless_log | PASS |  |
+| snapshot-ddl-window | converge:order_items | PASS |  |
+| snapshot-ddl-window | converge:orders | PASS |  |
+| snapshot-ddl-window | converge:shipments | PASS |  |
+| snapshot-ddl-window | converge:information_schema.columns | PASS |  |
+| snapshot-ddl-window | query:point lookup by key | PASS |  |
+| snapshot-ddl-window | query:range scan with compound predicate | PASS |  |
+| snapshot-ddl-window | query:inner join with aggregation | PASS |  |
+| snapshot-ddl-window | query:join with a residual comparison between both inputs | PASS |  |
+| snapshot-ddl-window | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| snapshot-ddl-window | query:residual comparison through coalesce on a nullable column | PASS |  |
+| snapshot-ddl-window | query:left join preserves unmatched rows | PASS |  |
+| snapshot-ddl-window | query:right join preserves unmatched rows | PASS |  |
+| snapshot-ddl-window | query:three-way join through items | PASS |  |
+| snapshot-ddl-window | query:union all across sources | PASS |  |
+| snapshot-ddl-window | query:intersect customer identifiers | PASS |  |
+| snapshot-ddl-window | query:except customer identifiers | PASS |  |
+| snapshot-ddl-window | query:order by an expression over an aggregate | PASS |  |
+| snapshot-ddl-window | query:order by a tree over several aggregates | PASS |  |
+| snapshot-ddl-window | query:order by an aggregate absent from the select list | PASS |  |
+| snapshot-ddl-window | query:group by with having | PASS |  |
+| snapshot-ddl-window | query:conditional decimal sum keeps the fraction | PASS |  |
+| snapshot-ddl-window | query:distinct count and min max | PASS |  |
+| snapshot-ddl-window | query:uncorrelated in-subquery | PASS |  |
+| snapshot-ddl-window | query:correlated exists with inner predicate | PASS |  |
+| snapshot-ddl-window | query:correlated scalar aggregate | PASS |  |
+| snapshot-ddl-window | query:correlated scalar unique lookup | PASS |  |
+| snapshot-ddl-window | query:scalar subquery threshold | PASS |  |
+| snapshot-ddl-window | query:non-recursive cte | PASS |  |
+| snapshot-ddl-window | query:bounded recursive cte | PASS |  |
+| snapshot-ddl-window | query:date bucketing | PASS |  |
+| snapshot-ddl-window | query:string functions and like | PASS |  |
+| snapshot-ddl-window | query:looker symmetric key helpers | PASS |  |
+| snapshot-ddl-window | query:json constructor preserves json versus text | PASS |  |
+| snapshot-ddl-window | query:json aggregate embeds documents | PASS |  |
+| snapshot-ddl-window | query:regular expression read transforms | PASS |  |
+| snapshot-ddl-window | query:case expression buckets | PASS |  |
+| snapshot-ddl-window | query:null handling | PASS |  |
+| snapshot-ddl-window | query:coalesce and ifnull | PASS |  |
+| snapshot-ddl-window | query:enum and set filters | PASS |  |
+| snapshot-ddl-window | query:unsigned boundary readback | PASS |  |
+| snapshot-ddl-window | query:derived table | PASS |  |
+| snapshot-ddl-window | query:group_concat single expression | PASS |  |
+| snapshot-ddl-window | query:window ranking per group | PASS |  |
+| snapshot-ddl-window | query:window share of total over grouped output | PASS |  |
+| snapshot-ddl-window | query:window running total | PASS |  |
+| snapshot-ddl-window | query:decimal column average beyond simple sum | PASS |  |
+| snapshot-ddl-window | query:json extract filter on customer meta | PASS |  |
+| snapshot-ddl-window | query:fan-out join group concat line products | PASS |  |
+| snapshot-ddl-window | query:outer join customers without recent orders | PASS |  |
+| snapshot-ddl-window | query:set op union distinct tiers and statuses | PASS |  |
+| snapshot-ddl-window | query:temporal convert and date_format grain | PASS |  |
+| snapshot-ddl-window | query:correlated not exists open orders | PASS |  |
+| snapshot-ddl-window | query:window lag payment-shaped totals | PASS |  |
+| snapshot-ddl-window | query:multi-key join items to orders | PASS |  |
+| snapshot-ddl-window | query:between and null-safe coalesce on balance | PASS |  |
+| snapshot-ddl-window | query:intersect all-style customer buyers | PASS |  |
+| snapshot-ddl-window | query:derived table status revenue share | PASS |  |
+| snapshot-ddl-window | query:general_ci: equality folds ASCII case | PASS |  |
+| snapshot-ddl-window | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| snapshot-ddl-window | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| snapshot-ddl-window | query:general_ci: every supplementary character compares equal | PASS |  |
+| snapshot-ddl-window | query:general_ci: grouping partitions by collated equality | PASS |  |
+| snapshot-ddl-window | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| snapshot-ddl-window | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| snapshot-ddl-window | query:general_ci: joining on a collated column | PASS |  |
+| snapshot-ddl-window | query:general_ci: representative spelling of a collated group | PASS |  |
+| snapshot-ddl-window | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -956,6 +1067,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | drop-table-cdc | query:union all across sources | PASS |  |
 | drop-table-cdc | query:intersect customer identifiers | PASS |  |
 | drop-table-cdc | query:except customer identifiers | PASS |  |
+| drop-table-cdc | query:order by an expression over an aggregate | PASS |  |
+| drop-table-cdc | query:order by a tree over several aggregates | PASS |  |
+| drop-table-cdc | query:order by an aggregate absent from the select list | PASS |  |
 | drop-table-cdc | query:group by with having | PASS |  |
 | drop-table-cdc | query:conditional decimal sum keeps the fraction | PASS |  |
 | drop-table-cdc | query:distinct count and min max | PASS |  |
@@ -1027,6 +1141,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | drop-table-recreate | query:union all across sources | PASS |  |
 | drop-table-recreate | query:intersect customer identifiers | PASS |  |
 | drop-table-recreate | query:except customer identifiers | PASS |  |
+| drop-table-recreate | query:order by an expression over an aggregate | PASS |  |
+| drop-table-recreate | query:order by a tree over several aggregates | PASS |  |
+| drop-table-recreate | query:order by an aggregate absent from the select list | PASS |  |
 | drop-table-recreate | query:group by with having | PASS |  |
 | drop-table-recreate | query:conditional decimal sum keeps the fraction | PASS |  |
 | drop-table-recreate | query:distinct count and min max | PASS |  |
@@ -1078,7 +1195,7 @@ Measured 2026-08-18T06:56:13.182Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_33a4906e9dd2f7529dcf2b321fdc4170","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T06:41:31.736064+00:00","updated_at":"2026-08-18T06:49:18.063852+00:00"},"tables":11,"rows":781} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1100,6 +1217,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | drop-table-polling | query:union all across sources | PASS |  |
 | drop-table-polling | query:intersect customer identifiers | PASS |  |
 | drop-table-polling | query:except customer identifiers | PASS |  |
+| drop-table-polling | query:order by an expression over an aggregate | PASS |  |
+| drop-table-polling | query:order by a tree over several aggregates | PASS |  |
+| drop-table-polling | query:order by an aggregate absent from the select list | PASS |  |
 | drop-table-polling | query:group by with having | PASS |  |
 | drop-table-polling | query:conditional decimal sum keeps the fraction | PASS |  |
 | drop-table-polling | query:distinct count and min max | PASS |  |
@@ -1176,6 +1296,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | drop-database | query:union all across sources | PASS |  |
 | drop-database | query:intersect customer identifiers | PASS |  |
 | drop-database | query:except customer identifiers | PASS |  |
+| drop-database | query:order by an expression over an aggregate | PASS |  |
+| drop-database | query:order by a tree over several aggregates | PASS |  |
+| drop-database | query:order by an aggregate absent from the select list | PASS |  |
 | drop-database | query:group by with having | PASS |  |
 | drop-database | query:conditional decimal sum keeps the fraction | PASS |  |
 | drop-database | query:distinct count and min max | PASS |  |
@@ -1244,6 +1367,9 @@ Measured 2026-08-18T06:56:13.182Z.
 | ddl-documented-gaps | query:union all across sources | PASS |  |
 | ddl-documented-gaps | query:intersect customer identifiers | PASS |  |
 | ddl-documented-gaps | query:except customer identifiers | PASS |  |
+| ddl-documented-gaps | query:order by an expression over an aggregate | PASS |  |
+| ddl-documented-gaps | query:order by a tree over several aggregates | PASS |  |
+| ddl-documented-gaps | query:order by an aggregate absent from the select list | PASS |  |
 | ddl-documented-gaps | query:group by with having | PASS |  |
 | ddl-documented-gaps | query:conditional decimal sum keeps the fraction | PASS |  |
 | ddl-documented-gaps | query:distinct count and min max | PASS |  |

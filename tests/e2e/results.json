@@ -91,6 +91,21 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -542,6 +557,21 @@
   },
   {
     "phase": "orm-compat",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -873,6 +903,21 @@
   },
   {
     "phase": "crud",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -1200,6 +1245,21 @@
   {
     "phase": "type-edges",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
@@ -1540,6 +1600,21 @@
   },
   {
     "phase": "ddl",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -1876,6 +1951,21 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -2208,6 +2298,21 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
@@ -2578,6 +2683,21 @@
   },
   {
     "phase": "churn",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -2939,6 +3059,21 @@
   },
   {
     "phase": "execution-budget",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -3295,6 +3430,21 @@
   },
   {
     "phase": "spill",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -3646,6 +3796,21 @@
   },
   {
     "phase": "pooling",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -3978,6 +4143,21 @@
   {
     "phase": "restart",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
@@ -4289,8 +4469,7 @@
   {
     "phase": "control-plane",
     "check": "api:a connection string carrying client driver options registers",
-    "status": "FAIL",
-    "detail": "Error: POST /api/databases returned 500: {\"error\":\"failed to register source database db_826f1144eb369194d57817e782f61477\"}"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -4395,6 +4574,21 @@
   {
     "phase": "control-plane",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
@@ -4639,6 +4833,367 @@
     "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
+    "phase": "snapshot-ddl-window",
+    "check": "a table created just before a forced snapshot is still adopted",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "WARN",
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+  },
+  {
     "phase": "drop-table-cdc",
     "check": "drop-table:replicates before the drop",
     "status": "PASS"
@@ -4762,6 +5317,21 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
@@ -5123,6 +5693,21 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -5380,8 +5965,7 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_33a4906e9dd2f7529dcf2b321fdc4170\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T06:41:31.736064+00:00\",\"updated_at\":\"2026-08-18T06:49:18.063852+00:00\"},\"tables\":11,\"rows\":781}"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -5486,6 +6070,21 @@
   {
     "phase": "drop-table-polling",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
@@ -5872,6 +6471,21 @@
   },
   {
     "phase": "drop-database",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "query:group by with having",
     "status": "PASS"
   },
@@ -6211,6 +6825,21 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:order by an aggregate absent from the select list",
     "status": "PASS"
   },
   {
