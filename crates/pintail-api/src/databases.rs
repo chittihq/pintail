@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use chrono::Utc;
-use mysql_async::{Opts, Pool, prelude::Queryable as _};
+use mysql_async::{Pool, prelude::Queryable as _};
 use pintail_meta::{DatabaseRecord, DatabaseUpdate};
 use pintail_probe::{RecommendedMode, probe};
 use serde::{Deserialize, Serialize};
@@ -339,7 +339,7 @@ pub(crate) async fn test_connection(
     principal.authorize_database(&id)?;
     let record = load_database(&state, &principal, &id)?;
     let dsn = state.decrypt_dsn(&record.encrypted_dsn)?;
-    let opts = Opts::from_url(&dsn)
+    let opts = crate::dsn::source_opts(&dsn)
         .map_err(|error| ApiError::bad_request(format!("invalid MySQL DSN: {error}")))?;
     let pool = Pool::new(opts);
     let mut connection = pool.get_conn().await.map_err(ApiError::internal)?;
@@ -364,7 +364,7 @@ pub(crate) async fn probe_database(
     principal.authorize_database(&id)?;
     let record = load_database(&state, &principal, &id)?;
     let dsn = state.decrypt_dsn(&record.encrypted_dsn)?;
-    let opts = Opts::from_url(&dsn)
+    let opts = crate::dsn::source_opts(&dsn)
         .map_err(|error| ApiError::bad_request(format!("invalid MySQL DSN: {error}")))?;
     let pool = Pool::new(opts);
     let report = probe(&pool, &record.name)

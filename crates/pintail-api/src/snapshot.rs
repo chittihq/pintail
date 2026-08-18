@@ -15,7 +15,7 @@ use axum::{
     http::StatusCode,
 };
 use chrono::Utc;
-use mysql_async::{Opts, Pool};
+use mysql_async::Pool;
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::{DatabaseRecord, SnapshotChunkStatus, TableRecord};
 use pintail_poll::{PollOptions, PollTarget, run_poll_cycle};
@@ -283,7 +283,7 @@ async fn run_snapshot_job(
     let dsn = state
         .decrypt_dsn(&database.encrypted_dsn)
         .map_err(display)?;
-    let options = Opts::from_url(&dsn).map_err(display)?;
+    let options = crate::dsn::source_opts(&dsn)?;
     let pool = Pool::new(options);
     let bytes = Arc::new(AtomicU64::new(0));
     let progress_state = state.clone();

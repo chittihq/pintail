@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
 };
 use chrono::Utc;
-use mysql_async::{Opts, Pool};
+use mysql_async::Pool;
 use pintail_meta::DatabaseRecord;
 use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
 use pintail_probe::ProbeReport;
@@ -193,7 +193,7 @@ async fn run_table_resnapshot_job(
     let dsn = state
         .decrypt_dsn(&database.encrypted_dsn)
         .map_err(display)?;
-    let options = Opts::from_url(&dsn).map_err(display)?;
+    let options = crate::dsn::source_opts(&dsn)?;
     let pool = Pool::new(options);
     let snapshot = run_snapshot(
         &pool,
@@ -476,7 +476,7 @@ pub(crate) async fn run_reconcile_job(
     let dsn = state
         .decrypt_dsn(&database.encrypted_dsn)
         .map_err(display)?;
-    let options = Opts::from_url(&dsn).map_err(display)?;
+    let options = crate::dsn::source_opts(&dsn)?;
     let pool = Pool::new(options);
     let mode = effective_mode(&database);
     let rows = match mode {

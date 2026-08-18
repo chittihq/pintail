@@ -1535,6 +1535,35 @@ async function phaseControlPlane() {
       body: { name: detail.name, mode: detail.mode, keyless_policy: 'quarantine' },
     })
   })
+  await check('a connection string carrying client driver options registers', async () => {
+    // The parameters an application's own DSN carries - node mysql2 spells
+    // them multipleStatements and dateStrings - configure that driver, not
+    // the connection, and mysql_async refuses a URL containing them. So an
+    // operator could not paste the string already in their .env: Chitti LMS
+    // reported building their pools "with the query parameters dropped",
+    // which is that refusal seen from the outside.
+    const host = await dockerHost()
+    const mysqlPort = await publishedPort(mysqlName, 3306)
+    const dsn =
+      `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}` +
+      '?multipleStatements=true&dateStrings=date'
+    const created = await api<{ id: string }>('/api/databases', {
+      method: 'POST',
+      body: { name: 'e2e_client_dsn', dsn, mode: 'cdc' },
+    })
+    try {
+      // Registration alone proves only that the string parsed. Probing
+      // proves the parameters were dropped rather than mangled into a DSN
+      // that points somewhere else.
+      const probe = await api<{ tables?: unknown[] }>(`/api/databases/${created.id}/probe`)
+      const tables = Array.isArray(probe.tables) ? probe.tables.length : 0
+      if (tables === 0) {
+        throw new Error(`probe found no tables through the client-parameter DSN: ${JSON.stringify(probe)}`)
+      }
+    } finally {
+      await api(`/api/databases/${created.id}`, { method: 'DELETE' })
+    }
+  })
   await check('throwaway database lifecycle: create, update, delete', async () => {
     const host = await dockerHost()
     const mysqlPort = await publishedPort(mysqlName, 3306)

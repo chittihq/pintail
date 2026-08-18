@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, path::Path, time::Duration};
 
 use chrono::{DateTime, Utc};
-use mysql_async::{Opts, Pool};
+use mysql_async::Pool;
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
@@ -233,7 +233,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
     let dsn = state
         .decrypt_dsn(&database.encrypted_dsn)
         .map_err(display)?;
-    let options = Opts::from_url(&dsn).map_err(display)?;
+    let options = crate::dsn::source_opts(&dsn)?;
     let pool = Pool::new(options);
     let result = match database.effective_mode.as_deref() {
         Some("cdc") => {

@@ -6,6 +6,7 @@ mod auth;
 mod backup;
 mod controls;
 mod databases;
+mod dsn;
 mod error;
 mod events;
 mod invites;
