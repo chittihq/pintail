@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T04:27:11.992Z.
+Measured 2026-08-18T06:56:13.182Z.
 
-**1136 passed, 0 failed, 23 documented-gap warnings.**
+**1256 passed, 1 failed, 24 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -15,6 +15,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | snapshot | query:point lookup by key | PASS |  |
 | snapshot | query:range scan with compound predicate | PASS |  |
 | snapshot | query:inner join with aggregation | PASS |  |
+| snapshot | query:join with a residual comparison between both inputs | PASS |  |
+| snapshot | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| snapshot | query:residual comparison through coalesce on a nullable column | PASS |  |
 | snapshot | query:left join preserves unmatched rows | PASS |  |
 | snapshot | query:right join preserves unmatched rows | PASS |  |
 | snapshot | query:three-way join through items | PASS |  |
@@ -102,6 +105,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | orm-compat | query:point lookup by key | PASS |  |
 | orm-compat | query:range scan with compound predicate | PASS |  |
 | orm-compat | query:inner join with aggregation | PASS |  |
+| orm-compat | query:join with a residual comparison between both inputs | PASS |  |
+| orm-compat | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| orm-compat | query:residual comparison through coalesce on a nullable column | PASS |  |
 | orm-compat | query:left join preserves unmatched rows | PASS |  |
 | orm-compat | query:right join preserves unmatched rows | PASS |  |
 | orm-compat | query:three-way join through items | PASS |  |
@@ -165,6 +171,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | crud | query:point lookup by key | PASS |  |
 | crud | query:range scan with compound predicate | PASS |  |
 | crud | query:inner join with aggregation | PASS |  |
+| crud | query:join with a residual comparison between both inputs | PASS |  |
+| crud | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| crud | query:residual comparison through coalesce on a nullable column | PASS |  |
 | crud | query:left join preserves unmatched rows | PASS |  |
 | crud | query:right join preserves unmatched rows | PASS |  |
 | crud | query:three-way join through items | PASS |  |
@@ -228,6 +237,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | type-edges | query:point lookup by key | PASS |  |
 | type-edges | query:range scan with compound predicate | PASS |  |
 | type-edges | query:inner join with aggregation | PASS |  |
+| type-edges | query:join with a residual comparison between both inputs | PASS |  |
+| type-edges | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| type-edges | query:residual comparison through coalesce on a nullable column | PASS |  |
 | type-edges | query:left join preserves unmatched rows | PASS |  |
 | type-edges | query:right join preserves unmatched rows | PASS |  |
 | type-edges | query:three-way join through items | PASS |  |
@@ -292,6 +304,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | ddl | query:point lookup by key | PASS |  |
 | ddl | query:range scan with compound predicate | PASS |  |
 | ddl | query:inner join with aggregation | PASS |  |
+| ddl | query:join with a residual comparison between both inputs | PASS |  |
+| ddl | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| ddl | query:residual comparison through coalesce on a nullable column | PASS |  |
 | ddl | query:left join preserves unmatched rows | PASS |  |
 | ddl | query:right join preserves unmatched rows | PASS |  |
 | ddl | query:three-way join through items | PASS |  |
@@ -356,6 +371,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | schema-drift-minimal | query:point lookup by key | PASS |  |
 | schema-drift-minimal | query:range scan with compound predicate | PASS |  |
 | schema-drift-minimal | query:inner join with aggregation | PASS |  |
+| schema-drift-minimal | query:join with a residual comparison between both inputs | PASS |  |
+| schema-drift-minimal | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| schema-drift-minimal | query:residual comparison through coalesce on a nullable column | PASS |  |
 | schema-drift-minimal | query:left join preserves unmatched rows | PASS |  |
 | schema-drift-minimal | query:right join preserves unmatched rows | PASS |  |
 | schema-drift-minimal | query:three-way join through items | PASS |  |
@@ -420,6 +438,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | schema-drift-unseen | query:point lookup by key | PASS |  |
 | schema-drift-unseen | query:range scan with compound predicate | PASS |  |
 | schema-drift-unseen | query:inner join with aggregation | PASS |  |
+| schema-drift-unseen | query:join with a residual comparison between both inputs | PASS |  |
+| schema-drift-unseen | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| schema-drift-unseen | query:residual comparison through coalesce on a nullable column | PASS |  |
 | schema-drift-unseen | query:left join preserves unmatched rows | PASS |  |
 | schema-drift-unseen | query:right join preserves unmatched rows | PASS |  |
 | schema-drift-unseen | query:three-way join through items | PASS |  |
@@ -477,9 +498,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
-| churn-live | live:left join preserves unmatched rows | PASS |  |
-| churn-live | live:right join preserves unmatched rows | PASS |  |
-| churn-live | live:three-way join through items | PASS |  |
+| churn-live | live:join with a residual comparison between both inputs | PASS |  |
+| churn-live | live:left join keeps rows whose only matches fail the residual | PASS |  |
+| churn-live | live:residual comparison through coalesce on a nullable column | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
@@ -490,6 +511,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | churn | query:point lookup by key | PASS |  |
 | churn | query:range scan with compound predicate | PASS |  |
 | churn | query:inner join with aggregation | PASS |  |
+| churn | query:join with a residual comparison between both inputs | PASS |  |
+| churn | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| churn | query:residual comparison through coalesce on a nullable column | PASS |  |
 | churn | query:left join preserves unmatched rows | PASS |  |
 | churn | query:right join preserves unmatched rows | PASS |  |
 | churn | query:three-way join through items | PASS |  |
@@ -544,6 +568,78 @@ Measured 2026-08-18T04:27:11.992Z.
 | churn | query:general_ci: joining on a collated column | PASS |  |
 | churn | query:general_ci: representative spelling of a collated group | PASS |  |
 | churn | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| execution-budget | hint:interrupts a runaway join | PASS |  |
+| execution-budget | hint:interrupts promptly | PASS |  |
+| execution-budget | hint:a generous budget runs to completion | PASS |  |
+| execution-budget | hint:cannot loosen the session ceiling | PASS |  |
+| execution-budget | hint:an unimplemented hint rejects | PASS |  |
+| execution-budget | converge:audit_log | PASS |  |
+| execution-budget | converge:counters | PASS |  |
+| execution-budget | converge:customers | PASS |  |
+| execution-budget | converge:order_items | PASS |  |
+| execution-budget | converge:orders | PASS |  |
+| execution-budget | converge:shipments | PASS |  |
+| execution-budget | converge:information_schema.columns | PASS |  |
+| execution-budget | query:point lookup by key | PASS |  |
+| execution-budget | query:range scan with compound predicate | PASS |  |
+| execution-budget | query:inner join with aggregation | PASS |  |
+| execution-budget | query:join with a residual comparison between both inputs | PASS |  |
+| execution-budget | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| execution-budget | query:residual comparison through coalesce on a nullable column | PASS |  |
+| execution-budget | query:left join preserves unmatched rows | PASS |  |
+| execution-budget | query:right join preserves unmatched rows | PASS |  |
+| execution-budget | query:three-way join through items | PASS |  |
+| execution-budget | query:union all across sources | PASS |  |
+| execution-budget | query:intersect customer identifiers | PASS |  |
+| execution-budget | query:except customer identifiers | PASS |  |
+| execution-budget | query:group by with having | PASS |  |
+| execution-budget | query:conditional decimal sum keeps the fraction | PASS |  |
+| execution-budget | query:distinct count and min max | PASS |  |
+| execution-budget | query:uncorrelated in-subquery | PASS |  |
+| execution-budget | query:correlated exists with inner predicate | PASS |  |
+| execution-budget | query:correlated scalar aggregate | PASS |  |
+| execution-budget | query:correlated scalar unique lookup | PASS |  |
+| execution-budget | query:scalar subquery threshold | PASS |  |
+| execution-budget | query:non-recursive cte | PASS |  |
+| execution-budget | query:bounded recursive cte | PASS |  |
+| execution-budget | query:date bucketing | PASS |  |
+| execution-budget | query:string functions and like | PASS |  |
+| execution-budget | query:looker symmetric key helpers | PASS |  |
+| execution-budget | query:json constructor preserves json versus text | PASS |  |
+| execution-budget | query:json aggregate embeds documents | PASS |  |
+| execution-budget | query:regular expression read transforms | PASS |  |
+| execution-budget | query:case expression buckets | PASS |  |
+| execution-budget | query:null handling | PASS |  |
+| execution-budget | query:coalesce and ifnull | PASS |  |
+| execution-budget | query:enum and set filters | PASS |  |
+| execution-budget | query:unsigned boundary readback | PASS |  |
+| execution-budget | query:derived table | PASS |  |
+| execution-budget | query:group_concat single expression | PASS |  |
+| execution-budget | query:window ranking per group | PASS |  |
+| execution-budget | query:window share of total over grouped output | PASS |  |
+| execution-budget | query:window running total | PASS |  |
+| execution-budget | query:decimal column average beyond simple sum | PASS |  |
+| execution-budget | query:json extract filter on customer meta | PASS |  |
+| execution-budget | query:fan-out join group concat line products | PASS |  |
+| execution-budget | query:outer join customers without recent orders | PASS |  |
+| execution-budget | query:set op union distinct tiers and statuses | PASS |  |
+| execution-budget | query:temporal convert and date_format grain | PASS |  |
+| execution-budget | query:correlated not exists open orders | PASS |  |
+| execution-budget | query:window lag payment-shaped totals | PASS |  |
+| execution-budget | query:multi-key join items to orders | PASS |  |
+| execution-budget | query:between and null-safe coalesce on balance | PASS |  |
+| execution-budget | query:intersect all-style customer buyers | PASS |  |
+| execution-budget | query:derived table status revenue share | PASS |  |
+| execution-budget | query:general_ci: equality folds ASCII case | PASS |  |
+| execution-budget | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| execution-budget | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| execution-budget | query:general_ci: every supplementary character compares equal | PASS |  |
+| execution-budget | query:general_ci: grouping partitions by collated equality | PASS |  |
+| execution-budget | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| execution-budget | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| execution-budget | query:general_ci: joining on a collated column | PASS |  |
+| execution-budget | query:general_ci: representative spelling of a collated group | PASS |  |
+| execution-budget | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -558,6 +654,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | spill | query:point lookup by key | PASS |  |
 | spill | query:range scan with compound predicate | PASS |  |
 | spill | query:inner join with aggregation | PASS |  |
+| spill | query:join with a residual comparison between both inputs | PASS |  |
+| spill | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| spill | query:residual comparison through coalesce on a nullable column | PASS |  |
 | spill | query:left join preserves unmatched rows | PASS |  |
 | spill | query:right join preserves unmatched rows | PASS |  |
 | spill | query:three-way join through items | PASS |  |
@@ -625,6 +724,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | pooling | query:point lookup by key | PASS |  |
 | pooling | query:range scan with compound predicate | PASS |  |
 | pooling | query:inner join with aggregation | PASS |  |
+| pooling | query:join with a residual comparison between both inputs | PASS |  |
+| pooling | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| pooling | query:residual comparison through coalesce on a nullable column | PASS |  |
 | pooling | query:left join preserves unmatched rows | PASS |  |
 | pooling | query:right join preserves unmatched rows | PASS |  |
 | pooling | query:three-way join through items | PASS |  |
@@ -689,6 +791,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | restart | query:point lookup by key | PASS |  |
 | restart | query:range scan with compound predicate | PASS |  |
 | restart | query:inner join with aggregation | PASS |  |
+| restart | query:join with a residual comparison between both inputs | PASS |  |
+| restart | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| restart | query:residual comparison through coalesce on a nullable column | PASS |  |
 | restart | query:left join preserves unmatched rows | PASS |  |
 | restart | query:right join preserves unmatched rows | PASS |  |
 | restart | query:three-way join through items | PASS |  |
@@ -756,6 +861,7 @@ Measured 2026-08-18T04:27:11.992Z.
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
 | control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
+| control-plane | api:a connection string carrying client driver options registers | FAIL | Error: POST /api/databases returned 500: {"error":"failed to register source database db_826f1144eb369194d57817e782f61477"} |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
@@ -768,6 +874,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | control-plane | query:point lookup by key | PASS |  |
 | control-plane | query:range scan with compound predicate | PASS |  |
 | control-plane | query:inner join with aggregation | PASS |  |
+| control-plane | query:join with a residual comparison between both inputs | PASS |  |
+| control-plane | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| control-plane | query:residual comparison through coalesce on a nullable column | PASS |  |
 | control-plane | query:left join preserves unmatched rows | PASS |  |
 | control-plane | query:right join preserves unmatched rows | PASS |  |
 | control-plane | query:three-way join through items | PASS |  |
@@ -838,6 +947,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | drop-table-cdc | query:point lookup by key | PASS |  |
 | drop-table-cdc | query:range scan with compound predicate | PASS |  |
 | drop-table-cdc | query:inner join with aggregation | PASS |  |
+| drop-table-cdc | query:join with a residual comparison between both inputs | PASS |  |
+| drop-table-cdc | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| drop-table-cdc | query:residual comparison through coalesce on a nullable column | PASS |  |
 | drop-table-cdc | query:left join preserves unmatched rows | PASS |  |
 | drop-table-cdc | query:right join preserves unmatched rows | PASS |  |
 | drop-table-cdc | query:three-way join through items | PASS |  |
@@ -906,6 +1018,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | drop-table-recreate | query:point lookup by key | PASS |  |
 | drop-table-recreate | query:range scan with compound predicate | PASS |  |
 | drop-table-recreate | query:inner join with aggregation | PASS |  |
+| drop-table-recreate | query:join with a residual comparison between both inputs | PASS |  |
+| drop-table-recreate | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| drop-table-recreate | query:residual comparison through coalesce on a nullable column | PASS |  |
 | drop-table-recreate | query:left join preserves unmatched rows | PASS |  |
 | drop-table-recreate | query:right join preserves unmatched rows | PASS |  |
 | drop-table-recreate | query:three-way join through items | PASS |  |
@@ -963,7 +1078,7 @@ Measured 2026-08-18T04:27:11.992Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_abff61a3693d2b8453765bb646be2f76","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T04:12:50.556269+00:00","updated_at":"2026-08-18T04:20:22.355887+00:00"},"tables":11,"rows":781} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_33a4906e9dd2f7529dcf2b321fdc4170","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T06:41:31.736064+00:00","updated_at":"2026-08-18T06:49:18.063852+00:00"},"tables":11,"rows":781} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -976,6 +1091,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | drop-table-polling | query:point lookup by key | PASS |  |
 | drop-table-polling | query:range scan with compound predicate | PASS |  |
 | drop-table-polling | query:inner join with aggregation | PASS |  |
+| drop-table-polling | query:join with a residual comparison between both inputs | PASS |  |
+| drop-table-polling | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| drop-table-polling | query:residual comparison through coalesce on a nullable column | PASS |  |
 | drop-table-polling | query:left join preserves unmatched rows | PASS |  |
 | drop-table-polling | query:right join preserves unmatched rows | PASS |  |
 | drop-table-polling | query:three-way join through items | PASS |  |
@@ -1049,6 +1167,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | drop-database | query:point lookup by key | PASS |  |
 | drop-database | query:range scan with compound predicate | PASS |  |
 | drop-database | query:inner join with aggregation | PASS |  |
+| drop-database | query:join with a residual comparison between both inputs | PASS |  |
+| drop-database | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| drop-database | query:residual comparison through coalesce on a nullable column | PASS |  |
 | drop-database | query:left join preserves unmatched rows | PASS |  |
 | drop-database | query:right join preserves unmatched rows | PASS |  |
 | drop-database | query:three-way join through items | PASS |  |
@@ -1114,6 +1235,9 @@ Measured 2026-08-18T04:27:11.992Z.
 | ddl-documented-gaps | query:point lookup by key | PASS |  |
 | ddl-documented-gaps | query:range scan with compound predicate | PASS |  |
 | ddl-documented-gaps | query:inner join with aggregation | PASS |  |
+| ddl-documented-gaps | query:join with a residual comparison between both inputs | SKIP |  |
+| ddl-documented-gaps | query:left join keeps rows whose only matches fail the residual | SKIP |  |
+| ddl-documented-gaps | query:residual comparison through coalesce on a nullable column | PASS |  |
 | ddl-documented-gaps | query:left join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:right join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:three-way join through items | SKIP |  |

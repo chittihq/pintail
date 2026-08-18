@@ -46,6 +46,21 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -482,6 +497,21 @@
   },
   {
     "phase": "orm-compat",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -798,6 +828,21 @@
   },
   {
     "phase": "crud",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -1110,6 +1155,21 @@
   {
     "phase": "type-edges",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -1435,6 +1495,21 @@
   },
   {
     "phase": "ddl",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -1756,6 +1831,21 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -2073,6 +2163,21 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -2363,17 +2468,17 @@
   },
   {
     "phase": "churn-live",
-    "check": "live:left join preserves unmatched rows",
+    "check": "live:join with a residual comparison between both inputs",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:right join preserves unmatched rows",
+    "check": "live:left join keeps rows whose only matches fail the residual",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:three-way join through items",
+    "check": "live:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -2424,6 +2529,21 @@
   {
     "phase": "churn",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -2698,6 +2818,367 @@
     "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
   },
   {
+    "phase": "execution-budget",
+    "check": "hint:interrupts a runaway join",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "hint:interrupts promptly",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "hint:a generous budget runs to completion",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "hint:cannot loosen the session ceiling",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "hint:an unimplemented hint rejects",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "WARN",
+    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+  },
+  {
     "phase": "spill",
     "check": "forced-spill:sort",
     "status": "PASS"
@@ -2765,6 +3246,21 @@
   {
     "phase": "spill",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -3105,6 +3601,21 @@
   },
   {
     "phase": "pooling",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -3422,6 +3933,21 @@
   {
     "phase": "restart",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -3762,6 +4288,12 @@
   },
   {
     "phase": "control-plane",
+    "check": "api:a connection string carrying client driver options registers",
+    "status": "FAIL",
+    "detail": "Error: POST /api/databases returned 500: {\"error\":\"failed to register source database db_826f1144eb369194d57817e782f61477\"}"
+  },
+  {
+    "phase": "control-plane",
     "check": "api:throwaway database lifecycle: create, update, delete",
     "status": "PASS"
   },
@@ -3818,6 +4350,21 @@
   {
     "phase": "control-plane",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -4174,6 +4721,21 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -4516,6 +5078,21 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -4804,7 +5381,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_abff61a3693d2b8453765bb646be2f76\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T04:12:50.556269+00:00\",\"updated_at\":\"2026-08-18T04:20:22.355887+00:00\"},\"tables\":11,\"rows\":781}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_33a4906e9dd2f7529dcf2b321fdc4170\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T06:41:31.736064+00:00\",\"updated_at\":\"2026-08-18T06:49:18.063852+00:00\"},\"tables\":11,\"rows\":781}"
   },
   {
     "phase": "drop-table-polling",
@@ -4864,6 +5441,21 @@
   {
     "phase": "drop-table-polling",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
@@ -5235,6 +5827,21 @@
   },
   {
     "phase": "drop-database",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -5559,6 +6166,21 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "SKIP"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "SKIP"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:residual comparison through coalesce on a nullable column",
     "status": "PASS"
   },
   {
