@@ -389,6 +389,9 @@ pub(super) struct HashJoinState {
     left_values: Option<Vec<Value>>,
     left_key: Option<JoinHashKey>,
     left_reserved: usize,
+    /// Build-side rows for the current left row that survived the residual ON
+    /// predicate, when there is one.
+    residual_matches: Option<Vec<Vec<Value>>>,
 }
 
 impl HashJoinState {
@@ -559,6 +562,7 @@ pub(super) fn build_hash_join_state(
         left_values: None,
         left_key: None,
         left_reserved: 0,
+        residual_matches: None,
     })
 }
 
@@ -792,6 +796,44 @@ pub(super) fn split_grace_partition(
     Ok(())
 }
 
+/// Keeps only the build-side rows a residual ON predicate accepts.
+///
+/// A hash join matches on equality alone, so an ON clause that also compares
+/// the two sides with something else - `lc.scheduledAt >= us.effectiveFrom` -
+/// needs its remaining conjuncts applied to each candidate pair. Filtering the
+/// bucket here rather than above the join is what preserves outer semantics:
+/// a left row whose every candidate fails the residual arrives at `join_emit`
+/// with an empty bucket and is NULL-extended, exactly as `MySQL` does. Moving
+/// the same predicate into WHERE drops that row instead, which is why it is
+/// not a workaround.
+fn apply_join_residual(
+    residual: Option<&CompiledExpr>,
+    columns: &[BoundColumn],
+    left_values: &[Value],
+    matches: Option<&Vec<Vec<Value>>>,
+) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
+    let (Some(residual), Some(matches)) = (residual, matches) else {
+        return Ok(matches.cloned());
+    };
+    let column_types = columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    let mut kept = Vec::with_capacity(matches.len());
+    for right_values in matches {
+        let mut candidate = left_values.to_vec();
+        candidate.extend(right_values.iter().cloned());
+        let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
+        let batch = RecordBatch::new(1, vectors)?;
+        if predicate_truth(&residual.evaluate(&batch, 0)?)? {
+            kept.push(right_values.clone());
+        }
+    }
+    // An empty bucket must read as "no match", not as a match producing
+    // nothing - the two differ for LEFT and ANTI.
+    Ok((!kept.is_empty()).then_some(kept))
+}
+
 /// One join-emit step shared by the in-memory probe loop and the grace
 /// replay: produces at most one output row and reports whether this left
 /// row is finished.
@@ -853,6 +895,8 @@ pub(super) fn next_hash_join_batch(
     extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     right_width: usize,
     column_types: &[DataType],
+    residual: Option<&CompiledExpr>,
+    residual_columns: &[BoundColumn],
     state: &mut HashJoinState,
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
@@ -865,6 +909,8 @@ pub(super) fn next_hash_join_batch(
             extra_keys,
             right_width,
             column_types,
+            residual,
+            residual_columns,
             state,
             memory,
         );
@@ -882,10 +928,21 @@ pub(super) fn next_hash_join_batch(
             .as_ref()
             .expect("prepared join row is present");
         let matches = state.left_key.as_ref().and_then(|key| state.build.get(key));
+        // Recomputed only when this left row is first seen; match_index walks
+        // the filtered bucket across successive emits for the same row.
+        if state.match_index == 0 {
+            state.residual_matches =
+                apply_join_residual(residual, residual_columns, left_values, matches)?;
+        }
+        let filtered = if residual.is_some() {
+            state.residual_matches.as_ref()
+        } else {
+            matches
+        };
         let (output, complete) = join_emit(
             kind,
             left_values,
-            matches,
+            filtered,
             &mut state.match_index,
             right_width,
         )?;
@@ -930,6 +987,8 @@ pub(super) fn next_grace_join_batch(
     extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     right_width: usize,
     column_types: &[DataType],
+    residual: Option<&CompiledExpr>,
+    residual_columns: &[BoundColumn],
     state: &mut HashJoinState,
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
@@ -1073,6 +1132,12 @@ pub(super) fn next_grace_join_batch(
             continue;
         };
         let matches = state.build.get(&key);
+        let filtered = apply_join_residual(residual, residual_columns, &left_values, matches)?;
+        let matches = if residual.is_some() {
+            filtered.as_ref()
+        } else {
+            matches
+        };
         let mut match_index = 0_usize;
         loop {
             let (output, complete) =

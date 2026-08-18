@@ -105,9 +105,8 @@ impl fmt::Display for ExecError {
             Self::UnsupportedOperator(operator) => {
                 write!(formatter, "physical operator {operator} is not implemented")
             }
-            Self::UnsupportedJoinCondition => formatter.write_str(
-                "hash join requires one equality between left and right input expressions",
-            ),
+            Self::UnsupportedJoinCondition => formatter
+                .write_str("join ON clause has no equality between the two inputs to join on"),
             Self::CrossJoinCardinalityUnknown => {
                 formatter.write_str("cross join requires known catalog row counts for every input")
             }

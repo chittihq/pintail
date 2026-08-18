@@ -236,6 +236,9 @@ pub enum PhysicalPlan {
         extra_keys: Vec<(BoundExpr, BoundExpr)>,
         /// Build-side key.
         right_key: BoundExpr,
+        /// ON conjuncts that compare both inputs with something other than
+        /// equality, applied to each candidate pair after the hash match.
+        residual: Option<BoundExpr>,
     },
     /// Bounded nested-loop join for ON predicates containing a dependent
     /// subquery that cannot be represented as hash keys alone.
@@ -558,6 +561,14 @@ impl PhysicalPlanner {
                 let (condition, left_filter, right_filter) =
                     split_join_condition(condition, &left, &right, kind);
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
+                // An ON clause may also compare the two inputs with something
+                // that is not equality. The hash join still runs on the
+                // equalities; the rest becomes a residual tested per candidate
+                // pair. Refusing the whole join for one such conjunct rejected
+                // valid MySQL that names a perfectly good join key.
+                let (equalities, residual) =
+                    split_join_residual(&condition, &left, &right, collation);
+                let condition = equalities.ok_or(ExecError::UnsupportedJoinCondition)?;
                 let mut pairs = equi_join_key_pairs(&condition, &left, &right, collation)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
@@ -570,6 +581,7 @@ impl PhysicalPlanner {
                     left_key,
                     extra_keys: pairs,
                     right_key,
+                    residual,
                 })
             }
         }
@@ -683,6 +695,33 @@ fn split_join_condition(
 /// Splits a join condition into oriented equality key pairs. Every AND-ed
 /// conjunct must be a hashable equality spanning the two sides; anything
 /// else rejects the whole condition.
+/// Separates an ON clause into hash-join equalities and everything else.
+///
+/// "Everything else" is any conjunct referencing BOTH inputs that is not an
+/// equality the hash join can key on - single-side conjuncts have already
+/// been pushed into the inputs by `split_join_condition`. Returns `None` for
+/// the equalities when none remain, which is the genuine "no join key" case
+/// the caller still refuses.
+fn split_join_residual(
+    condition: &BoundExpr,
+    left: &LogicalPlan,
+    right: &LogicalPlan,
+    collation: Collation,
+) -> (Option<BoundExpr>, Option<BoundExpr>) {
+    let mut conjuncts = Vec::new();
+    and_conjuncts(condition, &mut conjuncts);
+    let mut equalities = Vec::new();
+    let mut residuals = Vec::new();
+    for conjunct in conjuncts {
+        if equi_join_key_pairs(&conjunct, left, right, collation).is_some() {
+            equalities.push(conjunct);
+        } else {
+            residuals.push(conjunct);
+        }
+    }
+    (and_all(equalities), and_all(residuals))
+}
+
 fn equi_join_key_pairs(
     condition: &BoundExpr,
     left: &LogicalPlan,
@@ -2522,6 +2561,9 @@ enum PullOperator {
         column_types: Vec<DataType>,
         right_width: usize,
         state: Option<Box<HashJoinState>>,
+        /// Compiled residual ON predicate and the combined columns it reads.
+        residual: Option<CompiledExpr>,
+        residual_columns: Vec<BoundColumn>,
         /// The plan's collation. The key mode carries it for hashing; this is
         /// for the row-level work either side of the probe.
         collation: Collation,
@@ -2697,6 +2739,8 @@ impl PullOperator {
                 column_types,
                 right_width,
                 state,
+                residual,
+                residual_columns,
                 collation,
             } => {
                 if state.is_none() {
@@ -2723,6 +2767,8 @@ impl PullOperator {
                     extra_keys,
                     *right_width,
                     column_types,
+                    residual.as_ref(),
+                    residual_columns,
                     state.as_mut().expect("initialized above"),
                     memory,
                 )
@@ -3084,6 +3130,7 @@ fn build_operator(
             left_key,
             right_key,
             extra_keys,
+            residual,
         } => {
             let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
             let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
@@ -3118,6 +3165,14 @@ fn build_operator(
             let left_key = CompiledExpr::compile(&left_key, &left_columns, collation)?;
             let right_key = CompiledExpr::compile(&right_key, &right_columns, collation)?;
             let right_width = right_columns.len();
+            // The residual reads both sides, so it compiles against the
+            // concatenation - which is NOT output_columns, because semi and
+            // anti joins project the left side alone.
+            let mut residual_columns = left_columns.clone();
+            residual_columns.extend(right_columns.iter().cloned());
+            let residual = residual
+                .map(|predicate| CompiledExpr::compile(&predicate, &residual_columns, collation))
+                .transpose()?;
             let mut output_columns = left_columns;
             if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
                 output_columns.extend(right_columns);
@@ -3138,6 +3193,8 @@ fn build_operator(
                     column_types,
                     right_width,
                     state: None,
+                    residual,
+                    residual_columns,
                     collation,
                 },
                 output_columns,

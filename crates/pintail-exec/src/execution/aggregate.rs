@@ -2938,11 +2938,20 @@ fn build_fused_inner_join_aggregate(
         column_types,
         right_width,
         state,
+        residual,
+        residual_columns: _,
         collation: _,
     } = input
     else {
         return Ok(None);
     };
+    // The fused spine matches on the hash key alone and never sees candidate
+    // pairs, so it cannot apply a residual ON predicate. Declining here sends
+    // the join to the general operator, which can - silently ignoring it
+    // would return rows the ON clause excludes.
+    if residual.is_some() {
+        return Ok(None);
+    }
     let left_width = column_types.len().saturating_sub(*right_width);
     // The fused spine probes on the primary key alone; composite-key joins
     // stay on the general operator.

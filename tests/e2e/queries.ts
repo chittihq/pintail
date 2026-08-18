@@ -43,6 +43,40 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['orders', 'customers'],
   },
   {
+    // Chitti LMS PT-1, reduced to this fixture: an ON clause carrying BOTH an
+    // equality and a comparison between the two inputs. The equality is what
+    // the hash join keys on; the comparison is a residual tested per
+    // candidate pair. Pintail rejected the whole join for the residual.
+    name: 'join with a residual comparison between both inputs',
+    sql:
+      'SELECT COUNT(*) AS n FROM orders o ' +
+      'JOIN order_items i ON i.order_id = o.id AND i.price <= o.total',
+    tables: ['orders', 'order_items'],
+  },
+  {
+    // The half that makes the residual load-bearing rather than cosmetic. An
+    // order whose every item fails the residual must SURVIVE as a
+    // NULL-extended row; moving the same predicate into WHERE drops it
+    // instead, which is why Chitti had no semantics-preserving workaround.
+    name: 'left join keeps rows whose only matches fail the residual',
+    sql:
+      'SELECT o.id, COUNT(i.order_id) AS kept ' +
+      'FROM orders o LEFT JOIN order_items i ' +
+      '  ON i.order_id = o.id AND i.price > o.total ' +
+      'GROUP BY o.id ORDER BY o.id LIMIT 40',
+    tables: ['orders', 'order_items'],
+  },
+  {
+    // A residual referencing a nullable left column through COALESCE, which
+    // is the exact shape of their liveClassEffectiveFrom predicate.
+    name: 'residual comparison through coalesce on a nullable column',
+    sql:
+      'SELECT COUNT(*) AS n FROM customers c ' +
+      'LEFT JOIN orders o ON o.customer_id = c.id ' +
+      "  AND o.placed_on >= COALESCE(c.created_at, '1900-01-01')",
+    tables: ['customers', 'orders'],
+  },
+  {
     name: 'left join preserves unmatched rows',
     sql:
       'SELECT c.id, c.name, COUNT(o.id) AS order_count ' +
