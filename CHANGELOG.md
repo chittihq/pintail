@@ -4,6 +4,78 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.3] - 2026-08-18
+
+Every finding from a customer conformance report against their own schema:
+eight of nineteen dashboard queries were rejected outright and their
+connection string could not be registered. All eight now run. Verified by
+replaying their schema and data locally and running their own validation
+harness, which moves from 9/19 to 18/19 identical results.
+
+### Fixed
+
+- A join whose `ON` clause compares the two inputs with something other
+  than equality no longer rejects. The hash join keys on the equality and
+  tests the remaining conjuncts against each candidate pair, so
+  `ON a.id = b.id AND b.at >= COALESCE(a.from, '1900-01-01')` runs. The
+  residual filters the match bucket rather than the join's output, which
+  preserves outer semantics: a left row whose every candidate fails is
+  NULL-extended, as MySQL does, where moving the predicate into `WHERE`
+  drops it. Five queries.
+- `ORDER BY` accepts an expression, over aggregates in a grouped query
+  and over plain columns in an ungrouped one, carried as a hidden sort
+  column. An aggregate appearing only in `ORDER BY` is computed rather
+  than dangling. Three queries - the third found by running the
+  customer's harness rather than re-reading their report, which had
+  reported only the aggregate form.
+- A correlated scalar subquery in a grouped select is accepted when it
+  correlates only on grouping keys, where it has exactly one value per
+  group. Correlation keys are matched by physical column identity, since
+  `GROUP BY` binds after the decorrelated table joins and two bindings of
+  one column need not be structurally equal. A subquery correlating on
+  anything else still refuses: returning an arbitrary value per group
+  would be silently wrong.
+- A source connection string carrying client-driver parameters
+  registers. `multipleStatements` and `dateStrings` configure a driver's
+  own decoding, but made the whole URL unparseable. Only names known to
+  be client-side are dropped; anything else unrecognised still fails, so
+  a misspelled `require_ssl` cannot silently connect in plaintext.
+- A forced snapshot no longer swallows DDL. It read the stored probe and
+  handed the stream a position captured after it, so a table created in
+  that window was never copied and never adopted - the stream kept
+  reporting healthy with one fewer table, permanently.
+- A connection's preamble no longer moves the resume point. The format
+  description sits at the head of the file, and adopting its position
+  rewound an idle cycle's resume point to the start of the binlog.
+
+### Changed
+
+- One query may use 512MiB by default rather than 64MiB. A nine-way
+  dashboard join over a four-thousand-row table was refused at the old
+  ceiling. The per-query limit never bounded the process - the shared
+  concurrent total does, and still defaults to three quarters of host
+  memory - and operators spill rather than fail above it, so this trades
+  resident memory for fewer spills on the queries an analytical replica
+  exists to serve. `docker-compose.yml` now names the per-query knob
+  beside the total.
+
+### Added
+
+- `SELECT /*+ MAX_EXECUTION_TIME(5000) */ ...` is honoured. The session
+  variable already produced a real deadline; the inline form MySQL
+  documents rejected along with every other optimizer hint. The hint
+  tightens the effective deadline and never loosens it, so it cannot be
+  used to write around an administrator's limit. Hints Pintail does not
+  implement still reject rather than being silently ignored.
+- Replication and query telemetry that names what was previously
+  invisible: what a query spent before planning, what a CDC cycle read
+  and committed, and why a schema-drift heal declined.
+
+### Known limitations
+
+- `ORDER BY` on an `ENUM` sorts by label rather than by declared
+  ordinal, which is not MySQL's order.
+
 ## [0.0.2] - 2026-08-18
 
 Dashboard only. No engine, replication or storage changes.
