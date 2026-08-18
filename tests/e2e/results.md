@@ -1,6 +1,6 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-17T18:32:44.521Z.
+Measured 2026-08-18T04:27:11.992Z.
 
 **1136 passed, 0 failed, 23 documented-gap warnings.**
 
@@ -963,7 +963,7 @@ Measured 2026-08-17T18:32:44.521Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_7d6bc68287f78a592c13a0a816ebe016","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"polling","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-17T18:18:55.438619+00:00","updated_at":"2026-08-17T18:25:54.653710+00:00"},"tables":11,"rows":781} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_abff61a3693d2b8453765bb646be2f76","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T04:12:50.556269+00:00","updated_at":"2026-08-18T04:20:22.355887+00:00"},"tables":11,"rows":781} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
