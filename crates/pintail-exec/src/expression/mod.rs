@@ -651,12 +651,23 @@ impl CompiledExpr {
                 "window expressions must be lowered before compilation",
             )),
             BoundExprKind::Column(column) => {
+                // The relation name is part of the identity, not decoration.
+                // A table joined twice under two aliases yields two inputs
+                // whose database, table and column ids are all identical, so
+                // matching on those alone resolved BOTH aliases to whichever
+                // appeared first - `u2.name` silently returned `u1.name`.
+                // No error, entirely plausible values, and wrong: reported
+                // against a staging table where 605 of 4067 rows attributed
+                // an activity to the wrong person.
                 let index = columns
                     .iter()
                     .position(|candidate| {
                         candidate.database_id == column.database_id
                             && candidate.table_id == column.table_id
                             && candidate.column_id == column.column_id
+                            && candidate
+                                .relation_name
+                                .eq_ignore_ascii_case(&column.relation_name)
                     })
                     .ok_or_else(|| ExecError::MissingColumn {
                         relation: column.relation_name.clone(),

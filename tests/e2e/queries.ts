@@ -77,6 +77,38 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers', 'orders'],
   },
   {
+    // A table joined twice under two aliases. Physically the two inputs are
+    // the same database, table and column ids, so a resolver keyed on those
+    // alone returns the FIRST alias for both - silently, with plausible
+    // values. Reported against a staging table where 605 of 4067 rows
+    // attributed an activity to the wrong person.
+    //
+    // The second alias deliberately matches NOTHING, so the correct answer
+    // is NULL and the wrong answer is the first alias's row. A count would
+    // not catch it; only the values do.
+    name: 'a table joined twice under two aliases keeps them distinct',
+    sql:
+      'SELECT o.id, c1.name AS placer, c2.name AS phantom ' +
+      'FROM orders o ' +
+      'LEFT JOIN customers c1 ON c1.id = o.customer_id ' +
+      'LEFT JOIN customers c2 ON c2.id = o.id + 100000 ' +
+      'ORDER BY o.id LIMIT 30',
+    tables: ['orders', 'customers'],
+  },
+  {
+    // The same shape with the aliases reversed: the reporter found the bug
+    // followed the JOIN POSITION rather than the name, so both orders have
+    // to be covered.
+    name: 'aliases stay distinct when the empty side joins first',
+    sql:
+      'SELECT o.id, c1.name AS phantom, c2.name AS placer ' +
+      'FROM orders o ' +
+      'LEFT JOIN customers c1 ON c1.id = o.id + 100000 ' +
+      'LEFT JOIN customers c2 ON c2.id = o.customer_id ' +
+      'ORDER BY o.id LIMIT 30',
+    tables: ['orders', 'customers'],
+  },
+  {
     name: 'left join preserves unmatched rows',
     sql:
       'SELECT c.id, c.name, COUNT(o.id) AS order_count ' +
