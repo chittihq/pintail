@@ -25,7 +25,14 @@ use pintail_types::{DataType, Value};
 use thiserror::Error;
 
 /// Default hard memory ceiling for one client query.
-pub const DEFAULT_QUERY_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+///
+/// Sized for an analytical join rather than a point lookup. At 64MiB a
+/// nine-way dashboard join over a four-thousand-row table was refused - not a
+/// pathological query, just the shape a health or funnel report takes - and
+/// the operator's only signal was a byte count. Operators spill rather than
+/// fail above this, so a larger ceiling trades resident memory for fewer
+/// spills; the concurrent total, not this, is what bounds the process.
+pub const DEFAULT_QUERY_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 /// Default result row ceiling for HTTP and wire clients.
 pub const DEFAULT_MAX_ROWS: usize = 10_000;
 

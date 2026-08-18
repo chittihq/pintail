@@ -36,6 +36,11 @@ services:
       # kernel OOM killer decides instead. Set it to roughly 75% of the
       # limit configured in `deploy.resources` below.
       PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES:-3221225472}
+      # Ceiling for ONE query, against the shared total above. Raising this
+      # past the total achieves nothing - the shared budget refuses first.
+      # The default suits an analytical join; lower it only to make a single
+      # runaway query fail sooner than the total would.
+      PINTAIL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_QUERY_MEMORY_LIMIT_BYTES:-536870912}
       # error | info | debug. Defaults to info: every API request with its
       # duration, replication and backup lifecycle, and all failures. Raise to
       # debug while diagnosing - it adds per-table probe timings, per-chunk
