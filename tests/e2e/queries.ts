@@ -131,10 +131,13 @@ export const differentialQueries: DifferentialQuery[] = [
     // evaluated after grouping. Their workarounds - ORDER BY alias and
     // ORDER BY ordinal - already worked, which is what proved the aggregate
     // itself was reachable and only the expression form was not.
+    // Tie-broken on customer_id rather than status: status is an ENUM, and
+    // ordering by one is a separate divergence (MySQL sorts by declared
+    // ordinal, Pintail by label) that would mask what this case is for.
     name: 'order by an expression over an aggregate',
     sql:
-      'SELECT status, COUNT(*) AS c FROM orders GROUP BY status ' +
-      'ORDER BY COALESCE(COUNT(*), 0) DESC, status',
+      'SELECT customer_id, COUNT(*) AS c FROM orders GROUP BY customer_id ' +
+      'ORDER BY COALESCE(COUNT(*), 0) DESC, customer_id LIMIT 25',
     tables: ['orders'],
   },
   {
@@ -153,8 +156,8 @@ export const differentialQueries: DifferentialQuery[] = [
     // rather than left dangling.
     name: 'order by an aggregate absent from the select list',
     sql:
-      'SELECT status FROM orders GROUP BY status ' +
-      'ORDER BY SUM(total) DESC, status',
+      'SELECT customer_id FROM orders GROUP BY customer_id ' +
+      'ORDER BY SUM(total) DESC, customer_id LIMIT 25',
     tables: ['orders'],
   },
   {
