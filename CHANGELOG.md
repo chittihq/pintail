@@ -25,6 +25,14 @@ wrong-results bug that blocks reading through Pintail at all.
   customer on two columns their schema declares identically, and Pintail
   exposes a column's collation nowhere else - the message was the only
   place the disagreement could ever be seen.
+- A replication cycle finishing after a concurrent mode switch no longer
+  reverts the switch. The cycle's completion wrote back the effective
+  mode it started under, so a polling cycle straddling a polling-to-cdc
+  switch flipped the database back to polling while its requested mode
+  said cdc - the CDC handoff rebuild (keyed on the effective mode) then
+  never fired, and the database kept polling indefinitely, never
+  adopting tables created after the switch. The completion write is now
+  a compare-and-set against the requested mode; a stale cycle loses.
 
 ### Known limitations
 

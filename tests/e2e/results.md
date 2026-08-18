@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T18:19:51.390Z.
+Measured 2026-08-18T18:49:14.732Z.
 
-**1419 passed, 1 failed, 25 documented-gap warnings.**
+**1531 passed, 3 failed, 25 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -11,6 +11,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | snapshot | converge:customers | PASS |  |
 | snapshot | converge:order_items | PASS |  |
 | snapshot | converge:orders | PASS |  |
+| snapshot | converge:staff | PASS |  |
 | snapshot | converge:information_schema.columns | PASS |  |
 | snapshot | query:point lookup by key | PASS |  |
 | snapshot | query:range scan with compound predicate | PASS |  |
@@ -18,6 +19,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | snapshot | query:join with a residual comparison between both inputs | PASS |  |
 | snapshot | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | snapshot | query:residual comparison through coalesce on a nullable column | PASS |  |
+| snapshot | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| snapshot | query:alias pair with the join order reversed | PASS |  |
+| snapshot | query:four aliases of one table joined in a chain | PASS |  |
+| snapshot | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| snapshot | query:self-join manager chain preserves the roots | PASS |  |
 | snapshot | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | snapshot | query:aliases stay distinct when the empty side joins first | PASS |  |
 | snapshot | query:left join preserves unmatched rows | PASS |  |
@@ -106,6 +112,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | orm-compat | converge:customers | PASS |  |
 | orm-compat | converge:order_items | PASS |  |
 | orm-compat | converge:orders | PASS |  |
+| orm-compat | converge:staff | PASS |  |
 | orm-compat | converge:information_schema.columns | PASS |  |
 | orm-compat | query:point lookup by key | PASS |  |
 | orm-compat | query:range scan with compound predicate | PASS |  |
@@ -113,6 +120,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | orm-compat | query:join with a residual comparison between both inputs | PASS |  |
 | orm-compat | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | orm-compat | query:residual comparison through coalesce on a nullable column | PASS |  |
+| orm-compat | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| orm-compat | query:alias pair with the join order reversed | PASS |  |
+| orm-compat | query:four aliases of one table joined in a chain | PASS |  |
+| orm-compat | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| orm-compat | query:self-join manager chain preserves the roots | PASS |  |
 | orm-compat | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | orm-compat | query:aliases stay distinct when the empty side joins first | PASS |  |
 | orm-compat | query:left join preserves unmatched rows | PASS |  |
@@ -177,6 +189,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | crud | converge:customers | PASS |  |
 | crud | converge:order_items | PASS |  |
 | crud | converge:orders | PASS |  |
+| crud | converge:staff | PASS |  |
 | crud | converge:information_schema.columns | PASS |  |
 | crud | query:point lookup by key | PASS |  |
 | crud | query:range scan with compound predicate | PASS |  |
@@ -184,6 +197,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | crud | query:join with a residual comparison between both inputs | PASS |  |
 | crud | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | crud | query:residual comparison through coalesce on a nullable column | PASS |  |
+| crud | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| crud | query:alias pair with the join order reversed | PASS |  |
+| crud | query:four aliases of one table joined in a chain | PASS |  |
+| crud | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| crud | query:self-join manager chain preserves the roots | PASS |  |
 | crud | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | crud | query:aliases stay distinct when the empty side joins first | PASS |  |
 | crud | query:left join preserves unmatched rows | PASS |  |
@@ -248,6 +266,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | type-edges | converge:customers | PASS |  |
 | type-edges | converge:order_items | PASS |  |
 | type-edges | converge:orders | PASS |  |
+| type-edges | converge:staff | PASS |  |
 | type-edges | converge:information_schema.columns | PASS |  |
 | type-edges | query:point lookup by key | PASS |  |
 | type-edges | query:range scan with compound predicate | PASS |  |
@@ -255,6 +274,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | type-edges | query:join with a residual comparison between both inputs | PASS |  |
 | type-edges | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | type-edges | query:residual comparison through coalesce on a nullable column | PASS |  |
+| type-edges | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| type-edges | query:alias pair with the join order reversed | PASS |  |
+| type-edges | query:four aliases of one table joined in a chain | PASS |  |
+| type-edges | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| type-edges | query:self-join manager chain preserves the roots | PASS |  |
 | type-edges | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | type-edges | query:aliases stay distinct when the empty side joins first | PASS |  |
 | type-edges | query:left join preserves unmatched rows | PASS |  |
@@ -320,6 +344,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | ddl | converge:order_items | PASS |  |
 | ddl | converge:orders | PASS |  |
 | ddl | converge:shipments | PASS |  |
+| ddl | converge:staff | PASS |  |
 | ddl | converge:information_schema.columns | PASS |  |
 | ddl | query:point lookup by key | PASS |  |
 | ddl | query:range scan with compound predicate | PASS |  |
@@ -327,6 +352,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | ddl | query:join with a residual comparison between both inputs | PASS |  |
 | ddl | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | ddl | query:residual comparison through coalesce on a nullable column | PASS |  |
+| ddl | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| ddl | query:alias pair with the join order reversed | PASS |  |
+| ddl | query:four aliases of one table joined in a chain | PASS |  |
+| ddl | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| ddl | query:self-join manager chain preserves the roots | PASS |  |
 | ddl | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | ddl | query:aliases stay distinct when the empty side joins first | PASS |  |
 | ddl | query:left join preserves unmatched rows | PASS |  |
@@ -392,6 +422,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | schema-drift-minimal | converge:order_items | PASS |  |
 | schema-drift-minimal | converge:orders | PASS |  |
 | schema-drift-minimal | converge:shipments | PASS |  |
+| schema-drift-minimal | converge:staff | PASS |  |
 | schema-drift-minimal | converge:information_schema.columns | PASS |  |
 | schema-drift-minimal | query:point lookup by key | PASS |  |
 | schema-drift-minimal | query:range scan with compound predicate | PASS |  |
@@ -399,6 +430,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | schema-drift-minimal | query:join with a residual comparison between both inputs | PASS |  |
 | schema-drift-minimal | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | schema-drift-minimal | query:residual comparison through coalesce on a nullable column | PASS |  |
+| schema-drift-minimal | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| schema-drift-minimal | query:alias pair with the join order reversed | PASS |  |
+| schema-drift-minimal | query:four aliases of one table joined in a chain | PASS |  |
+| schema-drift-minimal | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| schema-drift-minimal | query:self-join manager chain preserves the roots | PASS |  |
 | schema-drift-minimal | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | schema-drift-minimal | query:aliases stay distinct when the empty side joins first | PASS |  |
 | schema-drift-minimal | query:left join preserves unmatched rows | PASS |  |
@@ -464,6 +500,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | schema-drift-unseen | converge:order_items | PASS |  |
 | schema-drift-unseen | converge:orders | PASS |  |
 | schema-drift-unseen | converge:shipments | PASS |  |
+| schema-drift-unseen | converge:staff | PASS |  |
 | schema-drift-unseen | converge:information_schema.columns | PASS |  |
 | schema-drift-unseen | query:point lookup by key | PASS |  |
 | schema-drift-unseen | query:range scan with compound predicate | PASS |  |
@@ -471,6 +508,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | schema-drift-unseen | query:join with a residual comparison between both inputs | PASS |  |
 | schema-drift-unseen | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | schema-drift-unseen | query:residual comparison through coalesce on a nullable column | PASS |  |
+| schema-drift-unseen | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| schema-drift-unseen | query:alias pair with the join order reversed | PASS |  |
+| schema-drift-unseen | query:four aliases of one table joined in a chain | PASS |  |
+| schema-drift-unseen | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| schema-drift-unseen | query:self-join manager chain preserves the roots | PASS |  |
 | schema-drift-unseen | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | schema-drift-unseen | query:aliases stay distinct when the empty side joins first | PASS |  |
 | schema-drift-unseen | query:left join preserves unmatched rows | PASS |  |
@@ -542,6 +584,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | churn | converge:order_items | PASS |  |
 | churn | converge:orders | PASS |  |
 | churn | converge:shipments | PASS |  |
+| churn | converge:staff | PASS |  |
 | churn | converge:information_schema.columns | PASS |  |
 | churn | query:point lookup by key | PASS |  |
 | churn | query:range scan with compound predicate | PASS |  |
@@ -549,6 +592,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | churn | query:join with a residual comparison between both inputs | PASS |  |
 | churn | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | churn | query:residual comparison through coalesce on a nullable column | PASS |  |
+| churn | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| churn | query:alias pair with the join order reversed | PASS |  |
+| churn | query:four aliases of one table joined in a chain | PASS |  |
+| churn | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| churn | query:self-join manager chain preserves the roots | PASS |  |
 | churn | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | churn | query:aliases stay distinct when the empty side joins first | PASS |  |
 | churn | query:left join preserves unmatched rows | PASS |  |
@@ -608,7 +656,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | churn | query:general_ci: joining on a collated column | PASS |  |
 | churn | query:general_ci: representative spelling of a collated group | PASS |  |
 | churn | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
-| execution-budget | hint:interrupts a runaway join | FAIL | Error: query engine failed: physical input is missing c.order_id |
+| execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
 | execution-budget | hint:cannot loosen the session ceiling | PASS |  |
@@ -619,6 +667,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | execution-budget | converge:order_items | PASS |  |
 | execution-budget | converge:orders | PASS |  |
 | execution-budget | converge:shipments | PASS |  |
+| execution-budget | converge:staff | PASS |  |
 | execution-budget | converge:information_schema.columns | PASS |  |
 | execution-budget | query:point lookup by key | PASS |  |
 | execution-budget | query:range scan with compound predicate | PASS |  |
@@ -626,6 +675,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | execution-budget | query:join with a residual comparison between both inputs | PASS |  |
 | execution-budget | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | execution-budget | query:residual comparison through coalesce on a nullable column | PASS |  |
+| execution-budget | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| execution-budget | query:alias pair with the join order reversed | PASS |  |
+| execution-budget | query:four aliases of one table joined in a chain | PASS |  |
+| execution-budget | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| execution-budget | query:self-join manager chain preserves the roots | PASS |  |
 | execution-budget | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | execution-budget | query:aliases stay distinct when the empty side joins first | PASS |  |
 | execution-budget | query:left join preserves unmatched rows | PASS |  |
@@ -695,6 +749,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | spill | converge:order_items | PASS |  |
 | spill | converge:orders | PASS |  |
 | spill | converge:shipments | PASS |  |
+| spill | converge:staff | PASS |  |
 | spill | converge:information_schema.columns | PASS |  |
 | spill | query:point lookup by key | PASS |  |
 | spill | query:range scan with compound predicate | PASS |  |
@@ -702,6 +757,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | spill | query:join with a residual comparison between both inputs | PASS |  |
 | spill | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | spill | query:residual comparison through coalesce on a nullable column | PASS |  |
+| spill | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| spill | query:alias pair with the join order reversed | PASS |  |
+| spill | query:four aliases of one table joined in a chain | PASS |  |
+| spill | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| spill | query:self-join manager chain preserves the roots | PASS |  |
 | spill | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | spill | query:aliases stay distinct when the empty side joins first | PASS |  |
 | spill | query:left join preserves unmatched rows | PASS |  |
@@ -770,6 +830,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | pooling | converge:order_items | PASS |  |
 | pooling | converge:orders | PASS |  |
 | pooling | converge:shipments | PASS |  |
+| pooling | converge:staff | PASS |  |
 | pooling | converge:information_schema.columns | PASS |  |
 | pooling | query:point lookup by key | PASS |  |
 | pooling | query:range scan with compound predicate | PASS |  |
@@ -777,6 +838,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | pooling | query:join with a residual comparison between both inputs | PASS |  |
 | pooling | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | pooling | query:residual comparison through coalesce on a nullable column | PASS |  |
+| pooling | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| pooling | query:alias pair with the join order reversed | PASS |  |
+| pooling | query:four aliases of one table joined in a chain | PASS |  |
+| pooling | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| pooling | query:self-join manager chain preserves the roots | PASS |  |
 | pooling | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | pooling | query:aliases stay distinct when the empty side joins first | PASS |  |
 | pooling | query:left join preserves unmatched rows | PASS |  |
@@ -842,6 +908,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | restart | converge:order_items | PASS |  |
 | restart | converge:orders | PASS |  |
 | restart | converge:shipments | PASS |  |
+| restart | converge:staff | PASS |  |
 | restart | converge:information_schema.columns | PASS |  |
 | restart | query:point lookup by key | PASS |  |
 | restart | query:range scan with compound predicate | PASS |  |
@@ -849,6 +916,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | restart | query:join with a residual comparison between both inputs | PASS |  |
 | restart | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | restart | query:residual comparison through coalesce on a nullable column | PASS |  |
+| restart | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| restart | query:alias pair with the join order reversed | PASS |  |
+| restart | query:four aliases of one table joined in a chain | PASS |  |
+| restart | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| restart | query:self-join manager chain preserves the roots | PASS |  |
 | restart | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | restart | query:aliases stay distinct when the empty side joins first | PASS |  |
 | restart | query:left join preserves unmatched rows | PASS |  |
@@ -920,23 +992,29 @@ Measured 2026-08-18T18:19:51.390Z.
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
-| control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
+| control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | FAIL | Error: keyless inserts never replicated |
 | control-plane | api:a connection string carrying client driver options registers | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
-| control-plane | converge:keyless_log | PASS |  |
+| control-plane | converge:keyless_log | FAIL | pintail query failed: Error: unknown table e2e_db.keyless_log |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
-| control-plane | converge:information_schema.columns | PASS |  |
+| control-plane | converge:staff | PASS |  |
+| control-plane | converge:information_schema.columns | FAIL | row count 46 vs 44 |
 | control-plane | query:point lookup by key | PASS |  |
 | control-plane | query:range scan with compound predicate | PASS |  |
 | control-plane | query:inner join with aggregation | PASS |  |
 | control-plane | query:join with a residual comparison between both inputs | PASS |  |
 | control-plane | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | control-plane | query:residual comparison through coalesce on a nullable column | PASS |  |
+| control-plane | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| control-plane | query:alias pair with the join order reversed | PASS |  |
+| control-plane | query:four aliases of one table joined in a chain | PASS |  |
+| control-plane | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| control-plane | query:self-join manager chain preserves the roots | PASS |  |
 | control-plane | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | control-plane | query:aliases stay distinct when the empty side joins first | PASS |  |
 | control-plane | query:left join preserves unmatched rows | PASS |  |
@@ -1004,6 +1082,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | snapshot-ddl-window | converge:order_items | PASS |  |
 | snapshot-ddl-window | converge:orders | PASS |  |
 | snapshot-ddl-window | converge:shipments | PASS |  |
+| snapshot-ddl-window | converge:staff | PASS |  |
 | snapshot-ddl-window | converge:information_schema.columns | PASS |  |
 | snapshot-ddl-window | query:point lookup by key | PASS |  |
 | snapshot-ddl-window | query:range scan with compound predicate | PASS |  |
@@ -1011,6 +1090,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | snapshot-ddl-window | query:join with a residual comparison between both inputs | PASS |  |
 | snapshot-ddl-window | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | snapshot-ddl-window | query:residual comparison through coalesce on a nullable column | PASS |  |
+| snapshot-ddl-window | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| snapshot-ddl-window | query:alias pair with the join order reversed | PASS |  |
+| snapshot-ddl-window | query:four aliases of one table joined in a chain | PASS |  |
+| snapshot-ddl-window | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| snapshot-ddl-window | query:self-join manager chain preserves the roots | PASS |  |
 | snapshot-ddl-window | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | snapshot-ddl-window | query:aliases stay distinct when the empty side joins first | PASS |  |
 | snapshot-ddl-window | query:left join preserves unmatched rows | PASS |  |
@@ -1082,6 +1166,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-cdc | converge:order_items | PASS |  |
 | drop-table-cdc | converge:orders | PASS |  |
 | drop-table-cdc | converge:shipments | PASS |  |
+| drop-table-cdc | converge:staff | PASS |  |
 | drop-table-cdc | converge:information_schema.columns | PASS |  |
 | drop-table-cdc | query:point lookup by key | PASS |  |
 | drop-table-cdc | query:range scan with compound predicate | PASS |  |
@@ -1089,6 +1174,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-cdc | query:join with a residual comparison between both inputs | PASS |  |
 | drop-table-cdc | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-table-cdc | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-table-cdc | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| drop-table-cdc | query:alias pair with the join order reversed | PASS |  |
+| drop-table-cdc | query:four aliases of one table joined in a chain | PASS |  |
+| drop-table-cdc | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| drop-table-cdc | query:self-join manager chain preserves the roots | PASS |  |
 | drop-table-cdc | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | drop-table-cdc | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-table-cdc | query:left join preserves unmatched rows | PASS |  |
@@ -1158,6 +1248,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-recreate | converge:order_items | PASS |  |
 | drop-table-recreate | converge:orders | PASS |  |
 | drop-table-recreate | converge:shipments | PASS |  |
+| drop-table-recreate | converge:staff | PASS |  |
 | drop-table-recreate | converge:information_schema.columns | PASS |  |
 | drop-table-recreate | query:point lookup by key | PASS |  |
 | drop-table-recreate | query:range scan with compound predicate | PASS |  |
@@ -1165,6 +1256,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-recreate | query:join with a residual comparison between both inputs | PASS |  |
 | drop-table-recreate | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-table-recreate | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-table-recreate | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| drop-table-recreate | query:alias pair with the join order reversed | PASS |  |
+| drop-table-recreate | query:four aliases of one table joined in a chain | PASS |  |
+| drop-table-recreate | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| drop-table-recreate | query:self-join manager chain preserves the roots | PASS |  |
 | drop-table-recreate | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | drop-table-recreate | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-table-recreate | query:left join preserves unmatched rows | PASS |  |
@@ -1227,7 +1323,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_de3a8feca32fb3bf47e2383eaf1be060","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T18:05:47.682861+00:00","updated_at":"2026-08-18T18:12:59.400253+00:00"},"tables":12,"rows":782} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_62e04aa5f4e64ecd281f06bf72afd2bb","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T18:27:47.256063+00:00","updated_at":"2026-08-18T18:42:32.038740+00:00"},"tables":13,"rows":795} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1236,6 +1332,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-polling | converge:order_items | PASS |  |
 | drop-table-polling | converge:orders | PASS |  |
 | drop-table-polling | converge:shipments | PASS |  |
+| drop-table-polling | converge:staff | PASS |  |
 | drop-table-polling | converge:information_schema.columns | PASS |  |
 | drop-table-polling | query:point lookup by key | PASS |  |
 | drop-table-polling | query:range scan with compound predicate | PASS |  |
@@ -1243,6 +1340,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-table-polling | query:join with a residual comparison between both inputs | PASS |  |
 | drop-table-polling | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-table-polling | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-table-polling | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| drop-table-polling | query:alias pair with the join order reversed | PASS |  |
+| drop-table-polling | query:four aliases of one table joined in a chain | PASS |  |
+| drop-table-polling | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| drop-table-polling | query:self-join manager chain preserves the roots | PASS |  |
 | drop-table-polling | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | drop-table-polling | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-table-polling | query:left join preserves unmatched rows | PASS |  |
@@ -1317,6 +1419,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-database | converge:order_items | PASS |  |
 | drop-database | converge:orders | PASS |  |
 | drop-database | converge:shipments | PASS |  |
+| drop-database | converge:staff | PASS |  |
 | drop-database | converge:information_schema.columns | PASS |  |
 | drop-database | query:point lookup by key | PASS |  |
 | drop-database | query:range scan with compound predicate | PASS |  |
@@ -1324,6 +1427,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | drop-database | query:join with a residual comparison between both inputs | PASS |  |
 | drop-database | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-database | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-database | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| drop-database | query:alias pair with the join order reversed | PASS |  |
+| drop-database | query:four aliases of one table joined in a chain | PASS |  |
+| drop-database | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| drop-database | query:self-join manager chain preserves the roots | PASS |  |
 | drop-database | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | drop-database | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-database | query:left join preserves unmatched rows | PASS |  |
@@ -1390,6 +1498,7 @@ Measured 2026-08-18T18:19:51.390Z.
 | ddl-documented-gaps | converge:order_items | PASS |  |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
+| ddl-documented-gaps | converge:staff | PASS |  |
 | ddl-documented-gaps | converge:information_schema.columns | WARN | row 0: |
 | ddl-documented-gaps | query:point lookup by key | PASS |  |
 | ddl-documented-gaps | query:range scan with compound predicate | PASS |  |
@@ -1397,6 +1506,11 @@ Measured 2026-08-18T18:19:51.390Z.
 | ddl-documented-gaps | query:join with a residual comparison between both inputs | SKIP |  |
 | ddl-documented-gaps | query:left join keeps rows whose only matches fail the residual | SKIP |  |
 | ddl-documented-gaps | query:residual comparison through coalesce on a nullable column | PASS |  |
+| ddl-documented-gaps | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| ddl-documented-gaps | query:alias pair with the join order reversed | PASS |  |
+| ddl-documented-gaps | query:four aliases of one table joined in a chain | PASS |  |
+| ddl-documented-gaps | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| ddl-documented-gaps | query:self-join manager chain preserves the roots | PASS |  |
 | ddl-documented-gaps | query:a table joined twice under two aliases keeps them distinct | PASS |  |
 | ddl-documented-gaps | query:aliases stay distinct when the empty side joins first | PASS |  |
 | ddl-documented-gaps | query:left join preserves unmatched rows | PASS |  |

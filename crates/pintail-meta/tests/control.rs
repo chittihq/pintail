@@ -771,3 +771,49 @@ fn member_roles_change_without_creating_memberships() {
         Some("admin".to_owned()),
     );
 }
+
+#[test]
+fn a_finished_cycle_does_not_overwrite_a_newer_mode_switch() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let metadata = MetaStore::open(&database_path).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-08-19T00:00:00Z")
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "events", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .set_database_mode("db-1", "polling", "2026-08-19T00:01:00Z")
+        .unwrap();
+    // The operator switches to cdc while a polling cycle is still in flight;
+    // the cycle's stale completion write must lose the race, or the database
+    // reverts to polling under mode 'cdc' and the CDC handoff never rebuilds.
+    metadata
+        .set_database_mode("db-1", "cdc", "2026-08-19T00:02:00Z")
+        .unwrap();
+    let before = metadata.database("db-1").unwrap().expect("database");
+    metadata
+        .set_database_replication_state("db-1", "polling", "2026-08-19T00:03:00Z")
+        .unwrap();
+    let after = metadata.database("db-1").unwrap().expect("database");
+    assert_eq!(after.effective_mode.as_deref(), Some("cdc"));
+    assert_eq!(after.state, before.state);
+    assert_ne!(metadata.tables("db-1").unwrap()[0].state, "polling");
+    // A completion matching the requested mode still lands, on the database
+    // and its tables both.
+    metadata
+        .set_database_replication_state("db-1", "cdc", "2026-08-19T00:04:00Z")
+        .unwrap();
+    assert_eq!(
+        metadata.database("db-1").unwrap().unwrap().state,
+        "streaming"
+    );
+    assert_eq!(metadata.tables("db-1").unwrap()[0].state, "streaming");
+    // A missing database is still an error, not a silent no-op.
+    assert!(
+        metadata
+            .set_database_replication_state("db-ghost", "cdc", "2026-08-19T00:05:00Z")
+            .is_err()
+    );
+}

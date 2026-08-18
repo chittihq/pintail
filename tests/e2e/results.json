@@ -26,6 +26,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -57,6 +62,31 @@
   {
     "phase": "snapshot",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -502,6 +532,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -533,6 +568,31 @@
   {
     "phase": "orm-compat",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -858,6 +918,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -889,6 +954,31 @@
   {
     "phase": "crud",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -1214,6 +1304,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -1245,6 +1340,31 @@
   {
     "phase": "type-edges",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -1575,6 +1695,11 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -1606,6 +1731,31 @@
   {
     "phase": "ddl",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -1936,6 +2086,11 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -1967,6 +2122,31 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -2297,6 +2477,11 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -2328,6 +2513,31 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -2688,6 +2898,11 @@
   },
   {
     "phase": "churn",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -2719,6 +2934,31 @@
   {
     "phase": "churn",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -3020,8 +3260,7 @@
   {
     "phase": "execution-budget",
     "check": "hint:interrupts a runaway join",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: physical input is missing c.order_id"
+    "status": "PASS"
   },
   {
     "phase": "execution-budget",
@@ -3075,6 +3314,11 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -3106,6 +3350,31 @@
   {
     "phase": "execution-budget",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -3456,6 +3725,11 @@
   },
   {
     "phase": "spill",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -3487,6 +3761,31 @@
   {
     "phase": "spill",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -3832,6 +4131,11 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -3863,6 +4167,31 @@
   {
     "phase": "pooling",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -4193,6 +4522,11 @@
   },
   {
     "phase": "restart",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -4224,6 +4558,31 @@
   {
     "phase": "restart",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -4585,7 +4944,8 @@
   {
     "phase": "control-plane",
     "check": "api:keyless policy: ambiguity quarantines and exact multiplicity repairs",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "Error: keyless inserts never replicated"
   },
   {
     "phase": "control-plane",
@@ -4615,7 +4975,8 @@
   {
     "phase": "control-plane",
     "check": "converge:keyless_log",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "pintail query failed: Error: unknown table e2e_db.keyless_log"
   },
   {
     "phase": "control-plane",
@@ -4634,8 +4995,14 @@
   },
   {
     "phase": "control-plane",
-    "check": "converge:information_schema.columns",
+    "check": "converge:staff",
     "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:information_schema.columns",
+    "status": "FAIL",
+    "detail": "row count 46 vs 44"
   },
   {
     "phase": "control-plane",
@@ -4665,6 +5032,31 @@
   {
     "phase": "control-plane",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -5005,6 +5397,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -5036,6 +5433,31 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -5397,6 +5819,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -5428,6 +5855,31 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -5779,6 +6231,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -5810,6 +6267,31 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -6127,7 +6609,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_de3a8feca32fb3bf47e2383eaf1be060\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T18:05:47.682861+00:00\",\"updated_at\":\"2026-08-18T18:12:59.400253+00:00\"},\"tables\":12,\"rows\":782}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_62e04aa5f4e64ecd281f06bf72afd2bb\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T18:27:47.256063+00:00\",\"updated_at\":\"2026-08-18T18:42:32.038740+00:00\"},\"tables\":13,\"rows\":795}"
   },
   {
     "phase": "drop-table-polling",
@@ -6171,6 +6653,11 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -6202,6 +6689,31 @@
   {
     "phase": "drop-table-polling",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -6578,6 +7090,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:information_schema.columns",
     "status": "PASS"
   },
@@ -6609,6 +7126,31 @@
   {
     "phase": "drop-database",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {
@@ -6945,6 +7487,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:information_schema.columns",
     "status": "WARN",
     "detail": "row 0:\n  mysql   audit_history | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | \n  pintail audit_log | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | "
@@ -6977,6 +7524,31 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:self-join manager chain preserves the roots",
     "status": "PASS"
   },
   {

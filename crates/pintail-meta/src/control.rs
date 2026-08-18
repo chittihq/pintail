@@ -1156,15 +1156,33 @@ impl MetaStore {
             .connection
             .unchecked_transaction()
             .context("failed to begin replication-state update")?;
+        // A cycle finishing is not entitled to overwrite a mode switch that
+        // landed while it ran: the supervisor captures the effective mode when
+        // a cycle starts, and writing that stale mode back after a
+        // polling->cdc switch reverts effective_mode to 'polling' - so the
+        // CDC-handoff rebuild (keyed on effective_mode == 'cdc') never fires
+        // and the database keeps polling forever under mode 'cdc', silently
+        // skipping every table created after the switch. The write is a
+        // compare-and-set against the operator's requested mode; on conflict
+        // the newer request wins and this completion is dropped.
         let changed = transaction
             .execute(
                 "UPDATE databases SET effective_mode = ?2, state = ?3, updated_at = ?4 \
-                 WHERE id = ?1",
+                 WHERE id = ?1 AND mode IN (?2, 'auto')",
                 (id, effective_mode, database_state, now),
             )
             .context("failed to update database replication state")?;
         if changed == 0 {
-            bail!("database {id} does not exist");
+            let exists = transaction
+                .query_row("SELECT 1 FROM databases WHERE id = ?1", [id], |_| Ok(()))
+                .optional()
+                .context("failed to check database existence")?;
+            if exists.is_none() {
+                bail!("database {id} does not exist");
+            }
+            return transaction
+                .commit()
+                .context("failed to commit replication-state update");
         }
         transaction
             .execute(
