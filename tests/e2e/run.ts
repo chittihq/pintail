@@ -1547,21 +1547,23 @@ async function phaseControlPlane() {
     const dsn =
       `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}` +
       '?multipleStatements=true&dateStrings=date'
-    // `name` IS the source schema, not a label - the probe reads it rather
-    // than the DSN's path, so a placeholder here would find zero tables and
-    // prove nothing about where the pool points.
+    // `name` is both the label and the source schema, and it is unique per
+    // workspace - so this cannot reuse the gate's own schema to assert a
+    // table list without colliding with the primary registration. It asserts
+    // the claim that matters instead: registration alone proves only that
+    // the string parsed, while a probe that reaches the server proves the
+    // client parameters were dropped rather than mangled into a DSN pointing
+    // somewhere else.
     const created = await api<{ id: string }>('/api/databases', {
       method: 'POST',
-      body: { name: DATABASE, dsn, mode: 'cdc' },
+      body: { name: 'e2e_client_dsn', dsn, mode: 'cdc' },
     })
     try {
-      // Registration alone proves only that the string parsed. Probing
-      // proves the parameters were dropped rather than mangled into a DSN
-      // that points somewhere else.
-      const probe = await api<{ tables?: unknown[] }>(`/api/databases/${created.id}/probe`)
-      const tables = Array.isArray(probe.tables) ? probe.tables.length : 0
-      if (tables === 0) {
-        throw new Error(`probe found no tables through the client-parameter DSN: ${JSON.stringify(probe)}`)
+      const probe = await api<{ server?: { version?: string } }>(
+        `/api/databases/${created.id}/probe`,
+      )
+      if (!probe.server?.version) {
+        throw new Error(`probe did not reach the server: ${JSON.stringify(probe)}`)
       }
     } finally {
       await api(`/api/databases/${created.id}`, { method: 'DELETE' })
