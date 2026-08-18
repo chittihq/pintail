@@ -1960,7 +1960,7 @@ fn flatten_parenthesized_root_joins(
 }
 
 fn validate_select_shape(select: &Select) -> Result<(), BindError> {
-    if !select.optimizer_hints.is_empty()
+    if !crate::hints::select_hints_are_supported(select)
         || select.select_modifiers.is_some()
         || select.top.is_some()
         || select.exclude.is_some()

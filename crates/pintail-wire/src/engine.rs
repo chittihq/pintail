@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher},
     hash::{Hash as _, Hasher as _},
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use pintail_catalog::{
@@ -267,6 +267,18 @@ impl ReplicaEngine {
         let table_count = replica.targets.len();
         let statement =
             parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
+        // `/*+ MAX_EXECUTION_TIME(ms) */` is scoped to the statement and
+        // tightens whatever the session already allows - never loosens it, so
+        // a hint cannot be used to escape an administrator's ceiling. A hint
+        // of 0 means "no ceiling" in MySQL and simply leaves the session's in
+        // force.
+        let deadline = match pintail_sql::max_execution_time_hint(&statement) {
+            Some(milliseconds) if milliseconds > 0 => Instant::now()
+                .checked_add(Duration::from_millis(milliseconds))
+                .map(|hinted| deadline.map_or(hinted, |held| held.min(hinted)))
+                .or(deadline),
+            _ => deadline,
+        };
         let facts = column_facts(&replica);
         match execute_metadata(&statement, &catalog, Some(&replica.database.name), &facts) {
             Ok(result) => return Ok(metadata_output(result, started)),

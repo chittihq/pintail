@@ -2,6 +2,7 @@
 
 mod binder;
 mod bound;
+mod hints;
 mod metadata;
 
 use std::fmt;
@@ -20,6 +21,7 @@ pub use bound::{
     BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
     IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
+pub use hints::max_execution_time_hint;
 pub use metadata::{
     ColumnFacts, ForeignKeyFacts, IndexFacts, MetadataError, MetadataField, MetadataResult,
     SourceFacts, execute_metadata,

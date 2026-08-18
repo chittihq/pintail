@@ -445,7 +445,7 @@ fn query_has_unsupported_clauses(query: &Query) -> bool {
 }
 
 fn select_has_unsupported_clauses(select: &Select) -> bool {
-    !select.optimizer_hints.is_empty()
+    !crate::hints::select_hints_are_supported(select)
         || matches!(select.distinct, Some(sqlparser::ast::Distinct::On(_)))
         || select
             .select_modifiers

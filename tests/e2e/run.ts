@@ -992,6 +992,76 @@ async function phaseRestart() {
   await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (10, 'shipped', 67.89, '2025-08-02')`)
 }
 
+async function phaseExecutionBudget() {
+  const phase = 'execution-budget'
+  const record = (check: string, ok: boolean, detail?: string) => {
+    results.push({ phase, check, status: ok ? 'PASS' : 'FAIL', detail: ok ? undefined : detail })
+  }
+
+  // A self-join with no selective predicate: output grows with the square of
+  // the rows per join key, so it is the shape that runs away in production
+  // and the one an execution ceiling exists for.
+  const runaway =
+    'SELECT COUNT(*) AS n FROM order_items a ' +
+    'JOIN order_items b ON a.order_id = b.order_id ' +
+    'JOIN order_items c ON c.order_id = b.order_id ' +
+    'JOIN order_items d ON d.order_id = c.order_id'
+
+  // 1. The hint is honoured, and the error is MySQL's 1317 - drivers key
+  //    their retry and timeout handling on the code, not the message.
+  const started = Date.now()
+  try {
+    await pintailQuery(`SELECT /*+ MAX_EXECUTION_TIME(1) */ ${runaway.slice('SELECT '.length)}`)
+    record('hint:interrupts a runaway join', false, 'the query completed without hitting its budget')
+  } catch (failure) {
+    const text = String(failure)
+    const interrupted = /1317|max_execution_time/i.test(text)
+    record('hint:interrupts a runaway join', interrupted, text)
+    // And it interrupts promptly rather than merely reporting a timeout at
+    // the end: the deadline is checked between batches, so a 1ms budget on a
+    // multi-second query must not take multiple seconds to surface.
+    const elapsed = Date.now() - started
+    record(
+      'hint:interrupts promptly',
+      elapsed < 15_000,
+      `took ${elapsed}ms to honour a 1ms budget`,
+    )
+  }
+
+  // 2. A budget the query finishes inside must not interfere.
+  try {
+    const rows = await pintailQuery(
+      'SELECT /*+ MAX_EXECUTION_TIME(60000) */ COUNT(*) AS n FROM orders',
+    )
+    record('hint:a generous budget runs to completion', Number(rows[0]?.[0]) > 0, JSON.stringify(rows))
+  } catch (failure) {
+    record('hint:a generous budget runs to completion', false, String(failure))
+  }
+
+  // 3. The hint tightens the session ceiling but must never loosen it, or an
+  //    author could write their way out of an administrator's limit.
+  try {
+    await pintailQuery('SET SESSION max_execution_time = 1')
+    let escaped = false
+    try {
+      await pintailQuery(`SELECT /*+ MAX_EXECUTION_TIME(600000) */ ${runaway.slice('SELECT '.length)}`)
+      escaped = true
+    } catch {}
+    record('hint:cannot loosen the session ceiling', !escaped, 'a generous hint outran a 1ms session limit')
+  } finally {
+    await pintailQuery('SET SESSION max_execution_time = 0')
+  }
+
+  // 4. A hint Pintail does not implement still rejects. Silently ignoring it
+  //    would run the query without the behaviour its author asked for.
+  try {
+    await pintailQuery('SELECT /*+ BKA(orders) */ COUNT(*) FROM orders')
+    record('hint:an unimplemented hint rejects', false, 'BKA was accepted and silently ignored')
+  } catch (failure) {
+    record('hint:an unimplemented hint rejects', true, String(failure))
+  }
+}
+
 async function phaseSpill() {
   const phase = 'spill'
   const repeatedJoinInput = Array.from(
@@ -2112,6 +2182,7 @@ async function main() {
     ['schema-drift-minimal', phaseSchemaDriftMinimal],
     ['schema-drift-unseen', phaseSchemaDriftUnseen],
     ['churn', phaseChurn],
+    ['execution-budget', phaseExecutionBudget],
     ['spill', phaseSpill],
     ['pooling', phasePooling],
     ['restart', phaseRestart],
