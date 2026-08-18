@@ -28,6 +28,11 @@ async function loadDatabaseDetail(showLoading = true) {
     ])
     tables.value = tableRows
     snapshot.value = snapshotStatus
+    // The banner is shared and sticky - nothing else on this page clears it -
+    // so a single failed poll left "database does not exist" on screen for
+    // the rest of the session while the page beneath it loaded perfectly.
+    // A load that succeeds is the evidence the last failure is over.
+    error.value = ''
   } catch (failure) {
     error.value = messageOf(failure)
   } finally {
