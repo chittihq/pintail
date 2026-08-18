@@ -1709,6 +1709,50 @@ const RETENTION_GAP =
   'DROP TABLE retains the replica as an orphan and does not refresh the stored ' +
   'probe report, so the table stays in the replica catalog until an operator re-probes'
 
+async function phaseSnapshotDdlWindow() {
+  const phase = 'snapshot-ddl-window'
+  const table = 'snapshot_window_table'
+  try {
+    // A forced snapshot reads the STORED probe and then hands the stream a
+    // position captured under its own read lock. Anything created between
+    // the last probe and that position is therefore invisible to the
+    // snapshot AND already behind the resumed stream - the CREATE TABLE is
+    // lost, the table is never adopted, and nothing errors: the stream keeps
+    // reporting healthy with one fewer target forever.
+    //
+    // The control-plane phase hit this by accident roughly one run in three,
+    // which is exactly why it survived three runs being written off as a
+    // race. Here the window is opened deliberately: create the table and
+    // force the snapshot immediately, before any cadence can read the DDL.
+    await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`)
+    await sql(`INSERT INTO ${table} VALUES (1, 'inside-the-window')`)
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await api(`/api/databases/${databaseId}/snapshot`, {
+          method: 'POST',
+          body: { force: true },
+        })
+        break
+      } catch (error) {
+        // The job slot is held by a supervisor cycle; that is correct server
+        // behaviour, so retry rather than fail.
+        if (!String(error).includes('409') || attempt >= 20) throw error
+        await Bun.sleep(2_000)
+      }
+    }
+    const adopted = await waitForAdoption(table, 1)
+    results.push({
+      phase,
+      check: 'a table created just before a forced snapshot is still adopted',
+      status: adopted.status,
+      detail: adopted.detail,
+    })
+  } finally {
+    await sql(`DROP TABLE IF EXISTS ${table}`)
+    await reprobe()
+  }
+}
+
 async function phaseDropTableCdc() {
   const phase = 'drop-table-cdc'
   const table = 'lifecycle_cdc_drop'
@@ -2221,6 +2265,7 @@ async function main() {
     ['pooling', phasePooling],
     ['restart', phaseRestart],
     ['control-plane', phaseControlPlane],
+    ['snapshot-ddl-window', phaseSnapshotDdlWindow],
     ['drop-table-cdc', phaseDropTableCdc],
     ['drop-table-recreate', phaseDropTableRecreate],
     ['drop-table-polling', phaseDropTablePolling],

@@ -19,7 +19,7 @@ use mysql_async::Pool;
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::{DatabaseRecord, SnapshotChunkStatus, TableRecord};
 use pintail_poll::{PollOptions, PollTarget, run_poll_cycle};
-use pintail_probe::{ProbeReport, RecommendedMode};
+use pintail_probe::{ProbeReport, RecommendedMode, probe};
 use pintail_snapshot::{
     SnapshotOptions, SnapshotProgress, SnapshotResult, SnapshotTarget, run_snapshot_with_progress,
 };
@@ -252,13 +252,36 @@ async fn run_snapshot_job(
         .database(database_id)
         .map_err(display)?
         .ok_or_else(|| "database does not exist".to_owned())?;
-    let report: ProbeReport = serde_json::from_str(
-        database
-            .probe_json
-            .as_deref()
-            .ok_or_else(|| "probe the database before starting a snapshot".to_owned())?,
-    )
-    .map_err(display)?;
+    let dsn = state
+        .decrypt_dsn(&database.encrypted_dsn)
+        .map_err(display)?;
+    let options = crate::dsn::source_opts(&dsn)?;
+    let pool = Pool::new(options);
+    // A forced snapshot runs MID-STREAM, so the stored probe can be older
+    // than the source: a table created since it was taken is absent from it.
+    // Snapshotting the stale list and then handing the stream a position
+    // captured AFTER that CREATE TABLE loses the statement outright - the
+    // table is never copied and never auto-included, the stream looks
+    // healthy, and nothing errors. Re-probing first is what keeps the
+    // snapshot and the position it hands over describing the same source.
+    let report: ProbeReport = if force {
+        let refreshed = probe(&pool, &database.name).await.map_err(display)?;
+        let encoded = serde_json::to_string(&refreshed).map_err(display)?;
+        // Probe JSON only: this must not disturb the lifecycle state, which
+        // is what removed a live database from the supervisor's schedule.
+        metadata
+            .refresh_database_probe_json(database_id, &encoded, &Utc::now().to_rfc3339())
+            .map_err(display)?;
+        refreshed
+    } else {
+        serde_json::from_str(
+            database
+                .probe_json
+                .as_deref()
+                .ok_or_else(|| "probe the database before starting a snapshot".to_owned())?,
+        )
+        .map_err(display)?
+    };
     let sources = selected_sources(&database, &report)?;
     let data_dir = state.data_dir().map_err(display)?.to_path_buf();
     let metadata_path = state.metadata_path().map_err(display)?.to_path_buf();
@@ -280,11 +303,6 @@ async fn run_snapshot_job(
         targets.push(SnapshotTarget::new(source, store).map_err(display)?);
     }
     drop(metadata);
-    let dsn = state
-        .decrypt_dsn(&database.encrypted_dsn)
-        .map_err(display)?;
-    let options = crate::dsn::source_opts(&dsn)?;
-    let pool = Pool::new(options);
     let bytes = Arc::new(AtomicU64::new(0));
     let progress_state = state.clone();
     let progress_bytes = Arc::clone(&bytes);
