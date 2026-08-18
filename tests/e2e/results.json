@@ -61,6 +61,16 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -527,6 +537,16 @@
   },
   {
     "phase": "orm-compat",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -873,6 +893,16 @@
   },
   {
     "phase": "crud",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -1215,6 +1245,16 @@
   {
     "phase": "type-edges",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:aliases stay distinct when the empty side joins first",
     "status": "PASS"
   },
   {
@@ -1570,6 +1610,16 @@
   },
   {
     "phase": "ddl",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -1921,6 +1971,16 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -2268,6 +2328,16 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:aliases stay distinct when the empty side joins first",
     "status": "PASS"
   },
   {
@@ -2653,6 +2723,16 @@
   },
   {
     "phase": "churn",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -3029,6 +3109,16 @@
   },
   {
     "phase": "execution-budget",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -3400,6 +3490,16 @@
   },
   {
     "phase": "spill",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -3766,6 +3866,16 @@
   },
   {
     "phase": "pooling",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -4113,6 +4223,16 @@
   {
     "phase": "restart",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:aliases stay distinct when the empty side joins first",
     "status": "PASS"
   },
   {
@@ -4548,6 +4668,16 @@
   },
   {
     "phase": "control-plane",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -4905,6 +5035,16 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:aliases stay distinct when the empty side joins first",
     "status": "PASS"
   },
   {
@@ -5291,6 +5431,16 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -5663,6 +5813,16 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -5966,7 +6126,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_e4ec0ca372656c7c96c8e5c101c53871\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T14:53:01.448394+00:00\",\"updated_at\":\"2026-08-18T15:00:30.100325+00:00\"},\"tables\":12,\"rows\":782}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_52e6ab99d123f797e549360d16b36668\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T17:34:42.180601+00:00\",\"updated_at\":\"2026-08-18T17:41:37.929537+00:00\"},\"tables\":12,\"rows\":782}"
   },
   {
     "phase": "drop-table-polling",
@@ -6041,6 +6201,16 @@
   {
     "phase": "drop-table-polling",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:aliases stay distinct when the empty side joins first",
     "status": "PASS"
   },
   {
@@ -6442,6 +6612,16 @@
   },
   {
     "phase": "drop-database",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "query:left join preserves unmatched rows",
     "status": "PASS"
   },
@@ -6796,6 +6976,16 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:aliases stay distinct when the empty side joins first",
     "status": "PASS"
   },
   {

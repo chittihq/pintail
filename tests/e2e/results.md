@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T15:07:13.472Z.
+Measured 2026-08-18T17:48:36.953Z.
 
-**1382 passed, 0 failed, 25 documented-gap warnings.**
+**1420 passed, 0 failed, 25 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -18,6 +18,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | snapshot | query:join with a residual comparison between both inputs | PASS |  |
 | snapshot | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | snapshot | query:residual comparison through coalesce on a nullable column | PASS |  |
+| snapshot | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| snapshot | query:aliases stay distinct when the empty side joins first | PASS |  |
 | snapshot | query:left join preserves unmatched rows | PASS |  |
 | snapshot | query:right join preserves unmatched rows | PASS |  |
 | snapshot | query:three-way join through items | PASS |  |
@@ -111,6 +113,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | orm-compat | query:join with a residual comparison between both inputs | PASS |  |
 | orm-compat | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | orm-compat | query:residual comparison through coalesce on a nullable column | PASS |  |
+| orm-compat | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| orm-compat | query:aliases stay distinct when the empty side joins first | PASS |  |
 | orm-compat | query:left join preserves unmatched rows | PASS |  |
 | orm-compat | query:right join preserves unmatched rows | PASS |  |
 | orm-compat | query:three-way join through items | PASS |  |
@@ -180,6 +184,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | crud | query:join with a residual comparison between both inputs | PASS |  |
 | crud | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | crud | query:residual comparison through coalesce on a nullable column | PASS |  |
+| crud | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| crud | query:aliases stay distinct when the empty side joins first | PASS |  |
 | crud | query:left join preserves unmatched rows | PASS |  |
 | crud | query:right join preserves unmatched rows | PASS |  |
 | crud | query:three-way join through items | PASS |  |
@@ -249,6 +255,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | type-edges | query:join with a residual comparison between both inputs | PASS |  |
 | type-edges | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | type-edges | query:residual comparison through coalesce on a nullable column | PASS |  |
+| type-edges | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| type-edges | query:aliases stay distinct when the empty side joins first | PASS |  |
 | type-edges | query:left join preserves unmatched rows | PASS |  |
 | type-edges | query:right join preserves unmatched rows | PASS |  |
 | type-edges | query:three-way join through items | PASS |  |
@@ -319,6 +327,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | ddl | query:join with a residual comparison between both inputs | PASS |  |
 | ddl | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | ddl | query:residual comparison through coalesce on a nullable column | PASS |  |
+| ddl | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| ddl | query:aliases stay distinct when the empty side joins first | PASS |  |
 | ddl | query:left join preserves unmatched rows | PASS |  |
 | ddl | query:right join preserves unmatched rows | PASS |  |
 | ddl | query:three-way join through items | PASS |  |
@@ -389,6 +399,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | schema-drift-minimal | query:join with a residual comparison between both inputs | PASS |  |
 | schema-drift-minimal | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | schema-drift-minimal | query:residual comparison through coalesce on a nullable column | PASS |  |
+| schema-drift-minimal | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| schema-drift-minimal | query:aliases stay distinct when the empty side joins first | PASS |  |
 | schema-drift-minimal | query:left join preserves unmatched rows | PASS |  |
 | schema-drift-minimal | query:right join preserves unmatched rows | PASS |  |
 | schema-drift-minimal | query:three-way join through items | PASS |  |
@@ -459,6 +471,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | schema-drift-unseen | query:join with a residual comparison between both inputs | PASS |  |
 | schema-drift-unseen | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | schema-drift-unseen | query:residual comparison through coalesce on a nullable column | PASS |  |
+| schema-drift-unseen | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| schema-drift-unseen | query:aliases stay distinct when the empty side joins first | PASS |  |
 | schema-drift-unseen | query:left join preserves unmatched rows | PASS |  |
 | schema-drift-unseen | query:right join preserves unmatched rows | PASS |  |
 | schema-drift-unseen | query:three-way join through items | PASS |  |
@@ -535,6 +549,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | churn | query:join with a residual comparison between both inputs | PASS |  |
 | churn | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | churn | query:residual comparison through coalesce on a nullable column | PASS |  |
+| churn | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| churn | query:aliases stay distinct when the empty side joins first | PASS |  |
 | churn | query:left join preserves unmatched rows | PASS |  |
 | churn | query:right join preserves unmatched rows | PASS |  |
 | churn | query:three-way join through items | PASS |  |
@@ -610,6 +626,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | execution-budget | query:join with a residual comparison between both inputs | PASS |  |
 | execution-budget | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | execution-budget | query:residual comparison through coalesce on a nullable column | PASS |  |
+| execution-budget | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| execution-budget | query:aliases stay distinct when the empty side joins first | PASS |  |
 | execution-budget | query:left join preserves unmatched rows | PASS |  |
 | execution-budget | query:right join preserves unmatched rows | PASS |  |
 | execution-budget | query:three-way join through items | PASS |  |
@@ -684,6 +702,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | spill | query:join with a residual comparison between both inputs | PASS |  |
 | spill | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | spill | query:residual comparison through coalesce on a nullable column | PASS |  |
+| spill | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| spill | query:aliases stay distinct when the empty side joins first | PASS |  |
 | spill | query:left join preserves unmatched rows | PASS |  |
 | spill | query:right join preserves unmatched rows | PASS |  |
 | spill | query:three-way join through items | PASS |  |
@@ -757,6 +777,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | pooling | query:join with a residual comparison between both inputs | PASS |  |
 | pooling | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | pooling | query:residual comparison through coalesce on a nullable column | PASS |  |
+| pooling | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| pooling | query:aliases stay distinct when the empty side joins first | PASS |  |
 | pooling | query:left join preserves unmatched rows | PASS |  |
 | pooling | query:right join preserves unmatched rows | PASS |  |
 | pooling | query:three-way join through items | PASS |  |
@@ -827,6 +849,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | restart | query:join with a residual comparison between both inputs | PASS |  |
 | restart | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | restart | query:residual comparison through coalesce on a nullable column | PASS |  |
+| restart | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| restart | query:aliases stay distinct when the empty side joins first | PASS |  |
 | restart | query:left join preserves unmatched rows | PASS |  |
 | restart | query:right join preserves unmatched rows | PASS |  |
 | restart | query:three-way join through items | PASS |  |
@@ -913,6 +937,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | control-plane | query:join with a residual comparison between both inputs | PASS |  |
 | control-plane | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | control-plane | query:residual comparison through coalesce on a nullable column | PASS |  |
+| control-plane | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| control-plane | query:aliases stay distinct when the empty side joins first | PASS |  |
 | control-plane | query:left join preserves unmatched rows | PASS |  |
 | control-plane | query:right join preserves unmatched rows | PASS |  |
 | control-plane | query:three-way join through items | PASS |  |
@@ -985,6 +1011,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | snapshot-ddl-window | query:join with a residual comparison between both inputs | PASS |  |
 | snapshot-ddl-window | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | snapshot-ddl-window | query:residual comparison through coalesce on a nullable column | PASS |  |
+| snapshot-ddl-window | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| snapshot-ddl-window | query:aliases stay distinct when the empty side joins first | PASS |  |
 | snapshot-ddl-window | query:left join preserves unmatched rows | PASS |  |
 | snapshot-ddl-window | query:right join preserves unmatched rows | PASS |  |
 | snapshot-ddl-window | query:three-way join through items | PASS |  |
@@ -1061,6 +1089,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | drop-table-cdc | query:join with a residual comparison between both inputs | PASS |  |
 | drop-table-cdc | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-table-cdc | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-table-cdc | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| drop-table-cdc | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-table-cdc | query:left join preserves unmatched rows | PASS |  |
 | drop-table-cdc | query:right join preserves unmatched rows | PASS |  |
 | drop-table-cdc | query:three-way join through items | PASS |  |
@@ -1135,6 +1165,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | drop-table-recreate | query:join with a residual comparison between both inputs | PASS |  |
 | drop-table-recreate | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-table-recreate | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-table-recreate | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| drop-table-recreate | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-table-recreate | query:left join preserves unmatched rows | PASS |  |
 | drop-table-recreate | query:right join preserves unmatched rows | PASS |  |
 | drop-table-recreate | query:three-way join through items | PASS |  |
@@ -1195,7 +1227,7 @@ Measured 2026-08-18T15:07:13.472Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_e4ec0ca372656c7c96c8e5c101c53871","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T14:53:01.448394+00:00","updated_at":"2026-08-18T15:00:30.100325+00:00"},"tables":12,"rows":782} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_52e6ab99d123f797e549360d16b36668","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T17:34:42.180601+00:00","updated_at":"2026-08-18T17:41:37.929537+00:00"},"tables":12,"rows":782} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1211,6 +1243,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | drop-table-polling | query:join with a residual comparison between both inputs | PASS |  |
 | drop-table-polling | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-table-polling | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-table-polling | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| drop-table-polling | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-table-polling | query:left join preserves unmatched rows | PASS |  |
 | drop-table-polling | query:right join preserves unmatched rows | PASS |  |
 | drop-table-polling | query:three-way join through items | PASS |  |
@@ -1290,6 +1324,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | drop-database | query:join with a residual comparison between both inputs | PASS |  |
 | drop-database | query:left join keeps rows whose only matches fail the residual | PASS |  |
 | drop-database | query:residual comparison through coalesce on a nullable column | PASS |  |
+| drop-database | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| drop-database | query:aliases stay distinct when the empty side joins first | PASS |  |
 | drop-database | query:left join preserves unmatched rows | PASS |  |
 | drop-database | query:right join preserves unmatched rows | PASS |  |
 | drop-database | query:three-way join through items | PASS |  |
@@ -1361,6 +1397,8 @@ Measured 2026-08-18T15:07:13.472Z.
 | ddl-documented-gaps | query:join with a residual comparison between both inputs | SKIP |  |
 | ddl-documented-gaps | query:left join keeps rows whose only matches fail the residual | SKIP |  |
 | ddl-documented-gaps | query:residual comparison through coalesce on a nullable column | PASS |  |
+| ddl-documented-gaps | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| ddl-documented-gaps | query:aliases stay distinct when the empty side joins first | PASS |  |
 | ddl-documented-gaps | query:left join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:right join preserves unmatched rows | PASS |  |
 | ddl-documented-gaps | query:three-way join through items | SKIP |  |
