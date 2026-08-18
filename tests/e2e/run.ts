@@ -1687,7 +1687,14 @@ async function waitForAdoption(
   rows: number,
 ): Promise<{ status: CheckResult['status']; detail?: string }> {
   const arrived = async () => (await replicaCount(table)) === rows
-  if (await waitUntil(arrived, 120_000, 5_000)) return { status: 'PASS' }
+  // Adoption is a supervisor cadence away, then a single-table snapshot, and
+  // both queue behind whatever else the cadence is doing. In a full gate run
+  // the same phase competes with eight other tables and a loaded host, and a
+  // window sized for an idle one turns that contention into a product
+  // failure - measured: the phase passes in isolation and failed twice in
+  // full runs while `targets` climbed 5 -> 9 and nine auto-include snapshots
+  // completed, which is adoption working, just later than the wait allowed.
+  if (await waitUntil(arrived, 300_000, 5_000)) return { status: 'PASS' }
   await Bun.sleep(45_000)
   if (await arrived()) {
     return {
