@@ -4339,6 +4339,12 @@ pub enum BindError {
     InvalidScalarFunction(String),
     /// A scalar subquery produced more than one row.
     InvalidScalarSubqueryRows(usize),
+    /// A correlated subquery in the select list is neither grouped nor
+    /// aggregated. Distinct from [`BindError::UngroupedColumn`] because
+    /// decorrelation gives it a synthesised name that appears nowhere in the
+    /// submitted SQL, so quoting one asks the author to edit something they
+    /// cannot see.
+    UngroupedSubquery,
     /// A selected column is neither grouped nor aggregated.
     UngroupedColumn(String),
     /// GROUP BY and HAVING have an invalid combination.
@@ -4433,6 +4439,9 @@ impl fmt::Display for BindError {
             Self::InvalidScalarSubqueryRows(rows) => {
                 write!(formatter, "scalar subquery produced {rows} rows")
             }
+            Self::UngroupedSubquery => formatter.write_str(
+                "a correlated subquery in the select list is neither grouped nor aggregated",
+            ),
             Self::UngroupedColumn(column) => {
                 write!(
                     formatter,
