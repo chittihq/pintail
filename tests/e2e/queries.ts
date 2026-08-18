@@ -77,6 +77,71 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers', 'orders'],
   },
   {
+    // The reported production shape verbatim: one table read through TWO
+    // aliases whose values differ per row, with references that are NULL or
+    // DANGLING. Every failure mode is visible in the values: collapsing the
+    // aliases changes names, and a dangling reference must come back NULL
+    // rather than as the other alias's row.
+    name: 'created-by and updated-by resolve through separate aliases',
+    sql:
+      'SELECT s.id, s.name, c.name AS created_by_name, u.name AS updated_by_name ' +
+      'FROM staff s ' +
+      'LEFT JOIN staff c ON c.id = s.created_by ' +
+      'LEFT JOIN staff u ON u.id = s.updated_by ' +
+      'ORDER BY s.id',
+    tables: ['staff'],
+  },
+  {
+    // The same pair with the join order reversed - the reporter established
+    // the misattribution follows POSITION, not name.
+    name: 'alias pair with the join order reversed',
+    sql:
+      'SELECT s.id, u.name AS updated_by_name, c.name AS created_by_name ' +
+      'FROM staff s ' +
+      'LEFT JOIN staff u ON u.id = s.updated_by ' +
+      'LEFT JOIN staff c ON c.id = s.created_by ' +
+      'ORDER BY s.id',
+    tables: ['staff'],
+  },
+  {
+    // The four-alias chain from the execution-budget phase, at a size where
+    // the answer is byte-checkable. This is the shape where key ORIENTATION
+    // goes wrong: with table-level provenance both sides of every conjunct
+    // look identical, and a key compiled against the wrong side either
+    // resolves to the wrong alias (same physical column, silently fine) or
+    // fails to resolve at all.
+    name: 'four aliases of one table joined in a chain',
+    sql:
+      'SELECT COUNT(*) AS n FROM staff a ' +
+      'JOIN staff b ON a.manager_id = b.manager_id ' +
+      'JOIN staff c ON c.manager_id = b.manager_id ' +
+      'JOIN staff d ON d.manager_id = c.manager_id',
+    tables: ['staff'],
+  },
+  {
+    // A single-side conjunct on a self-join ON clause. Relation-instance
+    // provenance is what lets this split to one input; before, a self-join
+    // bailed out of splitting entirely because its sides looked identical.
+    name: 'self-join with a single-side predicate in the ON clause',
+    sql:
+      'SELECT e.id, e.name, m.name AS manager_name ' +
+      'FROM staff e ' +
+      'JOIN staff m ON m.id = e.manager_id AND m.active = 1 ' +
+      'ORDER BY e.id',
+    tables: ['staff'],
+  },
+  {
+    // Manager chain two levels up, LEFT so the roots survive NULL-extended.
+    name: 'self-join manager chain preserves the roots',
+    sql:
+      'SELECT e.id, e.name, m.name AS manager, mm.name AS grand_manager ' +
+      'FROM staff e ' +
+      'LEFT JOIN staff m ON m.id = e.manager_id ' +
+      'LEFT JOIN staff mm ON mm.id = m.manager_id ' +
+      'ORDER BY e.id',
+    tables: ['staff'],
+  },
+  {
     // A table joined twice under two aliases. Physically the two inputs are
     // the same database, table and column ids, so a resolver keyed on those
     // alone returns the FIRST alias for both - silently, with plausible

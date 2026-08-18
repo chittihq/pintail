@@ -3020,7 +3020,8 @@
   {
     "phase": "execution-budget",
     "check": "hint:interrupts a runaway join",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "Error: query engine failed: physical input is missing c.order_id"
   },
   {
     "phase": "execution-budget",
@@ -6126,7 +6127,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_52e6ab99d123f797e549360d16b36668\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T17:34:42.180601+00:00\",\"updated_at\":\"2026-08-18T17:41:37.929537+00:00\"},\"tables\":12,\"rows\":782}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_de3a8feca32fb3bf47e2383eaf1be060\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T18:05:47.682861+00:00\",\"updated_at\":\"2026-08-18T18:12:59.400253+00:00\"},\"tables\":12,\"rows\":782}"
   },
   {
     "phase": "drop-table-polling",

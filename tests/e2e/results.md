@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T17:48:36.953Z.
+Measured 2026-08-18T18:19:51.390Z.
 
-**1420 passed, 0 failed, 25 documented-gap warnings.**
+**1419 passed, 1 failed, 25 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -608,7 +608,7 @@ Measured 2026-08-18T17:48:36.953Z.
 | churn | query:general_ci: joining on a collated column | PASS |  |
 | churn | query:general_ci: representative spelling of a collated group | PASS |  |
 | churn | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
-| execution-budget | hint:interrupts a runaway join | PASS |  |
+| execution-budget | hint:interrupts a runaway join | FAIL | Error: query engine failed: physical input is missing c.order_id |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
 | execution-budget | hint:cannot loosen the session ceiling | PASS |  |
@@ -1227,7 +1227,7 @@ Measured 2026-08-18T17:48:36.953Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_52e6ab99d123f797e549360d16b36668","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T17:34:42.180601+00:00","updated_at":"2026-08-18T17:41:37.929537+00:00"},"tables":12,"rows":782} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_de3a8feca32fb3bf47e2383eaf1be060","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T18:05:47.682861+00:00","updated_at":"2026-08-18T18:12:59.400253+00:00"},"tables":12,"rows":782} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |

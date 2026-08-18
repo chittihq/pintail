@@ -667,11 +667,11 @@ fn split_join_condition(
 ) -> (Option<BoundExpr>, Option<BoundExpr>, Option<BoundExpr>) {
     let left_tables = logical_tables(left);
     let right_tables = logical_tables(right);
-    // Provenance is tracked per (database, table), which cannot tell two
-    // aliases of one table apart. In a self-join every conjunct looks like it
-    // belongs to both sides, so splitting would strip the join key; leave the
-    // condition whole and let the key extractor's two-orientation test handle
-    // it exactly as before.
+    // Provenance is per relation INSTANCE, so a self-join's sides are
+    // disjoint like any other join's and its conjuncts split normally. An
+    // overlap can still occur when the same alias is visible on both sides
+    // through a derived input; splitting would misroute those, so leave the
+    // condition whole for the extractor's two-orientation test.
     if !left_tables.is_disjoint(&right_tables) {
         return (Some(condition), None, None);
     }
@@ -838,20 +838,29 @@ fn hash_join_key_mode(
     }
 }
 
-fn logical_tables(plan: &LogicalPlan) -> BTreeSet<(DatabaseId, TableId)> {
+/// One relation instance: the physical identity plus the alias it is visible
+/// through. Two aliases of one table are distinct here, which is what lets a
+/// self-join's sides stay disjoint and its keys stay oriented.
+type RelationKey = (DatabaseId, TableId, String);
+
+fn logical_tables(plan: &LogicalPlan) -> BTreeSet<RelationKey> {
     let mut tables = BTreeSet::new();
     collect_logical_tables(plan, &mut tables);
     tables
 }
 
-fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId, TableId)>) {
+fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<RelationKey>) {
     match plan {
         LogicalPlan::Recursive { anchor, member, .. } => {
             collect_logical_tables(anchor, tables);
             collect_logical_tables(member, tables);
         }
         LogicalPlan::Scan(scan) => {
-            tables.insert((scan.table.database_id, scan.table.table_id));
+            tables.insert((
+                scan.table.database_id,
+                scan.table.table_id,
+                scan.table.relation_name.to_ascii_lowercase(),
+            ));
         }
         LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
@@ -864,7 +873,11 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
         }
         LogicalPlan::Derived { columns, .. } => {
             for column in columns {
-                tables.insert((column.database_id, column.table_id));
+                tables.insert((
+                    column.database_id,
+                    column.table_id,
+                    column.relation_name.to_ascii_lowercase(),
+                ));
             }
         }
         LogicalPlan::Filter { input, .. }
@@ -878,16 +891,20 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<(DatabaseId,
     }
 }
 
-fn expression_belongs_to(expression: &BoundExpr, tables: &BTreeSet<(DatabaseId, TableId)>) -> bool {
+fn expression_belongs_to(expression: &BoundExpr, tables: &BTreeSet<RelationKey>) -> bool {
     let mut references = BTreeSet::new();
     collect_expression_tables(expression, &mut references);
     !references.is_empty() && references.is_subset(tables)
 }
 
-fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<(DatabaseId, TableId)>) {
+fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<RelationKey>) {
     match &expression.kind {
         BoundExprKind::Column(column) => {
-            tables.insert((column.database_id, column.table_id));
+            tables.insert((
+                column.database_id,
+                column.table_id,
+                column.relation_name.to_ascii_lowercase(),
+            ));
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
             collect_expression_tables(expr, tables);

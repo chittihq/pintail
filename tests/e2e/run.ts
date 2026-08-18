@@ -493,6 +493,35 @@ async function sql(statement: string) {
 }
 
 async function phaseSeed() {
+  // Self-referential fixture, shaped for the alias-misattribution class: a
+  // table read through two aliases at once (created_by/updated_by), where
+  // every wrong resolution is VISIBLE. created_by and updated_by differ on
+  // most rows, so returning one alias's row for both changes values;
+  // updated_by is sometimes NULL and sometimes DANGLING (id 99, which no row
+  // has), so the correct answer is NULL where the buggy answer was the first
+  // alias's row. A staging table with this shape attributed 605 of 4067
+  // activities to the wrong person while every count looked right.
+  await sql(`CREATE TABLE staff (
+    id INT UNSIGNED PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    manager_id INT UNSIGNED NULL,
+    created_by INT UNSIGNED NULL,
+    updated_by INT UNSIGNED NULL,
+    active TINYINT(1) NOT NULL DEFAULT 1
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`INSERT INTO staff (id, name, manager_id, created_by, updated_by, active) VALUES
+    (1, 'Asha',   NULL, NULL, NULL, 1),
+    (2, 'Bala',   1,    1,    NULL, 1),
+    (3, 'Chitra', 1,    1,    2,    1),
+    (4, 'Dev',    2,    1,    3,    0),
+    (5, 'Esha',   2,    3,    99,   1),
+    (6, 'Farid',  3,    2,    4,    1),
+    (7, 'Gita',   3,    99,   1,    0),
+    (8, 'Hari',   4,    5,    5,    1),
+    (9, 'Indra',  4,    6,    99,   1),
+    (10,'Jai',    5,    7,    2,    0),
+    (11,'Kavi',   5,    1,    6,    1),
+    (12,'Lata',   6,    8,    NULL, 1)`)
   await sql(`CREATE TABLE customers (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(64) NOT NULL,
