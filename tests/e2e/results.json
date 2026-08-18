@@ -4944,8 +4944,7 @@
   {
     "phase": "control-plane",
     "check": "api:keyless policy: ambiguity quarantines and exact multiplicity repairs",
-    "status": "FAIL",
-    "detail": "Error: keyless inserts never replicated"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -4975,8 +4974,7 @@
   {
     "phase": "control-plane",
     "check": "converge:keyless_log",
-    "status": "FAIL",
-    "detail": "pintail query failed: Error: unknown table e2e_db.keyless_log"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -5001,8 +4999,7 @@
   {
     "phase": "control-plane",
     "check": "converge:information_schema.columns",
-    "status": "FAIL",
-    "detail": "row count 46 vs 44"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -6609,7 +6606,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_62e04aa5f4e64ecd281f06bf72afd2bb\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T18:27:47.256063+00:00\",\"updated_at\":\"2026-08-18T18:42:32.038740+00:00\"},\"tables\":13,\"rows\":795}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_85718493f5f05acd90b032176357bd63\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T19:02:42.787865+00:00\",\"updated_at\":\"2026-08-18T19:11:31.992413+00:00\"},\"tables\":13,\"rows\":794}"
   },
   {
     "phase": "drop-table-polling",

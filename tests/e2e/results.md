@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T18:49:14.732Z.
+Measured 2026-08-18T19:18:38.394Z.
 
-**1531 passed, 3 failed, 25 documented-gap warnings.**
+**1534 passed, 0 failed, 25 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -992,18 +992,18 @@ Measured 2026-08-18T18:49:14.732Z.
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
-| control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | FAIL | Error: keyless inserts never replicated |
+| control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
 | control-plane | api:a connection string carrying client driver options registers | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
-| control-plane | converge:keyless_log | FAIL | pintail query failed: Error: unknown table e2e_db.keyless_log |
+| control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
 | control-plane | converge:staff | PASS |  |
-| control-plane | converge:information_schema.columns | FAIL | row count 46 vs 44 |
+| control-plane | converge:information_schema.columns | PASS |  |
 | control-plane | query:point lookup by key | PASS |  |
 | control-plane | query:range scan with compound predicate | PASS |  |
 | control-plane | query:inner join with aggregation | PASS |  |
@@ -1323,7 +1323,7 @@ Measured 2026-08-18T18:49:14.732Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_62e04aa5f4e64ecd281f06bf72afd2bb","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T18:27:47.256063+00:00","updated_at":"2026-08-18T18:42:32.038740+00:00"},"tables":13,"rows":795} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_85718493f5f05acd90b032176357bd63","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T19:02:42.787865+00:00","updated_at":"2026-08-18T19:11:31.992413+00:00"},"tables":13,"rows":794} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
