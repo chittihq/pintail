@@ -1064,7 +1064,7 @@ impl<'catalog> Binder<'catalog> {
                 Vec::new(),
             );
         }
-        let alias = format!("__scalar_{}", tables.len());
+        let alias = format!("{SCALAR_TABLE_PREFIX}{}", tables.len());
         let input = self.bind_query(&derived_query, ctes)?;
         let derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
         tables.push(derived.clone());
@@ -3791,6 +3791,19 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
         return Ok(());
     }
     match &mut expr.kind {
+        // A correlated scalar subquery is decorrelated into a derived join
+        // whose table and value column are synthesised names. Reporting one
+        // of those names asks the author to edit something they never wrote
+        // and cannot see - Chitti LMS received
+        // "column __scalar_2.__scalar_value is neither grouped nor
+        // aggregated" and correctly observed that nothing in their query
+        // could be changed in response. Name the construct instead.
+        BoundExprKind::Column(column) if column.relation_name.starts_with(SCALAR_TABLE_PREFIX) => {
+            Err(BindError::UngroupedColumn(
+                "a correlated subquery in the select list, which is neither                  grouped nor aggregated"
+                    .to_owned(),
+            ))
+        }
         BoundExprKind::Column(column) => Err(BindError::UngroupedColumn(format!(
             "{}.{}",
             column.relation_name, column.name
@@ -3847,6 +3860,9 @@ fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
 /// dividend's scale by four fraction digits.
 /// Aggregate output column of a decorrelated scalar-subquery derived table.
 const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
+
+/// Prefix of the derived table a decorrelated scalar subquery becomes.
+const SCALAR_TABLE_PREFIX: &str = "__scalar_";
 
 /// Everything one FROM clause contributes to binding: the join structure,
 /// the resolution scope, and the unqualified-`*` expansion order.
@@ -4631,6 +4647,26 @@ mod tests {
             ),
             "functional-dependency analysis is not implemented; if this now \
              passes, the limitation in docs/limitations.md is stale",
+        );
+    }
+
+    /// A rejection must name something the author wrote.
+    #[test]
+    fn a_grouped_correlated_scalar_is_refused_without_naming_an_internal() {
+        // Decorrelation turns the subquery into a derived join called
+        // __scalar_N with a __scalar_value column. Chitti LMS was told
+        // "column __scalar_2.__scalar_value is neither grouped nor
+        // aggregated" and could not act on it: neither name appears in the
+        // SQL they submitted.
+        let error = bind(
+            "SELECT id, (SELECT COUNT(*) FROM Events e WHERE e.id = Events.id) AS total, \
+             COUNT(*) AS c FROM Events GROUP BY id",
+        )
+        .expect_err("a correlated scalar under GROUP BY is still refused");
+        let message = error.to_string();
+        assert!(
+            !message.contains("__scalar"),
+            "the rejection leaks a rewrite artefact: {message}"
         );
     }
 
