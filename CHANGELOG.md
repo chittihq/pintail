@@ -4,6 +4,34 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc1] - 2026-08-18
+
+Two findings from the customer's re-check of 0.0.3, one of them a silent
+wrong-results bug that blocks reading through Pintail at all.
+
+### Fixed
+
+- A table joined twice under two aliases returned the first alias's row
+  for both. Physically the two inputs share database, table and column
+  ids, and the expression compiler resolved a column by those alone and
+  took the first match - so `u2.name` silently became `u1.name`. No
+  error, entirely plausible values, and wrong: on one staging table 605
+  of 4067 rows attributed an activity to the wrong person. The relation
+  name is now part of a column's identity during resolution. The defect
+  predates 0.0.3 - it became visible only once the join fixes let
+  `created_by`/`updated_by` alias pairs run at all.
+- Refusing to group keys of two text collations now names both
+  collations. The refusal itself is unchanged, but it fired for a
+  customer on two columns their schema declares identically, and Pintail
+  exposes a column's collation nowhere else - the message was the only
+  place the disagreement could ever be seen.
+
+### Known limitations
+
+- The underlying collation disagreement - the engine believing two
+  identically-declared columns differ - is diagnosable now but not yet
+  explained. Grouping those two columns still rejects.
+
 ## [0.0.3] - 2026-08-18
 
 Every finding from a customer conformance report against their own schema:
