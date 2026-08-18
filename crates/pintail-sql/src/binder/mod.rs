@@ -3799,10 +3799,7 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
         // aggregated" and correctly observed that nothing in their query
         // could be changed in response. Name the construct instead.
         BoundExprKind::Column(column) if column.relation_name.starts_with(SCALAR_TABLE_PREFIX) => {
-            Err(BindError::UngroupedColumn(
-                "a correlated subquery in the select list, which is neither                  grouped nor aggregated"
-                    .to_owned(),
-            ))
+            Err(BindError::UngroupedSubquery)
         }
         BoundExprKind::Column(column) => Err(BindError::UngroupedColumn(format!(
             "{}.{}",
