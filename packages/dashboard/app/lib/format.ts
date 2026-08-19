@@ -1,3 +1,4 @@
+import { toast } from 'vue-sonner'
 import type { DatabaseRecord, SnapshotStatus } from '@/types/pintail'
 
 export function modeOf(database: DatabaseRecord) {
@@ -44,6 +45,19 @@ export function displayValue(value: unknown) {
   if (value === null) return 'NULL'
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+/// The clipboard API rejects on plain-HTTP deploys, denied permissions, and
+/// unfocused documents. The callers hand it show-once secrets - an API key,
+/// an invite link - so a silent failure here means the user dismisses a
+/// secret believing it is on the clipboard, and it is gone.
+export async function copyText(value: string, label = 'Copied to clipboard') {
+  try {
+    await navigator.clipboard.writeText(value)
+    toast(label)
+  } catch {
+    toast('Copy failed - select the text and copy it by hand')
+  }
 }
 
 export function messageOf(failure: unknown) {

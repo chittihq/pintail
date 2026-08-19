@@ -71,8 +71,9 @@ const creatingWorkspace = ref(false)
 
 async function onSwitchWorkspace(workspaceId: string) {
   if (workspaceId === session.value?.workspace_id) return
-  await switchWorkspace(workspaceId)
-  await navigateTo('/')
+  // Navigating is the "you are in the new workspace" signal; a failed
+  // switch used to land on the OLD workspace's overview anyway.
+  if (await switchWorkspace(workspaceId)) await navigateTo('/')
 }
 
 async function submitCreateWorkspace() {

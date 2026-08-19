@@ -91,6 +91,11 @@ async function finishWizard() {
     await navigateTo(`/databases/${wizard.databaseId}?tab=snapshot`)
   } catch (failure) {
     wizard.error = messageOf(failure)
+    // Step 4 is a spinner-only panel with no error slot and no buttons -
+    // failing there dead-ends the wizard. Step 3 renders the error beside
+    // "Review & start", and re-running it is idempotent (a PUT then the
+    // snapshot request).
+    wizard.step = 3
   } finally {
     wizard.working = false
   }

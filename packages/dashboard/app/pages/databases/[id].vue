@@ -2,7 +2,7 @@
 import { AlertTriangle, Check, ChevronRight, Eye, HardDrive, LoaderCircle, Pause, Play, Radio, RefreshCw, Table2, X } from '@lucide/vue'
 import { useIntervalFn } from '@vueuse/core'
 import { displayValue, formatDate, formatNumber, messageOf, modeOf, snapshotPercent, stateTone } from '@/lib/format'
-import type { QueryResponse, SnapshotStatus, TableSummary } from '@/types/pintail'
+import type { DlqRecord, QueryResponse, SnapshotStatus, TableSummary } from '@/types/pintail'
 
 const route = useRoute()
 const router = useRouter()
@@ -73,11 +73,21 @@ async function saveReconcileInterval() {
   }
 }
 
+const resnapshotting = ref(false)
+
 async function resnapshot() {
-  if (!database.value) return
-  await forceSnapshot(database.value.id)
-  detailTab.value = 'snapshot'
-  await loadDatabaseDetail()
+  if (!database.value || resnapshotting.value) return
+  resnapshotting.value = true
+  try {
+    // Navigating to the snapshot tab is the "it started" signal, so it only
+    // happens when the request actually succeeded - a failure used to land
+    // there anyway, showing the OLD journal as if a new run were underway.
+    if (!(await forceSnapshot(database.value.id))) return
+    detailTab.value = 'snapshot'
+    await loadDatabaseDetail()
+  } finally {
+    resnapshotting.value = false
+  }
 }
 
 const viewTable = ref<TableSummary | null>(null)
@@ -108,6 +118,20 @@ function closeView(open: boolean) {
     viewTable.value = null
     viewResult.value = null
     viewError.value = ''
+  }
+}
+
+const discardCandidate = ref<DlqRecord | null>(null)
+const discarding = ref(false)
+
+async function confirmDiscard() {
+  if (!discardCandidate.value || discarding.value) return
+  discarding.value = true
+  try {
+    await discardDlq(discardCandidate.value)
+    discardCandidate.value = null
+  } finally {
+    discarding.value = false
   }
 }
 
@@ -163,7 +187,7 @@ function describeTable(table: TableSummary) {
           <Play v-if="database.mode === 'paused'" /><Pause v-else />
           {{ database.mode === 'paused' ? 'Resume' : 'Pause' }}
         </Button>
-        <Button @click="resnapshot"><RefreshCw /> Resnapshot</Button>
+        <Button :disabled="resnapshotting" @click="resnapshot"><LoaderCircle v-if="resnapshotting" class="animate-spin" /><RefreshCw v-else /> Resnapshot</Button>
       </div>
     </header>
 
@@ -274,7 +298,7 @@ function describeTable(table: TableSummary) {
               <p class="text-destructive mt-1 text-sm break-words">{{ record.error }}</p>
               <div class="mt-2 flex items-center gap-2">
                 <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
-                <Button variant="link" size="sm" @click="discardDlq(record)">Discard</Button>
+                <Button variant="link" size="sm" @click="discardCandidate = record">Discard</Button>
               </div>
             </div>
           </Card>
@@ -391,4 +415,14 @@ function describeTable(table: TableSummary) {
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
+  <ConfirmActionDialog
+    :open="Boolean(discardCandidate)"
+    :title="`Discard this ${discardCandidate?.table || 'database'} dead letter?`"
+    description="The quarantined event is deleted permanently and its change is never applied to the mirror. Retry it instead if the failure may have been transient."
+    confirm-label="Discard"
+    :working="discarding"
+    @confirm="confirmDiscard"
+    @update:open="(open) => { if (!open) discardCandidate = null }"
+  />
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Copy, Mail, Trash2, UserPlus, Users, X } from '@lucide/vue'
+import { Copy, LoaderCircle, Mail, Trash2, UserPlus, Users, X } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import { formatDate, messageOf } from '@/lib/format'
+import { copyText, formatDate, messageOf } from '@/lib/format'
 import type { CreatedInvite, Invite, WorkspaceMember } from '@/types/pintail'
 
 const { request } = usePintailApi()
@@ -9,11 +9,13 @@ const { session, error } = useControlPlane()
 
 const members = ref<WorkspaceMember[]>([])
 const invites = ref<Invite[]>([])
+const teamLoading = ref(false)
 const inviteForm = reactive({ email: '', role: 'operator' })
 const creatingInvite = ref(false)
 const revealedInvite = ref<CreatedInvite | null>(null)
 
 async function loadTeam() {
+  teamLoading.value = true
   try {
     const [memberRows, inviteRows] = await Promise.all([
       request<WorkspaceMember[]>('/workspaces/members'),
@@ -23,6 +25,8 @@ async function loadTeam() {
     invites.value = inviteRows
   } catch (failure) {
     error.value = messageOf(failure)
+  } finally {
+    teamLoading.value = false
   }
 }
 
@@ -70,13 +74,23 @@ async function revokeInvite(invite: Invite) {
   }
 }
 
-async function removeMember(member: WorkspaceMember) {
+const removeCandidate = ref<WorkspaceMember | null>(null)
+const removingMember = ref(false)
+
+async function removeMember() {
+  const member = removeCandidate.value
+  if (!member || removingMember.value) return
+  removingMember.value = true
   try {
     await request(`/workspaces/members/${member.user_id}`, { method: 'DELETE' })
     toast(`${member.email} removed from workspace`)
+    removeCandidate.value = null
     await loadTeam()
   } catch (failure) {
     error.value = messageOf(failure)
+    toast(`Removing ${member.email} failed: ${messageOf(failure)}`)
+  } finally {
+    removingMember.value = false
   }
 }
 
@@ -104,10 +118,6 @@ async function changeRole(member: WorkspaceMember, role: string) {
   }
 }
 
-async function copy(value: string) {
-  await navigator.clipboard.writeText(value)
-  toast('Invite link copied')
-}
 </script>
 
 <template>
@@ -144,7 +154,7 @@ async function copy(value: string) {
           <strong class="text-foreground block">Copy this link and send it to {{ revealedInvite.email }}. It cannot be recovered.</strong>
           <code data-testid="invite-link" class="mt-1 block break-all">{{ inviteLink(revealedInvite.token) }}</code>
         </div>
-        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Copy invite link" @click="copy(inviteLink(revealedInvite.token))"><Copy /></Button>
+        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Copy invite link" @click="copyText(inviteLink(revealedInvite.token), 'Invite link copied')"><Copy /></Button>
         <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Dismiss invite link" @click="revealedInvite = null"><X /></Button>
       </AlertDescription>
     </Alert>
@@ -152,7 +162,8 @@ async function copy(value: string) {
     <div class="grid gap-4 md:grid-cols-2">
       <Card class="overflow-hidden p-0">
         <div class="p-4 pb-0"><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Active</p><h2 class="text-base font-semibold">Members</h2></div>
-        <div v-if="!members.length" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center gap-2 p-6 text-center"><Users :size="24" /><span class="text-sm">No members yet</span></div>
+        <div v-if="!members.length && teamLoading" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="22" /></div>
+        <div v-else-if="!members.length" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center gap-2 p-6 text-center"><Users :size="24" /><span class="text-sm">No members yet</span></div>
         <Table v-else>
           <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead><span class="sr-only">Actions</span></TableHead></TableRow></TableHeader>
           <TableBody>
@@ -182,7 +193,7 @@ async function copy(value: string) {
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Remove member"
-                  @click="removeMember(member)"
+                  @click="removeCandidate = member"
                 ><Trash2 /></Button>
               </TableCell>
             </TableRow>
@@ -192,7 +203,8 @@ async function copy(value: string) {
 
       <Card class="overflow-hidden p-0">
         <div class="p-4 pb-0"><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Pending and past</p><h2 class="text-base font-semibold">Invites</h2></div>
-        <div v-if="!invites.length" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center gap-2 p-6 text-center"><Mail :size="24" /><span class="text-sm">No invites sent</span></div>
+        <div v-if="!invites.length && teamLoading" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="22" /></div>
+        <div v-else-if="!invites.length" class="text-muted-foreground grid min-h-40 place-content-center justify-items-center gap-2 p-6 text-center"><Mail :size="24" /><span class="text-sm">No invites sent</span></div>
         <Table v-else>
           <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead><TableHead>Expires</TableHead><TableHead><span class="sr-only">Actions</span></TableHead></TableRow></TableHeader>
           <TableBody>
@@ -215,5 +227,14 @@ async function copy(value: string) {
         </Table>
       </Card>
     </div>
+    <ConfirmActionDialog
+      :open="Boolean(removeCandidate)"
+      :title="`Remove ${removeCandidate?.email}?`"
+      description="They lose access to this workspace immediately. Inviting them again requires a fresh invite link."
+      confirm-label="Remove member"
+      :working="removingMember"
+      @confirm="removeMember"
+      @update:open="(open) => { if (!open) removeCandidate = null }"
+    />
   </section>
 </template>

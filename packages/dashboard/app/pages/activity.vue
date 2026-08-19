@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { Activity as ActivityIcon, RefreshCw, ShieldCheck } from '@lucide/vue'
+import { Activity as ActivityIcon, LoaderCircle, RefreshCw, ShieldCheck } from '@lucide/vue'
 import { formatBytes, formatDate, messageOf, stateTone } from '@/lib/format'
-import type { AuditEvent } from '@/types/pintail'
+import type { AuditEvent, DlqRecord } from '@/types/pintail'
 
 const route = useRoute()
 const router = useRouter()
-const { databases, activity, deadLetters, discardDlq, retryDlq, session, error } = useControlPlane()
+const { databases, activity, deadLetters, discardDlq, retryDlq, session, error, loading } = useControlPlane()
 const { request } = usePintailApi()
 
 const activityDatabase = computed({
@@ -39,6 +39,20 @@ async function loadAuditLog() {
 }
 
 onMounted(loadAuditLog)
+
+const discardCandidate = ref<DlqRecord | null>(null)
+const discarding = ref(false)
+
+async function confirmDiscard() {
+  if (!discardCandidate.value || discarding.value) return
+  discarding.value = true
+  try {
+    await discardDlq(discardCandidate.value)
+    discardCandidate.value = null
+  } finally {
+    discarding.value = false
+  }
+}
 
 function auditDetail(event: AuditEvent) {
   if (!event.detail_json) return ''
@@ -74,7 +88,7 @@ function auditDetail(event: AuditEvent) {
           <pre class="bg-muted text-muted-foreground mt-2 max-h-48 overflow-auto rounded p-2.5 text-xs">{{ JSON.stringify(record.event, null, 2) }}</pre>
           <div class="mt-2 flex items-center gap-2">
             <Button size="sm" :disabled="!record.table" @click="retryDlq(record)"><RefreshCw /> Retry safely</Button>
-            <Button variant="destructive" size="sm" @click="discardDlq(record)">Discard</Button>
+            <Button variant="destructive" size="sm" @click="discardCandidate = record">Discard</Button>
           </div>
         </div>
       </div>
@@ -86,7 +100,8 @@ function auditDetail(event: AuditEvent) {
       </TabsList>
       <TabsContent value="activity">
         <Card class="overflow-hidden p-0">
-      <div v-if="!filteredActivity.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><ActivityIcon :size="28" /><h2 class="text-foreground font-semibold">No matching activity</h2><p class="max-w-md text-sm">Completed and failed replication work appears after the first snapshot.</p></div>
+      <div v-if="!filteredActivity.length && loading" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="24" /></div>
+      <div v-else-if="!filteredActivity.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><ActivityIcon :size="28" /><h2 class="text-foreground font-semibold">No matching activity</h2><p class="max-w-md text-sm">Completed and failed replication work appears after the first snapshot.</p></div>
       <Table v-else>
         <TableHeader>
           <TableRow><TableHead>Started</TableHead><TableHead>Database</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Rows</TableHead><TableHead>Bytes</TableHead><TableHead>Duration</TableHead></TableRow>
@@ -108,7 +123,8 @@ function auditDetail(event: AuditEvent) {
       <TabsContent v-if="isAdmin" value="audit">
         <Card class="overflow-hidden p-0">
       <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Every user, every workspace action</p><h2 class="text-base font-semibold">Audit trail</h2></div><Button variant="ghost" size="icon" :disabled="auditLoading" aria-label="Refresh audit trail" @click="loadAuditLog"><RefreshCw /></Button></div>
-      <div v-if="!auditEvents.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><ShieldCheck :size="26" /><strong class="text-foreground">No audit events yet</strong><span class="max-w-sm text-sm">Queries, configuration changes, and workspace management appear here.</span></div>
+      <div v-if="!auditEvents.length && auditLoading" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="22" /></div>
+      <div v-else-if="!auditEvents.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><ShieldCheck :size="26" /><strong class="text-foreground">No audit events yet</strong><span class="max-w-sm text-sm">Queries, configuration changes, and workspace management appear here.</span></div>
       <Table v-else>
         <TableHeader>
           <TableRow><TableHead>When</TableHead><TableHead>Actor</TableHead><TableHead>Action</TableHead><TableHead>Target</TableHead><TableHead>Detail</TableHead></TableRow>
@@ -126,5 +142,15 @@ function auditDetail(event: AuditEvent) {
     </Card>
       </TabsContent>
     </Tabs>
+
+    <ConfirmActionDialog
+      :open="Boolean(discardCandidate)"
+      :title="`Discard this ${discardCandidate?.table || 'database'} dead letter?`"
+      description="The quarantined event is deleted permanently and its change is never applied to the mirror. Retry it instead if the failure may have been transient."
+      confirm-label="Discard"
+      :working="discarding"
+      @confirm="confirmDiscard"
+      @update:open="(open) => { if (!open) discardCandidate = null }"
+    />
   </section>
 </template>

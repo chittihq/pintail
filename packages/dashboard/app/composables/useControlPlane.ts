@@ -321,10 +321,11 @@ export function useControlPlane() {
       )
       await enterWorkspace(response)
       toast(`Switched to ${response.workspace.name}`)
+      return true
     } catch (failure) {
       error.value = messageOf(failure)
       toast(`Workspace switch failed: ${messageOf(failure)}`)
-      throw failure
+      return false
     }
   }
 
@@ -356,15 +357,18 @@ export function useControlPlane() {
   /// Every mutation shares one contract: retry the supervisor's busy
   /// window (the job slot is held through every replication cycle, so
   /// first clicks frequently land on a transient 409), toast the failure
-  /// loudly if it persists, and rethrow so callers keep their pending
-  /// state honest. The alternative was seven buttons that looked dead -
-  /// their failures went to a page-level banner nobody watches.
-  async function mutate(label: string, action: () => Promise<unknown>) {
+  /// loudly if it persists, and report success so callers can gate their
+  /// follow-up work. It returns a boolean rather than throwing because
+  /// most callers are template @click handlers, where a rethrow is an
+  /// unhandled rejection, not a signal. The alternative was seven buttons
+  /// that looked dead - their failures went to a page-level banner nobody
+  /// watches.
+  async function mutate(label: string, action: () => Promise<unknown>): Promise<boolean> {
     try {
       for (let attempt = 0; ; attempt += 1) {
         try {
           await action()
-          return
+          return true
         } catch (failure) {
           const busy = failure instanceof ApiFailure && failure.status === 409
           if (!busy || attempt >= 14) throw failure
@@ -372,15 +376,16 @@ export function useControlPlane() {
         }
       }
     } catch (failure) {
-      if (expiredSession(failure)) throw failure
-      error.value = messageOf(failure)
-      toast(`${label} failed: ${messageOf(failure)}`)
-      throw failure
+      if (!expiredSession(failure)) {
+        error.value = messageOf(failure)
+        toast(`${label} failed: ${messageOf(failure)}`)
+      }
+      return false
     }
   }
 
   async function setReconcileInterval(database: DatabaseRecord, seconds: number) {
-    await mutate(`Setting the reconcile interval`, () =>
+    const done = await mutate(`Setting the reconcile interval`, () =>
       request(`/databases/${database.id}`, {
         method: 'PUT',
         body: JSON.stringify({
@@ -390,17 +395,20 @@ export function useControlPlane() {
           reconcile_interval_seconds: seconds,
         }),
       }))
+    if (!done) return false
     toast(`Reconcile interval set to ${seconds}s`)
     await loadControlPlane()
+    return true
   }
 
   async function setMode(database: DatabaseRecord, mode: DatabaseRecord['mode']) {
     {
-      await mutate('Changing the replication mode', () =>
+      const done = await mutate('Changing the replication mode', () =>
         request(`/databases/${database.id}/mode`, {
           method: 'POST',
           body: JSON.stringify({ mode }),
         }))
+      if (!done) return
       // Four modes reach this, not two. Reporting anything that is not
       // "paused" as "resumed" told an operator who picked Polling that
       // replication had resumed, which is both wrong and unfalsifiable from
@@ -420,12 +428,13 @@ export function useControlPlane() {
   }
 
   async function forceSnapshot(databaseId: string) {
-    await mutate('Resnapshot', () =>
+    const done = await mutate('Resnapshot', () =>
       request(`/databases/${databaseId}/snapshot`, {
         method: 'POST',
         body: JSON.stringify({ force: true }),
       }))
-    toast('Resnapshot accepted')
+    if (done) toast('Resnapshot accepted')
+    return done
   }
 
   async function runTableAction(databaseId: string, table: TableSummary, action: 'resync' | 'reconcile') {
@@ -462,15 +471,18 @@ export function useControlPlane() {
   }
 
   async function removeDatabase(databaseId: string) {
-    await mutate('Removing the database', () =>
+    const done = await mutate('Removing the database', () =>
       request(`/databases/${databaseId}`, { method: 'DELETE' }))
+    if (!done) return false
     toast('Database configuration removed; mirrored files were retained')
     await loadControlPlane()
+    return true
   }
 
   async function discardDlq(record: DlqRecord) {
-    await mutate('Discarding the dead letter', () =>
+    const done = await mutate('Discarding the dead letter', () =>
       request(`/dlq/${record.id}`, { method: 'DELETE' }))
+    if (!done) return
     // Discarding drops a row permanently, so it confirms like every other
     // mutation here. The row vanishing is not confirmation on its own - a
     // failed request leaves the identical screen behind.
@@ -479,8 +491,9 @@ export function useControlPlane() {
   }
 
   async function retryDlq(record: DlqRecord) {
-    await mutate('Retrying the dead letter', () =>
+    const done = await mutate('Retrying the dead letter', () =>
       request(`/dlq/${record.id}/retry`, { method: 'POST' }))
+    if (!done) return
     toast(`${record.table || 'Database'} recovered; dead letter cleared`)
     await refreshLiveData()
   }

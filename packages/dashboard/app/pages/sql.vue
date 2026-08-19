@@ -6,7 +6,7 @@ import type { QueryResponse } from '@/types/pintail'
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases } = useControlPlane()
+const { databases, loading } = useControlPlane()
 
 const sqlDatabaseId = computed({
   get: () => (typeof route.query.db === 'string' ? route.query.db : databases.value[0]?.id || ''),
@@ -57,7 +57,10 @@ if (typeof route.query.describe === 'string') {
 }
 
 async function runSql() {
-  if (!sqlDatabaseId.value || !sqlText.value.trim()) return
+  // The editor's Mod-Enter binding calls this directly, bypassing the
+  // disabled Run button - without this guard two 120s queries can race and
+  // the results pane shows whichever resolves LAST, not the visible SQL.
+  if (sqlRunning.value || !sqlDatabaseId.value || !sqlText.value.trim()) return
   sqlRunning.value = true
   sqlError.value = ''
   try {
@@ -91,7 +94,8 @@ async function runSql() {
         </SelectContent>
       </Select>
     </header>
-    <Card v-if="!databases.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><SquareTerminal :size="30" /><h2 class="text-foreground font-semibold">No queryable mirror</h2><p class="max-w-md text-sm">Add and snapshot a database before opening the console.</p><Button as-child><NuxtLink to="/databases/new">Add database</NuxtLink></Button></Card>
+    <Card v-if="!databases.length && loading" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="24" /></Card>
+    <Card v-else-if="!databases.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><SquareTerminal :size="30" /><h2 class="text-foreground font-semibold">No queryable mirror</h2><p class="max-w-md text-sm">Add and snapshot a database before opening the console.</p><Button as-child><NuxtLink to="/databases/new">Add database</NuxtLink></Button></Card>
     <template v-else>
       <Card class="overflow-hidden p-0">
         <div class="text-muted-foreground flex min-h-11 items-center justify-between border-b px-3 font-mono text-xs">

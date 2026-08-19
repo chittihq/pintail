@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Database, LoaderCircle, Pause, Play, Plus, Trash2 } from '@lucide/vue'
-import { dotToneClass, formatDate, messageOf, modeOf, stateTone } from '@/lib/format'
+import { dotToneClass, formatDate, modeOf, stateTone } from '@/lib/format'
 import type { DatabaseRecord } from '@/types/pintail'
 
-const { databases, statuses, loading, setMode, removeDatabase, error } = useControlPlane()
+const { databases, statuses, loading, setMode, removeDatabase } = useControlPlane()
 
 const deleteCandidate = ref<DatabaseRecord | null>(null)
 const deleteText = ref('')
+const deleting = ref(false)
 
 function closeDeleteDialog(open: boolean) {
   if (!open) {
@@ -16,13 +17,14 @@ function closeDeleteDialog(open: boolean) {
 }
 
 async function confirmRemove() {
-  if (!deleteCandidate.value || deleteText.value !== deleteCandidate.value.name) return
+  if (!deleteCandidate.value || deleteText.value !== deleteCandidate.value.name || deleting.value) return
+  deleting.value = true
   try {
-    await removeDatabase(deleteCandidate.value.id)
-    deleteCandidate.value = null
-    deleteText.value = ''
-  } catch (failure) {
-    error.value = messageOf(failure)
+    // A failed delete keeps the dialog open: closing it is what success
+    // looks like, and the two must not be indistinguishable.
+    if (await removeDatabase(deleteCandidate.value.id)) closeDeleteDialog(false)
+  } finally {
+    deleting.value = false
   }
 }
 </script>
@@ -93,7 +95,7 @@ async function confirmRemove() {
         </div>
         <DialogFooter>
           <Button variant="outline" @click="closeDeleteDialog(false)">Cancel</Button>
-          <Button variant="destructive" :disabled="deleteText !== deleteCandidate?.name" @click="confirmRemove">Remove database</Button>
+          <Button variant="destructive" :disabled="deleteText !== deleteCandidate?.name || deleting" @click="confirmRemove"><LoaderCircle v-if="deleting" class="animate-spin" /> Remove database</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

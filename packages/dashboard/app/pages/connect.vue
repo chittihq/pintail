@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowRight, CircleHelp, Copy, Download, Radio, ShieldCheck } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import { messageOf, shellQuote } from '@/lib/format'
+import { copyText, messageOf, shellQuote } from '@/lib/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,10 +19,6 @@ const connectKey = ref('pk_your_key')
 const connectHost = ref(import.meta.client ? window.location.hostname || '127.0.0.1' : '127.0.0.1')
 const connectPort = ref(nodeStatus.value?.wire.port ? String(nodeStatus.value.wire.port) : '3306')
 
-async function copy(value: string) {
-  await navigator.clipboard.writeText(value)
-  toast('Copied to clipboard')
-}
 
 function connectSnippet(kind: 'mysql' | 'node' | 'python') {
   const database = selectedConnectDatabase.value?.name || 'analytics'
@@ -128,7 +124,7 @@ async function downloadCertificate() {
 
     <div class="grid gap-4 sm:grid-cols-2">
       <Card v-for="kind in (['mysql', 'node', 'python'] as const)" :key="kind" class="overflow-hidden p-0">
-        <div class="flex items-center justify-between gap-3 p-4 pb-3"><h2 class="text-base font-semibold">{{ kind === 'mysql' ? 'MySQL CLI' : kind === 'node' ? 'Node.js' : 'Python' }}</h2><Button variant="ghost" size="icon" @click="copy(connectSnippet(kind))"><Copy /></Button></div>
+        <div class="flex items-center justify-between gap-3 p-4 pb-3"><h2 class="text-base font-semibold">{{ kind === 'mysql' ? 'MySQL CLI' : kind === 'node' ? 'Node.js' : 'Python' }}</h2><Button variant="ghost" size="icon" @click="copyText(connectSnippet(kind))"><Copy /></Button></div>
         <pre class="bg-muted overflow-auto p-3.5 text-xs leading-relaxed break-all whitespace-pre-wrap">{{ connectSnippet(kind) }}</pre>
       </Card>
       <Card class="p-4">

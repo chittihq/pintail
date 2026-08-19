@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { AlertTriangle, Copy, Database, KeyRound, Plus, Trash2, X } from '@lucide/vue'
+import { AlertTriangle, Copy, Database, KeyRound, LoaderCircle, Plus, Trash2, X } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import { formatDate, messageOf } from '@/lib/format'
+import { copyText, formatDate, messageOf } from '@/lib/format'
 import type { ApiKeyRecord } from '@/types/pintail'
 
 const route = useRoute()
@@ -14,6 +14,7 @@ const keyDatabaseId = computed({
   set: (value) => router.replace({ query: { ...route.query, db: value } }),
 })
 const keys = ref<ApiKeyRecord[]>([])
+const keysLoading = ref(false)
 const keyForm = reactive({ name: '', scopes: ['read', 'query'] })
 const revealedSecret = ref('')
 
@@ -22,10 +23,13 @@ async function loadKeys() {
     keys.value = []
     return
   }
+  keysLoading.value = true
   try {
     keys.value = await request<ApiKeyRecord[]>(`/databases/${keyDatabaseId.value}/api-keys`)
   } catch (failure) {
     error.value = messageOf(failure)
+  } finally {
+    keysLoading.value = false
   }
 }
 
@@ -63,12 +67,23 @@ async function toggleKey(key: ApiKeyRecord) {
   }
 }
 
-async function deleteKey(key: ApiKeyRecord) {
+const deleteKeyCandidate = ref<ApiKeyRecord | null>(null)
+const deletingKey = ref(false)
+
+async function deleteKey() {
+  const key = deleteKeyCandidate.value
+  if (!key || deletingKey.value) return
+  deletingKey.value = true
   try {
     await request(`/databases/${key.database_id}/api-keys/${key.id}`, { method: 'DELETE' })
+    toast(`${key.name} deleted; clients holding it lose access now`)
+    deleteKeyCandidate.value = null
     await loadKeys()
   } catch (failure) {
     error.value = messageOf(failure)
+    toast(`Deleting ${key.name} failed: ${messageOf(failure)}`)
+  } finally {
+    deletingKey.value = false
   }
 }
 
@@ -78,10 +93,6 @@ function toggleScope(scope: string, on: boolean) {
     : keyForm.scopes.filter((existing) => existing !== scope)
 }
 
-async function copy(value: string) {
-  await navigator.clipboard.writeText(value)
-  toast('Copied to clipboard')
-}
 </script>
 
 <template>
@@ -108,18 +119,19 @@ async function copy(value: string) {
           <div class="flex items-center gap-2"><Checkbox id="scope-query" :model-value="keyForm.scopes.includes('query')" @update:model-value="(checked) => toggleScope('query', checked === true)" /><Label for="scope-query">Run queries</Label></div>
         </div>
       </div>
-      <Button :disabled="!keyDatabaseId || !keyForm.name || !keyForm.scopes.length" @click="createKey"><Plus /> Create</Button>
+      <Button :disabled="!keyDatabaseId || !keyForm.name.trim() || !keyForm.scopes.length" @click="createKey"><Plus /> Create</Button>
     </Card>
     <Alert v-if="revealedSecret" class="mb-4">
       <AlertTriangle />
       <AlertDescription class="flex w-full items-center gap-3">
         <div class="flex-1"><strong class="text-foreground block">Copy this secret now. It cannot be recovered.</strong><code data-testid="revealed-secret" class="mt-1 block break-all">{{ revealedSecret }}</code></div>
-        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Copy secret" @click="copy(revealedSecret)"><Copy /></Button>
+        <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Copy secret" @click="copyText(revealedSecret)"><Copy /></Button>
         <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label="Dismiss secret" @click="revealedSecret = ''"><X /></Button>
       </AlertDescription>
     </Alert>
     <Card class="overflow-hidden p-0">
-      <div v-if="!keys.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><KeyRound :size="28" /><h2 class="text-foreground font-semibold">No keys for this database</h2><p class="max-w-md text-sm">Create one for the HTTP API or MySQL wire clients.</p></div>
+      <div v-if="!keys.length && keysLoading" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="24" /></div>
+      <div v-else-if="!keys.length" class="text-muted-foreground grid min-h-80 place-content-center justify-items-center gap-2 p-6 text-center"><KeyRound :size="28" /><h2 class="text-foreground font-semibold">No keys for this database</h2><p class="max-w-md text-sm">Create one for the HTTP API or MySQL wire clients.</p></div>
       <Table v-else>
         <TableHeader>
           <TableRow><TableHead>Name</TableHead><TableHead>Scopes</TableHead><TableHead>Status</TableHead><TableHead>Last used</TableHead><TableHead>Created</TableHead><TableHead><span class="sr-only">Actions</span></TableHead></TableRow>
@@ -134,12 +146,22 @@ async function copy(value: string) {
             <TableCell>
               <div class="flex items-center gap-1">
                 <Button variant="link" size="sm" @click="toggleKey(key)">{{ key.enabled ? 'Disable' : 'Enable' }}</Button>
-                <Button variant="ghost" size="icon-sm" :aria-label="`Delete ${key.name}`" @click="deleteKey(key)"><Trash2 /></Button>
+                <Button variant="ghost" size="icon-sm" :aria-label="`Delete ${key.name}`" @click="deleteKeyCandidate = key"><Trash2 /></Button>
               </div>
             </TableCell>
           </TableRow>
         </TableBody>
       </Table>
     </Card>
+
+    <ConfirmActionDialog
+      :open="Boolean(deleteKeyCandidate)"
+      :title="`Delete ${deleteKeyCandidate?.name}?`"
+      description="The secret is hash-only and cannot be re-issued. Every client using this key loses access immediately. To stop a key temporarily, use Disable instead."
+      confirm-label="Delete key"
+      :working="deletingKey"
+      @confirm="deleteKey"
+      @update:open="(open) => { if (!open) deleteKeyCandidate = null }"
+    />
   </section>
 </template>

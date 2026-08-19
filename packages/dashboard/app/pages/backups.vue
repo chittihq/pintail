@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Archive, Database, HardDrive, LoaderCircle, Play, RefreshCw } from '@lucide/vue'
+import { useIntervalFn } from '@vueuse/core'
 import { toast } from 'vue-sonner'
 import { formatBytes, formatDate, messageOf, stateTone } from '@/lib/format'
 import type { BackupConfig, BackupRecord } from '@/types/pintail'
@@ -42,6 +43,20 @@ async function loadBackups(showLoading = true) {
     if (!restoreBackupId.value || !backups.value.some((backup) => backup.id === restoreBackupId.value)) {
       restoreBackupId.value = completed?.id || ''
     }
+  } catch (failure) {
+    error.value = messageOf(failure)
+  } finally {
+    if (showLoading) backupLoading.value = false
+  }
+}
+
+/// Separate from the artifact refresh on purpose: refreshing history after
+/// "Backup now" used to overwrite the WHOLE form from the server, silently
+/// discarding whatever the user had typed - including an unsaved secret key.
+/// The form now reloads only when the database changes or a save completes.
+async function loadBackupConfig() {
+  if (!backupDatabaseId.value) return
+  try {
     const config = await request<BackupConfig>(`/databases/${backupDatabaseId.value}/backup-config`)
     backupForm.bucket = config.bucket
     backupForm.prefix = config.prefix
@@ -54,12 +69,27 @@ async function loadBackups(showLoading = true) {
     backupConfigLoaded.value = config.configured
   } catch (failure) {
     error.value = messageOf(failure)
-  } finally {
-    if (showLoading) backupLoading.value = false
   }
 }
 
-watch(backupDatabaseId, () => loadBackups(), { immediate: true })
+watch(backupDatabaseId, () => Promise.all([loadBackups(), loadBackupConfig()]), { immediate: true })
+
+// A backup left "running" used to stay that way on screen until the user
+// found the refresh icon; success and failure both arrived silently. While
+// any run is live the history refreshes itself and announces the outcome.
+const watchedRuns = ref(new Set<string>())
+useIntervalFn(async () => {
+  const running = backups.value.filter((backup) => backup.status === 'running')
+  for (const run of running) watchedRuns.value.add(run.id)
+  if (!running.length) return
+  await loadBackups(false)
+  for (const backup of backups.value) {
+    if (!watchedRuns.value.has(backup.id) || backup.status === 'running') continue
+    watchedRuns.value.delete(backup.id)
+    if (backup.status === 'completed') toast(`Backup completed: ${formatBytes(backup.bytes)} uploaded`)
+    else toast(`Backup ${backup.status}: ${backup.error || 'see the history table'}`)
+  }
+}, 5_000)
 
 async function saveBackupConfig() {
   if (!backupDatabaseId.value || !backupForm.bucket.trim() || !backupForm.prefix.trim()) return
@@ -79,7 +109,7 @@ async function saveBackupConfig() {
       }),
     })
     toast('Backup destination saved')
-    await loadBackups(false)
+    await loadBackupConfig()
   } catch (failure) {
     error.value = messageOf(failure)
   } finally {
@@ -112,6 +142,10 @@ async function restoreSelectedBackup() {
     await request(`/databases/${backupDatabaseId.value}/backups/restore`, {
       method: 'POST',
       body: JSON.stringify({ backup_id: restoreBackupId.value, name: restoreName.value.trim() }),
+      // A large restore legitimately outlives the 30s control-plane
+      // deadline; aborting client-side while the server continues invites a
+      // retry that restores a SECOND database.
+      timeoutMs: 600_000,
     })
     restoreName.value = ''
     toast('Backup restored as a new detached database')
@@ -194,7 +228,8 @@ async function restoreSelectedBackup() {
     </div>
     <Card class="mt-4 overflow-hidden p-0">
       <div class="flex items-center justify-between gap-3 p-4 pb-0"><div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Durable audit</p><h2 class="text-base font-semibold">Backup history</h2></div><Button variant="ghost" size="icon" :disabled="backupLoading" aria-label="Refresh backup history" @click="loadBackups()"><RefreshCw /></Button></div>
-      <div v-if="!backups.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><Archive :size="26" /><strong class="text-foreground">No backup artifacts</strong><span class="max-w-sm text-sm">Save a destination, then create the first full recovery point.</span></div>
+      <div v-if="!backups.length && backupLoading" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center p-6"><LoaderCircle class="animate-spin" :size="22" /></div>
+      <div v-else-if="!backups.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><Archive :size="26" /><strong class="text-foreground">No backup artifacts</strong><span class="max-w-sm text-sm">Save a destination, then create the first full recovery point.</span></div>
       <Table v-else>
         <TableHeader>
           <TableRow><TableHead>Started</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Objects</TableHead><TableHead>Uploaded</TableHead><TableHead>Chain</TableHead><TableHead>Error</TableHead></TableRow>
