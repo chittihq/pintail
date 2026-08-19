@@ -17,10 +17,13 @@ const repository = join(import.meta.dir, '..')
 const asJson = process.argv.includes('--json')
 
 function surface(): Map<string, Set<string>> {
-  const source = readFileSync(
-    join(repository, 'crates/pintail-sql/src/binder.rs'),
-    'utf8',
-  )
+  // The binder split into a module; the scalar-function surface lives
+  // across its files now.
+  const source = ['mod.rs', 'function.rs']
+    .map((name) =>
+      readFileSync(join(repository, 'crates/pintail-sql/src/binder', name), 'utf8'),
+    )
+    .join('\n')
   const found = new Map<string, Set<string>>()
   const arm = /^\s*((?:"[A-Z0-9_]+"\s*\|\s*)*"[A-Z0-9_]+")\s*(if\s+.+?)?\s*=>/gm
   for (const match of source.matchAll(arm)) {

@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 975;
+const EXPECTED_CASES: usize = 1001;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -703,6 +703,82 @@ fn oracle_cases() -> Vec<OracleCase> {
     ] {
         cases.push(OracleCase {
             family: "mixed collation grouping",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // The twelve binder-callable names the coverage report shows no oracle
+    // SQL ever exercised - mostly aliases, which is exactly where a rename
+    // slips through untested. Over typed columns, not constants, and the
+    // two time-of-day names in shapes whose OUTPUT is deterministic.
+    for sql in [
+        "SELECT id, LEFT(name, 5), RIGHT(name, 2), SUBSTR(name, 3, 4) FROM events ORDER BY id",
+        "SELECT id, LCASE(note), UCASE(note), CHARACTER_LENGTH(name) FROM events ORDER BY id",
+        "SELECT id, CEILING(total), POW(user_id, 2), CEILING(total / 7) FROM orders ORDER BY id",
+        "SELECT id, DAYOFMONTH(placed_at), CHAR(65, 66, 67) FROM orders ORDER BY id",
+        "SELECT CURRENT_TIME() >= '00:00:00', CURTIME() <= '24:00:00'",
+        "SELECT id, LEFT(note, 2), RIGHT(note, 1) FROM events ORDER BY id",
+        "SELECT LCASE(LEFT(status, 4)), COUNT(*) FROM orders GROUP BY LCASE(LEFT(status, 4)) \
+         ORDER BY LCASE(LEFT(status, 4))",
+        "SELECT id, SUBSTR(name, CHARACTER_LENGTH(name) - 1) FROM users ORDER BY id",
+        "SELECT CEILING(AVG(total)), POW(COUNT(*), 2) FROM orders",
+        "SELECT id, UCASE(SUBSTR(tag, 1, 3)), CHARACTER_LENGTH(tag) FROM events ORDER BY id",
+    ] {
+        cases.push(OracleCase {
+            family: "alias functions",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // Window functions over the typed tables: no oracle family covered
+    // them at all, while the e2e corpus leans on them.
+    for sql in [
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY total, id) AS r FROM orders ORDER BY r",
+        "SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY placed_at, id) AS r \
+         FROM orders ORDER BY id",
+        "SELECT id, status, ROW_NUMBER() OVER (ORDER BY status, id) AS r FROM orders ORDER BY r",
+        "SELECT id, SUM(total) OVER (PARTITION BY user_id) AS s FROM orders ORDER BY id",
+        "SELECT id, COUNT(*) OVER (PARTITION BY status) AS c FROM orders ORDER BY id",
+        "SELECT id, AVG(score) OVER (PARTITION BY active) AS a FROM events ORDER BY id",
+        "SELECT id, MIN(placed_at) OVER (PARTITION BY user_id) AS first_order \
+         FROM orders ORDER BY id",
+        "SELECT id, ROW_NUMBER() OVER (PARTITION BY active ORDER BY score DESC, id) AS r \
+         FROM events ORDER BY id",
+    ] {
+        cases.push(OracleCase {
+            family: "window functions",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // Typed multi-table diversify: several types and features interacting
+    // in one statement, which is what the coverage report asks to grow -
+    // JSON next to ENUM next to DECIMAL, correlated subqueries over joins,
+    // mixed-collation text riding through aggregation.
+    for sql in [
+        "SELECT o.id, o.status, e.tag, o.total FROM orders o \
+         JOIN events e ON e.id = o.user_id \
+         WHERE o.status >= 'pending' AND o.total > 5.00 ORDER BY o.id",
+        "SELECT u.id, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id \
+         AND o.status <> 'cancelled') AS live_orders FROM users u ORDER BY u.id",
+        "SELECT o.status, COUNT(DISTINCT e.tag), SUM(o.total) FROM orders o \
+         JOIN events e ON e.id = o.user_id GROUP BY o.status ORDER BY o.status",
+        "SELECT o.id, JSON_EXTRACT(o.meta, '$.score'), o.status FROM orders o \
+         WHERE o.meta IS NOT NULL AND o.status IN ('shipped', 'delivered') ORDER BY o.id",
+        "SELECT e.name, MIN(o.placed_at), MAX(o.total) FROM events e \
+         JOIN orders o ON o.user_id = e.id GROUP BY e.name \
+         ORDER BY MIN(o.placed_at), MAX(o.total)",
+        "SELECT o.id, o.total, CASE WHEN o.status = 'cancelled' THEN 0.00 ELSE o.total END \
+         FROM orders o WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id) \
+         ORDER BY o.id",
+        "SELECT DATE(o.placed_at), COUNT(*), SUM(o.total) FROM orders o \
+         WHERE o.status BETWEEN 'delivered' AND 'shipped' \
+         GROUP BY DATE(o.placed_at) ORDER BY DATE(o.placed_at)",
+        "SELECT u.name, COALESCE((SELECT MAX(o.total) FROM orders o \
+         WHERE o.user_id = u.id), 0) FROM users u ORDER BY u.id",
+    ] {
+        cases.push(OracleCase {
+            family: "typed diversify",
             sql: sql.to_owned(),
             ordered: true,
         });
