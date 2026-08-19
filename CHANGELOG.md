@@ -4,6 +4,53 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc5] - 2026-08-19
+
+Restart-safe table copies and a two-pass dashboard audit (data layer,
+then every page) with the findings fixed and gated.
+
+### Added
+
+- Copy progress survives a reload: the server retains the last progress
+  frame per table - cleared by the same completion, error and
+  interrupted events that clear the live view - and `/tables` returns it
+  as `elapsed_seconds`, so a dashboard opened mid-copy draws the bar
+  immediately. The browser gate reloads mid-copy and asserts it.
+- The per-table resnapshot renders a live progress bar with row count
+  and ETA on the database page.
+- Destructive one-click actions - deleting an API key, removing a
+  member, discarding a dead letter - now confirm before acting; each was
+  one mis-click from irreversible loss.
+- Backup history refreshes itself while a run is live and announces
+  completion or failure, instead of showing "running" until a manual
+  refresh.
+
+### Fixed
+
+- A restart during a table copy no longer leaves the table answering as
+  healthy with partial rows: tables still marked `snapshotting` at boot
+  are quarantined to `needs_resync` with the reason recorded, and only
+  the job that is copying a table may declare it done.
+- A 409 on the job slot names the job that holds it and for how long,
+  instead of the generic "already active".
+- Dashboard data layer: every mutation now retries the supervisor's
+  busy window and toasts failures (seven actions previously failed
+  silently); the event and vitals streams reconnect with backoff; a
+  mid-session 401 signs the operator out instead of freezing the
+  dashboard on stale data; one unreachable database no longer freezes
+  every other database's status; a failed workspace switch rolls the
+  token back rather than stranding the operator signed out of both.
+- Dashboard pages: the connection wizard no longer dead-ends on a
+  spinner when starting the mirror fails; the delete-database dialog
+  stays open on failure instead of closing exactly like a success;
+  Resnapshot navigates to the snapshot tab only when the request
+  succeeded; refreshing backup history no longer discards unsaved
+  configuration edits (including a typed secret key); restore gets a
+  deadline that outlives large restores; clipboard failures on
+  show-once secrets toast instead of losing them silently; CSV export
+  neutralizes spreadsheet formula injection; the SQL console's
+  Cmd-Enter can no longer race two concurrent queries.
+
 ## [0.0.4-rc4] - 2026-08-19
 
 Operability follow-ups from the customer's 19/19 parity run and the
