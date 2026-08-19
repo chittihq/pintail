@@ -521,7 +521,7 @@ fn decode_name_set(value: Option<&str>) -> Result<BTreeSet<String>, String> {
     )
 }
 
-fn effective_mode(database: &DatabaseRecord, report: &ProbeReport) -> &'static str {
+pub(crate) fn effective_mode(database: &DatabaseRecord, report: &ProbeReport) -> &'static str {
     match database.mode.as_str() {
         "cdc" => "cdc",
         "polling" => "polling",

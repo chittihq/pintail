@@ -186,19 +186,40 @@ fn supervise_once(state: &ApiState) {
 }
 
 fn eligible(database: &DatabaseRecord) -> bool {
-    database.mode != "paused"
-        && database.probe_json.is_some()
-        && database
-            .effective_mode
-            .as_deref()
-            .is_some_and(|mode| matches!(mode, "cdc" | "polling"))
-        && matches!(database.state.as_str(), "streaming" | "polling" | "error")
+    // effective_mode is unset when the operator resumes to 'auto': the mode
+    // change deliberately clears it for recomputation. Requiring it here
+    // meant a pause followed by resume-to-auto unscheduled the database
+    // FOREVER - the badge kept saying streaming while no cycle ever ran
+    // again. An unset mode with a probe in hand is recomputed by the cycle.
+    let mode_known = match database.effective_mode.as_deref() {
+        Some(mode) => matches!(mode, "cdc" | "polling"),
+        None => database.mode == "auto",
+    };
+    // state stays 'paused' after a resume to 'auto' - the pause wrote it and
+    // the auto arm deliberately defers recomputation. That combination is a
+    // database WAITING for its first cycle, not a stopped one; requiring a
+    // live state here was the other half of the resume-to-auto trap.
+    let state_live = matches!(database.state.as_str(), "streaming" | "polling" | "error")
+        || (database.state == "paused" && database.mode != "paused");
+    database.mode != "paused" && database.probe_json.is_some() && mode_known && state_live
 }
 
 async fn supervise_database(state: ApiState, database: DatabaseRecord) {
     let run_id = crate::state::random_identifier("run_", 16);
     let started = std::time::Instant::now();
-    let kind = database.effective_mode.as_deref().unwrap_or("replication");
+    // Derived exactly as run_cycle derives it, so the success path's
+    // replication-state write (which insists on cdc|polling) re-persists the
+    // mode that 'auto' cleared instead of being silently rejected.
+    let kind = database
+        .effective_mode
+        .clone()
+        .filter(|mode| matches!(mode.as_str(), "cdc" | "polling"))
+        .or_else(|| {
+            let report: ProbeReport = serde_json::from_str(database.probe_json.as_deref()?).ok()?;
+            Some(crate::snapshot::effective_mode(&database, &report).to_owned())
+        })
+        .unwrap_or_else(|| "replication".to_owned());
+    let kind = kind.as_str();
     if let Ok(metadata) = state.metadata() {
         let _ =
             metadata.start_sync_run(&run_id, &database.id, None, kind, &Utc::now().to_rfc3339());
@@ -280,8 +301,16 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
         .map_err(display)?;
     let options = crate::dsn::source_opts(&dsn)?;
     let pool = Pool::new(options);
-    let result = match database.effective_mode.as_deref() {
-        Some("cdc") => {
+    // Recompute the mode the way the snapshot handoff would when 'auto'
+    // cleared it; a successful cycle re-persists it via the replication
+    // state below, so this heals the record too.
+    let effective = database
+        .effective_mode
+        .as_deref()
+        .filter(|mode| matches!(*mode, "cdc" | "polling"))
+        .unwrap_or_else(|| crate::snapshot::effective_mode(database, &report));
+    let result = match effective {
+        "cdc" => {
             let includes = decode_names(database.include_tables.as_deref())?;
             let excludes = decode_names(database.exclude_tables.as_deref())?;
             let streamed = run_cdc(
@@ -376,7 +405,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
             }
             result
         }
-        Some("polling") => {
+        "polling" => {
             // A tracked table can vanish from the source between probes (DROP
             // or RENAME that CDC has no handler for). Polling validates every
             // target against the probe report, so one ghost record would fail
