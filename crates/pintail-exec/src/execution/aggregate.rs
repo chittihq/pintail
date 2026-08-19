@@ -3320,9 +3320,17 @@ fn build_local_fused_join_groups(
     }
     // Uniform by construction: the fused path is gated to keys that share
     // one collation before it is attempted.
+    //
+    // Only groups a probe row actually TOUCHED leave this batch: the plan
+    // pre-seeds one slot per build-side group so the probe loop can index
+    // instead of hash, and emitting the untouched slots invented zero-count
+    // groups an INNER join must not have (sakila: every language appeared
+    // with COUNT 0 beside English's 1000).
     Ok(groups
         .into_iter()
-        .map(|group| {
+        .zip(touched)
+        .filter(|(_, touched)| *touched)
+        .map(|(group, _)| {
             let key = group
                 .values
                 .iter()

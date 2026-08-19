@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1001;
+const EXPECTED_CASES: usize = 1002;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -776,6 +776,8 @@ fn oracle_cases() -> Vec<OracleCase> {
          GROUP BY DATE(o.placed_at) ORDER BY DATE(o.placed_at)",
         "SELECT u.name, COALESCE((SELECT MAX(o.total) FROM orders o \
          WHERE o.user_id = u.id), 0) FROM users u ORDER BY u.id",
+        "SELECT u.name, COUNT(*) FROM orders o JOIN users u ON u.id = o.user_id \
+         GROUP BY u.name ORDER BY u.name",
     ] {
         cases.push(OracleCase {
             family: "typed diversify",
