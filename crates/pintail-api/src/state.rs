@@ -334,7 +334,8 @@ impl ApiState {
     pub(crate) fn table_progress(&self, database_id: &str, table: &str) -> Option<TableProgress> {
         let inner = self.inner.as_ref()?;
         let map = inner.table_progress.lock().ok()?;
-        map.get(&(database_id.to_owned(), table.to_owned())).cloned()
+        map.get(&(database_id.to_owned(), table.to_owned()))
+            .cloned()
     }
 
     pub(crate) fn acquire_job(&self, database_id: &str) -> Result<(), ApiError> {
