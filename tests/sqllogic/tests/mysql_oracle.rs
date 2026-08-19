@@ -22,7 +22,10 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 874;
+const EXPECTED_CASES: usize = 975;
+/// orders.status declaration order - deliberately disagrees with the
+/// alphabetical order at every adjacent pair.
+const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
 
 struct OracleCase {
     family: &'static str,
@@ -192,7 +195,8 @@ fn run_oracle() -> Result<(), String> {
            name VARCHAR(32) NOT NULL,\
            score BIGINT NOT NULL,\
            active BOOLEAN NOT NULL,\
-           note VARCHAR(32) NULL\
+           note VARCHAR(32) NULL,\
+           tag VARCHAR(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          CREATE TABLE users (\
            id BIGINT PRIMARY KEY,\
@@ -203,15 +207,15 @@ fn run_oracle() -> Result<(), String> {
            user_id BIGINT NOT NULL,\
            total DECIMAL(12,2) NOT NULL,\
            placed_at DATETIME NOT NULL,\
-           status VARCHAR(16) NOT NULL,\
+           status ENUM('pending','processing','shipped','delivered','cancelled') NOT NULL,\
            meta JSON NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          INSERT INTO events VALUES\
-           (1,'event-01',10,0,'Alpha'),(2,'event-02',20,1,'alpha'),\
-           (3,'event-03',30,0,NULL),(4,'event-04',40,1,'Beta'),\
-           (5,'event-05',50,0,'beta'),(6,'event-06',60,1,NULL),\
-           (7,'event-07',70,0,'Alpha'),(8,'event-08',80,1,'alpha'),\
-           (9,'event-09',90,0,NULL),(10,'event-10',100,1,'Beta');\
+           (1,'event-01',10,0,'Alpha','red'),(2,'event-02',20,1,'alpha','RED'),\
+           (3,'event-03',30,0,NULL,'red '),(4,'event-04',40,1,'Beta','blue'),\
+           (5,'event-05',50,0,'beta','BLUE'),(6,'event-06',60,1,NULL,'blue'),\
+           (7,'event-07',70,0,'Alpha','Green'),(8,'event-08',80,1,'alpha','green'),\
+           (9,'event-09',90,0,NULL,'RED'),(10,'event-10',100,1,'Beta','Blue');\
          INSERT INTO users VALUES\
            (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
            (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');\
@@ -615,6 +619,91 @@ fn oracle_cases() -> Vec<OracleCase> {
                 value + 2,
                 value + 1
             ),
+            ordered: true,
+        });
+    }
+    // ENUM semantics, generated over every label and operator: MySQL sorts
+    // an ENUM by its declared ordinal but COMPARES it - ranges, BETWEEN,
+    // MIN/MAX - as its label string. The declaration order and the
+    // alphabetical order disagree everywhere here, so a path applying the
+    // wrong rule cannot pass by luck (found live by the e2e gate; the
+    // oracle's status column was plain VARCHAR and never saw it).
+    for label in ENUM_LABELS {
+        for op in [">", ">=", "<", "<=", "=", "<>"] {
+            cases.push(OracleCase {
+                family: "enum semantics",
+                sql: format!(
+                    "SELECT COUNT(*), MIN(status), MAX(status) FROM orders \
+                     WHERE status {op} '{label}'"
+                ),
+                ordered: true,
+            });
+        }
+    }
+    for limit in 1..=12 {
+        cases.push(OracleCase {
+            family: "enum semantics",
+            sql: format!("SELECT id, status FROM orders ORDER BY status, id LIMIT {limit}"),
+            ordered: true,
+        });
+        cases.push(OracleCase {
+            family: "enum semantics",
+            sql: format!("SELECT id, status FROM orders ORDER BY status DESC, id LIMIT {limit}"),
+            ordered: true,
+        });
+    }
+    for low in ENUM_LABELS {
+        for high in ENUM_LABELS {
+            cases.push(OracleCase {
+                family: "enum semantics",
+                sql: format!(
+                    "SELECT COUNT(*) FROM orders WHERE status BETWEEN '{low}' AND '{high}'"
+                ),
+                ordered: true,
+            });
+        }
+    }
+    for sql in [
+        "SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY COUNT(*) DESC, status",
+        "SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY status",
+        "SELECT DISTINCT status FROM orders ORDER BY status",
+        "SELECT DISTINCT status FROM orders ORDER BY status DESC",
+        "SELECT COUNT(*) FROM orders WHERE status IN ('pending', 'delivered')",
+        "SELECT COUNT(*) FROM orders WHERE status NOT IN ('shipped')",
+    ] {
+        cases.push(OracleCase {
+            family: "enum semantics",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // Mixed-collation grouping: events.note is general_ci next to the
+    // orders columns' 0900_ai_ci, so these fold each key by its own rules.
+    // Projections stay spelling-independent (counts only): the reported
+    // spelling of a case-insensitively equal group follows scan order,
+    // which differs between engines by design (documented gap #10).
+    for floor in 1..=12 {
+        cases.push(OracleCase {
+            family: "mixed collation grouping",
+            sql: format!(
+                "SELECT COUNT(*) FROM (SELECT tag, status FROM events e \
+                 JOIN orders o ON o.user_id = e.id WHERE o.id >= {floor} \
+                 GROUP BY tag, status) g"
+            ),
+            ordered: true,
+        });
+    }
+    for sql in [
+        "SELECT COUNT(DISTINCT tag) FROM events",
+        "SELECT COUNT(*) FROM (SELECT tag FROM events GROUP BY tag) g",
+        "SELECT COUNT(*) FROM (SELECT tag, status, COUNT(*) AS c FROM events e \
+         JOIN orders o ON o.user_id = e.id GROUP BY tag, status HAVING COUNT(*) > 1) g",
+        "SELECT COUNT(DISTINCT tag), COUNT(DISTINCT status) FROM events e \
+         JOIN orders o ON o.user_id = e.id",
+    ] {
+        cases.push(OracleCase {
+            family: "mixed collation grouping",
+            sql: sql.to_owned(),
             ordered: true,
         });
     }
@@ -2607,6 +2696,8 @@ fn events_schema() -> Result<TableSchema, String> {
             Column::new(3, "score", DataType::Int64, false),
             Column::new(4, "active", DataType::Boolean, false),
             Column::new(5, "note", DataType::Utf8, true),
+            Column::new(6, "tag", DataType::Utf8, false)
+                .with_collation(Some("utf8mb4_general_ci".to_owned())),
         ],
     )
     .map_err(|error| error.to_string())
@@ -2639,7 +2730,14 @@ fn orders_schema() -> Result<TableSchema, String> {
                 false,
             ),
             Column::new(4, "placed_at", DataType::DateTime64 { fsp: 0 }, false),
-            Column::new(5, "status", DataType::Utf8, false),
+            Column::new(5, "status", DataType::Utf8, false)
+                .with_collation(Some("utf8mb4_0900_ai_ci".to_owned()))
+                .with_enum_labels(Some(
+                    ["pending", "processing", "shipped", "delivered", "cancelled"]
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                )),
             Column::new(6, "meta", DataType::Json, true),
         ],
     )
@@ -2770,6 +2868,20 @@ fn event_row(id: u64) -> StoredRow {
                 3 | 6 | 9 => Value::Null,
                 _ => unreachable!("oracle event IDs are 1 through 10"),
             },
+            Value::Utf8(
+                match id {
+                    1 => "red",
+                    2 | 9 => "RED",
+                    3 => "red ",
+                    4 | 6 => "blue",
+                    5 => "BLUE",
+                    7 => "Green",
+                    8 => "green",
+                    10 => "Blue",
+                    _ => unreachable!("oracle event IDs are 1 through 10"),
+                }
+                .to_owned(),
+            ),
         ],
         id,
         false,
