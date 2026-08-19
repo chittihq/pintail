@@ -993,7 +993,21 @@ impl BatchStream for SnapshotStream {
                 .iter()
                 .copied()
                 .zip(output)
-                .map(|(data_type, values)| {
+                .zip(self.enum_labels.iter())
+                .map(|((data_type, values), labels)| {
+                    // Row-shaped values come from the memtable (CDC rows not
+                    // yet flushed), where an ENUM is stored as its bare
+                    // label. Reattach the declaration index exactly as the
+                    // columnar decode path does, or a scan straddling
+                    // settled segments and fresh rows mixes ordinal-ordered
+                    // and text-ordered values in one sort (#256).
+                    let values = match labels {
+                        Some(labels) => values
+                            .into_iter()
+                            .map(|value| enum_value(value, labels))
+                            .collect(),
+                        None => values,
+                    };
                     ColumnVector::new(data_type, values).map_err(ExecError::from)
                 })
                 .collect::<Result<Vec<_>, _>>()?

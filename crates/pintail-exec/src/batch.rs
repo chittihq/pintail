@@ -393,6 +393,12 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
     let mut float64 =
         matches!(storage, DataType::Float64).then(|| Vec::with_capacity(values.len()));
     let mut utf8 = matches!(storage, DataType::Utf8).then(StrColumn::default);
+    // Reconstructed ENUM declaration slots from the values themselves: a
+    // repacked batch (projection, aggregate output, memtable rows) has no
+    // schema to hand, but every Value::Enum carries its own one-based
+    // index, so the label list rebuilds sparsely from what flows through.
+    // Unseen slots stay empty strings, which no real label equals.
+    let mut enum_slots: Option<Vec<String>> = None;
     let decimal_scale = match data_type {
         DataType::Decimal { scale, .. } => Some(scale),
         _ => None,
@@ -463,6 +469,18 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 if let Some(packed) = utf8.as_mut() {
                     packed.push(text.as_bytes());
                 }
+                if let Value::Enum { index, label } = value
+                    && *index > 0
+                {
+                    let slots = enum_slots.get_or_insert_with(Vec::new);
+                    let position = usize::from(*index) - 1;
+                    if slots.len() <= position {
+                        slots.resize(position + 1, String::new());
+                    }
+                    if slots[position].is_empty() {
+                        slots[position].clone_from(label);
+                    }
+                }
                 if let (Some(packed), Some(scale)) = (decimal.as_mut(), decimal_scale) {
                     match parse_decimal_scaled(text, scale) {
                         Some(scaled) => packed.push(scaled),
@@ -516,7 +534,9 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
     } else if let Some(packed) = float64 {
         Some(TypedValues::Float64(packed))
     } else {
-        utf8.map(TypedValues::Utf8)
+        utf8.map(|column| {
+            TypedValues::Utf8(column.with_enum_labels(enum_slots.map(std::sync::Arc::new)))
+        })
     };
     typed.map(|packed| (packed, ValidityMask::from_bools(&validity)))
 }
