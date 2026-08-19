@@ -27,11 +27,17 @@ export function formatNumber(value: number) {
 export function formatBytes(value: number) {
   if (value < 1_024) return `${value} B`
   if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`
-  return `${(value / 1_048_576).toFixed(1)} MiB`
+  if (value < 1_073_741_824) return `${(value / 1_048_576).toFixed(1)} MiB`
+  return `${(value / 1_073_741_824).toFixed(1)} GiB`
 }
 
 export function formatDate(value: string | null) {
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Never'
+  if (!value) return 'Never'
+  const parsed = new Date(value)
+  // Intl throws RangeError on an invalid Date, and this renders inside table
+  // cells - one bad timestamp from the server must not blank a whole page.
+  if (Number.isNaN(parsed.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(parsed)
 }
 
 export function displayValue(value: unknown) {
@@ -45,7 +51,11 @@ export function messageOf(failure: unknown) {
 }
 
 export function csvCell(value: unknown) {
-  const text = displayValue(value)
+  let text = displayValue(value)
+  // A cell starting with = + - @ or a tab executes as a formula when the CSV
+  // is opened in a spreadsheet; a leading apostrophe forces it to read as
+  // text (the standard neutralization, and what spreadsheets themselves do).
+  if (/^[=+\-@\t]/.test(text)) text = `'${text}`
   return `"${text.replaceAll('"', '""')}"`
 }
 
