@@ -1982,6 +1982,11 @@ fn build_hash_aggregate_scan(
                 aggregates,
                 memory,
                 collation,
+                // Uniform by the gate above; the KEY's collation is what the
+                // group fold must use - the plan collation folded a
+                // general_ci key under 0900 rules and split its PAD-equal
+                // spellings into separate groups (#258).
+                key_collations.first().copied().unwrap_or(collation),
             )?
         {
             return Ok(rows);
@@ -2973,6 +2978,7 @@ fn build_fused_inner_join_aggregate(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
     collation: Collation,
+    group_collation: Collation,
 ) -> Result<Option<MaterializedRows>, ExecError> {
     let PullOperator::HashJoin {
         left,
@@ -3095,7 +3101,7 @@ fn build_fused_inner_join_aggregate(
         } else {
             None
         };
-    let plan = resolve_join_group_plan(&join.build, &right_group_columns, collation)?;
+    let plan = resolve_join_group_plan(&join.build, &right_group_columns, group_collation)?;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     loop {
         let gather_clock = std::time::Instant::now();
@@ -3137,7 +3143,7 @@ fn build_fused_inner_join_aggregate(
                     batch,
                     left_key,
                     *key_mode,
-                    collation,
+                    group_collation,
                     left_width,
                     aggregates,
                     &join.build,
@@ -3208,7 +3214,7 @@ fn build_local_fused_join_groups(
     batch: &RecordBatch,
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
-    collation: Collation,
+    group_collation: Collation,
     left_width: usize,
     aggregates: &[CompiledAggregate],
     build: &PartitionedBuild,
@@ -3335,7 +3341,7 @@ fn build_local_fused_join_groups(
                 .values
                 .iter()
                 .cloned()
-                .map(|value| normalized_collation_value(value, collation))
+                .map(|value| normalized_collation_value(value, group_collation))
                 .collect();
             (key, group)
         })
