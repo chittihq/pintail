@@ -1514,10 +1514,24 @@ async function phaseControlPlane() {
     )`)
     await sql(`INSERT INTO drift_messages (body, sentByAdminId) VALUES ('one', 7), ('two', NULL)`)
     try {
-      // Adopt the new table into the mirror.
+      // Adopt the new table into the mirror. The accepted snapshot runs
+      // asynchronously and the database state reads 'streaming' until the
+      // job flips it, so the wait is on the OUTCOME: the new table tracked,
+      // copied, and streaming.
       await retry409(() =>
         api(`/api/databases/${databaseId}/snapshot`, { method: 'POST', body: { force: true } }))
-      await waitForState(databaseId, 'streaming', 180_000)
+      const adopted = Date.now() + 180_000
+      for (;;) {
+        const tables = await api<Array<{ name: string; state: string; rows: number }>>(
+          `/api/tables?db=${databaseId}`,
+        )
+        const table = tables.find((entry) => entry.name === 'drift_messages')
+        if (table?.state === 'streaming' && table.rows === 2) break
+        if (Date.now() > adopted) {
+          throw new Error(`drift_messages was never adopted: ${JSON.stringify(table)}`)
+        }
+        await Bun.sleep(2_000)
+      }
 
       // Downtime: pause, migrate, and lose the binlog history of it.
       await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'paused' } })
@@ -1593,7 +1607,9 @@ async function phaseControlPlane() {
       await Bun.sleep(2_000)
     }
     // And the stream is live again: a new source row arrives without help.
-    await sql(`INSERT INTO orders (customer_id, status, total) VALUES (1, 'paid', 12.34)`)
+    await sql(
+      `INSERT INTO orders (customer_id, status, total, placed_on) VALUES (1, 'shipped', 12.34, '2026-08-20')`,
+    )
     const streamed = Date.now() + 60_000
     for (;;) {
       const rows = await pintailQuery(`SELECT COUNT(*) FROM orders`)
