@@ -41,5 +41,8 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 bun run scripts/validate.ts --stages=fmt,accept
+# the confirming accept rewrites its ledgers once more; the banked copies
+# from the same chain are the evidence of record
+git checkout -- .
 ok=1
 echo "RELEASE-CHAIN-DONE"
