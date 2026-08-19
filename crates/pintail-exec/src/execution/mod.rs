@@ -167,6 +167,9 @@ pub struct OutputField {
     pub data_type: Option<DataType>,
     /// Whether the result can be `NULL`.
     pub nullable: bool,
+    /// Whether the result is a spatial column, advertised on the wire as
+    /// `MYSQL_TYPE_GEOMETRY` so clients decode it as `MySQL` does.
+    pub geometry: bool,
 }
 
 /// Physical pull operators selected for an executable query.
@@ -314,6 +317,7 @@ pub enum PhysicalPlan {
 impl PhysicalPlan {
     /// Returns client-visible result fields.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // one arm per plan node
     pub fn output_fields(&self) -> Vec<OutputField> {
         match self {
             Self::Project { expressions, .. } => expressions
@@ -322,6 +326,10 @@ impl PhysicalPlan {
                     name: expression.name.clone(),
                     data_type: expression.expr.data_type,
                     nullable: expression.expr.nullable,
+                    geometry: matches!(
+                        &expression.expr.kind,
+                        pintail_sql::BoundExprKind::Column(column) if column.geometry
+                    ),
                 })
                 .collect(),
             Self::SetOp { left: input, .. }
@@ -340,6 +348,7 @@ impl PhysicalPlan {
                     name: column.name.clone(),
                     data_type: Some(column.data_type),
                     nullable: column.nullable,
+                    geometry: false,
                 }));
                 fields
             }
@@ -353,11 +362,16 @@ impl PhysicalPlan {
                     name: String::new(),
                     data_type: expression.data_type,
                     nullable: expression.nullable,
+                    geometry: matches!(
+                        &expression.kind,
+                        pintail_sql::BoundExprKind::Column(column) if column.geometry
+                    ),
                 })
                 .chain(aggregates.iter().map(|aggregate| OutputField {
                     name: String::new(),
                     data_type: aggregate.data_type,
                     nullable: aggregate.nullable,
+                    geometry: false,
                 }))
                 .collect(),
             Self::CrossJoin { inputs, .. } => inputs.iter().flat_map(Self::output_fields).collect(),
@@ -395,6 +409,7 @@ impl PhysicalPlan {
                     name: column.name.clone(),
                     data_type: Some(column.data_type),
                     nullable: column.nullable,
+                    geometry: column.geometry,
                 })
                 .collect(),
             Self::Derived { columns, .. } => columns
@@ -403,6 +418,7 @@ impl PhysicalPlan {
                     name: column.name.clone(),
                     data_type: Some(column.data_type),
                     nullable: column.nullable,
+                    geometry: column.geometry,
                 })
                 .collect(),
             Self::Empty | Self::OneRow => Vec::new(),
@@ -3358,6 +3374,7 @@ fn build_operator(
                     nullable,
                     collation: None,
                     enum_labels: None,
+                    geometry: false,
                     outer: false,
                     using_shadowed: false,
                 };
@@ -3439,6 +3456,7 @@ fn build_operator(
                         nullable: projection.expr.nullable,
                         collation: None,
                         enum_labels: None,
+                        geometry: false,
                         outer: false,
                         using_shadowed: false,
                     },

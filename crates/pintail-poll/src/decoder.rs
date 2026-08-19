@@ -135,4 +135,3 @@ fn key_part(value: &Value) -> Option<KeyPart> {
         Value::Binary(value) => Some(KeyPart::Binary(value.clone())),
     }
 }
-

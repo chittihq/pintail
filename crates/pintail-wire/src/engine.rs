@@ -47,6 +47,8 @@ pub struct QueryField {
     /// Direct `GROUP_CONCAT` projections choose VARCHAR versus TEXT/BLOB on
     /// the wire from the connection's `group_concat_max_len`.
     pub group_concat: bool,
+    /// Spatial column: advertised as `MYSQL_TYPE_GEOMETRY` on the wire.
+    pub geometry: bool,
 }
 
 /// Physical work observed while executing one query.
@@ -405,6 +407,7 @@ impl ReplicaEngine {
                     .unwrap_or(field.nullable),
                 collation: result_collations.get(index).cloned().flatten(),
                 group_concat: group_concat.get(index).copied().unwrap_or(false),
+                geometry: field.geometry,
             })
             .collect();
         let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
@@ -452,6 +455,7 @@ impl ReplicaEngine {
                 nullable: false,
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
+                geometry: false,
             }],
             rows: vec![vec![Value::Utf8(plan)]],
             stats,
@@ -570,6 +574,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
                 collation: (field.data_type == DataType::Utf8)
                     .then(|| DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
+                geometry: false,
             })
             .collect(),
         stats: QueryStats {

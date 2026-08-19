@@ -53,6 +53,7 @@ pub struct BoundTable {
 
 /// A column made unambiguous against one catalog snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // independent source-column facts
 pub struct BoundColumn {
     /// Stable source database ID.
     pub database_id: DatabaseId,
@@ -77,6 +78,9 @@ pub struct BoundColumn {
     /// still knows both the column's declaration and which side of a
     /// comparison is the constant.
     pub enum_labels: Option<std::sync::Arc<Vec<String>>>,
+    /// Whether the source column is a spatial type; the wire advertises
+    /// `MYSQL_TYPE_GEOMETRY` for it so clients decode as `MySQL` does.
+    pub geometry: bool,
     /// Whether this reference resolves in an enclosing query scope rather
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.

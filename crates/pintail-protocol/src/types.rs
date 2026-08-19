@@ -48,6 +48,8 @@ pub enum ColumnType {
     MysqlTypeString = 0xfe,
     /// `BLOB` and `TEXT`.
     MysqlTypeBlob = 0xfc,
+    /// Spatial types, carried as `MySQL`'s internal SRID + WKB bytes.
+    MysqlTypeGeometry = 0xff,
 }
 
 /// Column attribute bits clients read alongside the type tag.

@@ -229,6 +229,7 @@ impl<'catalog> Binder<'catalog> {
                 nullable: true,
                 collation: anchor.result_collation(&projection.expr),
                 enum_labels: None,
+                geometry: false,
                 outer: false,
                 using_shadowed: false,
             })
@@ -1651,6 +1652,7 @@ impl<'catalog> Binder<'catalog> {
                 enum_labels: column
                     .enum_labels()
                     .map(|labels| std::sync::Arc::new(labels.to_vec())),
+                geometry: column.is_geometry(),
                 outer: false,
                 using_shadowed: false,
             })
@@ -1699,6 +1701,7 @@ impl<'catalog> Binder<'catalog> {
                 nullable: projection.expr.nullable,
                 collation: input.result_collation(&projection.expr),
                 enum_labels: None,
+                geometry: false,
                 outer: false,
                 using_shadowed: false,
             })

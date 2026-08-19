@@ -83,6 +83,10 @@ pub struct Column {
     /// a SET. `MySQL` sorts a SET by its member bitmask, so the position in
     /// this list is the member's bit.
     set_members: Option<Vec<String>>,
+    /// Whether the source column is a spatial type. Storage stays binary;
+    /// the wire advertises `MYSQL_TYPE_GEOMETRY` so clients decode it as
+    /// `MySQL` does.
+    geometry: bool,
 }
 
 impl Column {
@@ -97,6 +101,7 @@ impl Column {
             collation: None,
             enum_labels: None,
             set_members: None,
+            geometry: false,
         }
     }
 
@@ -128,6 +133,19 @@ impl Column {
     pub fn with_set_members(mut self, set_members: Option<Vec<String>>) -> Self {
         self.set_members = set_members;
         self
+    }
+
+    /// Marks the column as a spatial type.
+    #[must_use]
+    pub fn with_geometry(mut self, geometry: bool) -> Self {
+        self.geometry = geometry;
+        self
+    }
+
+    /// Whether the source column is a spatial type.
+    #[must_use]
+    pub fn is_geometry(&self) -> bool {
+        self.geometry
     }
 
     /// Returns the declared SET members, when the column is a SET.

@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-19T06:30:21.116Z.
+Measured 2026-08-19T11:24:08.539Z.
 
-**1781 passed, 0 failed, 6 documented-gap warnings.**
+**1811 passed, 27 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -95,6 +95,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | snapshot | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | snapshot | query:collation: distinct counts fold per column collation | PASS |  |
 | snapshot | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| snapshot | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| snapshot | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| snapshot | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -208,6 +211,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | orm-compat | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | orm-compat | query:collation: distinct counts fold per column collation | PASS |  |
 | orm-compat | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| orm-compat | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| orm-compat | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| orm-compat | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -297,6 +303,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | crud | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | crud | query:collation: distinct counts fold per column collation | PASS |  |
 | crud | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| crud | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| crud | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| crud | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -386,12 +395,15 @@ Measured 2026-08-19T06:30:21.116Z.
 | type-edges | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | type-edges | query:collation: distinct counts fold per column collation | PASS |  |
 | type-edges | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| type-edges | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| type-edges | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| type-edges | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
 | ddl | converge:order_items | PASS |  |
 | ddl | converge:orders | PASS |  |
-| ddl | converge:shipments | PASS |  |
+| ddl | converge:shipments | FAIL | row 0: |
 | ddl | converge:staff | PASS |  |
 | ddl | converge:information_schema.columns | PASS |  |
 | ddl | query:point lookup by key | PASS |  |
@@ -476,12 +488,15 @@ Measured 2026-08-19T06:30:21.116Z.
 | ddl | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | ddl | query:collation: distinct counts fold per column collation | PASS |  |
 | ddl | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| ddl | query:set: order by walks the member bitmask | PASS |  |
+| ddl | query:set: grouping orders groups by bitmask | PASS |  |
+| ddl | query:geometry: hex round-trips the internal format | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
 | schema-drift-minimal | converge:order_items | PASS |  |
 | schema-drift-minimal | converge:orders | PASS |  |
-| schema-drift-minimal | converge:shipments | PASS |  |
+| schema-drift-minimal | converge:shipments | FAIL | row 0: |
 | schema-drift-minimal | converge:staff | PASS |  |
 | schema-drift-minimal | converge:information_schema.columns | PASS |  |
 | schema-drift-minimal | query:point lookup by key | PASS |  |
@@ -566,12 +581,15 @@ Measured 2026-08-19T06:30:21.116Z.
 | schema-drift-minimal | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | schema-drift-minimal | query:collation: distinct counts fold per column collation | PASS |  |
 | schema-drift-minimal | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| schema-drift-minimal | query:set: order by walks the member bitmask | PASS |  |
+| schema-drift-minimal | query:set: grouping orders groups by bitmask | PASS |  |
+| schema-drift-minimal | query:geometry: hex round-trips the internal format | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
 | schema-drift-unseen | converge:order_items | PASS |  |
 | schema-drift-unseen | converge:orders | PASS |  |
-| schema-drift-unseen | converge:shipments | PASS |  |
+| schema-drift-unseen | converge:shipments | FAIL | row 0: |
 | schema-drift-unseen | converge:staff | PASS |  |
 | schema-drift-unseen | converge:information_schema.columns | PASS |  |
 | schema-drift-unseen | query:point lookup by key | PASS |  |
@@ -656,6 +674,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | schema-drift-unseen | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | schema-drift-unseen | query:collation: distinct counts fold per column collation | PASS |  |
 | schema-drift-unseen | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| schema-drift-unseen | query:set: order by walks the member bitmask | PASS |  |
+| schema-drift-unseen | query:set: grouping orders groups by bitmask | PASS |  |
+| schema-drift-unseen | query:geometry: hex round-trips the internal format | PASS |  |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
@@ -667,7 +688,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | churn | converge:customers | PASS |  |
 | churn | converge:order_items | PASS |  |
 | churn | converge:orders | PASS |  |
-| churn | converge:shipments | PASS |  |
+| churn | converge:shipments | FAIL | row 0: |
 | churn | converge:staff | PASS |  |
 | churn | converge:information_schema.columns | PASS |  |
 | churn | query:point lookup by key | PASS |  |
@@ -752,6 +773,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | churn | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | churn | query:collation: distinct counts fold per column collation | PASS |  |
 | churn | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| churn | query:set: order by walks the member bitmask | PASS |  |
+| churn | query:set: grouping orders groups by bitmask | PASS |  |
+| churn | query:geometry: hex round-trips the internal format | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
@@ -762,7 +786,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | execution-budget | converge:customers | PASS |  |
 | execution-budget | converge:order_items | PASS |  |
 | execution-budget | converge:orders | PASS |  |
-| execution-budget | converge:shipments | PASS |  |
+| execution-budget | converge:shipments | FAIL | row 0: |
 | execution-budget | converge:staff | PASS |  |
 | execution-budget | converge:information_schema.columns | PASS |  |
 | execution-budget | query:point lookup by key | PASS |  |
@@ -847,6 +871,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | execution-budget | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | execution-budget | query:collation: distinct counts fold per column collation | PASS |  |
 | execution-budget | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| execution-budget | query:set: order by walks the member bitmask | PASS |  |
+| execution-budget | query:set: grouping orders groups by bitmask | PASS |  |
+| execution-budget | query:geometry: hex round-trips the internal format | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -856,7 +883,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | spill | converge:customers | PASS |  |
 | spill | converge:order_items | PASS |  |
 | spill | converge:orders | PASS |  |
-| spill | converge:shipments | PASS |  |
+| spill | converge:shipments | FAIL | row 0: |
 | spill | converge:staff | PASS |  |
 | spill | converge:information_schema.columns | PASS |  |
 | spill | query:point lookup by key | PASS |  |
@@ -941,6 +968,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | spill | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | spill | query:collation: distinct counts fold per column collation | PASS |  |
 | spill | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| spill | query:set: order by walks the member bitmask | PASS |  |
+| spill | query:set: grouping orders groups by bitmask | PASS |  |
+| spill | query:geometry: hex round-trips the internal format | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -949,7 +979,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | pooling | converge:customers | PASS |  |
 | pooling | converge:order_items | PASS |  |
 | pooling | converge:orders | PASS |  |
-| pooling | converge:shipments | PASS |  |
+| pooling | converge:shipments | FAIL | row 0: |
 | pooling | converge:staff | PASS |  |
 | pooling | converge:information_schema.columns | PASS |  |
 | pooling | query:point lookup by key | PASS |  |
@@ -1034,12 +1064,15 @@ Measured 2026-08-19T06:30:21.116Z.
 | pooling | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | pooling | query:collation: distinct counts fold per column collation | PASS |  |
 | pooling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| pooling | query:set: order by walks the member bitmask | PASS |  |
+| pooling | query:set: grouping orders groups by bitmask | PASS |  |
+| pooling | query:geometry: hex round-trips the internal format | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
 | restart | converge:order_items | PASS |  |
 | restart | converge:orders | PASS |  |
-| restart | converge:shipments | PASS |  |
+| restart | converge:shipments | FAIL | row 0: |
 | restart | converge:staff | PASS |  |
 | restart | converge:information_schema.columns | PASS |  |
 | restart | query:point lookup by key | PASS |  |
@@ -1124,6 +1157,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | restart | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | restart | query:collation: distinct counts fold per column collation | PASS |  |
 | restart | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| restart | query:set: order by walks the member bitmask | PASS |  |
+| restart | query:set: grouping orders groups by bitmask | PASS |  |
+| restart | query:geometry: hex round-trips the internal format | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -1145,7 +1181,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
-| control-plane | converge:shipments | PASS |  |
+| control-plane | converge:shipments | FAIL | row 0: |
 | control-plane | converge:staff | PASS |  |
 | control-plane | converge:information_schema.columns | PASS |  |
 | control-plane | query:point lookup by key | PASS |  |
@@ -1230,6 +1266,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | control-plane | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | control-plane | query:collation: distinct counts fold per column collation | PASS |  |
 | control-plane | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| control-plane | query:set: order by walks the member bitmask | PASS |  |
+| control-plane | query:set: grouping orders groups by bitmask | PASS |  |
+| control-plane | query:geometry: hex round-trips the internal format | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
@@ -1237,7 +1276,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
 | snapshot-ddl-window | converge:order_items | PASS |  |
 | snapshot-ddl-window | converge:orders | PASS |  |
-| snapshot-ddl-window | converge:shipments | PASS |  |
+| snapshot-ddl-window | converge:shipments | FAIL | row 0: |
 | snapshot-ddl-window | converge:staff | PASS |  |
 | snapshot-ddl-window | converge:information_schema.columns | PASS |  |
 | snapshot-ddl-window | query:point lookup by key | PASS |  |
@@ -1322,6 +1361,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | snapshot-ddl-window | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | snapshot-ddl-window | query:collation: distinct counts fold per column collation | PASS |  |
 | snapshot-ddl-window | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| snapshot-ddl-window | query:set: order by walks the member bitmask | PASS |  |
+| snapshot-ddl-window | query:set: grouping orders groups by bitmask | PASS |  |
+| snapshot-ddl-window | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -1333,7 +1375,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-table-cdc | converge:keyless_log | PASS |  |
 | drop-table-cdc | converge:order_items | PASS |  |
 | drop-table-cdc | converge:orders | PASS |  |
-| drop-table-cdc | converge:shipments | PASS |  |
+| drop-table-cdc | converge:shipments | FAIL | row 0: |
 | drop-table-cdc | converge:staff | PASS |  |
 | drop-table-cdc | converge:information_schema.columns | PASS |  |
 | drop-table-cdc | query:point lookup by key | PASS |  |
@@ -1418,6 +1460,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-table-cdc | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-table-cdc | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-table-cdc | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| drop-table-cdc | query:set: order by walks the member bitmask | PASS |  |
+| drop-table-cdc | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-table-cdc | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
@@ -1427,7 +1472,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-table-recreate | converge:keyless_log | PASS |  |
 | drop-table-recreate | converge:order_items | PASS |  |
 | drop-table-recreate | converge:orders | PASS |  |
-| drop-table-recreate | converge:shipments | PASS |  |
+| drop-table-recreate | converge:shipments | FAIL | row 0: |
 | drop-table-recreate | converge:staff | PASS |  |
 | drop-table-recreate | converge:information_schema.columns | PASS |  |
 | drop-table-recreate | query:point lookup by key | PASS |  |
@@ -1512,10 +1557,13 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-table-recreate | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-table-recreate | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-table-recreate | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| drop-table-recreate | query:set: order by walks the member bitmask | PASS |  |
+| drop-table-recreate | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-table-recreate | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_615bfe558e3d9088e40a83b7347ef24f","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T06:17:44.808428+00:00","updated_at":"2026-08-19T06:23:46.719147+00:00"},"tables":13,"rows":794} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_df7befa6b34fcf5239cd1b3e4f337c4d","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T10:29:50.982033+00:00","updated_at":"2026-08-19T11:11:34.646091+00:00"},"tables":13,"rows":794} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1523,7 +1571,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-table-polling | converge:keyless_log | PASS |  |
 | drop-table-polling | converge:order_items | PASS |  |
 | drop-table-polling | converge:orders | PASS |  |
-| drop-table-polling | converge:shipments | PASS |  |
+| drop-table-polling | converge:shipments | FAIL | row 0: |
 | drop-table-polling | converge:staff | PASS |  |
 | drop-table-polling | converge:information_schema.columns | PASS |  |
 | drop-table-polling | query:point lookup by key | PASS |  |
@@ -1608,6 +1656,9 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-table-polling | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-table-polling | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-table-polling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| drop-table-polling | query:set: order by walks the member bitmask | PASS |  |
+| drop-table-polling | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-table-polling | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -1622,7 +1673,7 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-database | converge:keyless_log | PASS |  |
 | drop-database | converge:order_items | PASS |  |
 | drop-database | converge:orders | PASS |  |
-| drop-database | converge:shipments | PASS |  |
+| drop-database | converge:shipments | FAIL | row 0: |
 | drop-database | converge:staff | PASS |  |
 | drop-database | converge:information_schema.columns | PASS |  |
 | drop-database | query:point lookup by key | PASS |  |
@@ -1707,13 +1758,16 @@ Measured 2026-08-19T06:30:21.116Z.
 | drop-database | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-database | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-database | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| drop-database | query:set: order by walks the member bitmask | PASS |  |
+| drop-database | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-database | query:geometry: hex round-trips the internal format | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
 | ddl-documented-gaps | converge:order_items | PASS |  |
 | ddl-documented-gaps | converge:orders | PASS |  |
-| ddl-documented-gaps | converge:shipments | PASS |  |
+| ddl-documented-gaps | converge:shipments | FAIL | row 0: |
 | ddl-documented-gaps | converge:staff | PASS |  |
 | ddl-documented-gaps | converge:information_schema.columns | WARN | row 0: |
 | ddl-documented-gaps | query:point lookup by key | PASS |  |
@@ -1798,3 +1852,6 @@ Measured 2026-08-19T06:30:21.116Z.
 | ddl-documented-gaps | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | ddl-documented-gaps | query:collation: distinct counts fold per column collation | PASS |  |
 | ddl-documented-gaps | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| ddl-documented-gaps | query:set: order by walks the member bitmask | PASS |  |
+| ddl-documented-gaps | query:set: grouping orders groups by bitmask | PASS |  |
+| ddl-documented-gaps | query:geometry: hex round-trips the internal format | PASS |  |

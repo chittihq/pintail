@@ -427,8 +427,22 @@ async function verifyConvergence(phase: string) {
 }
 
 async function verifyCorpus(phase: string) {
+  // Some corpus tables are born mid-run (shipments carries the GEOMETRY
+  // and SET coverage and is created by a later phase); a case whose table
+  // does not exist yet SKIPs instead of failing on the source side.
+  const existing = new Set(
+    (
+      await mysqlRows(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = '${DATABASE}'`,
+      )
+    ).map((row) => String(row[0]).toLowerCase()),
+  )
   for (const query of differentialQueries) {
     if (query.tables.some((table) => documentedGapTables.has(table))) {
+      results.push({ phase, check: `query:${query.name}`, status: 'SKIP' })
+      continue
+    }
+    if (query.tables.some((table) => !existing.has(table.toLowerCase()))) {
       results.push({ phase, check: `query:${query.name}`, status: 'SKIP' })
       continue
     }

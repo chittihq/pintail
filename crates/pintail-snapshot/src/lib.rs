@@ -1295,7 +1295,6 @@ fn quote_identifier(identifier: &str) -> String {
     format!("`{}`", identifier.replace('`', "``"))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{

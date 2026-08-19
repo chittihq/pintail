@@ -1404,6 +1404,7 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) 
         Some(DataType::DateTime64 { .. }) => (ColumnType::MysqlTypeDatetime, false),
         Some(DataType::Time64 { .. }) => (ColumnType::MysqlTypeTime, false),
         Some(DataType::Year) => (ColumnType::MysqlTypeYear, true),
+        Some(DataType::Binary) if field.geometry => (ColumnType::MysqlTypeGeometry, false),
         Some(DataType::Binary) => (ColumnType::MysqlTypeBlob, false),
         Some(DataType::Json) => (ColumnType::MysqlTypeJson, false),
         Some(DataType::Utf8) | None => (ColumnType::MysqlTypeVarString, false),
@@ -1621,6 +1622,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
             collation: (value.data_type() == Some(DataType::Utf8))
                 .then(|| DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: false,
+            geometry: false,
         }],
         rows: vec![vec![value]],
         stats: QueryStats {
@@ -1640,6 +1642,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 nullable: false,
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
+                geometry: false,
             },
             QueryField {
                 name: "Code".to_owned(),
@@ -1647,6 +1650,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 nullable: false,
                 collation: None,
                 group_concat: false,
+                geometry: false,
             },
             QueryField {
                 name: "Message".to_owned(),
@@ -1654,6 +1658,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 nullable: false,
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
+                geometry: false,
             },
         ],
         rows: (1..=session.group_concat_warnings)
@@ -1941,6 +1946,7 @@ mod tests {
                 nullable: true,
                 collation: None,
                 group_concat: false,
+                geometry: false,
             },
             1024,
             "utf8mb4",
@@ -1957,6 +1963,7 @@ mod tests {
                 nullable: false,
                 collation: None,
                 group_concat: false,
+                geometry: false,
             },
             1024,
             "utf8mb4",
@@ -1972,6 +1979,7 @@ mod tests {
                 nullable: true,
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
+                geometry: false,
             },
             1024,
             "utf8mb4",
@@ -1986,6 +1994,7 @@ mod tests {
                 nullable: true,
                 collation: None,
                 group_concat: false,
+                geometry: false,
             },
             1024,
             "utf8mb4",
@@ -2008,6 +2017,7 @@ mod tests {
                 nullable: false,
                 collation: None,
                 group_concat: false,
+                geometry: false,
             },
             1024,
             "utf8mb4",
@@ -2023,6 +2033,7 @@ mod tests {
                 nullable: false,
                 collation: None,
                 group_concat: false,
+                geometry: false,
             },
             1024,
             "utf8mb4",
@@ -2039,6 +2050,7 @@ mod tests {
             nullable: true,
             collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: true,
+            geometry: false,
         };
         assert_eq!(
             mysql_column(&field, 512, "utf8mb4").coltype,
@@ -2058,6 +2070,7 @@ mod tests {
             nullable: false,
             collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: false,
+            geometry: false,
         };
         assert_eq!(mysql_column(&field, 1024, "utf8mb3").character_set, 33);
         let binary = mysql_column(&field, 1024, "binary");

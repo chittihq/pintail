@@ -184,6 +184,17 @@ impl SourceTable {
                                 })
                                 .flatten(),
                         )
+                        .with_geometry(matches!(
+                            column.mysql_data_type.to_ascii_lowercase().as_str(),
+                            "geometry"
+                                | "point"
+                                | "linestring"
+                                | "polygon"
+                                | "multipoint"
+                                | "multilinestring"
+                                | "multipolygon"
+                                | "geometrycollection"
+                        ))
                         // A SET sorts by its member bitmask; the members and
                         // their declaration order are that mask's bits.
                         .with_set_members(

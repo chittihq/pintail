@@ -262,6 +262,7 @@ impl LogicalPlanner {
                     nullable: window.nullable,
                     collation: None,
                     enum_labels: None,
+                    geometry: false,
                     outer: false,
                     using_shadowed: false,
                 })
