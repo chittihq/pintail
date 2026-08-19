@@ -136,7 +136,7 @@ pub(crate) async fn retry_dead_letter(
     })?;
     let table = table.to_owned();
     drop(metadata);
-    state.acquire_job(&record.database_id)?;
+    state.acquire_job_as(&record.database_id, "a dead-letter retry")?;
     let result = run_reconcile_job(&state, &record.database_id, &table).await;
     state.release_job(&record.database_id);
     result.map_err(ApiError::unavailable)?;

@@ -319,7 +319,7 @@ fn start_job(
     database_id: &str,
     force_full: bool,
 ) -> Result<AcceptedBackup, ApiError> {
-    state.acquire_job(database_id)?;
+    state.acquire_job_as(database_id, "a backup")?;
     let metadata = state
         .metadata()
         .inspect_err(|_| state.release_job(database_id))?;

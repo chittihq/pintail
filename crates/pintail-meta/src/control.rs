@@ -1186,14 +1186,45 @@ impl MetaStore {
         }
         transaction
             .execute(
+                // 'snapshotting' is deliberately NOT lifted here: only the
+                // job that is copying the table may declare it done. A
+                // replication cycle finishing used to flip a mid-copy table
+                // to 'streaming', so a restart during a per-table resnapshot
+                // left a PARTIAL copy answering queries as healthy.
                 "UPDATE tables SET state = ?2, last_error = NULL \
-                 WHERE db_id = ?1 AND state NOT IN ('excluded', 'needs_resync')",
+                 WHERE db_id = ?1 AND state NOT IN ('excluded', 'needs_resync', 'snapshotting')",
                 (id, table_state),
             )
             .context("failed to update table replication states")?;
         transaction
             .commit()
             .context("failed to commit replication-state update")
+    }
+
+    /// Quarantines every table a dead process left mid-copy: no job
+    /// survives a restart, so a table still in 'snapshotting' at boot holds
+    /// a PARTIAL copy that must never answer queries as healthy. Returns
+    /// the tables flagged, for the boot log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sweep cannot be persisted.
+    pub fn quarantine_interrupted_snapshots(&self, reason: &str) -> Result<Vec<(String, String)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT db_id, name FROM tables WHERE state = 'snapshotting'")
+            .context("failed to prepare interrupted-snapshot sweep")?;
+        let interrupted = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .context("failed to query interrupted snapshots")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to decode interrupted snapshots")?;
+        for (database_id, table) in &interrupted {
+            self.mark_table_needs_resync(database_id, table, reason)?;
+        }
+        Ok(interrupted)
     }
 
     /// Records a database-level API job failure.

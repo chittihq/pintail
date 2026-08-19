@@ -93,7 +93,7 @@ pub(crate) fn begin_snapshot_job(
     database_id: &str,
     force: bool,
 ) -> Result<String, ApiError> {
-    state.acquire_job(database_id)?;
+    state.acquire_job_as(database_id, "a full snapshot")?;
     let run_id = crate::state::random_identifier("run_", 16);
     let metadata = match state.metadata() {
         Ok(metadata) => metadata,
@@ -487,10 +487,7 @@ fn table_snapshot_status(
 
 /// Progress for a single-table resnapshot, distinguishable from a full
 /// snapshot's chunks in the activity feed.
-pub(crate) fn resnapshot_progress_event(
-    database_id: &str,
-    progress: SnapshotProgress,
-) -> ApiEvent {
+pub(crate) fn resnapshot_progress_event(database_id: &str, progress: SnapshotProgress) -> ApiEvent {
     ApiEvent {
         kind: "resnapshot.progress".to_owned(),
         database_id: Some(database_id.to_owned()),

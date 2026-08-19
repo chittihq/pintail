@@ -4,6 +4,7 @@ use pintail_meta::{
 };
 
 #[test]
+#[allow(clippy::too_many_lines)] // one linear round trip through every control
 fn users_databases_and_table_controls_round_trip() {
     let data_dir = tempfile::tempdir().expect("temporary data directory");
     let database_path = data_dir.path().join("pintail-meta.db");
@@ -100,6 +101,9 @@ fn users_databases_and_table_controls_round_trip() {
         metadata.database("db-1").unwrap().unwrap().effective_mode,
         None
     );
+    metadata
+        .finish_table_resnapshot("db-1", "events", "polling")
+        .unwrap();
     metadata
         .set_database_replication_state("db-1", "polling", "2026-07-30T00:06:00Z")
         .unwrap();
@@ -784,6 +788,9 @@ fn a_finished_cycle_does_not_overwrite_a_newer_mode_switch() {
         .upsert_snapshot_table("db-1", "events", Some("[\"id\"]"), Some("[\"id\"]"))
         .unwrap();
     metadata
+        .finish_table_resnapshot("db-1", "events", "streaming")
+        .unwrap();
+    metadata
         .set_database_mode("db-1", "polling", "2026-08-19T00:01:00Z")
         .unwrap();
     // The operator switches to cdc while a polling cycle is still in flight;
@@ -816,4 +823,67 @@ fn a_finished_cycle_does_not_overwrite_a_newer_mode_switch() {
             .set_database_replication_state("db-ghost", "cdc", "2026-08-19T00:05:00Z")
             .is_err()
     );
+}
+
+#[test]
+fn a_restart_quarantines_tables_left_mid_copy() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let metadata = MetaStore::open(&database_path).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-08-19T00:00:00Z")
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "healthy", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "midcopy", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .set_database_mode("db-1", "cdc", "2026-08-19T00:01:00Z")
+        .unwrap();
+    metadata
+        .set_database_replication_state("db-1", "cdc", "2026-08-19T00:02:00Z")
+        .unwrap();
+    // The initial snapshot's completion lifts each table individually.
+    metadata
+        .finish_table_resnapshot("db-1", "healthy", "streaming")
+        .unwrap();
+    metadata
+        .finish_table_resnapshot("db-1", "midcopy", "streaming")
+        .unwrap();
+    metadata.begin_table_resnapshot("db-1", "midcopy").unwrap();
+
+    // The process dies here. A finishing replication cycle must NOT lift
+    // the mid-copy table back to streaming (it used to, laundering a
+    // partial copy as healthy)...
+    metadata
+        .set_database_replication_state("db-1", "cdc", "2026-08-19T00:03:00Z")
+        .unwrap();
+    let states: std::collections::BTreeMap<String, String> = metadata
+        .tables("db-1")
+        .unwrap()
+        .into_iter()
+        .map(|table| (table.name, table.state))
+        .collect();
+    assert_eq!(states["healthy"], "streaming");
+    assert_eq!(states["midcopy"], "snapshotting");
+
+    // ...and the boot sweep quarantines it, visibly, leaving siblings alone.
+    let flagged = metadata
+        .quarantine_interrupted_snapshots("interrupted by a restart")
+        .unwrap();
+    assert_eq!(flagged, [("db-1".to_owned(), "midcopy".to_owned())]);
+    let after: std::collections::BTreeMap<String, (String, Option<String>)> = metadata
+        .tables("db-1")
+        .unwrap()
+        .into_iter()
+        .map(|table| (table.name, (table.state, table.last_error)))
+        .collect();
+    assert_eq!(after["midcopy"].0, "needs_resync");
+    assert_eq!(
+        after["midcopy"].1.as_deref(),
+        Some("interrupted by a restart")
+    );
+    assert_eq!(after["healthy"].0, "streaming");
 }

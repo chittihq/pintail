@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
@@ -39,7 +39,10 @@ struct ApiStateInner {
     jwt_secret: Vec<u8>,
     dsn_key: [u8; 32],
     events: broadcast::Sender<ApiEvent>,
-    active_jobs: Mutex<BTreeSet<String>>,
+    /// One claim per database: what kind of job holds the slot and since
+    /// when, so the 409 can say what is actually running instead of leaving
+    /// the operator to guess whether to retry in seconds or minutes.
+    active_jobs: Mutex<std::collections::BTreeMap<String, (String, std::time::Instant)>>,
     oauth_exchanges: Mutex<HashMap<String, PendingOauthExchange>>,
     metrics: RuntimeMetrics,
 }
@@ -99,7 +102,7 @@ impl ApiState {
                 jwt_secret: jwt_secret.into(),
                 dsn_key,
                 events,
-                active_jobs: Mutex::new(BTreeSet::new()),
+                active_jobs: Mutex::new(std::collections::BTreeMap::new()),
                 oauth_exchanges: Mutex::new(HashMap::new()),
                 metrics: RuntimeMetrics::default(),
             })),
@@ -262,17 +265,33 @@ impl ApiState {
     }
 
     pub(crate) fn acquire_job(&self, database_id: &str) -> Result<(), ApiError> {
+        self.acquire_job_as(database_id, "a replication cycle")
+    }
+
+    /// Claims the database's one job slot under a human-readable name. On
+    /// conflict the refusal names the running job and its age - "retry in a
+    /// moment" and "a snapshot has been copying for four minutes" demand
+    /// different operator responses, and the bare message distinguished
+    /// neither.
+    pub(crate) fn acquire_job_as(&self, database_id: &str, claim: &str) -> Result<(), ApiError> {
         let inner = self
             .inner
             .as_ref()
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
         let mut jobs = inner.active_jobs.lock().map_err(ApiError::internal)?;
-        if jobs.insert(database_id.to_owned()) {
-            Ok(())
-        } else {
-            Err(ApiError::conflict(
-                "a replication job is already active for this database",
-            ))
+        match jobs.entry(database_id.to_owned()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert((claim.to_owned(), std::time::Instant::now()));
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let (running, since) = entry.get();
+                Err(ApiError::conflict(format!(
+                    "{running} has been running for {}s; it holds this database's job slot - \
+                     retry when it completes",
+                    since.elapsed().as_secs()
+                )))
+            }
         }
     }
 

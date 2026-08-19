@@ -25,6 +25,37 @@ pub fn spawn(
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        // No job survives a restart, so any table still marked
+        // 'snapshotting' holds a PARTIAL copy from a process that died
+        // mid-resnapshot. Left alone it answered queries as a healthy
+        // 'streaming' table with a fraction of the source's rows -
+        // quarantine each one visibly before the first cadence runs.
+        if let Ok(metadata) = state.metadata() {
+            match metadata.quarantine_interrupted_snapshots(
+                "a table copy was interrupted by a restart; resync to repair the partial data",
+            ) {
+                Ok(interrupted) => {
+                    for (database_id, table) in interrupted {
+                        state.publish(ApiEvent::database(
+                            "resnapshot.interrupted",
+                            &database_id,
+                            format!(
+                                "{table} was mid-copy when the process stopped; \
+                                 flagged needs_resync so the partial data never \
+                                 answers as healthy"
+                            ),
+                        ));
+                    }
+                }
+                Err(error) => {
+                    state.publish(ApiEvent::database(
+                        "supervisor.error",
+                        "control-plane",
+                        format!("interrupted-snapshot sweep failed: {error}"),
+                    ));
+                }
+            }
+        }
         let mut interval = tokio::time::interval(SUPERVISOR_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
