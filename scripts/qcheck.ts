@@ -124,7 +124,7 @@ try {
   if (!port) fail('could not read the published MySQL port')
 
   const mysql = (sql: string) =>
-    run(['docker', 'exec', container, 'mysql', '-uroot', '-proot', '-N', 'qcheck', '-e', sql])
+    run(['docker', 'exec', container, 'mysql', '-uroot', '-proot', '-N', '--default-character-set=utf8mb4', 'qcheck', '-e', sql])
   for (let attempt = 0; ; attempt += 1) {
     if (run(['docker', 'exec', container, 'mysql', '-uroot', '-proot', '-e', 'SELECT 1']).ok) break
     if (attempt > 60) fail('MySQL did not become ready')
