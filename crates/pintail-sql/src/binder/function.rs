@@ -653,18 +653,11 @@ pub(super) fn bind_between(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let subject = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
-    // BETWEEN is a pair of range comparisons, so its bounds coerce against
-    // an ENUM subject exactly as `<`/`>` literals do.
-    let low = super::coerce_enum_range_literal(
-        &subject,
+    let args = vec![
+        bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
-    );
-    let high = super::coerce_enum_range_literal(
-        &subject,
         bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
-    );
-    let args = vec![subject, low, high];
+    ];
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
     {

@@ -4186,17 +4186,15 @@ pub(crate) fn compare_mysql(
 ) -> Result<Ordering, ExecError> {
     match (left, right) {
         (Value::Utf8(left), Value::Utf8(right)) => Ok(compare_utf8_mysql(left, right, collation)),
-        // Two ENUM values order by declaration index, which is MySQL's rule.
-        // Against a plain string the label compares as text: a coerced range
-        // literal arrives as Value::Enum already, so this arm only carries
-        // uncoerced comparisons, where MySQL also falls back to the string
-        // form.
-        (Value::Enum { index: left, .. }, Value::Enum { index: right, .. }) => Ok(left.cmp(right)),
-        (Value::Enum { label, .. }, Value::Utf8(text)) => {
-            Ok(compare_utf8_mysql(label, text, collation))
-        }
-        (Value::Utf8(text), Value::Enum { label, .. }) => {
-            Ok(compare_utf8_mysql(text, label, collation))
+        // MySQL compares ENUM values as STRINGS in predicates, MIN/MAX and
+        // BETWEEN - the declaration index governs only sorting, which the
+        // sort comparator handles. Measured differentially against MySQL
+        // 8.4: `status > 'processing'` keeps the labels lexically above
+        // 'processing', not the ordinals above 2.
+        (Value::Enum { label: left, .. }, Value::Enum { label: right, .. })
+        | (Value::Enum { label: left, .. }, Value::Utf8(right))
+        | (Value::Utf8(left), Value::Enum { label: right, .. }) => {
+            Ok(compare_utf8_mysql(left, right, collation))
         }
         (Value::Binary(left), Value::Binary(right)) => Ok(left.cmp(right)),
         (Value::Boolean(left), Value::Boolean(right)) => Ok(left.cmp(right)),

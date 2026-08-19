@@ -3,10 +3,11 @@
 //! where alphabetical and declaration order disagree everywhere, so a path
 //! that falls back to text comparison cannot pass by luck.
 //!
-//! Ten shapes cover the surfaces the ordinal rule governs: bare ORDER BY in
-//! both directions, the customer's grouped tie-break, MIN/MAX, range
-//! predicates, BETWEEN, DISTINCT ordering, a `TopK` limit, and a window
-//! ORDER BY. The expectations are `MySQL` 8.4's answers for this data
+//! Ten shapes pin the split `MySQL` actually implements (confirmed
+//! differentially against 8.4): SORTING follows the declared ordinal -
+//! ORDER BY, grouped tie-breaks, DISTINCT, `TopK`, window order - while
+//! COMPARISON (ranges, BETWEEN, MIN/MAX) treats the value as its label
+//! string. The expectations are `MySQL` 8.4's answers for this data
 //! (mirrored differentially by the e2e corpus cases over the same shapes).
 
 use pintail_catalog::{
@@ -209,37 +210,35 @@ fn v3_a_grouped_tie_breaks_on_the_enum_ordinal() {
 }
 
 #[test]
-fn v4_min_and_max_follow_the_ordinal() {
-    // Alphabetically MIN would be cancelled and MAX shipped; by ordinal the
-    // answers are pending(1) and cancelled(5).
+fn v4_min_and_max_compare_as_strings() {
+    // MySQL's documented quirk, confirmed differentially: MIN/MAX over an
+    // ENUM compare the LABELS lexically, not the ordinals.
     let rows = run("SELECT MIN(status), MAX(status) FROM orders");
-    assert_eq!(rows, [["pending", "cancelled"]]);
+    assert_eq!(rows, [["cancelled", "shipped"]]);
 }
 
 #[test]
-fn v5_a_greater_than_range_compares_ordinals() {
-    // status > 'processing'(2): shipped(3) + delivered(3 rows) + cancelled(3
-    // rows) + shipped(1 row) = 7. Textually '> processing' would also catch
-    // 'shipped' but drop 'delivered' and 'cancelled'.
+fn v5_a_greater_than_range_compares_labels() {
+    // MySQL compares an ENUM to a string constant AS A STRING (confirmed
+    // differentially): > 'processing' keeps only 'shipped' - 1 row.
     let rows = run("SELECT COUNT(*) FROM orders WHERE status > 'processing'");
-    assert_eq!(rows, [["7"]]);
+    assert_eq!(rows, [["1"]]);
 }
 
 #[test]
-fn v6_a_less_than_range_compares_ordinals() {
-    // status < 'delivered'(4): pending 2 + processing 3 + shipped 1 = 6.
+fn v6_a_less_than_range_compares_labels() {
+    // < 'delivered' lexically keeps only 'cancelled' - 3 rows.
     let rows = run("SELECT COUNT(*) FROM orders WHERE status < 'delivered'");
-    assert_eq!(rows, [["6"]]);
+    assert_eq!(rows, [["3"]]);
 }
 
 #[test]
-fn v7_between_spans_the_declared_interval() {
-    // BETWEEN 'processing'(2) AND 'delivered'(4): processing 3 + shipped 1 +
-    // delivered 3 = 7. The text interval would be empty ('processing' >
-    // 'delivered' alphabetically is false - it would keep only rows between
-    // the two strings, which excludes shipped).
+fn v7_between_compares_labels() {
+    // BETWEEN 'processing' AND 'delivered' lexically is an empty interval
+    // ('processing' > 'delivered'), so no rows qualify. Confirmed against
+    // MySQL 8.4: ENUM constants in BETWEEN compare as strings.
     let rows = run("SELECT COUNT(*) FROM orders WHERE status BETWEEN 'processing' AND 'delivered'");
-    assert_eq!(rows, [["7"]]);
+    assert_eq!(rows, [["0"]]);
 }
 
 #[test]

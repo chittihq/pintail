@@ -651,24 +651,24 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['orders'],
   },
   {
-    name: 'enum: min and max follow the ordinal',
+    name: 'enum: min and max compare as strings',
     sql: 'SELECT MIN(status), MAX(status) FROM orders',
     tables: ['orders'],
   },
   {
-    // A string constant in a range predicate coerces to its declared
-    // ordinal: > 'processing' keeps shipped, delivered AND cancelled.
-    name: 'enum: a greater-than range compares ordinals',
+    // MySQL compares an ENUM to a string constant AS A STRING (confirmed
+    // differentially); only sorting follows the declared ordinal.
+    name: 'enum: a greater-than range compares as strings',
     sql: "SELECT COUNT(*) FROM orders WHERE status > 'processing'",
     tables: ['orders'],
   },
   {
-    name: 'enum: a less-than range compares ordinals',
+    name: 'enum: a less-than range compares as strings',
     sql: "SELECT COUNT(*) FROM orders WHERE status < 'delivered'",
     tables: ['orders'],
   },
   {
-    name: 'enum: between spans the declared interval',
+    name: 'enum: between compares as strings',
     sql: "SELECT COUNT(*) FROM orders WHERE status BETWEEN 'processing' AND 'delivered'",
     tables: ['orders'],
   },
