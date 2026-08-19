@@ -4,6 +4,31 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc4] - 2026-08-19
+
+Operability follow-ups from the customer's 19/19 parity run and the
+resnapshot-responsiveness report.
+
+### Added
+
+- Row-constructor IN: `(a, b, c) IN ((...), (...))` - the natural
+  predicate for composite-key tables - desugars to exact OR-of-AND
+  equalities. Verified against MySQL 8.4 and pinned by a twelve-case
+  oracle family (1,015 cases).
+- `SELECT VERSION()` reports the deployed release
+  (`8.4.0-pintail-<tag>` via the compose-provided build version), so a
+  deployment identifies its build on the wire.
+- A per-table resnapshot publishes progress events like the full
+  snapshot; the dashboard animates through long copies instead of
+  sitting on a motionless badge.
+
+### Fixed
+
+- The dashboard's Resync button retries the supervisor's busy window
+  (the job lock is held through every replication cycle, so clicks
+  frequently landed on a 409 that was swallowed silently) and failures
+  now toast with the reason.
+
 ## [0.0.4-rc3] - 2026-08-19
 
 A day of differential hunting: the oracle corpus grew to 1,003 cases,
