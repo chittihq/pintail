@@ -7,7 +7,7 @@ import type { QueryResponse, SnapshotStatus, TableSummary } from '@/types/pintai
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, runTableAction, discardDlq, retryDlq } = useControlPlane()
+const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, runTableAction, discardDlq, retryDlq, tableProgress } = useControlPlane()
 
 const databaseId = computed(() => String(route.params.id))
 const database = computed(() => databases.value.find((item) => item.id === databaseId.value) ?? null)
@@ -123,6 +123,24 @@ async function onTableAction(table: TableSummary, action: 'resync' | 'reconcile'
   }
 }
 
+/// Live copy progress for a table, when the event stream has reported any.
+/// The bar's fraction derives from elapsed/(elapsed + eta): the snapshot
+/// engine computes the ETA from measured throughput, so the fraction moves
+/// honestly even though the source's total row count is unknown here.
+function progressOf(table: TableSummary) {
+  const entry = tableProgress.value[`${databaseId.value}:${table.name}`]
+  if (!entry || table.state !== 'snapshotting') return null
+  const elapsed = (Date.now() - entry.startedAt) / 1000
+  const fraction = entry.etaSeconds != null && entry.etaSeconds >= 0
+    ? Math.min(0.99, elapsed / Math.max(elapsed + entry.etaSeconds, 1))
+    : null
+  return {
+    rows: entry.rows,
+    fraction,
+    eta: entry.etaSeconds != null && entry.etaSeconds >= 0 ? Math.round(entry.etaSeconds) : null,
+  }
+}
+
 function describeTable(table: TableSummary) {
   navigateTo(`/sql?db=${databaseId.value}&describe=${encodeURIComponent(table.name)}`)
 }
@@ -181,7 +199,21 @@ function describeTable(table: TableSummary) {
                     :title="table.remediation === 'resnapshot' ? 'An ambiguous source mutation was quarantined. Resnapshot to restore exact duplicate multiplicity.' : 'Inserts replicate exactly; an UPDATE or DELETE is quarantined instead of choosing an arbitrary duplicate and requires resnapshot.'"
                   >keyless · {{ table.mutation_guarantee.replaceAll('_', ' ') }}</Badge>
                 </TableCell>
-                <TableCell><Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge></TableCell>
+                <TableCell>
+                  <Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge>
+                  <div v-if="progressOf(table)" data-testid="resnapshot-progress" class="mt-1.5 w-40">
+                    <div class="bg-muted h-1.5 w-full overflow-hidden rounded-full">
+                      <div
+                        class="bg-primary h-full rounded-full transition-all duration-500"
+                        :class="progressOf(table)!.fraction == null ? 'w-1/3 animate-pulse' : ''"
+                        :style="progressOf(table)!.fraction != null ? { width: `${Math.round(progressOf(table)!.fraction! * 100)}%` } : {}"
+                      />
+                    </div>
+                    <span class="text-muted-foreground mt-0.5 block text-xs tabular-nums">
+                      {{ progressOf(table)!.rows.toLocaleString() }} rows copied<template v-if="progressOf(table)!.eta != null"> · ~{{ progressOf(table)!.eta }}s left</template>
+                    </span>
+                  </div>
+                </TableCell>
                 <TableCell class="font-mono">{{ table.rows.toLocaleString() }}</TableCell>
                 <TableCell class="font-mono">v{{ table.schema_version }}</TableCell>
                 <TableCell class="text-muted-foreground"><span class="block max-w-72 truncate" :title="table.last_error || undefined">{{ table.last_error || '—' }}</span></TableCell>

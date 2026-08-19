@@ -34,6 +34,13 @@ export function useControlPlane() {
   const statuses = useState<Record<string, DatabaseStatus>>('cp-statuses', () => ({}))
   const activity = useState<ActivityRecord[]>('cp-activity', () => [])
   const deadLetters = useState<DlqRecord[]>('cp-dlq', () => [])
+  /** Live copy progress per \`databaseId:table\`, parsed from the event
+   *  stream's snapshot.progress / resnapshot.progress frames. \`startedAt\`
+   *  anchors the ETA-derived completion fraction the progress bar renders. */
+  const tableProgress = useState<Record<string, { rows: number; etaSeconds: number | null; startedAt: number; updatedAt: number }>>(
+    'cp-table-progress',
+    () => ({}),
+  )
   const loading = useState('cp-loading', () => false)
   const error = useState('cp-error', () => '')
   const dark = useState('cp-dark', () => false)
@@ -128,7 +135,44 @@ export function useControlPlane() {
         if (chunk.done) break
         buffered += decoder.decode(chunk.value, { stream: true })
         if (buffered.includes('\n\n')) {
+          const complete = buffered.slice(0, buffered.lastIndexOf('\n\n'))
           buffered = buffered.slice(buffered.lastIndexOf('\n\n') + 2)
+          for (const frame of complete.split('\n\n')) {
+            const data = frame.split('\n').find((line) => line.startsWith('data: '))
+            if (!data) continue
+            try {
+              const event = JSON.parse(data.slice(6)) as {
+                kind: string
+                database_id?: string
+                table?: string
+                rows?: number
+                eta_seconds?: number | null
+              }
+              if (!event.database_id || !event.table) continue
+              const key = `${event.database_id}:${event.table}`
+              if (event.kind === 'resnapshot.progress' || event.kind === 'snapshot.progress') {
+                const existing = tableProgress.value[key]
+                tableProgress.value = {
+                  ...tableProgress.value,
+                  [key]: {
+                    rows: event.rows ?? existing?.rows ?? 0,
+                    etaSeconds: event.eta_seconds ?? null,
+                    startedAt: existing?.startedAt ?? Date.now(),
+                    updatedAt: Date.now(),
+                  },
+                }
+              } else if (
+                event.kind === 'resnapshot.completed'
+                || event.kind === 'snapshot.completed'
+                || event.kind === 'resnapshot.error'
+              ) {
+                const { [key]: _finished, ...rest } = tableProgress.value
+                tableProgress.value = rest
+              }
+            } catch {
+              // A malformed frame only skips its own parse; refresh still runs.
+            }
+          }
           await refreshLiveData()
         }
       }
@@ -378,6 +422,7 @@ export function useControlPlane() {
     setReconcileInterval,
     forceSnapshot,
     runTableAction,
+    tableProgress,
     removeDatabase,
     discardDlq,
     retryDlq,

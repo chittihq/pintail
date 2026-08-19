@@ -719,6 +719,49 @@ async function main() {
     }
   })
 
+  await check('a per-table Resync shows a live progress bar and completes', async () => {
+    // The exact flow a user reported as unresponsive: clicking the table
+    // row's Resync gave no feedback while the copy ran, and busy (409)
+    // answers died into a banner nobody watched. The dashboard now retries
+    // the busy window itself, toasts the accept, parses the progress events
+    // and renders a bar - all of which this asserts against a copy made
+    // slow enough to observe.
+    for (let doubling = 0; doubling < 9; doubling += 1) {
+      await sql(`INSERT INTO events (kind, amount, happened_at) SELECT kind, amount, happened_at FROM events`)
+    }
+    await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+    await page!.getByRole('link', { name: DATABASE }).first().click()
+    await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+
+    // One click, no manual retry loop: the busy window is the dashboard's
+    // job now. The accept toast is the feedback contract.
+    await page!.getByRole('button', { name: 'Resync', exact: true }).first().click()
+    await page!
+      .getByText('resnapshot accepted; other tables keep replicating')
+      .waitFor({ timeout: 45_000 })
+
+    // The progress bar renders while the copy runs, with a live row count.
+    const progress = page!.getByTestId('resnapshot-progress').first()
+    await progress.waitFor({ timeout: 30_000 })
+    const label = (await progress.textContent()) ?? ''
+    if (!/rows copied/.test(label)) {
+      throw new Error(`progress rendered without its row count: ${JSON.stringify(label)}`)
+    }
+
+    // And it finishes: the badge returns to streaming and the bar leaves.
+    const settled = Date.now() + 120_000
+    for (;;) {
+      const gone = await page!
+        .getByTestId('resnapshot-progress')
+        .count()
+        .then((count) => count === 0)
+      const body = (await page!.textContent('body')) ?? ''
+      if (gone && /streaming/i.test(body)) break
+      if (Date.now() > settled) throw new Error('the resync never settled back to streaming')
+      await Bun.sleep(2_000)
+    }
+  })
+
   await check('a backup destination saves, runs and restores', async () => {
     await page!.goto(`${pintailUrl}/backups`)
     await page!.getByRole('heading', { name: 'Backups' }).waitFor()
