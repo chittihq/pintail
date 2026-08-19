@@ -1,4 +1,5 @@
 import { toast } from 'vue-sonner'
+import { ApiFailure } from './usePintailApi'
 import { messageOf } from '@/lib/format'
 import type {
   ActivityRecord,
@@ -274,11 +275,26 @@ export function useControlPlane() {
   }
 
   async function runTableAction(databaseId: string, table: TableSummary, action: 'resync' | 'reconcile') {
+    // The supervisor holds the per-database job lock for the whole of every
+    // replication cycle, so a click frequently lands on a 409 that clears
+    // itself within seconds. Retrying briefly is the e2e harness's codified
+    // behavior for this endpoint; without it the click died silently into a
+    // page-level error nobody was looking at, and Resync read as
+    // unresponsive. Anything still failing after the window toasts loudly.
     try {
-      await request(
-        `/databases/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(table.name)}/${action}`,
-        { method: 'POST' },
-      )
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await request(
+            `/databases/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(table.name)}/${action}`,
+            { method: 'POST' },
+          )
+          break
+        } catch (failure) {
+          const busy = failure instanceof ApiFailure && failure.status === 409
+          if (!busy || attempt >= 14) throw failure
+          await new Promise((resolve) => setTimeout(resolve, 2000))
+        }
+      }
       if (action === 'resync') {
         toast(`${table.name} resnapshot accepted; other tables keep replicating`)
       } else {
@@ -286,6 +302,7 @@ export function useControlPlane() {
       }
     } catch (failure) {
       error.value = messageOf(failure)
+      toast(`${table.name} ${action} failed: ${messageOf(failure)}`)
       throw failure
     }
   }
