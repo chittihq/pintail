@@ -624,6 +624,74 @@ pub(super) fn bind_in_list(
     if list.is_empty() {
         return Err(BindError::UnsupportedExpression(expr.to_string()));
     }
+    // A row-constructor subject - `(a, b) IN ((1, 2), (3, 4))` - is exactly
+    // the OR over items of the AND of pairwise equalities, including under
+    // three-valued NULL logic, so it desugars here rather than teaching the
+    // executor about tuples. The natural predicate for composite-key tables
+    // (found by a customer addressing one).
+    if let Expr::Tuple(subject) = expr {
+        let mut alternatives: Option<BoundExpr> = None;
+        for item in list {
+            let Expr::Tuple(values) = item else {
+                return Err(BindError::UnsupportedExpression(format!(
+                    "IN list item {item} must be a row constructor of {} values",
+                    subject.len()
+                )));
+            };
+            if values.len() != subject.len() {
+                return Err(BindError::UnsupportedExpression(format!(
+                    "IN list item {item} must be a row constructor of {} values",
+                    subject.len()
+                )));
+            }
+            let mut conjunction: Option<BoundExpr> = None;
+            for (column, value) in subject.iter().zip(values) {
+                let left = bind_expr_inner(column, tables, aggregates, windows, subqueries)?;
+                let right = bind_expr_inner(value, tables, aggregates, windows, subqueries)?;
+                if !comparable(left.data_type, right.data_type) {
+                    return Err(BindError::InvalidScalarFunction("IN".to_owned()));
+                }
+                let equality = equality_expr(left, right)?;
+                conjunction = Some(match conjunction {
+                    None => equality,
+                    Some(existing) => BoundExpr {
+                        nullable: existing.nullable || equality.nullable,
+                        data_type: Some(DataType::Boolean),
+                        kind: BoundExprKind::Binary {
+                            op: BinaryOp::And,
+                            left: Box::new(existing),
+                            right: Box::new(equality),
+                        },
+                    },
+                });
+            }
+            let conjunction = conjunction.expect("row constructors are non-empty");
+            alternatives = Some(match alternatives {
+                None => conjunction,
+                Some(existing) => BoundExpr {
+                    nullable: existing.nullable || conjunction.nullable,
+                    data_type: Some(DataType::Boolean),
+                    kind: BoundExprKind::Binary {
+                        op: BinaryOp::Or,
+                        left: Box::new(existing),
+                        right: Box::new(conjunction),
+                    },
+                },
+            });
+        }
+        let bound = alternatives.expect("IN lists are non-empty");
+        if negated {
+            return Ok(BoundExpr {
+                nullable: bound.nullable,
+                data_type: Some(DataType::Boolean),
+                kind: BoundExprKind::Unary {
+                    op: crate::bound::UnaryOp::Not,
+                    expr: Box::new(bound),
+                },
+            });
+        }
+        return Ok(bound);
+    }
     let mut args = Vec::with_capacity(list.len() + 1);
     args.push(bind_expr_inner(
         expr, tables, aggregates, windows, subqueries,

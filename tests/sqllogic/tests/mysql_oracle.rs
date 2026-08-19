@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1003;
+const EXPECTED_CASES: usize = 1015;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -784,6 +784,38 @@ fn oracle_cases() -> Vec<OracleCase> {
     ] {
         cases.push(OracleCase {
             family: "typed diversify",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // Row-constructor IN, the natural predicate for composite-key tables
+    // (a customer needed it to address one; MySQL n=2, Pintail rejected).
+    // Desugars to OR-of-AND equalities in the binder; these pin the
+    // semantics across types, NOT IN, misses, and single-column tuples.
+    for floor in 0..6 {
+        cases.push(OracleCase {
+            family: "row constructor IN",
+            sql: format!(
+                "SELECT COUNT(*) FROM orders WHERE (user_id, status) IN \
+                 (({floor}, 'shipped'), ({}, 'pending'), (9, 'nope'))",
+                floor + 1
+            ),
+            ordered: true,
+        });
+    }
+    for sql in [
+        "SELECT id, name FROM events WHERE (id, tag) IN ((1, 'red'), (4, 'blue'), (7, 'zzz')) \
+         ORDER BY id",
+        "SELECT COUNT(*) FROM events WHERE (id, tag) NOT IN ((1, 'red'), (2, 'RED'))",
+        "SELECT COUNT(*) FROM orders WHERE (id, user_id, status) IN \
+         ((1, 1, 'shipped'), (4, 2, 'cancelled'), (4, 2, 'shipped'))",
+        "SELECT COUNT(*) FROM users WHERE (id) IN ((1), (3), (99))",
+        "SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id \
+         WHERE (o.user_id, o.status) IN ((1, 'shipped'), (3, 'pending')) ORDER BY o.id",
+        "SELECT COUNT(*) FROM events WHERE (id, note) IN ((1, 'Alpha'), (3, 'missing'))",
+    ] {
+        cases.push(OracleCase {
+            family: "row constructor IN",
             sql: sql.to_owned(),
             ordered: true,
         });
