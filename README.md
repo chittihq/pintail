@@ -102,14 +102,14 @@ measure of what a dashboard refresh costs, and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
-| Full table count | 1,424 ms | 9 ms | 9 ms |
-| Filtered count | 593 ms | 8 ms | 27 ms |
-| Group by status | 36,073 ms | 8 ms | 62 ms |
-| Region × status breakdown | 13,263 ms | 8 ms | 228 ms |
-| Monthly revenue (2023) | 5,676 ms | 10 ms | 41 ms |
-| Top 10 spenders | 806,748 ms | 91 ms | 237 ms |
-| Regional analytics | 57,445 ms | 9 ms | 159 ms |
-| Join users + orders | 1,430,931 ms | 10 ms | 188 ms |
+| Full table count | 1,424 ms | 13 ms | 13 ms |
+| Filtered count | 593 ms | 13 ms | 30 ms |
+| Group by status | 36,073 ms | 14 ms | 67 ms |
+| Region × status breakdown | 13,263 ms | 12 ms | 265 ms |
+| Monthly revenue (2023) | 5,676 ms | 13 ms | 44 ms |
+| Top 10 spenders | 806,748 ms | 89 ms | 270 ms |
+| Regional analytics | 57,445 ms | 12 ms | 162 ms |
+| Join users + orders | 1,430,931 ms | 13 ms | 200 ms |
 
 **Novel queries — raw engine speed.** The same shapes with constants the memo
 has never seen, so both engines actually execute. **ClickHouse is faster here.**
@@ -118,10 +118,10 @@ win it.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Filtered count, novel constant | 1,077 ms | 398 ms | 49 ms | 0.12× |
-| Group by region (novel group column) | 14,048 ms | 903 ms | 88 ms | 0.10× |
-| Monthly revenue, novel year | 9,180 ms | 136 ms | 48 ms | 0.35× |
-| Regional analytics, novel range | 58,183 ms | 470 ms | 168 ms | 0.36× |
+| Filtered count, novel constant | 1,077 ms | 411 ms | 51 ms | 0.12× |
+| Group by region (novel group column) | 14,048 ms | 819 ms | 81 ms | 0.10× |
+| Monthly revenue, novel year | 9,180 ms | 134 ms | 49 ms | 0.37× |
+| Regional analytics, novel range | 58,183 ms | 523 ms | 173 ms | 0.33× |
 
 ClickHouse is measured in both configurations: plain `MergeTree` for its
 raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is
@@ -141,7 +141,7 @@ queries and not enough to support a general claim about either engine. MySQL
 runs with a 1 GB buffer pool, so its column is a baseline being escaped
 rather than a tuned competitor.
 
-<sub>Generated from `benchmark/results.json` (2026-08-19T13:34:28.090Z) by
+<sub>Generated from `benchmark/results.json` (2026-08-19T17:15:35.360Z) by
 `benchmark/render-readme-table.ts` — do not edit by hand.</sub>
 
 <!-- benchmark:end -->
