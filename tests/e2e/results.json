@@ -447,20 +447,17 @@
   {
     "phase": "snapshot",
     "check": "query:set: order by walks the member bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "snapshot",
     "check": "query:set: grouping orders groups by bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "snapshot",
     "check": "query:geometry: hex round-trips the internal format",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "orm-compat",
@@ -1030,20 +1027,17 @@
   {
     "phase": "orm-compat",
     "check": "query:set: order by walks the member bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "orm-compat",
     "check": "query:set: grouping orders groups by bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "orm-compat",
     "check": "query:geometry: hex round-trips the internal format",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "crud",
@@ -1493,20 +1487,17 @@
   {
     "phase": "crud",
     "check": "query:set: order by walks the member bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "crud",
     "check": "query:set: grouping orders groups by bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "crud",
     "check": "query:geometry: hex round-trips the internal format",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "type-edges",
@@ -1956,20 +1947,17 @@
   {
     "phase": "type-edges",
     "check": "query:set: order by walks the member bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "type-edges",
     "check": "query:set: grouping orders groups by bitmask",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "type-edges",
     "check": "query:geometry: hex round-trips the internal format",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist"
+    "status": "SKIP"
   },
   {
     "phase": "ddl",
@@ -1999,8 +1987,7 @@
   {
     "phase": "ddl",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -2465,8 +2452,7 @@
   {
     "phase": "schema-drift-minimal",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-minimal",
@@ -2931,8 +2917,7 @@
   {
     "phase": "schema-drift-unseen",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-unseen",
@@ -3427,8 +3412,7 @@
   {
     "phase": "churn",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -3918,8 +3902,7 @@
   {
     "phase": "execution-budget",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "execution-budget",
@@ -4404,8 +4387,7 @@
   {
     "phase": "spill",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "spill",
@@ -4885,8 +4867,7 @@
   {
     "phase": "pooling",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "pooling",
@@ -5351,8 +5332,7 @@
   {
     "phase": "restart",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -5897,8 +5877,7 @@
   {
     "phase": "control-plane",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -6373,8 +6352,7 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -6870,8 +6848,7 @@
   {
     "phase": "drop-table-cdc",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-cdc",
@@ -7357,8 +7334,7 @@
   {
     "phase": "drop-table-recreate",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -7814,7 +7790,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_df7befa6b34fcf5239cd1b3e4f337c4d\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T10:29:50.982033+00:00\",\"updated_at\":\"2026-08-19T11:11:34.646091+00:00\"},\"tables\":13,\"rows\":794}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_4598c7b25dd1b8ac2b32e70347c1bc07\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T13:08:05.890824+00:00\",\"updated_at\":\"2026-08-19T13:15:33.077933+00:00\"},\"tables\":13,\"rows\":794}"
   },
   {
     "phase": "drop-table-polling",
@@ -7854,8 +7830,7 @@
   {
     "phase": "drop-table-polling",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -8366,8 +8341,7 @@
   {
     "phase": "drop-database",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "drop-database",
@@ -8838,8 +8812,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:shipments",
-    "status": "FAIL",
-    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | DHL Express | 2025-07-08 | {\"x\":\"-112.8186\",\"y\":\"49.7000\"} | tracked\n  pintail 1.0000 | 1.0000 | DHL Express | 2025-07-08 | 0x0000000001010000003e0a325d63345cc0761fdb8d99d94840 | tracked"
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",

@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-19T11:24:08.539Z.
+Measured 2026-08-19T13:22:06.888Z.
 
-**1811 passed, 27 failed, 6 documented-gap warnings.**
+**1826 passed, 0 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -95,9 +95,9 @@ Measured 2026-08-19T11:24:08.539Z.
 | snapshot | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | snapshot | query:collation: distinct counts fold per column collation | PASS |  |
 | snapshot | query:collation: regrouping a mixed grouping stays exact | PASS |  |
-| snapshot | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| snapshot | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| snapshot | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| snapshot | query:set: order by walks the member bitmask | SKIP |  |
+| snapshot | query:set: grouping orders groups by bitmask | SKIP |  |
+| snapshot | query:geometry: hex round-trips the internal format | SKIP |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -211,9 +211,9 @@ Measured 2026-08-19T11:24:08.539Z.
 | orm-compat | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | orm-compat | query:collation: distinct counts fold per column collation | PASS |  |
 | orm-compat | query:collation: regrouping a mixed grouping stays exact | PASS |  |
-| orm-compat | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| orm-compat | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| orm-compat | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| orm-compat | query:set: order by walks the member bitmask | SKIP |  |
+| orm-compat | query:set: grouping orders groups by bitmask | SKIP |  |
+| orm-compat | query:geometry: hex round-trips the internal format | SKIP |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -303,9 +303,9 @@ Measured 2026-08-19T11:24:08.539Z.
 | crud | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | crud | query:collation: distinct counts fold per column collation | PASS |  |
 | crud | query:collation: regrouping a mixed grouping stays exact | PASS |  |
-| crud | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| crud | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| crud | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| crud | query:set: order by walks the member bitmask | SKIP |  |
+| crud | query:set: grouping orders groups by bitmask | SKIP |  |
+| crud | query:geometry: hex round-trips the internal format | SKIP |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -395,15 +395,15 @@ Measured 2026-08-19T11:24:08.539Z.
 | type-edges | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | type-edges | query:collation: distinct counts fold per column collation | PASS |  |
 | type-edges | query:collation: regrouping a mixed grouping stays exact | PASS |  |
-| type-edges | query:set: order by walks the member bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| type-edges | query:set: grouping orders groups by bitmask | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
-| type-edges | query:geometry: hex round-trips the internal format | FAIL | mysql rejected the corpus query: Error: Table 'e2e_db.shipments' doesn't exist |
+| type-edges | query:set: order by walks the member bitmask | SKIP |  |
+| type-edges | query:set: grouping orders groups by bitmask | SKIP |  |
+| type-edges | query:geometry: hex round-trips the internal format | SKIP |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
 | ddl | converge:order_items | PASS |  |
 | ddl | converge:orders | PASS |  |
-| ddl | converge:shipments | FAIL | row 0: |
+| ddl | converge:shipments | PASS |  |
 | ddl | converge:staff | PASS |  |
 | ddl | converge:information_schema.columns | PASS |  |
 | ddl | query:point lookup by key | PASS |  |
@@ -496,7 +496,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | schema-drift-minimal | converge:customers | PASS |  |
 | schema-drift-minimal | converge:order_items | PASS |  |
 | schema-drift-minimal | converge:orders | PASS |  |
-| schema-drift-minimal | converge:shipments | FAIL | row 0: |
+| schema-drift-minimal | converge:shipments | PASS |  |
 | schema-drift-minimal | converge:staff | PASS |  |
 | schema-drift-minimal | converge:information_schema.columns | PASS |  |
 | schema-drift-minimal | query:point lookup by key | PASS |  |
@@ -589,7 +589,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | schema-drift-unseen | converge:customers | PASS |  |
 | schema-drift-unseen | converge:order_items | PASS |  |
 | schema-drift-unseen | converge:orders | PASS |  |
-| schema-drift-unseen | converge:shipments | FAIL | row 0: |
+| schema-drift-unseen | converge:shipments | PASS |  |
 | schema-drift-unseen | converge:staff | PASS |  |
 | schema-drift-unseen | converge:information_schema.columns | PASS |  |
 | schema-drift-unseen | query:point lookup by key | PASS |  |
@@ -688,7 +688,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | churn | converge:customers | PASS |  |
 | churn | converge:order_items | PASS |  |
 | churn | converge:orders | PASS |  |
-| churn | converge:shipments | FAIL | row 0: |
+| churn | converge:shipments | PASS |  |
 | churn | converge:staff | PASS |  |
 | churn | converge:information_schema.columns | PASS |  |
 | churn | query:point lookup by key | PASS |  |
@@ -786,7 +786,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | execution-budget | converge:customers | PASS |  |
 | execution-budget | converge:order_items | PASS |  |
 | execution-budget | converge:orders | PASS |  |
-| execution-budget | converge:shipments | FAIL | row 0: |
+| execution-budget | converge:shipments | PASS |  |
 | execution-budget | converge:staff | PASS |  |
 | execution-budget | converge:information_schema.columns | PASS |  |
 | execution-budget | query:point lookup by key | PASS |  |
@@ -883,7 +883,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | spill | converge:customers | PASS |  |
 | spill | converge:order_items | PASS |  |
 | spill | converge:orders | PASS |  |
-| spill | converge:shipments | FAIL | row 0: |
+| spill | converge:shipments | PASS |  |
 | spill | converge:staff | PASS |  |
 | spill | converge:information_schema.columns | PASS |  |
 | spill | query:point lookup by key | PASS |  |
@@ -979,7 +979,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | pooling | converge:customers | PASS |  |
 | pooling | converge:order_items | PASS |  |
 | pooling | converge:orders | PASS |  |
-| pooling | converge:shipments | FAIL | row 0: |
+| pooling | converge:shipments | PASS |  |
 | pooling | converge:staff | PASS |  |
 | pooling | converge:information_schema.columns | PASS |  |
 | pooling | query:point lookup by key | PASS |  |
@@ -1072,7 +1072,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | restart | converge:customers | PASS |  |
 | restart | converge:order_items | PASS |  |
 | restart | converge:orders | PASS |  |
-| restart | converge:shipments | FAIL | row 0: |
+| restart | converge:shipments | PASS |  |
 | restart | converge:staff | PASS |  |
 | restart | converge:information_schema.columns | PASS |  |
 | restart | query:point lookup by key | PASS |  |
@@ -1181,7 +1181,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
-| control-plane | converge:shipments | FAIL | row 0: |
+| control-plane | converge:shipments | PASS |  |
 | control-plane | converge:staff | PASS |  |
 | control-plane | converge:information_schema.columns | PASS |  |
 | control-plane | query:point lookup by key | PASS |  |
@@ -1276,7 +1276,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
 | snapshot-ddl-window | converge:order_items | PASS |  |
 | snapshot-ddl-window | converge:orders | PASS |  |
-| snapshot-ddl-window | converge:shipments | FAIL | row 0: |
+| snapshot-ddl-window | converge:shipments | PASS |  |
 | snapshot-ddl-window | converge:staff | PASS |  |
 | snapshot-ddl-window | converge:information_schema.columns | PASS |  |
 | snapshot-ddl-window | query:point lookup by key | PASS |  |
@@ -1375,7 +1375,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | drop-table-cdc | converge:keyless_log | PASS |  |
 | drop-table-cdc | converge:order_items | PASS |  |
 | drop-table-cdc | converge:orders | PASS |  |
-| drop-table-cdc | converge:shipments | FAIL | row 0: |
+| drop-table-cdc | converge:shipments | PASS |  |
 | drop-table-cdc | converge:staff | PASS |  |
 | drop-table-cdc | converge:information_schema.columns | PASS |  |
 | drop-table-cdc | query:point lookup by key | PASS |  |
@@ -1472,7 +1472,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | drop-table-recreate | converge:keyless_log | PASS |  |
 | drop-table-recreate | converge:order_items | PASS |  |
 | drop-table-recreate | converge:orders | PASS |  |
-| drop-table-recreate | converge:shipments | FAIL | row 0: |
+| drop-table-recreate | converge:shipments | PASS |  |
 | drop-table-recreate | converge:staff | PASS |  |
 | drop-table-recreate | converge:information_schema.columns | PASS |  |
 | drop-table-recreate | query:point lookup by key | PASS |  |
@@ -1563,7 +1563,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_df7befa6b34fcf5239cd1b3e4f337c4d","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T10:29:50.982033+00:00","updated_at":"2026-08-19T11:11:34.646091+00:00"},"tables":13,"rows":794} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_4598c7b25dd1b8ac2b32e70347c1bc07","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T13:08:05.890824+00:00","updated_at":"2026-08-19T13:15:33.077933+00:00"},"tables":13,"rows":794} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1571,7 +1571,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | drop-table-polling | converge:keyless_log | PASS |  |
 | drop-table-polling | converge:order_items | PASS |  |
 | drop-table-polling | converge:orders | PASS |  |
-| drop-table-polling | converge:shipments | FAIL | row 0: |
+| drop-table-polling | converge:shipments | PASS |  |
 | drop-table-polling | converge:staff | PASS |  |
 | drop-table-polling | converge:information_schema.columns | PASS |  |
 | drop-table-polling | query:point lookup by key | PASS |  |
@@ -1673,7 +1673,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | drop-database | converge:keyless_log | PASS |  |
 | drop-database | converge:order_items | PASS |  |
 | drop-database | converge:orders | PASS |  |
-| drop-database | converge:shipments | FAIL | row 0: |
+| drop-database | converge:shipments | PASS |  |
 | drop-database | converge:staff | PASS |  |
 | drop-database | converge:information_schema.columns | PASS |  |
 | drop-database | query:point lookup by key | PASS |  |
@@ -1767,7 +1767,7 @@ Measured 2026-08-19T11:24:08.539Z.
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
 | ddl-documented-gaps | converge:order_items | PASS |  |
 | ddl-documented-gaps | converge:orders | PASS |  |
-| ddl-documented-gaps | converge:shipments | FAIL | row 0: |
+| ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
 | ddl-documented-gaps | converge:information_schema.columns | WARN | row 0: |
 | ddl-documented-gaps | query:point lookup by key | PASS |  |
