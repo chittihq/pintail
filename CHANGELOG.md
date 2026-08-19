@@ -4,16 +4,19 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.4-rc2] - 2026-08-19
 
 ### Fixed
 
-- An ENUM now compares and orders by its declared ordinal everywhere,
-  matching MySQL: ORDER BY in both directions, grouped tie-breaks,
-  MIN/MAX, range predicates and BETWEEN (whose string constants coerce
-  to their declared ordinal), DISTINCT, limited sorts, and window
-  ordering. The columnar batch path had been rebuilding plain strings,
-  so every one of those surfaces silently sorted alphabetically.
+- An ENUM now follows the split MySQL actually implements, confirmed
+  differentially against MySQL 8.4: SORTING - ORDER BY in both
+  directions, grouped tie-breaks, DISTINCT, limited sorts, and window
+  ordering - walks the declared ordinal, while COMPARISON - range
+  predicates, BETWEEN, MIN/MAX - treats the value as its label string.
+  Every one of those surfaces previously sorted alphabetically: the
+  columnar batch path, the memtable row path (fresh CDC rows), and
+  repacked projection/aggregate batches all rebuilt plain strings and
+  erased the declaration index.
 - Grouping keys of two text collations now answers instead of refusing:
   each key folds under its own collation - grouping never compares one
   key column against another - exactly as sorting already ordered each
@@ -22,6 +25,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A distinct aggregate folds its values under its own expression's
   collation, not the query's: COUNT(DISTINCT general_ci_col) PAD-folds
   trailing spaces even when the rest of the query resolved 0900_ai_ci.
+- The supervisor says why the CDC handoff rebuild is waiting (a
+  resync.retry event naming the error) instead of retrying silently,
+  so a database that pauses after a polling-to-cdc switch diagnoses
+  itself in the event log.
 
 ## [0.0.4-rc1] - 2026-08-18
 
