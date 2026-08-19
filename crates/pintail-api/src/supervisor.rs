@@ -91,13 +91,27 @@ fn supervise_once(state: &ApiState) {
             && checkpoint.kind == "polling"
         {
             // A begin failure means the job is already active or the
-            // control plane hiccupped; the next cadence retries.
-            if let Ok(run_id) = crate::snapshot::begin_snapshot_job(state, &database.id, true) {
-                state.publish(ApiEvent::database(
-                    "resync.auto",
-                    &database.id,
-                    format!("rebuilding the CDC handoff after polling via snapshot {run_id}"),
-                ));
+            // control plane hiccupped; the next cadence retries. Said out
+            // loud rather than swallowed: the e2e gate twice watched a
+            // database sit in exactly this state for its whole two-minute
+            // adoption window with nothing in the log to say why - the
+            // handoff was retrying against a held job lock every cadence,
+            // and silence here is indistinguishable from not trying.
+            match crate::snapshot::begin_snapshot_job(state, &database.id, true) {
+                Ok(run_id) => {
+                    state.publish(ApiEvent::database(
+                        "resync.auto",
+                        &database.id,
+                        format!("rebuilding the CDC handoff after polling via snapshot {run_id}"),
+                    ));
+                }
+                Err(error) => {
+                    state.publish(ApiEvent::database(
+                        "resync.retry",
+                        &database.id,
+                        format!("the CDC handoff rebuild will retry next cadence: {error}"),
+                    ));
+                }
             }
             continue;
         }
