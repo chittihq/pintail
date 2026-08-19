@@ -5831,17 +5831,6 @@
   },
   {
     "phase": "control-plane",
-    "check": "api:schema drift during downtime: purged DDL recovers by re-probe",
-    "status": "FAIL",
-    "detail": "Error: POST /api/databases/db_d48a8a3a2987b827bae8aac2799c81ac/tables/drift_messages/resync returned 404: {\"error\":\"table does not exist\"}"
-  },
-  {
-    "phase": "control-plane",
-    "check": "api:reset starts the mirror over with the saved connection",
-    "status": "PASS"
-  },
-  {
-    "phase": "control-plane",
     "check": "api:keyless policy: ambiguity quarantines and exact multiplicity repairs",
     "status": "PASS"
   },
@@ -6063,8 +6052,7 @@
   {
     "phase": "control-plane",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -6169,8 +6157,7 @@
   {
     "phase": "control-plane",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -6540,8 +6527,7 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -6646,8 +6632,7 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -7038,8 +7023,7 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-cdc",
@@ -7144,8 +7128,7 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-cdc",
@@ -7526,8 +7509,7 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -7632,8 +7614,7 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -7809,7 +7790,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_d48a8a3a2987b827bae8aac2799c81ac\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T19:02:40.055802+00:00\",\"updated_at\":\"2026-08-19T19:10:05.067355+00:00\"},\"tables\":13,\"rows\":795}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_790da42aae3d4feadb4ff389c6c3c049\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T16:51:40.041183+00:00\",\"updated_at\":\"2026-08-19T16:58:07.005456+00:00\"},\"tables\":13,\"rows\":794}"
   },
   {
     "phase": "drop-table-polling",
@@ -8024,8 +8005,7 @@
   {
     "phase": "drop-table-polling",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -8130,8 +8110,7 @@
   {
     "phase": "drop-table-polling",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -8537,8 +8516,7 @@
   {
     "phase": "drop-database",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-database",
@@ -8643,8 +8621,7 @@
   {
     "phase": "drop-database",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "drop-database",
@@ -9011,8 +8988,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:date bucketing",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
@@ -9117,8 +9093,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:temporal convert and date_format grain",
-    "status": "FAIL",
-    "detail": "Error: query engine failed: invalid MySQL date/time value"
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
