@@ -3332,20 +3332,40 @@ fn build_local_fused_join_groups(
     // instead of hash, and emitting the untouched slots invented zero-count
     // groups an INNER join must not have (sakila: every language appeared
     // with COUNT 0 beside English's 1000).
-    Ok(groups
-        .into_iter()
-        .zip(touched)
-        .filter(|(_, touched)| *touched)
-        .map(|(group, _)| {
-            let key = group
-                .values
-                .iter()
-                .cloned()
-                .map(|value| normalized_collation_value(value, group_collation))
-                .collect();
-            (key, group)
-        })
-        .collect())
+    //
+    // Slots whose keys NORMALIZE equal must MERGE, not last-write-win: a
+    // plain collect() dropped every earlier slot's states whenever two
+    // build spellings folded to one key, silently losing their rows'
+    // aggregates (#258's vanished red/RED group).
+    let mut folded: HashMap<Vec<Value>, AggregateGroup> = HashMap::with_capacity(groups.len());
+    for (group, touched) in groups.into_iter().zip(touched) {
+        if !touched {
+            continue;
+        }
+        let key: Vec<Value> = group
+            .values
+            .iter()
+            .cloned()
+            .map(|value| normalized_collation_value(value, group_collation))
+            .collect();
+        match folded.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(group);
+            }
+            Entry::Occupied(mut entry) => {
+                for ((state, partial_state), aggregate) in entry
+                    .get_mut()
+                    .states
+                    .iter_mut()
+                    .zip(group.states)
+                    .zip(aggregates)
+                {
+                    state.merge(aggregate, partial_state, &memory)?;
+                }
+            }
+        }
+    }
+    Ok(folded)
 }
 
 /// Dictionary-code aggregation for low-cardinality string group keys

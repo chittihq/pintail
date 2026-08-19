@@ -39,6 +39,16 @@ fn items_schema() -> TableSchema {
             Column::new(3, "ai", DataType::Utf8, true).with_collation(Some(AI_CI.to_owned())),
             Column::new(4, "school", DataType::UInt64, false),
             Column::new(5, "n", DataType::Int64, false),
+            Column::new(6, "placed", DataType::DateTime64 { fsp: 0 }, false),
+            Column::new(
+                7,
+                "amt",
+                DataType::Decimal {
+                    precision: 12,
+                    scale: 2,
+                },
+                false,
+            ),
         ],
     )
     .expect("schema")
@@ -65,6 +75,8 @@ fn item_row(id: u64, ci: &str, ai: &str, school: u64, n: i64) -> StoredRow {
             Value::Utf8(ai.to_owned()),
             Value::UInt64(school),
             Value::Int64(n),
+            Value::Utf8(format!("2026-01-{id:02} 10:00:00")),
+            Value::Utf8(format!("{n}.25")),
         ],
         id,
         false,
@@ -312,4 +324,21 @@ fn v12_a_join_grouped_on_the_build_sides_general_ci_key_pad_folds() {
          GROUP BY i.ci ORDER BY i.ci",
     );
     assert_eq!(rows, [["blue", "2", "2"], ["red", "3", "1"]]);
+}
+
+#[test]
+fn v13_two_pass_lanes_over_a_join_keep_the_general_ci_fold() {
+    // The exact #258 oracle shape: MIN(datetime) + MAX(decimal) route the
+    // single general_ci key through the streaming two-pass lanes over a
+    // JOIN output. The fold must still PAD/case-merge red/RED/'red '.
+    let rows = run("SELECT i.ci, MIN(i.placed), MAX(i.amt) FROM schools s \
+         JOIN items i ON i.school = s.id \
+         GROUP BY i.ci ORDER BY MIN(i.placed), MAX(i.amt)");
+    assert_eq!(
+        rows,
+        [
+            ["red", "2026-01-01 10:00:00", "10.25"],
+            ["blue", "2026-01-04 10:00:00", "4.25"],
+        ]
+    );
 }
