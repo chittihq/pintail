@@ -748,6 +748,24 @@ async function main() {
       throw new Error(`progress rendered without its row count: ${JSON.stringify(label)}`)
     }
 
+    // The bar survives a reload: the server retains the last progress frame
+    // and /tables hands it back, so a page opened mid-copy is not blind
+    // until the next SSE frame. If the copy finished during the reload the
+    // settled state is the correct render and the check moves on.
+    await page!.reload()
+    await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+    const reloadDeadline = Date.now() + 20_000
+    for (;;) {
+      const restored = await page!.getByTestId('resnapshot-progress').count()
+      const body = (await page!.textContent('body')) ?? ''
+      const finished = !/snapshotting/i.test(body) && /streaming/i.test(body)
+      if (restored > 0 || finished) break
+      if (Date.now() > reloadDeadline) {
+        throw new Error('after a reload mid-copy, neither the restored progress bar nor a settled table appeared')
+      }
+      await Bun.sleep(1_000)
+    }
+
     // And it finishes: the badge returns to streaming and the bar leaves.
     const settled = Date.now() + 120_000
     for (;;) {
