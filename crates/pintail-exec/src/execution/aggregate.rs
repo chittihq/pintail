@@ -3689,19 +3689,37 @@ fn build_local_direct_groups(
             &memory,
         )?;
     }
-    Ok(groups
-        .into_iter()
-        .map(|group| {
-            let key = group
-                .values
-                .iter()
-                .cloned()
-                .zip(key_collations)
-                .map(|(value, collation)| normalized_collation_value(value, *collation))
-                .collect();
-            (key, group)
-        })
-        .collect())
+    // Groups whose keys NORMALIZE equal must MERGE, not last-write-win: the
+    // ASCII fast path above can leave two local groups whose keys the
+    // collation folds together, and a plain collect() dropped every earlier
+    // group's states (#258, the same defect the fused finalize had).
+    let mut folded: HashMap<Vec<Value>, AggregateGroup> = HashMap::with_capacity(groups.len());
+    for group in groups {
+        let key: Vec<Value> = group
+            .values
+            .iter()
+            .cloned()
+            .zip(key_collations)
+            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .collect();
+        match folded.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(group);
+            }
+            Entry::Occupied(mut entry) => {
+                for ((state, partial_state), aggregate) in entry
+                    .get_mut()
+                    .states
+                    .iter_mut()
+                    .zip(group.states)
+                    .zip(aggregates)
+                {
+                    state.merge(aggregate, partial_state, &memory)?;
+                }
+            }
+        }
+    }
+    Ok(folded)
 }
 
 fn build_local_expression_groups(
@@ -4019,11 +4037,11 @@ pub(super) fn direct_group_matches(
             direct_group_value(batch, row, *column).is_ok_and(|candidate| {
                 match (grouped, candidate) {
                     (Value::Utf8(left), Value::Utf8(right)) => {
-                        if left.is_ascii() && right.is_ascii() {
-                            left.eq_ignore_ascii_case(right)
-                        } else {
-                            compare_utf8_mysql(left, right, *collation) == Ordering::Equal
-                        }
+                        // The ASCII fast path may only answer EQUAL: it
+                        // ignores PAD SPACE, so 'red' vs 'red ' must fall
+                        // through to the collation, which pads (#258).
+                        (left.is_ascii() && right.is_ascii() && left.eq_ignore_ascii_case(right))
+                            || compare_utf8_mysql(left, right, *collation) == Ordering::Equal
                     }
                     _ => grouped == candidate,
                 }

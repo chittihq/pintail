@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1002;
+const EXPECTED_CASES: usize = 1003;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -765,6 +765,9 @@ fn oracle_cases() -> Vec<OracleCase> {
          JOIN events e ON e.id = o.user_id GROUP BY o.status ORDER BY o.status",
         "SELECT o.id, JSON_EXTRACT(o.meta, '$.score'), o.status FROM orders o \
          WHERE o.meta IS NOT NULL AND o.status IN ('shipped', 'delivered') ORDER BY o.id",
+        "SELECT e.tag, MIN(o.placed_at), MAX(o.total) FROM events e \
+         JOIN orders o ON o.user_id = e.id GROUP BY e.tag \
+         ORDER BY MIN(o.placed_at), MAX(o.total)",
         "SELECT e.name, MIN(o.placed_at), MAX(o.total) FROM events e \
          JOIN orders o ON o.user_id = e.id GROUP BY e.name \
          ORDER BY MIN(o.placed_at), MAX(o.total)",
