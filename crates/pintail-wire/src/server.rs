@@ -936,10 +936,22 @@ impl Backend {
     }
 }
 
+/// The version string clients see: the deployed release when the image
+/// says which one it is (`PINTAIL_BUILD_VERSION`, set by the compose
+/// file from the image tag), else the crate version. A customer had to
+/// verify rc1-rc3 were live purely by behavior because every build
+/// reported 8.4.0-pintail-0.1.0.
+fn reported_server_version() -> String {
+    std::env::var("PINTAIL_BUILD_VERSION").map_or_else(
+        |_| format!("8.4.0-pintail-{}", env!("CARGO_PKG_VERSION")),
+        |build| format!("8.4.0-pintail-{build}"),
+    )
+}
+
 #[async_trait]
 impl Handler for Backend {
     fn server_version(&self) -> String {
-        format!("8.4.0-pintail-{}", env!("CARGO_PKG_VERSION"))
+        reported_server_version()
     }
 
     fn connection_id(&self) -> u32 {
@@ -1679,7 +1691,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
 }
 
 fn mysql_compat_version() -> String {
-    format!("8.4.0-pintail-{}", env!("CARGO_PKG_VERSION"))
+    reported_server_version()
 }
 
 fn compatibility_charset_query(
