@@ -453,3 +453,11 @@ clustered query execution, synchronous high availability, source writes,
 multi-tenant isolation, spatial querying, or background compaction. Those
 boundaries are explicit rather than emulated with results that look plausible
 but may be wrong.
+
+- A `CASE`/`IF` branch value with a scale smaller than the unified DECIMAL
+  result type renders at the unified scale: `CASE WHEN .. THEN 0 ELSE
+  dec(12,2) END` answers `0.00` where MySQL 8.4 answers `0` (MySQL keeps
+  the branch value's own scale; its `COALESCE` rescales like Pintail
+  does). Pintail's decimal columns carry one canonical text scale per
+  COLUMN, regenerated whenever a batch is repacked, so a per-VALUE scale
+  does not survive execution. Numerically the answers are equal.
