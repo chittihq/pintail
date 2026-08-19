@@ -661,15 +661,25 @@ async function phaseDdl() {
   await sql(`ALTER TABLE customers DROP COLUMN latin_note`)
   await sql(`UPDATE customers SET balance = balance + 1 WHERE id = 1`)
   // CREATE TABLE mid-stream: the replica must pick it up automatically.
+  // route (GEOMETRY) and services (SET) exist because real data found
+  // both types broken while the gate stayed green: sakila's address lost
+  // its SRID+WKB header through reconciliation and special_features
+  // ordered alphabetically instead of by member bitmask. Convergence now
+  // byte-checks a point, a linestring and a NULL every run, and the
+  // corpus orders by the SET.
   await sql(`CREATE TABLE shipments (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     order_id BIGINT UNSIGNED NOT NULL,
     carrier VARCHAR(32) NOT NULL,
-    shipped_on DATE NULL
+    shipped_on DATE NULL,
+    route GEOMETRY NULL,
+    services SET('fragile','insured','priority','tracked') NOT NULL DEFAULT ''
   ) DEFAULT CHARACTER SET utf8mb4`)
   await sql(
-    `INSERT INTO shipments (order_id, carrier, shipped_on) VALUES ` +
-      `(1, 'DHL', '2025-07-08'), (2, 'UPS', NULL), (3, 'FedEx', '2025-07-09')`,
+    `INSERT INTO shipments (order_id, carrier, shipped_on, route, services) VALUES ` +
+      `(1, 'DHL', '2025-07-08', ST_GeomFromText('POINT(-112.8185647 49.6999986)'), 'tracked'), ` +
+      `(2, 'UPS', NULL, NULL, 'fragile,priority'), ` +
+      `(3, 'FedEx', '2025-07-09', ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 'insured,tracked')`,
   )
   await sql(`UPDATE shipments SET carrier = 'DHL Express' WHERE id = 1`)
   // Storage-compatible MODIFY COLUMN evolves in place — no resync: an

@@ -835,14 +835,15 @@ pub fn map_mysql_value(
             mysql_text(&value)
                 .ok_or_else(|| mapping_error(table, column, "value is not valid UTF-8"))?,
         ),
-        DataType::Binary => {
-            let mut bytes = mysql_bytes(value)
-                .ok_or_else(|| mapping_error(table, column, "expected binary bytes"))?;
-            if is_geometry(&column.mysql_data_type) && bytes.len() >= 4 {
-                bytes.drain(..4);
-            }
-            Value::Binary(bytes)
-        }
+        DataType::Binary => Value::Binary(
+            // Geometry stays in MySQL's internal format - 4-byte SRID then
+            // WKB - because that is byte-for-byte what a MySQL client reads
+            // back with SELECT. Stripping the SRID here made every geometry
+            // differ from the source (#263), and the poll path once stripped
+            // AGAIN on top of ST_AsWKB, corrupting reconciled values.
+            mysql_bytes(value)
+                .ok_or_else(|| mapping_error(table, column, "expected binary bytes"))?,
+        ),
         DataType::Json => {
             let text = mysql_text(&value)
                 .ok_or_else(|| mapping_error(table, column, "JSON is not valid UTF-8"))?;
@@ -1294,19 +1295,6 @@ fn quote_identifier(identifier: &str) -> String {
     format!("`{}`", identifier.replace('`', "``"))
 }
 
-fn is_geometry(data_type: &str) -> bool {
-    matches!(
-        data_type.to_ascii_lowercase().as_str(),
-        "geometry"
-            | "point"
-            | "linestring"
-            | "polygon"
-            | "multipoint"
-            | "multilinestring"
-            | "multipolygon"
-            | "geometrycollection"
-    )
-}
 
 #[cfg(test)]
 mod tests {

@@ -715,4 +715,22 @@ export const differentialQueries: DifferentialQuery[] = [
       'GROUP BY tier ORDER BY tier',
     tables: ['customers'],
   },
+  {
+    // MySQL orders a SET by its member bitmask ('fragile'=1 before
+    // 'tracked'=8, 'fragile,priority'=5 between), never alphabetically.
+    name: 'set: order by walks the member bitmask',
+    sql: 'SELECT id, services FROM shipments ORDER BY services, id',
+    tables: ['shipments'],
+  },
+  {
+    name: 'set: grouping orders groups by bitmask',
+    sql: 'SELECT services, COUNT(*) FROM shipments GROUP BY services ORDER BY services',
+    tables: ['shipments'],
+  },
+  {
+    // GEOMETRY reads back byte-identical to MySQL: internal SRID + WKB.
+    name: 'geometry: hex round-trips the internal format',
+    sql: 'SELECT id, HEX(route) FROM shipments ORDER BY id',
+    tables: ['shipments'],
+  },
 ]

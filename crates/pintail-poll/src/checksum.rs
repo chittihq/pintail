@@ -92,9 +92,11 @@ fn source_row_expression(table: &SourceTable) -> String {
 
 fn source_value_expression(column: &SourceColumn) -> String {
     let identifier = quote_identifier(&column.name);
-    let value = if is_geometry(&column.mysql_data_type) {
-        format!("ST_AsWKB({identifier})")
-    } else if is_binary(&column.mysql_data_type) {
+    // Geometry hashes as its raw internal bytes (SRID + WKB), the same
+    // form the snapshot stores and a MySQL SELECT returns - hashing
+    // ST_AsWKB while the replica stored the internal format made every
+    // geometry row look repaired forever (#263).
+    let value = if is_binary(&column.mysql_data_type) || is_geometry(&column.mysql_data_type) {
         identifier.clone()
     } else {
         format!("CONVERT({identifier} USING utf8mb4)")

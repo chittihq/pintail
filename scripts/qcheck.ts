@@ -125,9 +125,18 @@ try {
 
   const mysql = (sql: string) =>
     run(['docker', 'exec', container, 'mysql', '-uroot', '-proot', '-N', '--default-character-set=utf8mb4', 'qcheck', '-e', sql])
-  for (let attempt = 0; ; attempt += 1) {
-    if (run(['docker', 'exec', container, 'mysql', '-uroot', '-proot', '-e', 'SELECT 1']).ok) break
-    if (attempt > 60) fail('MySQL did not become ready')
+  // MySQL restarts once during first-boot initialization, so a single
+  // successful probe can land in the pre-restart window and the next
+  // statement hits a downed server. Require consecutive successes, as the
+  // oracle harness does.
+  for (let attempt = 0, consecutive = 0; ; attempt += 1) {
+    if (run(['docker', 'exec', container, 'mysql', '-uroot', '-proot', '-e', 'SELECT 1']).ok) {
+      consecutive += 1
+      if (consecutive >= 3) break
+    } else {
+      consecutive = 0
+    }
+    if (attempt > 90) fail('MySQL did not become ready')
     await Bun.sleep(2000)
   }
   console.log('qcheck: seeding')

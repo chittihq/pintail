@@ -59,49 +59,27 @@ pub(crate) fn physical_key(table: &SourceTable, values: &[Value]) -> Result<Prim
 }
 
 pub(crate) fn source_projection(table: &SourceTable) -> String {
+    // Geometry is fetched RAW, exactly like the snapshot path: the shared
+    // map_mysql_value strips the 4-byte SRID from MySQL's internal format
+    // to reach canonical WKB. Fetching ST_AsWKB here handed that mapper an
+    // already-canonical value and the second strip corrupted every
+    // reconciled geometry (#263: sakila.address lost its WKB header).
     table
         .columns
         .iter()
-        .map(|column| {
-            if is_geometry(&column.mysql_data_type) {
-                format!(
-                    "ST_AsWKB({}) AS {}",
-                    quote_identifier(&column.name),
-                    quote_identifier(&column.name)
-                )
-            } else {
-                quote_identifier(&column.name)
-            }
-        })
+        .map(|column| quote_identifier(&column.name))
         .collect::<Vec<_>>()
         .join(",")
 }
 
 pub(crate) fn key_projection(table: &SourceTable) -> String {
+    // Raw fetch for the same reason as source_projection: map_mysql_value
+    // owns the SRID strip.
     table
         .key
         .columns
         .iter()
-        .map(|key| {
-            table
-                .columns
-                .iter()
-                .find(|column| column.name.eq_ignore_ascii_case(key))
-                .map_or_else(
-                    || quote_identifier(key),
-                    |column| {
-                        if is_geometry(&column.mysql_data_type) {
-                            format!(
-                                "ST_AsWKB({}) AS {}",
-                                quote_identifier(&column.name),
-                                quote_identifier(&column.name)
-                            )
-                        } else {
-                            quote_identifier(&column.name)
-                        }
-                    },
-                )
-        })
+        .map(|key| quote_identifier(key))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -158,16 +136,3 @@ fn key_part(value: &Value) -> Option<KeyPart> {
     }
 }
 
-fn is_geometry(data_type: &str) -> bool {
-    matches!(
-        data_type.to_ascii_lowercase().as_str(),
-        "geometry"
-            | "point"
-            | "linestring"
-            | "polygon"
-            | "multipoint"
-            | "multilinestring"
-            | "multipolygon"
-            | "geometrycollection"
-    )
-}
