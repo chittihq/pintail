@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-19T17:04:42.265Z.
+Measured 2026-08-19T19:17:06.305Z.
 
-**1826 passed, 0 failed, 6 documented-gap warnings.**
+**1813 passed, 15 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -1172,6 +1172,8 @@ Measured 2026-08-19T17:04:42.265Z.
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
+| control-plane | api:schema drift during downtime: purged DDL recovers by re-probe | FAIL | Error: POST /api/databases/db_d48a8a3a2987b827bae8aac2799c81ac/tables/drift_messages/resync returned 404: {"error":"table does not exist"} |
+| control-plane | api:reset starts the mirror over with the saved connection | PASS |  |
 | control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
 | control-plane | api:a connection string carrying client driver options registers | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
@@ -1216,7 +1218,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | control-plane | query:scalar subquery threshold | PASS |  |
 | control-plane | query:non-recursive cte | PASS |  |
 | control-plane | query:bounded recursive cte | PASS |  |
-| control-plane | query:date bucketing | PASS |  |
+| control-plane | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | control-plane | query:string functions and like | PASS |  |
 | control-plane | query:looker symmetric key helpers | PASS |  |
 | control-plane | query:json constructor preserves json versus text | PASS |  |
@@ -1237,7 +1239,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | control-plane | query:fan-out join group concat line products | PASS |  |
 | control-plane | query:outer join customers without recent orders | PASS |  |
 | control-plane | query:set op union distinct tiers and statuses | PASS |  |
-| control-plane | query:temporal convert and date_format grain | PASS |  |
+| control-plane | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | control-plane | query:correlated not exists open orders | PASS |  |
 | control-plane | query:window lag payment-shaped totals | PASS |  |
 | control-plane | query:multi-key join items to orders | PASS |  |
@@ -1311,7 +1313,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | snapshot-ddl-window | query:scalar subquery threshold | PASS |  |
 | snapshot-ddl-window | query:non-recursive cte | PASS |  |
 | snapshot-ddl-window | query:bounded recursive cte | PASS |  |
-| snapshot-ddl-window | query:date bucketing | PASS |  |
+| snapshot-ddl-window | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | snapshot-ddl-window | query:string functions and like | PASS |  |
 | snapshot-ddl-window | query:looker symmetric key helpers | PASS |  |
 | snapshot-ddl-window | query:json constructor preserves json versus text | PASS |  |
@@ -1332,7 +1334,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | snapshot-ddl-window | query:fan-out join group concat line products | PASS |  |
 | snapshot-ddl-window | query:outer join customers without recent orders | PASS |  |
 | snapshot-ddl-window | query:set op union distinct tiers and statuses | PASS |  |
-| snapshot-ddl-window | query:temporal convert and date_format grain | PASS |  |
+| snapshot-ddl-window | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | snapshot-ddl-window | query:correlated not exists open orders | PASS |  |
 | snapshot-ddl-window | query:window lag payment-shaped totals | PASS |  |
 | snapshot-ddl-window | query:multi-key join items to orders | PASS |  |
@@ -1410,7 +1412,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-cdc | query:scalar subquery threshold | PASS |  |
 | drop-table-cdc | query:non-recursive cte | PASS |  |
 | drop-table-cdc | query:bounded recursive cte | PASS |  |
-| drop-table-cdc | query:date bucketing | PASS |  |
+| drop-table-cdc | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-table-cdc | query:string functions and like | PASS |  |
 | drop-table-cdc | query:looker symmetric key helpers | PASS |  |
 | drop-table-cdc | query:json constructor preserves json versus text | PASS |  |
@@ -1431,7 +1433,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-cdc | query:fan-out join group concat line products | PASS |  |
 | drop-table-cdc | query:outer join customers without recent orders | PASS |  |
 | drop-table-cdc | query:set op union distinct tiers and statuses | PASS |  |
-| drop-table-cdc | query:temporal convert and date_format grain | PASS |  |
+| drop-table-cdc | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-table-cdc | query:correlated not exists open orders | PASS |  |
 | drop-table-cdc | query:window lag payment-shaped totals | PASS |  |
 | drop-table-cdc | query:multi-key join items to orders | PASS |  |
@@ -1507,7 +1509,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-recreate | query:scalar subquery threshold | PASS |  |
 | drop-table-recreate | query:non-recursive cte | PASS |  |
 | drop-table-recreate | query:bounded recursive cte | PASS |  |
-| drop-table-recreate | query:date bucketing | PASS |  |
+| drop-table-recreate | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-table-recreate | query:string functions and like | PASS |  |
 | drop-table-recreate | query:looker symmetric key helpers | PASS |  |
 | drop-table-recreate | query:json constructor preserves json versus text | PASS |  |
@@ -1528,7 +1530,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-recreate | query:fan-out join group concat line products | PASS |  |
 | drop-table-recreate | query:outer join customers without recent orders | PASS |  |
 | drop-table-recreate | query:set op union distinct tiers and statuses | PASS |  |
-| drop-table-recreate | query:temporal convert and date_format grain | PASS |  |
+| drop-table-recreate | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-table-recreate | query:correlated not exists open orders | PASS |  |
 | drop-table-recreate | query:window lag payment-shaped totals | PASS |  |
 | drop-table-recreate | query:multi-key join items to orders | PASS |  |
@@ -1563,7 +1565,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_790da42aae3d4feadb4ff389c6c3c049","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T16:51:40.041183+00:00","updated_at":"2026-08-19T16:58:07.005456+00:00"},"tables":13,"rows":794} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_d48a8a3a2987b827bae8aac2799c81ac","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T19:02:40.055802+00:00","updated_at":"2026-08-19T19:10:05.067355+00:00"},"tables":13,"rows":795} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1606,7 +1608,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-polling | query:scalar subquery threshold | PASS |  |
 | drop-table-polling | query:non-recursive cte | PASS |  |
 | drop-table-polling | query:bounded recursive cte | PASS |  |
-| drop-table-polling | query:date bucketing | PASS |  |
+| drop-table-polling | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-table-polling | query:string functions and like | PASS |  |
 | drop-table-polling | query:looker symmetric key helpers | PASS |  |
 | drop-table-polling | query:json constructor preserves json versus text | PASS |  |
@@ -1627,7 +1629,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-table-polling | query:fan-out join group concat line products | PASS |  |
 | drop-table-polling | query:outer join customers without recent orders | PASS |  |
 | drop-table-polling | query:set op union distinct tiers and statuses | PASS |  |
-| drop-table-polling | query:temporal convert and date_format grain | PASS |  |
+| drop-table-polling | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-table-polling | query:correlated not exists open orders | PASS |  |
 | drop-table-polling | query:window lag payment-shaped totals | PASS |  |
 | drop-table-polling | query:multi-key join items to orders | PASS |  |
@@ -1708,7 +1710,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-database | query:scalar subquery threshold | PASS |  |
 | drop-database | query:non-recursive cte | PASS |  |
 | drop-database | query:bounded recursive cte | PASS |  |
-| drop-database | query:date bucketing | PASS |  |
+| drop-database | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-database | query:string functions and like | PASS |  |
 | drop-database | query:looker symmetric key helpers | PASS |  |
 | drop-database | query:json constructor preserves json versus text | PASS |  |
@@ -1729,7 +1731,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | drop-database | query:fan-out join group concat line products | PASS |  |
 | drop-database | query:outer join customers without recent orders | PASS |  |
 | drop-database | query:set op union distinct tiers and statuses | PASS |  |
-| drop-database | query:temporal convert and date_format grain | PASS |  |
+| drop-database | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | drop-database | query:correlated not exists open orders | PASS |  |
 | drop-database | query:window lag payment-shaped totals | PASS |  |
 | drop-database | query:multi-key join items to orders | PASS |  |
@@ -1802,7 +1804,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | ddl-documented-gaps | query:scalar subquery threshold | PASS |  |
 | ddl-documented-gaps | query:non-recursive cte | PASS |  |
 | ddl-documented-gaps | query:bounded recursive cte | PASS |  |
-| ddl-documented-gaps | query:date bucketing | PASS |  |
+| ddl-documented-gaps | query:date bucketing | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | ddl-documented-gaps | query:string functions and like | PASS |  |
 | ddl-documented-gaps | query:looker symmetric key helpers | PASS |  |
 | ddl-documented-gaps | query:json constructor preserves json versus text | PASS |  |
@@ -1823,7 +1825,7 @@ Measured 2026-08-19T17:04:42.265Z.
 | ddl-documented-gaps | query:fan-out join group concat line products | SKIP |  |
 | ddl-documented-gaps | query:outer join customers without recent orders | PASS |  |
 | ddl-documented-gaps | query:set op union distinct tiers and statuses | PASS |  |
-| ddl-documented-gaps | query:temporal convert and date_format grain | PASS |  |
+| ddl-documented-gaps | query:temporal convert and date_format grain | FAIL | Error: query engine failed: invalid MySQL date/time value |
 | ddl-documented-gaps | query:correlated not exists open orders | PASS |  |
 | ddl-documented-gaps | query:window lag payment-shaped totals | PASS |  |
 | ddl-documented-gaps | query:multi-key join items to orders | SKIP |  |
