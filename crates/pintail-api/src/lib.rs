@@ -211,6 +211,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/tables/{name}/data", get(table_data))
         .route("/tables/{name}/count", get(table_count))
         .route("/databases/{id}/snapshot", post(start_snapshot))
+        .route("/databases/{id}/reset", post(snapshot::reset))
         .route("/databases/{id}/snapshot/status", get(snapshot_status))
         .route("/databases/{id}/tables/{name}/resync", post(resync))
         .route("/databases/{id}/tables/{name}/reconcile", post(reconcile))

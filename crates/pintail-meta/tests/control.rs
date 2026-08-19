@@ -887,3 +887,57 @@ fn a_restart_quarantines_tables_left_mid_copy() {
     );
     assert_eq!(after["healthy"].0, "streaming");
 }
+
+#[test]
+fn a_reset_clears_replication_state_but_keeps_the_connection() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let mut metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-08-20T00:00:00Z")
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "events", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .record_schema_history(
+            "db-1",
+            "events",
+            1,
+            None,
+            "[{\"id\":1}]",
+            "2026-08-20T00:00:01Z",
+        )
+        .unwrap();
+    metadata
+        .record_dlq(
+            "dlq-1",
+            "db-1",
+            Some("events"),
+            "{}",
+            "quarantined update",
+            "2026-08-20T00:00:02Z",
+        )
+        .unwrap();
+    metadata
+        .set_database_replication_state("db-1", "cdc", "2026-08-20T00:00:03Z")
+        .unwrap();
+
+    assert!(
+        metadata
+            .reset_database_replication("db-1", "2026-08-20T00:01:00Z")
+            .unwrap()
+    );
+
+    // Replication state is gone: tracked tables (with their cascading schema
+    // history), the checkpoint slot, quarantined events.
+    assert!(metadata.tables("db-1").unwrap().is_empty());
+    assert!(metadata.schema_history("db-1", "events").unwrap().is_empty());
+    assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
+    assert!(metadata.snapshot_checkpoint("db-1").unwrap().is_none());
+
+    // The connection itself survives, back at the starting line.
+    let database = metadata.database("db-1").unwrap().expect("database");
+    assert_eq!(database.state, "created");
+    assert_eq!(database.encrypted_dsn, b"encrypted");
+}

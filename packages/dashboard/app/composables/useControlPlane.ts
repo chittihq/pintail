@@ -495,6 +495,15 @@ export function useControlPlane() {
     }
   }
 
+  async function resetDatabase(databaseId: string) {
+    const done = await mutate('Reset', () =>
+      request(`/databases/${databaseId}/reset`, { method: 'POST' }))
+    if (!done) return false
+    toast('Mirror reset; a fresh snapshot is running')
+    await loadControlPlane()
+    return true
+  }
+
   async function removeDatabase(databaseId: string) {
     const done = await mutate('Removing the database', () =>
       request(`/databases/${databaseId}`, { method: 'DELETE' }))
@@ -563,6 +572,7 @@ export function useControlPlane() {
     runTableAction,
     tableProgress,
     seedTableProgress,
+    resetDatabase,
     removeDatabase,
     discardDlq,
     retryDlq,

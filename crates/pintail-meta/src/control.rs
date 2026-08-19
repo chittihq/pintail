@@ -1258,6 +1258,44 @@ impl MetaStore {
             .context("failed to commit database failure update")
     }
 
+    /// Clears one database's replication state so the mirror starts over.
+    ///
+    /// Removes the tracked tables (cascading to snapshot chunks, schema
+    /// history and poll state), the replication checkpoint and quarantined
+    /// events, then returns the database record to `created` with no error.
+    /// The connection itself, its API keys, backup configuration and
+    /// activity history all survive - this resets what is mirrored, not how
+    /// the database is reached.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reset transaction cannot be applied.
+    pub fn reset_database_replication(&mut self, id: &str, now: &str) -> Result<bool> {
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin database reset")?;
+        transaction
+            .execute("DELETE FROM tables WHERE db_id = ?1", [id])
+            .context("failed to clear tracked tables")?;
+        transaction
+            .execute("DELETE FROM checkpoints WHERE db_id = ?1", [id])
+            .context("failed to clear the replication checkpoint")?;
+        transaction
+            .execute("DELETE FROM dlq WHERE db_id = ?1", [id])
+            .context("failed to clear quarantined events")?;
+        let changed = transaction
+            .execute(
+                "UPDATE databases SET state = 'created', updated_at = ?2 WHERE id = ?1",
+                rusqlite::params![id, now],
+            )
+            .context("failed to reset database state")?;
+        transaction
+            .commit()
+            .context("failed to commit database reset")?;
+        Ok(changed == 1)
+    }
+
     /// Deletes one database and its cascading control-plane records.
     ///
     /// # Errors

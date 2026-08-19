@@ -7,7 +7,7 @@ import type { DlqRecord, QueryResponse, SnapshotStatus, TableSummary } from '@/t
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, runTableAction, discardDlq, retryDlq, tableProgress, seedTableProgress } = useControlPlane()
+const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, resetDatabase, runTableAction, discardDlq, retryDlq, tableProgress, seedTableProgress } = useControlPlane()
 
 const databaseId = computed(() => String(route.params.id))
 const database = computed(() => databases.value.find((item) => item.id === databaseId.value) ?? null)
@@ -121,6 +121,22 @@ function closeView(open: boolean) {
     viewTable.value = null
     viewResult.value = null
     viewError.value = ''
+  }
+}
+
+const resetOpen = ref(false)
+const resetting = ref(false)
+
+async function confirmReset() {
+  if (!database.value || resetting.value) return
+  resetting.value = true
+  try {
+    if (!(await resetDatabase(database.value.id))) return
+    resetOpen.value = false
+    detailTab.value = 'snapshot'
+    await loadDatabaseDetail()
+  } finally {
+    resetting.value = false
   }
 }
 
@@ -373,6 +389,15 @@ function describeTable(table: TableSummary) {
             <div class="py-3"><dt class="text-muted-foreground font-mono text-xs uppercase">Excluded</dt><dd class="mt-1 text-sm">{{ database.exclude_tables.length || 'None' }}</dd></div>
           </dl>
         </Card>
+        <Card class="mt-4 grid gap-3 p-4">
+          <div><p class="text-muted-foreground mb-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">Recovery of last resort</p><h2 class="text-base font-semibold">Start the mirror over</h2></div>
+          <p class="text-muted-foreground text-sm">
+            Clears every mirrored table, checkpoint and quarantined event, re-probes the source
+            with the saved connection, and copies everything again. Replication then continues in
+            the mode configured above. The connection, API keys and backups are untouched.
+          </p>
+          <div><Button variant="destructive" :disabled="resetting" data-testid="reset-mirror" @click="resetOpen = true"><LoaderCircle v-if="resetting" class="animate-spin" /> Reset mirror</Button></div>
+        </Card>
       </TabsContent>
     </Tabs>
   </section>
@@ -418,6 +443,16 @@ function describeTable(table: TableSummary) {
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
+  <ConfirmActionDialog
+    :open="resetOpen"
+    :title="`Reset the ${database?.name} mirror?`"
+    description="All mirrored data for this database is deleted and copied again from the source. Queries answer against partial data until the snapshot completes. The saved connection, mode, API keys and backups are kept."
+    confirm-label="Reset mirror"
+    :working="resetting"
+    @confirm="confirmReset"
+    @update:open="(open) => { resetOpen = open }"
+  />
 
   <ConfirmActionDialog
     :open="Boolean(discardCandidate)"
