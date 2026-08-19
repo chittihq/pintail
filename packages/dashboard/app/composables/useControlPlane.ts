@@ -146,6 +146,31 @@ export function useControlPlane() {
     }, wait)
   }
 
+  /// Seeds the live map from the server's retained copy of the same frames,
+  /// so a page that loads MID-copy (reload, second browser) draws the bar
+  /// immediately. A fresh SSE entry always wins over the seed - the stream
+  /// is the primary source and this only fills the gap before its next frame.
+  function seedTableProgress(
+    databaseId: string,
+    tables: Array<{ name: string; progress: { rows: number; eta_seconds: number | null; elapsed_seconds: number } | null }>,
+  ) {
+    for (const table of tables) {
+      if (!table.progress) continue
+      const key = `${databaseId}:${table.name}`
+      const live = tableProgress.value[key]
+      if (live && Date.now() - live.updatedAt < 10_000) continue
+      tableProgress.value = {
+        ...tableProgress.value,
+        [key]: {
+          rows: table.progress.rows,
+          etaSeconds: table.progress.eta_seconds,
+          startedAt: Date.now() - table.progress.elapsed_seconds * 1000,
+          updatedAt: Date.now(),
+        },
+      }
+    }
+  }
+
   function clearSessionState() {
     stopEventStream()
     setToken(null)
@@ -537,6 +562,7 @@ export function useControlPlane() {
     forceSnapshot,
     runTableAction,
     tableProgress,
+    seedTableProgress,
     removeDatabase,
     discardDlq,
     retryDlq,

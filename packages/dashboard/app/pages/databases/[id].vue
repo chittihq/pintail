@@ -7,7 +7,7 @@ import type { DlqRecord, QueryResponse, SnapshotStatus, TableSummary } from '@/t
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, runTableAction, discardDlq, retryDlq, tableProgress } = useControlPlane()
+const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, runTableAction, discardDlq, retryDlq, tableProgress, seedTableProgress } = useControlPlane()
 
 const databaseId = computed(() => String(route.params.id))
 const database = computed(() => databases.value.find((item) => item.id === databaseId.value) ?? null)
@@ -28,6 +28,9 @@ async function loadDatabaseDetail(showLoading = true) {
     ])
     tables.value = tableRows
     snapshot.value = snapshotStatus
+    // A copy that was already running when this page loaded gets its bar
+    // back from the server's retained progress instead of an empty badge.
+    seedTableProgress(databaseId.value, tableRows)
     // The banner is shared and sticky - nothing else on this page clears it -
     // so a single failed poll left "database does not exist" on screen for
     // the rest of the session while the page beneath it loaded perfectly.

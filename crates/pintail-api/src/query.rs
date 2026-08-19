@@ -87,6 +87,21 @@ pub(crate) struct TableSummary {
     mutation_guarantee: &'static str,
     /// Required recovery when the normal mutation guarantee cannot apply.
     remediation: Option<&'static str>,
+    /// Live copy progress, present only while this table is being copied.
+    /// Lets a dashboard that loads mid-copy draw the bar immediately instead
+    /// of waiting for the next SSE frame - reloading the page used to reset
+    /// the bar to nothing while the copy kept running.
+    progress: Option<TableProgressSummary>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct TableProgressSummary {
+    rows: u64,
+    eta_seconds: Option<u64>,
+    /// How long this copy has been running, so the client can reconstruct
+    /// its local start time without trusting clock agreement between the
+    /// server and the browser.
+    elapsed_seconds: u64,
 }
 
 /// Every table's column names in one response, for editor completion.
@@ -211,11 +226,23 @@ pub(crate) async fn list_tables(
             let key_mode = facts
                 .map(|facts| facts.key_mode)
                 .or_else(|| durable_key_mode(&record));
+            // Stale entries are dropped rather than shown: a copy that has
+            // not reported for a minute is dead or wedged, and a frozen bar
+            // claiming progress is worse than no bar.
+            let progress = state
+                .table_progress(&query.db, &record.name)
+                .filter(|kept| kept.age_seconds() < 60)
+                .map(|kept| TableProgressSummary {
+                    rows: kept.rows,
+                    eta_seconds: kept.eta_seconds,
+                    elapsed_seconds: kept.elapsed_seconds(),
+                });
             TableSummary::new(
                 record,
                 key_mode,
                 facts.is_some_and(|facts| facts.cascade_reconciled),
                 effective_mode,
+                progress,
             )
         })
         .collect();
@@ -458,6 +485,7 @@ impl TableSummary {
         key_mode: Option<KeyMode>,
         cascade_reconciled: bool,
         effective_mode: Option<&str>,
+        progress: Option<TableProgressSummary>,
     ) -> Self {
         let (mutation_guarantee, remediation) =
             match (effective_mode, key_mode, record.state.as_str()) {
@@ -483,6 +511,7 @@ impl TableSummary {
             key_mode,
             mutation_guarantee,
             remediation,
+            progress,
         }
     }
 }
@@ -565,6 +594,7 @@ mod tests {
             Some(KeyMode::AppendRowId),
             false,
             Some("cdc"),
+            None,
         );
         assert_eq!(insert_only.mutation_guarantee, "insert_only");
         assert_eq!(
@@ -577,6 +607,7 @@ mod tests {
             Some(KeyMode::AppendRowId),
             false,
             Some("cdc"),
+            None,
         );
         assert_eq!(quarantined.mutation_guarantee, "quarantined");
         assert_eq!(quarantined.remediation, Some("resnapshot"));

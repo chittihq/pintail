@@ -43,8 +43,32 @@ struct ApiStateInner {
     /// when, so the 409 can say what is actually running instead of leaving
     /// the operator to guess whether to retry in seconds or minutes.
     active_jobs: Mutex<std::collections::BTreeMap<String, (String, std::time::Instant)>>,
+    /// Last-known copy progress per (database, table), retained so a
+    /// dashboard that loads MID-copy (reload, second browser) can seed its
+    /// progress bar instead of waiting for the next SSE frame. Entries live
+    /// exactly as long as the run: written by `*.progress` events, removed by
+    /// the completion/error/interrupted events, all inside `publish`.
+    table_progress: Mutex<HashMap<(String, String), TableProgress>>,
     oauth_exchanges: Mutex<HashMap<String, PendingOauthExchange>>,
     metrics: RuntimeMetrics,
+}
+
+#[derive(Clone)]
+pub(crate) struct TableProgress {
+    pub(crate) rows: u64,
+    pub(crate) eta_seconds: Option<u64>,
+    started: Instant,
+    updated: Instant,
+}
+
+impl TableProgress {
+    pub(crate) fn elapsed_seconds(&self) -> u64 {
+        self.started.elapsed().as_secs()
+    }
+
+    pub(crate) fn age_seconds(&self) -> u64 {
+        self.updated.elapsed().as_secs()
+    }
 }
 
 struct PendingOauthExchange {
@@ -103,6 +127,7 @@ impl ApiState {
                 dsn_key,
                 events,
                 active_jobs: Mutex::new(std::collections::BTreeMap::new()),
+                table_progress: Mutex::new(HashMap::new()),
                 oauth_exchanges: Mutex::new(HashMap::new()),
                 metrics: RuntimeMetrics::default(),
             })),
@@ -259,9 +284,57 @@ impl ApiState {
                 event.kind, event.message
             ));
         }
+        self.retain_progress(&event);
         if let Some(inner) = &self.inner {
             let _ = inner.events.send(event);
         }
+    }
+
+    /// Mirrors the dashboard's own SSE bookkeeping so the two can never
+    /// disagree: the same frames that move its live bar move this map.
+    fn retain_progress(&self, event: &ApiEvent) {
+        let Some(inner) = &self.inner else { return };
+        let Some(database_id) = event.database_id.as_deref() else {
+            return;
+        };
+        let Ok(mut map) = inner.table_progress.lock() else {
+            return;
+        };
+        if event.kind.ends_with(".progress") {
+            if let Some(table) = event.table.as_deref() {
+                let key = (database_id.to_owned(), table.to_owned());
+                let started = map.get(&key).map_or_else(Instant::now, |kept| kept.started);
+                map.insert(
+                    key,
+                    TableProgress {
+                        rows: event.rows.unwrap_or(0),
+                        eta_seconds: event.eta_seconds,
+                        started,
+                        updated: Instant::now(),
+                    },
+                );
+            }
+        } else if matches!(
+            event.kind.as_str(),
+            "resnapshot.completed"
+                | "snapshot.completed"
+                | "resnapshot.error"
+                | "resnapshot.interrupted"
+        ) {
+            match event.table.as_deref() {
+                Some(table) => {
+                    map.remove(&(database_id.to_owned(), table.to_owned()));
+                }
+                // A database-level completion ends every table's copy.
+                None => map.retain(|(kept_database, _), _| kept_database != database_id),
+            }
+        }
+    }
+
+    pub(crate) fn table_progress(&self, database_id: &str, table: &str) -> Option<TableProgress> {
+        let inner = self.inner.as_ref()?;
+        let map = inner.table_progress.lock().ok()?;
+        map.get(&(database_id.to_owned(), table.to_owned())).cloned()
     }
 
     pub(crate) fn acquire_job(&self, database_id: &str) -> Result<(), ApiError> {
