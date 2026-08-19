@@ -4,6 +4,46 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc3] - 2026-08-19
+
+A day of differential hunting: the oracle corpus grew to 1,003 cases,
+three public datasets (sakila, employees at 2.8M rows, world) now
+byte-diff against MySQL, and everything they caught is fixed.
+
+### Fixed
+
+- ENUM comparison corrected against real MySQL 8.4: ranges, BETWEEN and
+  MIN/MAX compare the label STRING; only sorting walks the declared
+  ordinal. rc2 shipped ordinal comparison everywhere, which real data
+  refuted the same day.
+- The ENUM ordinal now survives the server's remaining paths: memtable
+  rows (fresh CDC writes) and repacked projection/aggregate batches
+  both rebuilt plain strings and sorted alphabetically.
+- A SET sorts by its member bitmask, as MySQL does; MIN/MAX and
+  comparisons keep string semantics (measured).
+- GEOMETRY replicates byte-for-byte: the poll path stripped a
+  4-byte header from already-canonical values, and the intentional
+  SRID canonicalization itself broke parity with what a MySQL client
+  reads. Geometry now flows as MySQL's raw internal bytes end to end,
+  the checksum hashes the same bytes it stores, and the wire advertises
+  MYSQL_TYPE_GEOMETRY so drivers decode the column as MySQL's.
+  Deployments upgrading across this fix should per-table resync
+  geometry-bearing tables.
+- Three wrong-results grouping defects, all found differentially: the
+  fused inner-join aggregate emitted zero-count groups for unmatched
+  build rows; two separate group finalizes kept only the LAST group
+  when spellings folded to one collation key, silently dropping every
+  earlier group's aggregates; and the local matcher's ASCII fast path
+  ignored PAD SPACE so trailing-space spellings never folded at all.
+- The fused join aggregate folds its group keys under the KEY's
+  collation rather than the plan's.
+
+### Known limitations
+
+- A CASE/IF branch value renders at the unified DECIMAL scale
+  (`0.00` where MySQL prints `0`); numerically equal, documented in
+  docs/limitations.md.
+
 ## [0.0.4-rc2] - 2026-08-19
 
 ### Fixed
