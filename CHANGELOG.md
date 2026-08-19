@@ -4,6 +4,25 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- An ENUM now compares and orders by its declared ordinal everywhere,
+  matching MySQL: ORDER BY in both directions, grouped tie-breaks,
+  MIN/MAX, range predicates and BETWEEN (whose string constants coerce
+  to their declared ordinal), DISTINCT, limited sorts, and window
+  ordering. The columnar batch path had been rebuilding plain strings,
+  so every one of those surfaces silently sorted alphabetically.
+- Grouping keys of two text collations now answers instead of refusing:
+  each key folds under its own collation - grouping never compares one
+  key column against another - exactly as sorting already ordered each
+  key by its own rules. Reported by a customer grouping a section name
+  next to a school name.
+- A distinct aggregate folds its values under its own expression's
+  collation, not the query's: COUNT(DISTINCT general_ci_col) PAD-folds
+  trailing spaces even when the rest of the query resolved 0900_ai_ci.
+
 ## [0.0.4-rc1] - 2026-08-18
 
 Two findings from the customer's re-check of 0.0.3, one of them a silent
