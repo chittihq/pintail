@@ -10,7 +10,7 @@ use mysql_async::Pool;
 use pintail_meta::DatabaseRecord;
 use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
 use pintail_probe::ProbeReport;
-use pintail_snapshot::{SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot};
+use pintail_snapshot::{SnapshotOptions, SnapshotPosition, SnapshotTarget};
 use serde::Serialize;
 
 use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, events::ApiEvent, snapshot};
@@ -145,6 +145,7 @@ async fn complete_table_resnapshot_job(
     );
 }
 
+#[allow(clippy::too_many_lines)] // linear copy-and-restore sequence
 async fn run_table_resnapshot_job(
     state: &ApiState,
     database_id: &str,
@@ -195,13 +196,24 @@ async fn run_table_resnapshot_job(
         .map_err(display)?;
     let options = crate::dsn::source_opts(&dsn)?;
     let pool = Pool::new(options);
-    let snapshot = run_snapshot(
+    // Progress is published exactly as the full-database snapshot publishes
+    // it: without this, a large table sat on a motionless 'snapshotting'
+    // badge for minutes and the resnapshot read as unresponsive.
+    let progress_state = state.clone();
+    let progress_database_id = database_id.to_owned();
+    let snapshot = pintail_snapshot::run_snapshot_with_progress(
         &pool,
         &metadata_path,
         database_id,
         &report,
         vec![target],
         SnapshotOptions::default(),
+        move |progress| {
+            progress_state.publish(crate::snapshot::resnapshot_progress_event(
+                &progress_database_id,
+                progress,
+            ));
+        },
     )
     .await
     .map_err(display);

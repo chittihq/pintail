@@ -485,6 +485,24 @@ fn table_snapshot_status(
     })
 }
 
+/// Progress for a single-table resnapshot, distinguishable from a full
+/// snapshot's chunks in the activity feed.
+pub(crate) fn resnapshot_progress_event(
+    database_id: &str,
+    progress: SnapshotProgress,
+) -> ApiEvent {
+    ApiEvent {
+        kind: "resnapshot.progress".to_owned(),
+        database_id: Some(database_id.to_owned()),
+        table: Some(progress.table),
+        message: format!("chunk {} is durable", progress.chunk_id),
+        rows: Some(progress.rows),
+        bytes: Some(progress.bytes),
+        eta_seconds: progress.eta_seconds,
+        at: Utc::now().to_rfc3339(),
+    }
+}
+
 fn snapshot_event(database_id: &str, progress: SnapshotProgress) -> ApiEvent {
     ApiEvent {
         kind: "snapshot.progress".to_owned(),
