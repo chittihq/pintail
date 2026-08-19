@@ -902,6 +902,9 @@ async function main() {
     await sql(`UPDATE ${APPEND_TABLE} SET body = 'changed' WHERE body = 'first'`)
     const discardable = await awaitDeadLetter(APPEND_TABLE, 'the quarantined UPDATE')
     await discardable.getByRole('button', { name: 'Discard' }).click()
+    // Discard is now confirmed rather than immediate - the click opens a
+    // dialog and the deletion happens on its Discard button.
+    await page!.getByRole('dialog').getByRole('button', { name: 'Discard', exact: true }).click()
     await discardable.waitFor({ state: 'detached', timeout: 20_000 })
     // Discard must be durable, not just a row removed from the local list.
     await page!.goto(`${pintailUrl}/activity`)

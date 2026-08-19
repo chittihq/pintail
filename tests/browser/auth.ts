@@ -526,6 +526,9 @@ async function main() {
       const member = page!.getByRole('row').filter({ hasText: GOOGLE_INVITE_EMAIL })
       await member.first().waitFor({ timeout: 20_000 })
       await member.first().getByRole('button', { name: 'Remove member' }).click()
+      // The trash icon now opens a confirmation dialog rather than being the
+      // deletion itself; the removal this check measures happens on confirm.
+      await page!.getByRole('dialog').getByRole('button', { name: 'Remove member' }).click()
 
       // Their next call must be refused, without waiting for expiry.
       await waitForServerLog(/GET \/session 401|GET \/databases 401|GET \/activity 401/, 30_000)
