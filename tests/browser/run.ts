@@ -627,6 +627,9 @@ async function main() {
     // Revoke. The row must be gone after a reload too - a DELETE that 4xx'd
     // would still empty the local list on an optimistic implementation.
     await page!.getByRole('button', { name: `Delete ${API_KEY_NAME}` }).click()
+    // Deletion is confirmed now: the trash icon opens a dialog and the
+    // revocation happens on its Delete key button.
+    await page!.getByRole('dialog').getByRole('button', { name: 'Delete key' }).click()
     await row.waitFor({ state: 'detached', timeout: 15_000 })
     await page!.reload()
     await page!.getByRole('heading', { name: 'API Keys' }).waitFor()
@@ -926,7 +929,10 @@ async function main() {
     await sql(`DELETE FROM ${APPEND_TABLE_RETRY} WHERE body = 'second'`)
     const unretryable = await awaitDeadLetter(APPEND_TABLE_RETRY, 'the quarantined DELETE')
     await unretryable.getByRole('button', { name: 'Retry safely' }).click()
-    await page!.getByText(/no source key/i).waitFor({ timeout: 60_000 })
+    // .first(): the refusal now surfaces twice - the shared banner AND the
+    // failure toast the retry action raises - and either one satisfies the
+    // check; strict mode would otherwise fail on the duplication itself.
+    await page!.getByText(/no source key/i).first().waitFor({ timeout: 60_000 })
     // And the record survives a refused retry, so the operator can still act.
     await page!.goto(`${pintailUrl}/activity`)
     await page!.getByRole('heading', { name: 'Activity' }).waitFor({ timeout: 20_000 })
