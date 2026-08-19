@@ -288,3 +288,28 @@ fn v10_each_collation_keeps_its_own_pad_rule_in_one_query() {
     let rows = run("SELECT COUNT(DISTINCT ai) AS ai_folds FROM items");
     assert_eq!(rows, [["3"]]);
 }
+
+#[test]
+fn v11_a_join_grouped_on_one_general_ci_key_pad_folds() {
+    // The #258 shape in miniature: GROUP BY a single general_ci key over an
+    // inner join. 'red', 'RED' and 'red ' are one group under PAD SPACE +
+    // case folding; the failing path split 'red ' out and lost the others.
+    let rows = run(
+        "SELECT i.ci, COUNT(*) AS c, MIN(s.id) AS first_school FROM items i \
+         JOIN schools s ON s.id = i.school \
+         GROUP BY i.ci ORDER BY i.ci",
+    );
+    assert_eq!(rows, [["blue", "2", "2"], ["red", "3", "1"]]);
+}
+
+#[test]
+fn v12_a_join_grouped_on_the_build_sides_general_ci_key_pad_folds() {
+    // Same fold with the key on the BUILD side, which routes through the
+    // fused inner-join aggregate - the path oracle case #258 fails on.
+    let rows = run(
+        "SELECT i.ci, COUNT(*) AS c, MIN(s.id) AS first_school FROM schools s \
+         JOIN items i ON i.school = s.id \
+         GROUP BY i.ci ORDER BY i.ci",
+    );
+    assert_eq!(rows, [["blue", "2", "2"], ["red", "3", "1"]]);
+}
