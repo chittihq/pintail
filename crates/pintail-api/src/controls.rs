@@ -159,7 +159,14 @@ async fn run_table_resnapshot_job(
     if database.mode == "paused" {
         return Err("resume the database before resnapshotting a table".to_owned());
     }
-    let report = decode_probe(&database)?;
+    // The metadata handle cannot be held across the probe's await, so it is
+    // released here and reopened once the fresh report is in hand.
+    drop(metadata);
+    let dsn = state
+        .decrypt_dsn(&database.encrypted_dsn)
+        .map_err(display)?;
+    let pool = Pool::new(crate::dsn::source_opts(&dsn)?);
+    let report = refreshed_probe(state, database_id, &pool, &database.name).await?;
     let mut source = report
         .tables
         .iter()
@@ -175,6 +182,7 @@ async fn run_table_resnapshot_job(
             .join("tables"),
         &source.name,
     );
+    let mut metadata = state.metadata().map_err(display)?;
     // The snapshot-to-stream handoff checkpoint belongs to the database, and
     // every other table's stream starts from it. A snapshot run owns that
     // checkpoint - it is written for the database being copied wholesale - so
@@ -183,7 +191,8 @@ async fn run_table_resnapshot_job(
     // "polling checkpoint cannot start CDC". Measured: the control-plane gate
     // passes at 138 checks without this and fails four with it.
     let preserved_checkpoint = metadata.snapshot_checkpoint(database_id).map_err(display)?;
-    let mut store = snapshot::open_tracked_store(&metadata, database_id, &mut source, directory)?;
+    let mut store =
+        snapshot::open_tracked_store(&mut metadata, database_id, &mut source, directory, true)?;
     // Drop what is there before recopying, so the snapshot is the table rather
     // than the table merged onto its own stale rows.
     store.reset_for_resnapshot().map_err(display)?;
@@ -191,11 +200,6 @@ async fn run_table_resnapshot_job(
     let metadata_path = state.metadata_path().map_err(display)?.to_path_buf();
     drop(metadata);
 
-    let dsn = state
-        .decrypt_dsn(&database.encrypted_dsn)
-        .map_err(display)?;
-    let options = crate::dsn::source_opts(&dsn)?;
-    let pool = Pool::new(options);
     // Progress is published exactly as the full-database snapshot publishes
     // it: without this, a large table sat on a motionless 'snapshotting'
     // badge for minutes and the resnapshot read as unresponsive.
@@ -463,7 +467,12 @@ pub(crate) async fn run_reconcile_job(
     if database.mode == "paused" {
         return Err("resume the database before reconciling a table".to_owned());
     }
-    let report = decode_probe(&database)?;
+    drop(metadata);
+    let dsn = state
+        .decrypt_dsn(&database.encrypted_dsn)
+        .map_err(display)?;
+    let pool = Pool::new(crate::dsn::source_opts(&dsn)?);
+    let report = refreshed_probe(state, database_id, &pool, &database.name).await?;
     let source = report
         .tables
         .iter()
@@ -479,17 +488,16 @@ pub(crate) async fn run_reconcile_job(
             .join("tables"),
         &source.name,
     );
+    let mut metadata = state.metadata().map_err(display)?;
     let mut source = source;
-    let store = snapshot::open_tracked_store(&metadata, database_id, &mut source, directory)?;
+    // Reconcile repairs rows in place and never wipes, so a schema mismatch
+    // here must fail loudly and point at resync rather than rebuild the store.
+    let store =
+        snapshot::open_tracked_store(&mut metadata, database_id, &mut source, directory, false)?;
     let target = PollTarget::new(source, store).map_err(display)?;
     let metadata_path = state.metadata_path().map_err(display)?.to_path_buf();
     drop(metadata);
 
-    let dsn = state
-        .decrypt_dsn(&database.encrypted_dsn)
-        .map_err(display)?;
-    let options = crate::dsn::source_opts(&dsn)?;
-    let pool = Pool::new(options);
     let mode = effective_mode(&database);
     let rows = match mode {
         "cdc" => run_cdc_reconciliation(
@@ -594,15 +602,34 @@ fn require_table(state: &ApiState, database_id: &str, table_name: &str) -> Resul
     }
 }
 
-fn decode_probe(database: &DatabaseRecord) -> Result<ProbeReport, String> {
-    serde_json::from_str(
-        database
-            .probe_json
-            .as_deref()
-            .ok_or_else(|| "probe the database before reconciling a table".to_owned())?,
-    )
-    .map_err(display)
+/// Re-probes the source and persists the fresh report before a repair job
+/// uses a table definition.
+///
+/// The stored probe describes the source as it was at the last full
+/// snapshot. A resync or reconcile exists to repair drift - and schema
+/// drift is drift too: copying with the stale column list dies on the
+/// source's own "Unknown column" error, and since every retry reads the
+/// same stale probe, the failure repeats forever. The forced full snapshot
+/// already re-probes for exactly this reason; the per-table repairs were
+/// the only copy paths that did not.
+async fn refreshed_probe(
+    state: &ApiState,
+    database_id: &str,
+    pool: &Pool,
+    database_name: &str,
+) -> Result<ProbeReport, String> {
+    let refreshed = pintail_probe::probe(pool, database_name)
+        .await
+        .map_err(display)?;
+    let encoded = serde_json::to_string(&refreshed).map_err(display)?;
+    state
+        .metadata()
+        .map_err(display)?
+        .refresh_database_probe_json(database_id, &encoded, &Utc::now().to_rfc3339())
+        .map_err(display)?;
+    Ok(refreshed)
 }
+
 
 fn effective_mode(database: &DatabaseRecord) -> &str {
     database

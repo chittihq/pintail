@@ -85,6 +85,70 @@ pub(crate) async fn start(
     ))
 }
 
+/// Clears the mirror and starts over with the stored connection.
+///
+/// The operator's escape hatch when replication state is wedged beyond what
+/// a per-table resync repairs: every tracked table, checkpoint, quarantined
+/// event and on-disk store is dropped, then a forced snapshot re-probes the
+/// source and copies everything fresh, continuing in whatever mode the
+/// database is configured for. Nothing about the connection is asked again.
+pub(crate) async fn reset(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path(database_id): Path<String>,
+) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
+    principal.require_operator()?;
+    principal.authorize_database(&database_id)?;
+    crate::databases::load_database(&state, &principal, &database_id)?;
+    // Hold the job slot through the wipe so no replication cycle is mid-write
+    // while the state underneath it disappears.
+    state.acquire_job_as(&database_id, "a factory reset")?;
+    let wiped = (|| -> Result<(), ApiError> {
+        let mut metadata = state.metadata()?;
+        let database = metadata
+            .database(&database_id)
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| ApiError::not_found("database does not exist"))?;
+        if database.mode == "paused" {
+            return Err(ApiError::conflict("resume the database before resetting it"));
+        }
+        metadata
+            .reset_database_replication(&database_id, &Utc::now().to_rfc3339())
+            .map_err(ApiError::internal)?;
+        let tables_dir = state
+            .data_dir()?
+            .join("databases")
+            .join(&database_id)
+            .join("tables");
+        if tables_dir.exists() {
+            std::fs::remove_dir_all(&tables_dir).map_err(ApiError::internal)?;
+        }
+        Ok(())
+    })();
+    state.release_job(&database_id);
+    wiped?;
+    state.publish(ApiEvent::database(
+        "database.reset",
+        &database_id,
+        "replication state cleared; a fresh snapshot follows",
+    ));
+    let run_id = begin_snapshot_job(&state, &database_id, true)?;
+    audit::record(
+        &state,
+        &principal,
+        "database.reset",
+        Some(("database", &database_id)),
+        None,
+    );
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedSnapshot {
+            run_id,
+            state: "snapshotting",
+        }),
+    ))
+}
+
 /// Acquires the database job slot, journals a snapshot run, and detaches the
 /// worker. Used by the snapshot/resync routes and the supervisor's
 /// `auto_resync` keyless-policy repair.
@@ -247,7 +311,7 @@ async fn run_snapshot_job(
     run_id: &str,
     force: bool,
 ) -> Result<(u64, u64, &'static str), String> {
-    let metadata = state.metadata().map_err(display)?;
+    let mut metadata = state.metadata().map_err(display)?;
     let database = metadata
         .database(database_id)
         .map_err(display)?
@@ -296,7 +360,11 @@ async fn run_snapshot_job(
     for source in sources {
         let mut source = source;
         let directory = table_directory(&root, &source.name);
-        let mut store = open_tracked_store(&metadata, database_id, &mut source, directory)?;
+        // A forced snapshot recopies everything, so a store whose schema no
+        // longer matches the source is rebuilt; a resumable first snapshot
+        // must not wipe half-copied chunks, so it stays strict.
+        let mut store =
+            open_tracked_store(&mut metadata, database_id, &mut source, directory, force)?;
         if force {
             store.reset_for_resnapshot().map_err(display)?;
         }
@@ -519,24 +587,152 @@ fn snapshot_event(database_id: &str, progress: SnapshotProgress) -> ApiEvent {
 /// that — found by the e2e control-plane gate, 2026-08-03). Mirrors
 /// `CdcTarget::open_tracked`.
 pub(crate) fn open_tracked_store(
-    metadata: &pintail_meta::MetaStore,
+    metadata: &mut pintail_meta::MetaStore,
     database_id: &str,
     source: &mut pintail_probe::SourceTable,
     directory: std::path::PathBuf,
+    wipe_on_schema_mismatch: bool,
 ) -> Result<pintail_store::TableStore, String> {
     let history = metadata
         .schema_history(database_id, &source.name)
         .map_err(display)?;
-    let version = history.last().map_or(1, |record| record.version);
-    if let Some(record) = history.last() {
-        source.columns = serde_json::from_str(&record.columns_json).map_err(display)?;
+    let attempted =
+        open_store_with_history(metadata, database_id, source, directory.clone(), &history);
+    match attempted {
+        Err(message)
+            if wipe_on_schema_mismatch
+                && (message.contains("schema fingerprint mismatch")
+                    || message.contains("schema version mismatch")) =>
+        {
+            // The store on disk was built from a shape this control plane has
+            // no usable record of - schema history is only written by DDL
+            // events, so a source migrated while nothing was streaming leaves
+            // the durable store and the fresh probe disagreeing with no
+            // history row to bridge them. The caller is recopying the table
+            // wholesale, so the data carries no information worth keeping:
+            // rebuild the store around the source's current shape instead of
+            // refusing forever.
+            std::fs::remove_dir_all(&directory).map_err(display)?;
+            let version = match history.last() {
+                None => 1,
+                Some(record) => {
+                    let stored: Vec<pintail_probe::SourceColumn> =
+                        serde_json::from_str(&record.columns_json).map_err(display)?;
+                    let mut previous = source.clone();
+                    previous.columns = stored;
+                    let adopted =
+                        pintail_probe::stabilize_source_table(&previous, source.clone())?;
+                    source.columns = adopted.columns;
+                    let version = record
+                        .version
+                        .checked_add(1)
+                        .ok_or_else(|| "table schema version exceeds UInt32".to_owned())?;
+                    let columns_json =
+                        serde_json::to_string(&source.columns).map_err(display)?;
+                    metadata
+                        .record_schema_history(
+                            database_id,
+                            &source.name,
+                            version,
+                            None,
+                            &columns_json,
+                            &Utc::now().to_rfc3339(),
+                        )
+                        .map_err(display)?;
+                    version
+                }
+            };
+            TableStore::open(
+                directory,
+                source.table_schema_with_version(version).map_err(display)?,
+                StoreOptions::default(),
+            )
+            .map_err(display)
+        }
+        other => other,
     }
-    TableStore::open(
+}
+
+fn open_store_with_history(
+    metadata: &mut pintail_meta::MetaStore,
+    database_id: &str,
+    source: &mut pintail_probe::SourceTable,
+    directory: std::path::PathBuf,
+    history: &[pintail_meta::SchemaHistoryRecord],
+) -> Result<pintail_store::TableStore, String> {
+    let Some(record) = history.last() else {
+        return TableStore::open(
+            directory,
+            source.table_schema_with_version(1).map_err(display)?,
+            StoreOptions::default(),
+        )
+        .map_err(display);
+    };
+    let stored: Vec<pintail_probe::SourceColumn> =
+        serde_json::from_str(&record.columns_json).map_err(display)?;
+    if columns_equivalent(&stored, &source.columns) {
+        source.columns = stored;
+        return TableStore::open(
+            directory,
+            source
+                .table_schema_with_version(record.version)
+                .map_err(display)?,
+            StoreOptions::default(),
+        )
+        .map_err(display);
+    }
+    // The source's schema moved while nothing was streaming - a migration
+    // during downtime, or DDL whose binlog was purged before it replayed.
+    // The history's shape can no longer read the source (its SELECT dies on
+    // the source's own "Unknown column"), and since every retry read the
+    // same stale history, the copy stayed impossible until someone deleted
+    // the mirror. The probe in hand describes the source as it IS, so adopt
+    // it as the next schema version and let the copy rewrite every row.
+    let mut previous = source.clone();
+    previous.columns = stored;
+    let adopted = pintail_probe::stabilize_source_table(&previous, source.clone())?;
+    let version = record
+        .version
+        .checked_add(1)
+        .ok_or_else(|| "table schema version exceeds UInt32".to_owned())?;
+    let mut store = TableStore::open(
         directory,
-        source.table_schema_with_version(version).map_err(display)?,
+        previous
+            .table_schema_with_version(record.version)
+            .map_err(display)?,
         StoreOptions::default(),
     )
-    .map_err(display)
+    .map_err(display)?;
+    store
+        .evolve_schema(adopted.table_schema_with_version(version).map_err(display)?)
+        .map_err(display)?;
+    let columns_json = serde_json::to_string(&adopted.columns).map_err(display)?;
+    metadata
+        .record_schema_history(
+            database_id,
+            &source.name,
+            version,
+            None,
+            &columns_json,
+            &Utc::now().to_rfc3339(),
+        )
+        .map_err(display)?;
+    source.columns = adopted.columns;
+    Ok(store)
+}
+
+/// Same table shape, ignoring the stable IDs the probe cannot know.
+fn columns_equivalent(
+    stored: &[pintail_probe::SourceColumn],
+    fresh: &[pintail_probe::SourceColumn],
+) -> bool {
+    stored.len() == fresh.len()
+        && stored.iter().zip(fresh).all(|(left, right)| {
+            left.name.eq_ignore_ascii_case(&right.name)
+                && left.mysql_column_type == right.mysql_column_type
+                && left.pintail_type == right.pintail_type
+                && left.nullable == right.nullable
+        })
 }
 
 pub(crate) fn table_directory(root: &FsPath, table: &str) -> PathBuf {
