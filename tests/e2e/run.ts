@@ -506,6 +506,44 @@ async function sql(statement: string) {
   await mysqlConnection!.query(statement)
 }
 
+async function mysqlCount(table: string): Promise<string> {
+  const [rows] = (await mysqlConnection!.query(
+    `SELECT COUNT(*) AS n FROM ${table}`,
+  )) as unknown as [Array<{ n: number | string }>]
+  return String(rows[0]!.n)
+}
+
+/// A supervisor cycle may hold the database's job slot at any instant; the
+/// 409 is correct API behavior, so callers retry it rather than failing.
+async function retry409<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (!String(error).includes('409') || attempt >= 30) throw error
+      await Bun.sleep(2_000)
+    }
+  }
+}
+
+async function waitForState(database: string, wanted: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const status = await api<{ state: string; tables?: Array<{ name: string; last_error?: string }> }>(
+      `/api/databases/${database}/snapshot/status`,
+    )
+    if (status.state === wanted) return
+    if (Date.now() > deadline) {
+      const errors = (status.tables ?? [])
+        .filter((table) => table.last_error)
+        .map((table) => `${table.name}: ${table.last_error}`)
+        .join('; ')
+      throw new Error(`state never reached ${wanted}: ${status.state}; ${errors}`)
+    }
+    await Bun.sleep(2_000)
+  }
+}
+
 async function phaseSeed() {
   // Self-referential fixture, shaped for the alias-misattribution class: a
   // table read through two aliases at once (created_by/updated_by), where
@@ -1458,6 +1496,109 @@ async function phaseControlPlane() {
               .join('; '),
         )
       }
+      await Bun.sleep(2_000)
+    }
+  })
+  await check('schema drift during downtime: purged DDL recovers by re-probe', async () => {
+    // The reported stuck flow. A migration drops a column while replication
+    // is paused, and the binlog containing that ALTER is purged before the
+    // stream returns - so no DDL event will ever teach the mirror the new
+    // shape. Every copy path used to SELECT the remembered column list and
+    // die on the source's own "Unknown column", and since retries re-read
+    // the same stale schema, the failure repeated forever. Recovery must
+    // re-probe: copy the table as the source IS, not as it was.
+    await sql(`CREATE TABLE drift_messages (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      body VARCHAR(200) NOT NULL,
+      sentByAdminId BIGINT NULL
+    )`)
+    await sql(`INSERT INTO drift_messages (body, sentByAdminId) VALUES ('one', 7), ('two', NULL)`)
+    try {
+      // Adopt the new table into the mirror.
+      await retry409(() =>
+        api(`/api/databases/${databaseId}/snapshot`, { method: 'POST', body: { force: true } }))
+      await waitForState(databaseId, 'streaming', 180_000)
+
+      // Downtime: pause, migrate, and lose the binlog history of it.
+      await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'paused' } })
+      await sql(`ALTER TABLE drift_messages DROP COLUMN sentByAdminId`)
+      await sql(`INSERT INTO drift_messages (body) VALUES ('three')`)
+      await sql(`FLUSH BINARY LOGS`)
+      await sql(`FLUSH BINARY LOGS`)
+      const [logs] = (await mysqlConnection!.query('SHOW BINARY LOGS')) as unknown as [
+        Array<{ Log_name: string }>,
+      ]
+      await sql(`PURGE BINARY LOGS TO '${logs[logs.length - 1]!.Log_name}'`)
+      await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'auto' } })
+
+      // The per-table resync is the operator's repair tool; it must adopt
+      // the source's current shape rather than replaying the stale one.
+      await retry409(() =>
+        api(`/api/databases/${databaseId}/tables/drift_messages/resync`, { method: 'POST' }))
+      const deadline = Date.now() + 180_000
+      for (;;) {
+        const tables = await api<Array<{ name: string; state: string; rows: number; last_error: string | null }>>(
+          `/api/tables?db=${databaseId}`,
+        )
+        const table = tables.find((entry) => entry.name === 'drift_messages')
+        if (table?.last_error?.includes('Unknown column')) {
+          throw new Error(`resync copied the stale schema: ${table.last_error}`)
+        }
+        if (table?.state === 'streaming' && table.rows === 3) break
+        if (Date.now() > deadline) {
+          throw new Error(`drift resync never settled: ${JSON.stringify(table)}`)
+        }
+        await Bun.sleep(2_000)
+      }
+      const rows = await pintailQuery(`SELECT id, body FROM drift_messages ORDER BY id`)
+      const expected = [['1', 'one'], ['2', 'two'], ['3', 'three']]
+      if (JSON.stringify(rows.map((row) => row.map(String))) !== JSON.stringify(expected)) {
+        throw new Error(`drift table diverged: ${JSON.stringify(rows)}`)
+      }
+      // The stream itself must be live again, not just the copy: the purged
+      // checkpoint forced a stream-level recovery, and a silent restart loop
+      // here would pass every assertion above while replicating nothing.
+      await sql(`INSERT INTO drift_messages (body) VALUES ('four')`)
+      const streamed = Date.now() + 120_000
+      for (;;) {
+        const streaming = await pintailQuery(`SELECT COUNT(*) FROM drift_messages`)
+        if (String(streaming[0][0]) === '4') break
+        if (Date.now() > streamed) {
+          throw new Error('the stream never recovered after the purged checkpoint')
+        }
+        await Bun.sleep(2_000)
+      }
+    } finally {
+      await sql(`DROP TABLE IF EXISTS drift_messages`)
+      // The drop replicates and the fixture table leaves the mirror; later
+      // checks never see it.
+    }
+  })
+  await check('reset starts the mirror over with the saved connection', async () => {
+    // The escape hatch for state wedged beyond per-table repair: clear the
+    // mirror, re-probe, recopy, continue in the configured mode - without
+    // re-entering any connection details. What is asserted: the reset is
+    // accepted, every table comes back byte-countable, and streaming
+    // resumes.
+    const countBefore = await mysqlCount('orders')
+    await retry409(() => api(`/api/databases/${databaseId}/reset`, { method: 'POST' }))
+    await waitForState(databaseId, 'streaming', 300_000)
+    const settled = Date.now() + 120_000
+    for (;;) {
+      const rows = await pintailQuery(`SELECT COUNT(*) FROM orders`)
+      if (String(rows[0][0]) === countBefore) break
+      if (Date.now() > settled) {
+        throw new Error(`orders never converged after reset: ${rows[0][0]} vs ${countBefore}`)
+      }
+      await Bun.sleep(2_000)
+    }
+    // And the stream is live again: a new source row arrives without help.
+    await sql(`INSERT INTO orders (customer_id, status, total) VALUES (1, 'paid', 12.34)`)
+    const streamed = Date.now() + 60_000
+    for (;;) {
+      const rows = await pintailQuery(`SELECT COUNT(*) FROM orders`)
+      if (Number(rows[0][0]) === Number(countBefore) + 1) break
+      if (Date.now() > streamed) throw new Error('the reset mirror is not streaming new rows')
       await Bun.sleep(2_000)
     }
   })
