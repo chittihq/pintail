@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-19T06:17:11.706Z.
+Measured 2026-08-19T06:30:21.116Z.
 
-**1762 passed, 19 failed, 6 documented-gap warnings.**
+**1781 passed, 0 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -92,7 +92,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | snapshot | query:enum: distinct orders by ordinal | PASS |  |
 | snapshot | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | snapshot | query:enum: a window order walks the ordinal | PASS |  |
-| snapshot | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| snapshot | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | snapshot | query:collation: distinct counts fold per column collation | PASS |  |
 | snapshot | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
@@ -205,7 +205,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | orm-compat | query:enum: distinct orders by ordinal | PASS |  |
 | orm-compat | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | orm-compat | query:enum: a window order walks the ordinal | PASS |  |
-| orm-compat | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| orm-compat | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | orm-compat | query:collation: distinct counts fold per column collation | PASS |  |
 | orm-compat | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | crud | converge:audit_log | PASS |  |
@@ -294,7 +294,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | crud | query:enum: distinct orders by ordinal | PASS |  |
 | crud | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | crud | query:enum: a window order walks the ordinal | PASS |  |
-| crud | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| crud | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | crud | query:collation: distinct counts fold per column collation | PASS |  |
 | crud | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
@@ -383,7 +383,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | type-edges | query:enum: distinct orders by ordinal | PASS |  |
 | type-edges | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | type-edges | query:enum: a window order walks the ordinal | PASS |  |
-| type-edges | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| type-edges | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | type-edges | query:collation: distinct counts fold per column collation | PASS |  |
 | type-edges | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | ddl | converge:audit_log | PASS |  |
@@ -473,7 +473,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | ddl | query:enum: distinct orders by ordinal | PASS |  |
 | ddl | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | ddl | query:enum: a window order walks the ordinal | PASS |  |
-| ddl | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| ddl | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | ddl | query:collation: distinct counts fold per column collation | PASS |  |
 | ddl | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
@@ -563,7 +563,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | schema-drift-minimal | query:enum: distinct orders by ordinal | PASS |  |
 | schema-drift-minimal | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | schema-drift-minimal | query:enum: a window order walks the ordinal | PASS |  |
-| schema-drift-minimal | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| schema-drift-minimal | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | schema-drift-minimal | query:collation: distinct counts fold per column collation | PASS |  |
 | schema-drift-minimal | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
@@ -653,7 +653,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | schema-drift-unseen | query:enum: distinct orders by ordinal | PASS |  |
 | schema-drift-unseen | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | schema-drift-unseen | query:enum: a window order walks the ordinal | PASS |  |
-| schema-drift-unseen | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| schema-drift-unseen | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | schema-drift-unseen | query:collation: distinct counts fold per column collation | PASS |  |
 | schema-drift-unseen | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | churn-live | live:point lookup by key | PASS |  |
@@ -749,7 +749,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | churn | query:enum: distinct orders by ordinal | PASS |  |
 | churn | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | churn | query:enum: a window order walks the ordinal | PASS |  |
-| churn | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| churn | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | churn | query:collation: distinct counts fold per column collation | PASS |  |
 | churn | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
@@ -844,7 +844,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | execution-budget | query:enum: distinct orders by ordinal | PASS |  |
 | execution-budget | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | execution-budget | query:enum: a window order walks the ordinal | PASS |  |
-| execution-budget | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| execution-budget | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | execution-budget | query:collation: distinct counts fold per column collation | PASS |  |
 | execution-budget | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | spill | forced-spill:sort | PASS |  |
@@ -938,7 +938,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | spill | query:enum: distinct orders by ordinal | PASS |  |
 | spill | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | spill | query:enum: a window order walks the ordinal | PASS |  |
-| spill | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| spill | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | spill | query:collation: distinct counts fold per column collation | PASS |  |
 | spill | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
@@ -1031,7 +1031,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | pooling | query:enum: distinct orders by ordinal | PASS |  |
 | pooling | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | pooling | query:enum: a window order walks the ordinal | PASS |  |
-| pooling | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| pooling | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | pooling | query:collation: distinct counts fold per column collation | PASS |  |
 | pooling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | restart | converge:audit_log | PASS |  |
@@ -1121,7 +1121,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | restart | query:enum: distinct orders by ordinal | PASS |  |
 | restart | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | restart | query:enum: a window order walks the ordinal | PASS |  |
-| restart | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| restart | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | restart | query:collation: distinct counts fold per column collation | PASS |  |
 | restart | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
@@ -1227,7 +1227,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | control-plane | query:enum: distinct orders by ordinal | PASS |  |
 | control-plane | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | control-plane | query:enum: a window order walks the ordinal | PASS |  |
-| control-plane | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| control-plane | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | control-plane | query:collation: distinct counts fold per column collation | PASS |  |
 | control-plane | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
@@ -1319,7 +1319,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | snapshot-ddl-window | query:enum: distinct orders by ordinal | PASS |  |
 | snapshot-ddl-window | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | snapshot-ddl-window | query:enum: a window order walks the ordinal | PASS |  |
-| snapshot-ddl-window | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| snapshot-ddl-window | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | snapshot-ddl-window | query:collation: distinct counts fold per column collation | PASS |  |
 | snapshot-ddl-window | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
@@ -1415,7 +1415,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | drop-table-cdc | query:enum: distinct orders by ordinal | PASS |  |
 | drop-table-cdc | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | drop-table-cdc | query:enum: a window order walks the ordinal | PASS |  |
-| drop-table-cdc | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-table-cdc | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-table-cdc | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-table-cdc | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
@@ -1509,13 +1509,13 @@ Measured 2026-08-19T06:17:11.706Z.
 | drop-table-recreate | query:enum: distinct orders by ordinal | PASS |  |
 | drop-table-recreate | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | drop-table-recreate | query:enum: a window order walks the ordinal | PASS |  |
-| drop-table-recreate | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-table-recreate | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-table-recreate | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-table-recreate | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_d2f17e4c6cf4a0c54e03ff355a18f088","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T06:04:24.902841+00:00","updated_at":"2026-08-19T06:10:36.790539+00:00"},"tables":13,"rows":794} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_615bfe558e3d9088e40a83b7347ef24f","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T06:17:44.808428+00:00","updated_at":"2026-08-19T06:23:46.719147+00:00"},"tables":13,"rows":794} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1605,7 +1605,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | drop-table-polling | query:enum: distinct orders by ordinal | PASS |  |
 | drop-table-polling | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | drop-table-polling | query:enum: a window order walks the ordinal | PASS |  |
-| drop-table-polling | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-table-polling | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-table-polling | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-table-polling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
@@ -1704,7 +1704,7 @@ Measured 2026-08-19T06:17:11.706Z.
 | drop-database | query:enum: distinct orders by ordinal | PASS |  |
 | drop-database | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | drop-database | query:enum: a window order walks the ordinal | PASS |  |
-| drop-database | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-database | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | drop-database | query:collation: distinct counts fold per column collation | PASS |  |
 | drop-database | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
@@ -1795,6 +1795,6 @@ Measured 2026-08-19T06:17:11.706Z.
 | ddl-documented-gaps | query:enum: distinct orders by ordinal | PASS |  |
 | ddl-documented-gaps | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
 | ddl-documented-gaps | query:enum: a window order walks the ordinal | PASS |  |
-| ddl-documented-gaps | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| ddl-documented-gaps | query:collation: mixed grouping answers with per-key folds | PASS |  |
 | ddl-documented-gaps | query:collation: distinct counts fold per column collation | PASS |  |
 | ddl-documented-gaps | query:collation: regrouping a mixed grouping stays exact | PASS |  |

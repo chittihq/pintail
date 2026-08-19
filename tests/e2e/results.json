@@ -432,8 +432,7 @@
   {
     "phase": "snapshot",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "snapshot",
@@ -998,16 +997,15 @@
   {
     "phase": "orm-compat",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
-  },
-  {
-    "phase": "orm-compat",
-    "check": "query:collation: distinct counts fold per column collation",
     "status": "PASS"
   },
   {
     "phase": "orm-compat",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "query:collation: regrouping a mixed grouping stays exact",
     "status": "PASS"
   },
@@ -1444,8 +1442,7 @@
   {
     "phase": "crud",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "crud",
@@ -1890,8 +1887,7 @@
   {
     "phase": "type-edges",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "type-edges",
@@ -2341,8 +2337,7 @@
   {
     "phase": "ddl",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -2792,8 +2787,7 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-minimal",
@@ -3243,8 +3237,7 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-unseen",
@@ -3724,8 +3717,7 @@
   {
     "phase": "churn",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -4200,8 +4192,7 @@
   {
     "phase": "execution-budget",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "execution-budget",
@@ -4671,8 +4662,7 @@
   {
     "phase": "spill",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "spill",
@@ -5137,8 +5127,7 @@
   {
     "phase": "pooling",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "pooling",
@@ -5588,8 +5577,7 @@
   {
     "phase": "restart",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -6119,8 +6107,7 @@
   {
     "phase": "control-plane",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -6580,8 +6567,7 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -7062,8 +7048,7 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-cdc",
@@ -7534,8 +7519,7 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -7566,7 +7550,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_d2f17e4c6cf4a0c54e03ff355a18f088\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T06:04:24.902841+00:00\",\"updated_at\":\"2026-08-19T06:10:36.790539+00:00\"},\"tables\":13,\"rows\":794}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_615bfe558e3d9088e40a83b7347ef24f\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T06:17:44.808428+00:00\",\"updated_at\":\"2026-08-19T06:23:46.719147+00:00\"},\"tables\":13,\"rows\":794}"
   },
   {
     "phase": "drop-table-polling",
@@ -8016,8 +8000,7 @@
   {
     "phase": "drop-table-polling",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -8513,8 +8496,7 @@
   {
     "phase": "drop-database",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "drop-database",
@@ -8971,8 +8953,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:collation: mixed grouping answers with per-key folds",
-    "status": "FAIL",
-    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
