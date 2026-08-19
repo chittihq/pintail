@@ -79,6 +79,10 @@ pub struct Column {
     /// one number a million times and go stale the moment the declaration
     /// changed. The read path reattaches it.
     enum_labels: Option<Vec<String>>,
+    /// Declared SET members in declaration order, when the source column is
+    /// a SET. `MySQL` sorts a SET by its member bitmask, so the position in
+    /// this list is the member's bit.
+    set_members: Option<Vec<String>>,
 }
 
 impl Column {
@@ -92,6 +96,7 @@ impl Column {
             nullable,
             collation: None,
             enum_labels: None,
+            set_members: None,
         }
     }
 
@@ -118,14 +123,27 @@ impl Column {
         self.enum_labels.as_deref()
     }
 
+    /// Attaches the declared SET members in declaration order.
+    #[must_use]
+    pub fn with_set_members(mut self, set_members: Option<Vec<String>>) -> Self {
+        self.set_members = set_members;
+        self
+    }
+
+    /// Returns the declared SET members, when the column is a SET.
+    #[must_use]
+    pub fn set_members(&self) -> Option<&[String]> {
+        self.set_members.as_deref()
+    }
+
     /// Returns the one-based declaration index of `label`, when declared.
     #[must_use]
-    pub fn enum_index_of(&self, label: &str) -> Option<u16> {
+    pub fn enum_index_of(&self, label: &str) -> Option<u64> {
         self.enum_labels.as_ref().and_then(|labels| {
             labels
                 .iter()
                 .position(|declared| declared == label)
-                .and_then(|position| u16::try_from(position + 1).ok())
+                .and_then(|position| u64::try_from(position + 1).ok())
         })
     }
 

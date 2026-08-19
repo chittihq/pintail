@@ -184,6 +184,20 @@ impl SourceTable {
                                 })
                                 .flatten(),
                         )
+                        // A SET sorts by its member bitmask; the members and
+                        // their declaration order are that mask's bits.
+                        .with_set_members(
+                            column
+                                .mysql_data_type
+                                .eq_ignore_ascii_case("set")
+                                .then(|| {
+                                    pintail_types::declaration_labels(
+                                        &column.mysql_column_type,
+                                        "set",
+                                    )
+                                })
+                                .flatten(),
+                        )
                 })
                 .collect(),
             self.key.mode,

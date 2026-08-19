@@ -185,8 +185,9 @@ pub enum Value {
     /// Derived `Ord` compares `index` before `label`, which is the ordering
     /// `MySQL` uses.
     Enum {
-        /// One-based declaration index, matching `MySQL`'s ordinal.
-        index: u16,
+        /// One-based declaration index for an ENUM, or the member bitmask
+        /// for a SET - both are what `MySQL` sorts the type by.
+        index: u64,
         /// Declared label, and what the value displays as.
         label: String,
     },
@@ -240,7 +241,7 @@ impl Value {
 
     /// The declaration index when this is an ENUM.
     #[must_use]
-    pub const fn enum_index(&self) -> Option<u16> {
+    pub const fn enum_index(&self) -> Option<u64> {
         match self {
             Self::Enum { index, .. } => Some(*index),
             _ => None,

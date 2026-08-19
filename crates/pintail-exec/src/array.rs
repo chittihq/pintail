@@ -287,6 +287,11 @@ pub struct StrColumn {
     /// from codes: predicates, group keys and DISTINCT read codes only, so
     /// a 20M-row low-cardinality column never builds 20M views (issue #6).
     lazy: Option<Box<std::sync::OnceLock<StrBody>>>,
+    /// Source SET members in declaration order, when the column is a SET.
+    /// The read path derives each value's member bitmask - what `MySQL`
+    /// sorts a SET by - from these, exactly as `enum_labels` carries the
+    /// ENUM ordinal.
+    set_members: Option<std::sync::Arc<Vec<String>>>,
     /// Source ENUM labels in declaration order, when the column is an ENUM.
     ///
     /// Carried here rather than in a new `ColumnVector` variant so no match
@@ -320,10 +325,45 @@ impl StrColumn {
         self
     }
 
+    /// Attaches source SET members in declaration order.
+    #[must_use]
+    pub fn with_set_members(mut self, members: Option<std::sync::Arc<Vec<String>>>) -> Self {
+        self.set_members = members;
+        self
+    }
+
+    /// The declared ordinal `MySQL` sorts this column's value by: an ENUM
+    /// label's one-based declaration index, or a SET value's member
+    /// bitmask. `None` leaves the value a plain string.
+    #[must_use]
+    pub(crate) fn declared_ordinal(&self, text: &str) -> Option<u64> {
+        if let Some(index) = self.enum_index_of(text) {
+            return Some(index);
+        }
+        let members = self.set_members.as_ref()?;
+        // The empty SET is mask 0; anything undeclared refuses, exactly as
+        // an undeclared ENUM label does.
+        let mut mask = 0_u64;
+        for member in text.split(',').filter(|member| !member.is_empty()) {
+            let position = members.iter().position(|declared| declared == member)?;
+            if position >= 64 {
+                return None;
+            }
+            mask |= 1_u64 << position;
+        }
+        Some(mask)
+    }
+
     /// The declared ENUM labels this column carries, if any.
     #[must_use]
     pub(crate) fn declared_enum_labels(&self) -> Option<&std::sync::Arc<Vec<String>>> {
         self.enum_labels.as_ref()
+    }
+
+    /// The declared SET members this column carries, if any.
+    #[must_use]
+    pub(crate) fn declared_set_members(&self) -> Option<&std::sync::Arc<Vec<String>>> {
+        self.set_members.as_ref()
     }
 
     /// The one-based declaration index of `label`, when this column is an
@@ -333,12 +373,12 @@ impl StrColumn {
     /// string: it cannot be ordered by an index it does not have, and
     /// inventing one would order it confidently and wrongly.
     #[must_use]
-    pub(crate) fn enum_index_of(&self, label: &str) -> Option<u16> {
+    pub(crate) fn enum_index_of(&self, label: &str) -> Option<u64> {
         self.enum_labels.as_ref().and_then(|labels| {
             labels
                 .iter()
                 .position(|declared| declared == label)
-                .and_then(|position| u16::try_from(position + 1).ok())
+                .and_then(|position| u64::try_from(position + 1).ok())
         })
     }
 
@@ -413,6 +453,7 @@ impl StrColumn {
             }),
             lazy: Some(Box::new(std::sync::OnceLock::new())),
             enum_labels: None,
+            set_members: None,
         }
     }
 
@@ -683,7 +724,7 @@ impl ColumnArray {
                 }
                 values.views()[row].with_bytes(values.heap(), |bytes| {
                     let text = String::from_utf8_lossy(bytes).into_owned();
-                    values.enum_index_of(&text).map_or_else(
+                    values.declared_ordinal(&text).map_or_else(
                         || Value::Utf8(text.clone()),
                         |index| Value::Enum {
                             index,

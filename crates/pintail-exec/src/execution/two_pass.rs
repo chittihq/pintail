@@ -315,6 +315,7 @@ pub(super) fn build_streaming_two_pass_aggregate(
     // string and the declaration index - which is what MySQL orders an
     // ENUM by - is erased exactly here (#251).
     let mut key_enum_labels: [Option<std::sync::Arc<Vec<String>>>; 2] = [None, None];
+    let mut key_set_members: [Option<std::sync::Arc<Vec<String>>>; 2] = [None, None];
     let key_columns: [Option<usize>; 2] = match keys {
         TwoPassKeySource::Text { column } => [Some(column), None],
         TwoPassKeySource::TextPair { first, second } => [Some(first), Some(second)],
@@ -328,10 +329,12 @@ pub(super) fn build_streaming_two_pass_aggregate(
         for (slot, key_column) in key_columns.iter().enumerate() {
             if let Some(column) = key_column
                 && key_enum_labels[slot].is_none()
+                && key_set_members[slot].is_none()
                 && let Some(vector) = current.column(*column)
                 && let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed()
             {
                 key_enum_labels[slot] = strings.declared_enum_labels().cloned();
+                key_set_members[slot] = strings.declared_set_members().cloned();
             }
         }
         // String sources prepare their (tiny, per-distinct-value) dictionary
@@ -510,30 +513,47 @@ pub(super) fn build_streaming_two_pass_aggregate(
     let finalized = maps
         .into_par_iter()
         .map(|map| -> Result<(Vec<Vec<Value>>, usize), ExecError> {
-            let interned = |id: u64, labels: Option<&std::sync::Arc<Vec<String>>>| {
-                let text = intern
-                    .as_ref()
-                    .expect("text keys carry an intern table")
-                    .values[usize::try_from(id).expect("intern id fits usize")]
-                .clone();
-                // An ENUM group key rebuilds with its declaration index so
-                // the ORDER BY above sorts it by ordinal, MySQL's rule; a
-                // label absent from the declaration stays a plain string.
-                labels
-                    .and_then(|labels| {
+            let interned =
+                |id: u64,
+                 labels: Option<&std::sync::Arc<Vec<String>>>,
+                 members: Option<&std::sync::Arc<Vec<String>>>| {
+                    let text = intern
+                        .as_ref()
+                        .expect("text keys carry an intern table")
+                        .values[usize::try_from(id).expect("intern id fits usize")]
+                    .clone();
+                    // An ENUM group key rebuilds with its declaration index and
+                    // a SET key with its member bitmask, so the ORDER BY above
+                    // sorts by MySQL's rule; anything undeclared stays a plain
+                    // string.
+                    let ordinal = if let Some(labels) = labels {
                         labels
                             .iter()
                             .position(|declared| declared == &text)
-                            .and_then(|position| u16::try_from(position + 1).ok())
-                    })
-                    .map_or_else(
+                            .and_then(|position| u64::try_from(position + 1).ok())
+                    } else if let Some(members) = members {
+                        let mut mask = Some(0_u64);
+                        for member in text.split(',').filter(|member| !member.is_empty()) {
+                            mask = mask.and_then(|mask| {
+                                members
+                                    .iter()
+                                    .position(|declared| declared == member)
+                                    .filter(|position| *position < 64)
+                                    .map(|position| mask | (1_u64 << position))
+                            });
+                        }
+                        mask
+                    } else {
+                        None
+                    };
+                    ordinal.map_or_else(
                         || Value::Utf8(text.clone()),
                         |index| Value::Enum {
                             index,
                             label: text.clone(),
                         },
                     )
-            };
+                };
             let mut rows = Vec::with_capacity(map.len());
             let mut payload = 0_usize;
             for ((bits, null), states) in map {
@@ -546,7 +566,11 @@ pub(super) fn build_streaming_two_pass_aggregate(
                         row.push(if null {
                             Value::Null
                         } else {
-                            interned(bits, key_enum_labels[0].as_ref())
+                            interned(
+                                bits,
+                                key_enum_labels[0].as_ref(),
+                                key_set_members[0].as_ref(),
+                            )
                         });
                     }
                     TwoPassKeySource::TextPair { .. } => {
@@ -554,7 +578,11 @@ pub(super) fn build_streaming_two_pass_aggregate(
                             row.push(if id == 0 {
                                 Value::Null
                             } else {
-                                interned(id - 1, key_enum_labels[slot].as_ref())
+                                interned(
+                                    id - 1,
+                                    key_enum_labels[slot].as_ref(),
+                                    key_set_members[slot].as_ref(),
+                                )
                             });
                         }
                     }

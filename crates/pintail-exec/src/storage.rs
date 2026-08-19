@@ -237,6 +237,16 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     .map(|labels| Arc::new(labels.to_vec()))
             })
             .collect::<Vec<_>>();
+        // Parallel to `enum_labels`: a SET column's declared members, so a
+        // materialized value carries the member bitmask MySQL sorts by.
+        let set_members = output_positions
+            .iter()
+            .map(|position| {
+                snapshot.schema().columns()[*position]
+                    .set_members()
+                    .map(|members| Arc::new(members.to_vec()))
+            })
+            .collect::<Vec<_>>();
         let stream_overhead = std::mem::size_of::<SnapshotStream>()
             .saturating_add(types.capacity() * std::mem::size_of::<pintail_types::DataType>());
         if stream_overhead > memory_limit {
@@ -264,6 +274,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 started: true,
                 types,
                 enum_labels,
+                set_members,
                 retained_bytes: stream_overhead,
                 remaining: None,
                 settled: None,
@@ -367,6 +378,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 started: false,
                 types,
                 enum_labels,
+                set_members,
                 retained_bytes: stream_overhead,
                 remaining: scan
                     .predicates
@@ -459,6 +471,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             started: true,
             types,
             enum_labels,
+            set_members,
             retained_bytes,
             remaining: None,
             settled: None,
@@ -727,6 +740,9 @@ struct PrewhereSpec {
     /// ENUM as text while the projection compares it by index - the same
     /// column answering two different questions in one query.
     enum_labels: Vec<Option<Arc<Vec<String>>>>,
+    /// Parallel to `enum_labels`: a SET column's declared members, whose
+    /// positions are the bits of the mask `MySQL` sorts a SET by.
+    set_members: Vec<Option<Arc<Vec<String>>>>,
 }
 
 struct SnapshotStream {
@@ -751,6 +767,9 @@ struct SnapshotStream {
     types: Vec<pintail_types::DataType>,
     /// Parallel to `types`: declared ENUM labels per projected column.
     enum_labels: Vec<Option<Arc<Vec<String>>>>,
+    /// Parallel to `enum_labels`: a SET column's declared members, whose
+    /// positions are the bits of the mask `MySQL` sorts a SET by.
+    set_members: Vec<Option<Arc<Vec<String>>>>,
     retained_bytes: usize,
     remaining: Option<usize>,
     /// `(table directory, manifest generation, scan signature)` over a
@@ -900,7 +919,9 @@ impl BatchStream for SnapshotStream {
                     .into_iter()
                     .collect::<Vec<_>>()
                     .into_par_iter()
-                    .map(|chunk| adopt_chunk(chunk, &self.types, &self.enum_labels))
+                    .map(|chunk| {
+                        adopt_chunk(chunk, &self.types, &self.enum_labels, &self.set_members)
+                    })
                     .collect::<Result<Vec<_>, ExecError>>()?;
                 for (batches, chunk_bytes) in adopted {
                     released = released.saturating_add(chunk_bytes);
@@ -964,9 +985,9 @@ impl BatchStream for SnapshotStream {
                 .iter()
                 .copied()
                 .zip(taken)
-                .zip(self.enum_labels.iter())
-                .map(|((data_type, column), labels)| {
-                    column_vector_from_decoded(data_type, column, labels.as_ref())
+                .zip(self.enum_labels.iter().zip(self.set_members.iter()))
+                .map(|((data_type, column), (labels, members))| {
+                    column_vector_from_decoded(data_type, column, labels.as_ref(), members.as_ref())
                 })
                 .collect::<Result<Vec<_>, _>>()?
         } else {
@@ -993,20 +1014,21 @@ impl BatchStream for SnapshotStream {
                 .iter()
                 .copied()
                 .zip(output)
-                .zip(self.enum_labels.iter())
-                .map(|((data_type, values), labels)| {
+                .zip(self.enum_labels.iter().zip(self.set_members.iter()))
+                .map(|((data_type, values), (labels, members))| {
                     // Row-shaped values come from the memtable (CDC rows not
                     // yet flushed), where an ENUM is stored as its bare
                     // label. Reattach the declaration index exactly as the
                     // columnar decode path does, or a scan straddling
                     // settled segments and fresh rows mixes ordinal-ordered
                     // and text-ordered values in one sort (#256).
-                    let values = match labels {
-                        Some(labels) => values
+                    let values = if labels.is_some() || members.is_some() {
+                        values
                             .into_iter()
-                            .map(|value| enum_value(value, labels))
-                            .collect(),
-                        None => values,
+                            .map(|value| ordinal_value(value, labels.as_ref(), members.as_ref()))
+                            .collect()
+                    } else {
+                        values
                     };
                     ColumnVector::new(data_type, values).map_err(ExecError::from)
                 })
@@ -1317,6 +1339,7 @@ fn build_prewhere_spec(
     let mut layout = Vec::with_capacity(predicate_ids.len());
     let mut data_types = Vec::with_capacity(predicate_ids.len());
     let mut enum_labels = Vec::with_capacity(predicate_ids.len());
+    let mut set_members = Vec::with_capacity(predicate_ids.len());
     for id in &predicate_ids {
         let column = snapshot
             .schema()
@@ -1338,6 +1361,11 @@ fn build_prewhere_spec(
         });
         data_types.push(column.data_type());
         enum_labels.push(column.enum_labels().map(|labels| Arc::new(labels.to_vec())));
+        set_members.push(
+            column
+                .set_members()
+                .map(|members| Arc::new(members.to_vec())),
+        );
     }
     let predicates = scan
         .predicates
@@ -1350,6 +1378,7 @@ fn build_prewhere_spec(
         predicates,
         data_types,
         enum_labels,
+        set_members,
     })
 }
 
@@ -1388,9 +1417,14 @@ fn prewhere_ranges(
         .data_types
         .iter()
         .zip(columns)
-        .zip(spec.enum_labels.iter())
-        .map(|((data_type, column), labels)| {
-            column_vector_from_decoded(*data_type, column.clone(), labels.as_ref())
+        .zip(spec.enum_labels.iter().zip(spec.set_members.iter()))
+        .map(|((data_type, column), (labels, members))| {
+            column_vector_from_decoded(
+                *data_type,
+                column.clone(),
+                labels.as_ref(),
+                members.as_ref(),
+            )
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
@@ -1452,6 +1486,7 @@ fn adopt_chunk(
     chunk: ProjectedColumnChunk,
     types: &[pintail_types::DataType],
     enum_labels: &[Option<Arc<Vec<String>>>],
+    set_members: &[Option<Arc<Vec<String>>>],
 ) -> Result<(Vec<RecordBatch>, usize), ExecError> {
     let chunk_bytes = chunk
         .retained_bytes()
@@ -1485,9 +1520,9 @@ fn adopt_chunk(
             .iter()
             .copied()
             .zip(taken)
-            .zip(enum_labels.iter())
-            .map(|((data_type, column), labels)| {
-                column_vector_from_decoded(data_type, column, labels.as_ref())
+            .zip(enum_labels.iter().zip(set_members.iter()))
+            .map(|((data_type, column), (labels, members))| {
+                column_vector_from_decoded(data_type, column, labels.as_ref(), members.as_ref())
             })
             .collect::<Result<Vec<_>, _>>()?;
         batches.push(RecordBatch::new(take, vectors)?);
@@ -1501,21 +1536,43 @@ fn adopt_chunk(
 /// Promotes a text value to an ENUM value carrying its declaration index.
 /// A label absent from the declaration stays text: it has no index, and
 /// inventing one would order it confidently and wrongly.
-fn enum_value(value: pintail_types::Value, labels: &Arc<Vec<String>>) -> pintail_types::Value {
+fn ordinal_value(
+    value: pintail_types::Value,
+    enum_labels: Option<&Arc<Vec<String>>>,
+    set_members: Option<&Arc<Vec<String>>>,
+) -> pintail_types::Value {
     let pintail_types::Value::Utf8(text) = &value else {
         return value;
     };
-    labels
-        .iter()
-        .position(|declared| declared == text)
-        .and_then(|position| u16::try_from(position + 1).ok())
-        .map_or_else(
-            || value.clone(),
-            |index| pintail_types::Value::Enum {
-                index,
-                label: text.clone(),
-            },
-        )
+    let ordinal = if let Some(labels) = enum_labels {
+        labels
+            .iter()
+            .position(|declared| declared == text)
+            .and_then(|position| u64::try_from(position + 1).ok())
+    } else if let Some(members) = set_members {
+        // A SET value is a comma-joined subset; its ordinal is the member
+        // bitmask. Undeclared members refuse, like undeclared ENUM labels.
+        let mut mask = Some(0_u64);
+        for member in text.split(',').filter(|member| !member.is_empty()) {
+            mask = mask.and_then(|mask| {
+                members
+                    .iter()
+                    .position(|declared| declared == member)
+                    .filter(|position| *position < 64)
+                    .map(|position| mask | (1_u64 << position))
+            });
+        }
+        mask
+    } else {
+        None
+    };
+    ordinal.map_or_else(
+        || value.clone(),
+        |index| pintail_types::Value::Enum {
+            index,
+            label: text.clone(),
+        },
+    )
 }
 
 /// materialize lazily only if a row-shaped consumer asks. Falls back to
@@ -1531,16 +1588,18 @@ fn column_vector_from_decoded(
     data_type: pintail_types::DataType,
     decoded: DecodedColumn,
     enum_labels: Option<&Arc<Vec<String>>>,
+    set_members: Option<&Arc<Vec<String>>>,
 ) -> Result<ColumnVector, ExecError> {
     let storage = data_type.storage_type();
     match decoded {
         DecodedColumn::Values(values) => {
-            let values = match enum_labels {
-                Some(labels) => values
+            let values = if enum_labels.is_some() || set_members.is_some() {
+                values
                     .into_iter()
-                    .map(|value| enum_value(value, labels))
-                    .collect(),
-                None => values,
+                    .map(|value| ordinal_value(value, enum_labels, set_members))
+                    .collect()
+            } else {
+                values
             };
             ColumnVector::new(data_type, values).map_err(ExecError::from)
         }
@@ -1575,9 +1634,16 @@ fn column_vector_from_decoded(
             heap,
             offsets,
             validity,
-        } if matches!(storage, pintail_types::DataType::Utf8) => Ok(
-            typed_from_utf8_arena_labelled(data_type, &heap, &offsets, &validity, enum_labels),
-        ),
+        } if matches!(storage, pintail_types::DataType::Utf8) => {
+            Ok(typed_from_utf8_arena_labelled(
+                data_type,
+                &heap,
+                &offsets,
+                &validity,
+                enum_labels,
+                set_members,
+            ))
+        }
         DecodedColumn::DictionaryUtf8 {
             dict_heap,
             dict_offsets,
@@ -1593,7 +1659,8 @@ fn column_vector_from_decoded(
                 // dictionary bytes as the only heap.
                 let column =
                     StrColumn::from_dictionary(&dict_heap, &dict_offsets, &codes, &validity)
-                        .with_enum_labels(enum_labels.map(Arc::clone));
+                        .with_enum_labels(enum_labels.map(Arc::clone))
+                        .with_set_members(set_members.map(Arc::clone));
                 return Ok(ColumnVector::from_typed(
                     data_type,
                     TypedValues::Utf8(column),
@@ -1619,6 +1686,7 @@ fn column_vector_from_decoded(
                 &offsets,
                 &validity,
                 enum_labels,
+                set_members,
             ))
         }
         DecodedColumn::NativeUnits {
@@ -1695,12 +1763,15 @@ fn typed_from_utf8_arena_labelled(
     offsets: &[usize],
     validity: &pintail_store::ColumnValidity,
     enum_labels: Option<&Arc<Vec<String>>>,
+    set_members: Option<&Arc<Vec<String>>>,
 ) -> ColumnVector {
     let mut text = StrColumn::default();
     for row in 0..validity.len() {
         text.push(&heap[offsets[row]..offsets[row + 1]]);
     }
-    let text = text.with_enum_labels(enum_labels.map(Arc::clone));
+    let text = text
+        .with_enum_labels(enum_labels.map(Arc::clone))
+        .with_set_members(set_members.map(Arc::clone));
     let mask = ValidityMask::from_column_validity(validity);
     let typed = match data_type {
         pintail_types::DataType::Decimal { scale, .. } => {

@@ -471,9 +471,12 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 }
                 if let Value::Enum { index, label } = value
                     && *index > 0
+                    // SET masks also ride Value::Enum; only a plausible
+                    // single-member ordinal reconstructs a declaration slot.
+                    && let Ok(position) = usize::try_from(*index - 1)
+                    && position < 256
                 {
                     let slots = enum_slots.get_or_insert_with(Vec::new);
-                    let position = usize::from(*index) - 1;
                     if slots.len() <= position {
                         slots.resize(position + 1, String::new());
                     }
@@ -753,7 +756,7 @@ fn materialize_values(typed: &TypedValues, validity: &ValidityMask) -> Vec<Value
             // what made ORDER BY on an ENUM alphabetical (#251).
             TypedValues::Utf8(column) => {
                 let text = str_column_string(column, row);
-                match column.enum_index_of(&text) {
+                match column.declared_ordinal(&text) {
                     Some(index) => Value::Enum { index, label: text },
                     None => Value::Utf8(text),
                 }
