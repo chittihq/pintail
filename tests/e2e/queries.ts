@@ -696,7 +696,7 @@ export const differentialQueries: DifferentialQuery[] = [
     // representative spelling documented as gap #10.
     name: 'collation: mixed grouping answers with per-key folds',
     sql:
-      'SELECT COUNT(*) AS groups FROM ' +
+      'SELECT COUNT(*) AS n_groups FROM ' +
       '(SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tier) g',
     tables: ['customers'],
   },

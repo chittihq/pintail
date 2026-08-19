@@ -382,8 +382,68 @@
   {
     "phase": "snapshot",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "orm-compat",
@@ -888,8 +948,68 @@
   {
     "phase": "orm-compat",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "crud",
@@ -1274,8 +1394,68 @@
   {
     "phase": "crud",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "crud",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "type-edges",
@@ -1660,8 +1840,68 @@
   {
     "phase": "type-edges",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -2051,8 +2291,68 @@
   {
     "phase": "ddl",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-minimal",
@@ -2442,8 +2742,68 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-unseen",
@@ -2833,8 +3193,68 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "churn-live",
@@ -3254,8 +3674,68 @@
   {
     "phase": "churn",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "churn",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "execution-budget",
@@ -3670,8 +4150,68 @@
   {
     "phase": "execution-budget",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "spill",
@@ -4081,8 +4621,68 @@
   {
     "phase": "spill",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "spill",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "pooling",
@@ -4487,8 +5087,68 @@
   {
     "phase": "pooling",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -4878,8 +5538,68 @@
   {
     "phase": "restart",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "restart",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -5349,8 +6069,68 @@
   {
     "phase": "control-plane",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -5750,8 +6530,68 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "drop-table-cdc",
@@ -6172,8 +7012,68 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -6584,8 +7484,68 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -6606,7 +7566,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_85718493f5f05acd90b032176357bd63\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-18T19:02:42.787865+00:00\",\"updated_at\":\"2026-08-18T19:11:31.992413+00:00\"},\"tables\":13,\"rows\":794}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_d2f17e4c6cf4a0c54e03ff355a18f088\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-19T06:04:24.902841+00:00\",\"updated_at\":\"2026-08-19T06:10:36.790539+00:00\"},\"tables\":13,\"rows\":794}"
   },
   {
     "phase": "drop-table-polling",
@@ -7006,8 +7966,68 @@
   {
     "phase": "drop-table-polling",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "drop-database",
@@ -7443,8 +8463,68 @@
   {
     "phase": "drop-database",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
@@ -7841,7 +8921,67 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:general_ci: mixing collations across separate comparisons",
-    "status": "WARN",
-    "detail": "a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10)\nrow 0:\n  mysql   free | 104.0000\n  pintail enterprise | 160.0000"
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "FAIL",
+    "detail": "mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
   }
 ]

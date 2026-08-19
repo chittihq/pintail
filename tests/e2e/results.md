@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-18T19:18:38.394Z.
+Measured 2026-08-19T06:17:11.706Z.
 
-**1534 passed, 0 failed, 25 documented-gap warnings.**
+**1762 passed, 19 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -82,7 +82,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | snapshot | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | snapshot | query:general_ci: joining on a collated column | PASS |  |
 | snapshot | query:general_ci: representative spelling of a collated group | PASS |  |
-| snapshot | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| snapshot | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| snapshot | query:enum: order by ascends by declared ordinal | PASS |  |
+| snapshot | query:enum: order by descends by declared ordinal | PASS |  |
+| snapshot | query:enum: min and max compare as strings | PASS |  |
+| snapshot | query:enum: a greater-than range compares as strings | PASS |  |
+| snapshot | query:enum: a less-than range compares as strings | PASS |  |
+| snapshot | query:enum: between compares as strings | PASS |  |
+| snapshot | query:enum: distinct orders by ordinal | PASS |  |
+| snapshot | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| snapshot | query:enum: a window order walks the ordinal | PASS |  |
+| snapshot | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| snapshot | query:collation: distinct counts fold per column collation | PASS |  |
+| snapshot | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -183,7 +195,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | orm-compat | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | orm-compat | query:general_ci: joining on a collated column | PASS |  |
 | orm-compat | query:general_ci: representative spelling of a collated group | PASS |  |
-| orm-compat | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| orm-compat | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| orm-compat | query:enum: order by ascends by declared ordinal | PASS |  |
+| orm-compat | query:enum: order by descends by declared ordinal | PASS |  |
+| orm-compat | query:enum: min and max compare as strings | PASS |  |
+| orm-compat | query:enum: a greater-than range compares as strings | PASS |  |
+| orm-compat | query:enum: a less-than range compares as strings | PASS |  |
+| orm-compat | query:enum: between compares as strings | PASS |  |
+| orm-compat | query:enum: distinct orders by ordinal | PASS |  |
+| orm-compat | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| orm-compat | query:enum: a window order walks the ordinal | PASS |  |
+| orm-compat | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| orm-compat | query:collation: distinct counts fold per column collation | PASS |  |
+| orm-compat | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
@@ -260,7 +284,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | crud | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | crud | query:general_ci: joining on a collated column | PASS |  |
 | crud | query:general_ci: representative spelling of a collated group | PASS |  |
-| crud | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| crud | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| crud | query:enum: order by ascends by declared ordinal | PASS |  |
+| crud | query:enum: order by descends by declared ordinal | PASS |  |
+| crud | query:enum: min and max compare as strings | PASS |  |
+| crud | query:enum: a greater-than range compares as strings | PASS |  |
+| crud | query:enum: a less-than range compares as strings | PASS |  |
+| crud | query:enum: between compares as strings | PASS |  |
+| crud | query:enum: distinct orders by ordinal | PASS |  |
+| crud | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| crud | query:enum: a window order walks the ordinal | PASS |  |
+| crud | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| crud | query:collation: distinct counts fold per column collation | PASS |  |
+| crud | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
@@ -337,7 +373,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | type-edges | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | type-edges | query:general_ci: joining on a collated column | PASS |  |
 | type-edges | query:general_ci: representative spelling of a collated group | PASS |  |
-| type-edges | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| type-edges | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| type-edges | query:enum: order by ascends by declared ordinal | PASS |  |
+| type-edges | query:enum: order by descends by declared ordinal | PASS |  |
+| type-edges | query:enum: min and max compare as strings | PASS |  |
+| type-edges | query:enum: a greater-than range compares as strings | PASS |  |
+| type-edges | query:enum: a less-than range compares as strings | PASS |  |
+| type-edges | query:enum: between compares as strings | PASS |  |
+| type-edges | query:enum: distinct orders by ordinal | PASS |  |
+| type-edges | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| type-edges | query:enum: a window order walks the ordinal | PASS |  |
+| type-edges | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| type-edges | query:collation: distinct counts fold per column collation | PASS |  |
+| type-edges | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
@@ -415,7 +463,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | ddl | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | ddl | query:general_ci: joining on a collated column | PASS |  |
 | ddl | query:general_ci: representative spelling of a collated group | PASS |  |
-| ddl | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| ddl | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| ddl | query:enum: order by ascends by declared ordinal | PASS |  |
+| ddl | query:enum: order by descends by declared ordinal | PASS |  |
+| ddl | query:enum: min and max compare as strings | PASS |  |
+| ddl | query:enum: a greater-than range compares as strings | PASS |  |
+| ddl | query:enum: a less-than range compares as strings | PASS |  |
+| ddl | query:enum: between compares as strings | PASS |  |
+| ddl | query:enum: distinct orders by ordinal | PASS |  |
+| ddl | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| ddl | query:enum: a window order walks the ordinal | PASS |  |
+| ddl | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| ddl | query:collation: distinct counts fold per column collation | PASS |  |
+| ddl | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
@@ -493,7 +553,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | schema-drift-minimal | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | schema-drift-minimal | query:general_ci: joining on a collated column | PASS |  |
 | schema-drift-minimal | query:general_ci: representative spelling of a collated group | PASS |  |
-| schema-drift-minimal | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| schema-drift-minimal | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| schema-drift-minimal | query:enum: order by ascends by declared ordinal | PASS |  |
+| schema-drift-minimal | query:enum: order by descends by declared ordinal | PASS |  |
+| schema-drift-minimal | query:enum: min and max compare as strings | PASS |  |
+| schema-drift-minimal | query:enum: a greater-than range compares as strings | PASS |  |
+| schema-drift-minimal | query:enum: a less-than range compares as strings | PASS |  |
+| schema-drift-minimal | query:enum: between compares as strings | PASS |  |
+| schema-drift-minimal | query:enum: distinct orders by ordinal | PASS |  |
+| schema-drift-minimal | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| schema-drift-minimal | query:enum: a window order walks the ordinal | PASS |  |
+| schema-drift-minimal | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| schema-drift-minimal | query:collation: distinct counts fold per column collation | PASS |  |
+| schema-drift-minimal | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
@@ -571,7 +643,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | schema-drift-unseen | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | schema-drift-unseen | query:general_ci: joining on a collated column | PASS |  |
 | schema-drift-unseen | query:general_ci: representative spelling of a collated group | PASS |  |
-| schema-drift-unseen | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| schema-drift-unseen | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| schema-drift-unseen | query:enum: order by ascends by declared ordinal | PASS |  |
+| schema-drift-unseen | query:enum: order by descends by declared ordinal | PASS |  |
+| schema-drift-unseen | query:enum: min and max compare as strings | PASS |  |
+| schema-drift-unseen | query:enum: a greater-than range compares as strings | PASS |  |
+| schema-drift-unseen | query:enum: a less-than range compares as strings | PASS |  |
+| schema-drift-unseen | query:enum: between compares as strings | PASS |  |
+| schema-drift-unseen | query:enum: distinct orders by ordinal | PASS |  |
+| schema-drift-unseen | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| schema-drift-unseen | query:enum: a window order walks the ordinal | PASS |  |
+| schema-drift-unseen | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| schema-drift-unseen | query:collation: distinct counts fold per column collation | PASS |  |
+| schema-drift-unseen | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | churn-live | live:point lookup by key | PASS |  |
 | churn-live | live:range scan with compound predicate | PASS |  |
 | churn-live | live:inner join with aggregation | PASS |  |
@@ -655,7 +739,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | churn | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | churn | query:general_ci: joining on a collated column | PASS |  |
 | churn | query:general_ci: representative spelling of a collated group | PASS |  |
-| churn | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| churn | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| churn | query:enum: order by ascends by declared ordinal | PASS |  |
+| churn | query:enum: order by descends by declared ordinal | PASS |  |
+| churn | query:enum: min and max compare as strings | PASS |  |
+| churn | query:enum: a greater-than range compares as strings | PASS |  |
+| churn | query:enum: a less-than range compares as strings | PASS |  |
+| churn | query:enum: between compares as strings | PASS |  |
+| churn | query:enum: distinct orders by ordinal | PASS |  |
+| churn | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| churn | query:enum: a window order walks the ordinal | PASS |  |
+| churn | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| churn | query:collation: distinct counts fold per column collation | PASS |  |
+| churn | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
@@ -738,7 +834,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | execution-budget | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | execution-budget | query:general_ci: joining on a collated column | PASS |  |
 | execution-budget | query:general_ci: representative spelling of a collated group | PASS |  |
-| execution-budget | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| execution-budget | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| execution-budget | query:enum: order by ascends by declared ordinal | PASS |  |
+| execution-budget | query:enum: order by descends by declared ordinal | PASS |  |
+| execution-budget | query:enum: min and max compare as strings | PASS |  |
+| execution-budget | query:enum: a greater-than range compares as strings | PASS |  |
+| execution-budget | query:enum: a less-than range compares as strings | PASS |  |
+| execution-budget | query:enum: between compares as strings | PASS |  |
+| execution-budget | query:enum: distinct orders by ordinal | PASS |  |
+| execution-budget | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| execution-budget | query:enum: a window order walks the ordinal | PASS |  |
+| execution-budget | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| execution-budget | query:collation: distinct counts fold per column collation | PASS |  |
+| execution-budget | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -820,7 +928,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | spill | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | spill | query:general_ci: joining on a collated column | PASS |  |
 | spill | query:general_ci: representative spelling of a collated group | PASS |  |
-| spill | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| spill | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| spill | query:enum: order by ascends by declared ordinal | PASS |  |
+| spill | query:enum: order by descends by declared ordinal | PASS |  |
+| spill | query:enum: min and max compare as strings | PASS |  |
+| spill | query:enum: a greater-than range compares as strings | PASS |  |
+| spill | query:enum: a less-than range compares as strings | PASS |  |
+| spill | query:enum: between compares as strings | PASS |  |
+| spill | query:enum: distinct orders by ordinal | PASS |  |
+| spill | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| spill | query:enum: a window order walks the ordinal | PASS |  |
+| spill | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| spill | query:collation: distinct counts fold per column collation | PASS |  |
+| spill | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -901,7 +1021,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | pooling | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | pooling | query:general_ci: joining on a collated column | PASS |  |
 | pooling | query:general_ci: representative spelling of a collated group | PASS |  |
-| pooling | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| pooling | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| pooling | query:enum: order by ascends by declared ordinal | PASS |  |
+| pooling | query:enum: order by descends by declared ordinal | PASS |  |
+| pooling | query:enum: min and max compare as strings | PASS |  |
+| pooling | query:enum: a greater-than range compares as strings | PASS |  |
+| pooling | query:enum: a less-than range compares as strings | PASS |  |
+| pooling | query:enum: between compares as strings | PASS |  |
+| pooling | query:enum: distinct orders by ordinal | PASS |  |
+| pooling | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| pooling | query:enum: a window order walks the ordinal | PASS |  |
+| pooling | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| pooling | query:collation: distinct counts fold per column collation | PASS |  |
+| pooling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
@@ -979,7 +1111,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | restart | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | restart | query:general_ci: joining on a collated column | PASS |  |
 | restart | query:general_ci: representative spelling of a collated group | PASS |  |
-| restart | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| restart | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| restart | query:enum: order by ascends by declared ordinal | PASS |  |
+| restart | query:enum: order by descends by declared ordinal | PASS |  |
+| restart | query:enum: min and max compare as strings | PASS |  |
+| restart | query:enum: a greater-than range compares as strings | PASS |  |
+| restart | query:enum: a less-than range compares as strings | PASS |  |
+| restart | query:enum: between compares as strings | PASS |  |
+| restart | query:enum: distinct orders by ordinal | PASS |  |
+| restart | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| restart | query:enum: a window order walks the ordinal | PASS |  |
+| restart | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| restart | query:collation: distinct counts fold per column collation | PASS |  |
+| restart | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -1073,7 +1217,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | control-plane | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | control-plane | query:general_ci: joining on a collated column | PASS |  |
 | control-plane | query:general_ci: representative spelling of a collated group | PASS |  |
-| control-plane | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| control-plane | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| control-plane | query:enum: order by ascends by declared ordinal | PASS |  |
+| control-plane | query:enum: order by descends by declared ordinal | PASS |  |
+| control-plane | query:enum: min and max compare as strings | PASS |  |
+| control-plane | query:enum: a greater-than range compares as strings | PASS |  |
+| control-plane | query:enum: a less-than range compares as strings | PASS |  |
+| control-plane | query:enum: between compares as strings | PASS |  |
+| control-plane | query:enum: distinct orders by ordinal | PASS |  |
+| control-plane | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| control-plane | query:enum: a window order walks the ordinal | PASS |  |
+| control-plane | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| control-plane | query:collation: distinct counts fold per column collation | PASS |  |
+| control-plane | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
@@ -1153,7 +1309,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | snapshot-ddl-window | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | snapshot-ddl-window | query:general_ci: joining on a collated column | PASS |  |
 | snapshot-ddl-window | query:general_ci: representative spelling of a collated group | PASS |  |
-| snapshot-ddl-window | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| snapshot-ddl-window | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| snapshot-ddl-window | query:enum: order by ascends by declared ordinal | PASS |  |
+| snapshot-ddl-window | query:enum: order by descends by declared ordinal | PASS |  |
+| snapshot-ddl-window | query:enum: min and max compare as strings | PASS |  |
+| snapshot-ddl-window | query:enum: a greater-than range compares as strings | PASS |  |
+| snapshot-ddl-window | query:enum: a less-than range compares as strings | PASS |  |
+| snapshot-ddl-window | query:enum: between compares as strings | PASS |  |
+| snapshot-ddl-window | query:enum: distinct orders by ordinal | PASS |  |
+| snapshot-ddl-window | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| snapshot-ddl-window | query:enum: a window order walks the ordinal | PASS |  |
+| snapshot-ddl-window | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| snapshot-ddl-window | query:collation: distinct counts fold per column collation | PASS |  |
+| snapshot-ddl-window | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -1237,7 +1405,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | drop-table-cdc | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | drop-table-cdc | query:general_ci: joining on a collated column | PASS |  |
 | drop-table-cdc | query:general_ci: representative spelling of a collated group | PASS |  |
-| drop-table-cdc | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-table-cdc | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| drop-table-cdc | query:enum: order by ascends by declared ordinal | PASS |  |
+| drop-table-cdc | query:enum: order by descends by declared ordinal | PASS |  |
+| drop-table-cdc | query:enum: min and max compare as strings | PASS |  |
+| drop-table-cdc | query:enum: a greater-than range compares as strings | PASS |  |
+| drop-table-cdc | query:enum: a less-than range compares as strings | PASS |  |
+| drop-table-cdc | query:enum: between compares as strings | PASS |  |
+| drop-table-cdc | query:enum: distinct orders by ordinal | PASS |  |
+| drop-table-cdc | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| drop-table-cdc | query:enum: a window order walks the ordinal | PASS |  |
+| drop-table-cdc | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-table-cdc | query:collation: distinct counts fold per column collation | PASS |  |
+| drop-table-cdc | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
@@ -1319,11 +1499,23 @@ Measured 2026-08-18T19:18:38.394Z.
 | drop-table-recreate | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | drop-table-recreate | query:general_ci: joining on a collated column | PASS |  |
 | drop-table-recreate | query:general_ci: representative spelling of a collated group | PASS |  |
-| drop-table-recreate | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-table-recreate | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| drop-table-recreate | query:enum: order by ascends by declared ordinal | PASS |  |
+| drop-table-recreate | query:enum: order by descends by declared ordinal | PASS |  |
+| drop-table-recreate | query:enum: min and max compare as strings | PASS |  |
+| drop-table-recreate | query:enum: a greater-than range compares as strings | PASS |  |
+| drop-table-recreate | query:enum: a less-than range compares as strings | PASS |  |
+| drop-table-recreate | query:enum: between compares as strings | PASS |  |
+| drop-table-recreate | query:enum: distinct orders by ordinal | PASS |  |
+| drop-table-recreate | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| drop-table-recreate | query:enum: a window order walks the ordinal | PASS |  |
+| drop-table-recreate | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-table-recreate | query:collation: distinct counts fold per column collation | PASS |  |
+| drop-table-recreate | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_85718493f5f05acd90b032176357bd63","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-18T19:02:42.787865+00:00","updated_at":"2026-08-18T19:11:31.992413+00:00"},"tables":13,"rows":794} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_d2f17e4c6cf4a0c54e03ff355a18f088","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-19T06:04:24.902841+00:00","updated_at":"2026-08-19T06:10:36.790539+00:00"},"tables":13,"rows":794} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
@@ -1403,7 +1595,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | drop-table-polling | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | drop-table-polling | query:general_ci: joining on a collated column | PASS |  |
 | drop-table-polling | query:general_ci: representative spelling of a collated group | PASS |  |
-| drop-table-polling | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-table-polling | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| drop-table-polling | query:enum: order by ascends by declared ordinal | PASS |  |
+| drop-table-polling | query:enum: order by descends by declared ordinal | PASS |  |
+| drop-table-polling | query:enum: min and max compare as strings | PASS |  |
+| drop-table-polling | query:enum: a greater-than range compares as strings | PASS |  |
+| drop-table-polling | query:enum: a less-than range compares as strings | PASS |  |
+| drop-table-polling | query:enum: between compares as strings | PASS |  |
+| drop-table-polling | query:enum: distinct orders by ordinal | PASS |  |
+| drop-table-polling | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| drop-table-polling | query:enum: a window order walks the ordinal | PASS |  |
+| drop-table-polling | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-table-polling | query:collation: distinct counts fold per column collation | PASS |  |
+| drop-table-polling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -1490,7 +1694,19 @@ Measured 2026-08-18T19:18:38.394Z.
 | drop-database | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | drop-database | query:general_ci: joining on a collated column | PASS |  |
 | drop-database | query:general_ci: representative spelling of a collated group | PASS |  |
-| drop-database | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| drop-database | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| drop-database | query:enum: order by ascends by declared ordinal | PASS |  |
+| drop-database | query:enum: order by descends by declared ordinal | PASS |  |
+| drop-database | query:enum: min and max compare as strings | PASS |  |
+| drop-database | query:enum: a greater-than range compares as strings | PASS |  |
+| drop-database | query:enum: a less-than range compares as strings | PASS |  |
+| drop-database | query:enum: between compares as strings | PASS |  |
+| drop-database | query:enum: distinct orders by ordinal | PASS |  |
+| drop-database | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| drop-database | query:enum: a window order walks the ordinal | PASS |  |
+| drop-database | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| drop-database | query:collation: distinct counts fold per column collation | PASS |  |
+| drop-database | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
@@ -1569,4 +1785,16 @@ Measured 2026-08-18T19:18:38.394Z.
 | ddl-documented-gaps | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
 | ddl-documented-gaps | query:general_ci: joining on a collated column | PASS |  |
 | ddl-documented-gaps | query:general_ci: representative spelling of a collated group | PASS |  |
-| ddl-documented-gaps | query:general_ci: mixing collations across separate comparisons | WARN | a query whose comparisons use different collations is refused; pintail resolves one collation per query (#10) |
+| ddl-documented-gaps | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| ddl-documented-gaps | query:enum: order by ascends by declared ordinal | PASS |  |
+| ddl-documented-gaps | query:enum: order by descends by declared ordinal | PASS |  |
+| ddl-documented-gaps | query:enum: min and max compare as strings | PASS |  |
+| ddl-documented-gaps | query:enum: a greater-than range compares as strings | PASS |  |
+| ddl-documented-gaps | query:enum: a less-than range compares as strings | PASS |  |
+| ddl-documented-gaps | query:enum: between compares as strings | PASS |  |
+| ddl-documented-gaps | query:enum: distinct orders by ordinal | PASS |  |
+| ddl-documented-gaps | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| ddl-documented-gaps | query:enum: a window order walks the ordinal | PASS |  |
+| ddl-documented-gaps | query:collation: mixed grouping answers with per-key folds | FAIL | mysql rejected the corpus query: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'groups FROM (SELECT legacy_label, tier FROM customers GROUP BY legacy_label, tie' at line 1 |
+| ddl-documented-gaps | query:collation: distinct counts fold per column collation | PASS |  |
+| ddl-documented-gaps | query:collation: regrouping a mixed grouping stays exact | PASS |  |
