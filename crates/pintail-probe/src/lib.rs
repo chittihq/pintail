@@ -1125,6 +1125,99 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
     Ok(mapping)
 }
 
+/// Carries each stable column ID from a previously tracked table definition
+/// onto a freshly probed one, so a schema refresh does not re-key columns the
+/// store already holds. Refuses changes that cannot be adopted in place: a
+/// physical key change, or a column whose physical type changed outside the
+/// widening the binlog row layout makes value-identical.
+///
+/// # Errors
+///
+/// Returns a human-readable reason when the refreshed definition cannot
+/// adopt the previous stable IDs: the physical key changed, a column's
+/// physical type changed incompatibly, or the ID space is exhausted.
+pub fn stabilize_source_table(
+    previous: &SourceTable,
+    mut refreshed: SourceTable,
+) -> Result<SourceTable, String> {
+    if previous.key.mode != refreshed.key.mode
+        || previous.key.columns.len() != refreshed.key.columns.len()
+        || previous
+            .key
+            .columns
+            .iter()
+            .zip(&refreshed.key.columns)
+            .any(|(left, right)| !left.eq_ignore_ascii_case(right))
+    {
+        return Err("physical key changed".to_owned());
+    }
+    let mut next_id = previous
+        .columns
+        .iter()
+        .map(|column| column.id)
+        .max()
+        .unwrap_or(0);
+    for column in &mut refreshed.columns {
+        if let Some(existing) = previous
+            .columns
+            .iter()
+            .find(|existing| existing.name.eq_ignore_ascii_case(&column.name))
+        {
+            if existing.pintail_type != column.pintail_type
+                && !widening_compatible(existing.pintail_type, column.pintail_type)
+            {
+                // The probe reflects the source's CURRENT state, so an
+                // earlier DDL event can legitimately see a later
+                // storage-compatible widening; adopting the wider type
+                // early is value-identical because row decode reads the
+                // physical layout from the binlog table map.
+                return Err(format!("column {} changed physical type", column.name));
+            }
+            column.id = existing.id;
+        } else {
+            next_id = next_id
+                .checked_add(1)
+                .ok_or_else(|| "stable column ID space is exhausted".to_owned())?;
+            column.id = next_id;
+        }
+    }
+    Ok(refreshed)
+}
+
+/// Whether a column's declared type can change without touching stored
+/// values: integer families share one 64-bit storage lane per signedness,
+/// floats share the 64-bit carrier, string-typed columns are width-free
+/// canonical text, and decimals render identically while the scale holds.
+/// Temporal precisions are part of the type and must match exactly.
+fn widening_compatible(
+    previous: pintail_types::DataType,
+    refreshed: pintail_types::DataType,
+) -> bool {
+    use pintail_types::DataType::{
+        Boolean, Decimal, Float32, Float64, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
+        UInt64,
+    };
+    if previous == refreshed {
+        return true;
+    }
+    match (previous, refreshed) {
+        (Boolean | Int8 | Int16 | Int32 | Int64, Boolean | Int8 | Int16 | Int32 | Int64)
+        | (UInt8 | UInt16 | UInt32 | UInt64, UInt8 | UInt16 | UInt32 | UInt64)
+        | (Float32 | Float64, Float32 | Float64) => true,
+        (
+            Decimal {
+                precision: previous_precision,
+                scale: previous_scale,
+            },
+            Decimal {
+                precision: refreshed_precision,
+                scale: refreshed_scale,
+            },
+        ) => previous_scale == refreshed_scale && refreshed_precision >= previous_precision,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

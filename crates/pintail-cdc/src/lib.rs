@@ -867,17 +867,47 @@ async fn resnapshot_targets(
     targets: Vec<CdcTarget>,
     snapshot_options: SnapshotOptions,
 ) -> Result<Vec<CdcTarget>, CdcError> {
+    // The copy below rebuilds every target from the source as it IS, not as
+    // it was when the stream started. The position was usually lost because
+    // binlogs were purged, and purged binlogs may contain DDL this stream
+    // never saw - copying with the remembered column list dies on the
+    // source's own "Unknown column" error, and the recovery that exists to
+    // unstick the stream becomes the thing that keeps it stuck.
+    let refreshed = probe_source(pool, &report.database).await?;
+    let mut metadata = MetaStore::open(metadata_path)?;
     let mut snapshot_targets = Vec::with_capacity(targets.len());
     for mut target in targets {
+        if let Some(fresh) = find_source_table(&refreshed, &target.source.name) {
+            let fresh = pintail_probe::stabilize_source_table(&target.source, fresh.clone())
+                .map_err(CdcError::Ddl)?;
+            if fresh.columns != target.source.columns {
+                let version = next_schema_version(target.store.schema().version())?;
+                target
+                    .store
+                    .evolve_schema(fresh.table_schema_with_version(version)?)?;
+                let columns_json = serde_json::to_string(&fresh.columns)
+                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                metadata.record_schema_history(
+                    database_id,
+                    &target.source.name,
+                    version,
+                    None,
+                    &columns_json,
+                    &Utc::now().to_rfc3339(),
+                )?;
+            }
+            target.source = fresh;
+        }
         target.store.reset_for_resnapshot()?;
         snapshot_targets.push(SnapshotTarget::new(target.source, target.store)?);
     }
-    MetaStore::open(metadata_path)?.begin_resnapshot(database_id, &Utc::now().to_rfc3339())?;
+    metadata.begin_resnapshot(database_id, &Utc::now().to_rfc3339())?;
+    drop(metadata);
     let snapshot = run_snapshot(
         pool,
         metadata_path,
         database_id,
-        report,
+        &refreshed,
         snapshot_targets,
         snapshot_options,
     )
@@ -946,7 +976,7 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 };
-                let source = match stabilize_source_table(&targets[index].source, source) {
+                let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
                     Ok(source) => source,
                     Err(reason) => {
                         quarantine_schema_change(
@@ -1022,7 +1052,7 @@ async fn apply_ddl_actions(
                         }
                     }
                 }
-                let source = match stabilize_source_table(&previous, source) {
+                let source = match pintail_probe::stabilize_source_table(&previous, source) {
                     Ok(source) => source,
                     Err(reason) => {
                         quarantine_schema_change(
@@ -1085,7 +1115,7 @@ async fn apply_ddl_actions(
                 // Storage-compatible type changes evolve in place; anything
                 // else fails stabilization (or the store's segment re-read)
                 // and quarantines for resync exactly like before.
-                let source = match stabilize_source_table(&targets[index].source, source) {
+                let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
                     Ok(source) => source,
                     Err(reason) => {
                         quarantine_schema_change(
@@ -1149,7 +1179,7 @@ async fn apply_ddl_actions(
                 // refreshed key metadata (unique keys, reconciliation flag)
                 // without a schema generation. A changed key strategy fails
                 // stabilization and quarantines like any other reshape.
-                match stabilize_source_table(&targets[index].source, source) {
+                match pintail_probe::stabilize_source_table(&targets[index].source, source) {
                     Ok(source) => {
                         targets[index].source = source;
                         let probe_json = serde_json::to_string(&refreshed)
@@ -1323,88 +1353,6 @@ fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a Sou
         .tables
         .iter()
         .find(|source| source.name.eq_ignore_ascii_case(table))
-}
-
-/// Whether a column's declared type can change without touching stored
-/// values: integer families share one 64-bit storage lane per signedness,
-/// floats share the 64-bit carrier, string-typed columns are width-free
-/// canonical text, and decimals render identically while the scale holds.
-/// Temporal precisions are part of the type and must match exactly.
-fn widening_compatible(
-    previous: pintail_types::DataType,
-    refreshed: pintail_types::DataType,
-) -> bool {
-    use pintail_types::DataType::{
-        Boolean, Decimal, Float32, Float64, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
-        UInt64,
-    };
-    if previous == refreshed {
-        return true;
-    }
-    match (previous, refreshed) {
-        (Boolean | Int8 | Int16 | Int32 | Int64, Boolean | Int8 | Int16 | Int32 | Int64)
-        | (UInt8 | UInt16 | UInt32 | UInt64, UInt8 | UInt16 | UInt32 | UInt64)
-        | (Float32 | Float64, Float32 | Float64) => true,
-        (
-            Decimal {
-                precision: previous_precision,
-                scale: previous_scale,
-            },
-            Decimal {
-                precision: refreshed_precision,
-                scale: refreshed_scale,
-            },
-        ) => previous_scale == refreshed_scale && refreshed_precision >= previous_precision,
-        _ => false,
-    }
-}
-
-fn stabilize_source_table(
-    previous: &SourceTable,
-    mut refreshed: SourceTable,
-) -> Result<SourceTable, String> {
-    if previous.key.mode != refreshed.key.mode
-        || previous.key.columns.len() != refreshed.key.columns.len()
-        || previous
-            .key
-            .columns
-            .iter()
-            .zip(&refreshed.key.columns)
-            .any(|(left, right)| !left.eq_ignore_ascii_case(right))
-    {
-        return Err("physical key changed".to_owned());
-    }
-    let mut next_id = previous
-        .columns
-        .iter()
-        .map(|column| column.id)
-        .max()
-        .unwrap_or(0);
-    for column in &mut refreshed.columns {
-        if let Some(existing) = previous
-            .columns
-            .iter()
-            .find(|existing| existing.name.eq_ignore_ascii_case(&column.name))
-        {
-            if existing.pintail_type != column.pintail_type
-                && !widening_compatible(existing.pintail_type, column.pintail_type)
-            {
-                // The probe reflects the source's CURRENT state, so an
-                // earlier DDL event can legitimately see a later
-                // storage-compatible widening; adopting the wider type
-                // early is value-identical because row decode reads the
-                // physical layout from the binlog table map.
-                return Err(format!("column {} changed physical type", column.name));
-            }
-            column.id = existing.id;
-        } else {
-            next_id = next_id
-                .checked_add(1)
-                .ok_or_else(|| "stable column ID space is exhausted".to_owned())?;
-            column.id = next_id;
-        }
-    }
-    Ok(refreshed)
 }
 
 fn quarantine_schema_change(
@@ -1742,7 +1690,7 @@ async fn adopt_drifted_schema(
     let source = find_source_table(&refreshed, &target.source.name)
         .cloned()
         .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
-    let source = stabilize_source_table(&target.source, source)?;
+    let source = pintail_probe::stabilize_source_table(&target.source, source)?;
     // Only adopt a schema that actually explains the row in hand. A probe the
     // row still cannot be placed against means the drift is something else - a
     // rename, a table swapped underneath - and guessing would silently corrupt
@@ -2335,11 +2283,11 @@ mod tests {
         let keyless = source_table(KeyMode::AppendRowId);
         let primary = source_table(KeyMode::Primary);
         assert_eq!(
-            super::stabilize_source_table(&keyless, primary.clone()),
+            pintail_probe::stabilize_source_table(&keyless, primary.clone()),
             Err("physical key changed".to_owned())
         );
         assert_eq!(
-            super::stabilize_source_table(&primary, keyless),
+            pintail_probe::stabilize_source_table(&primary, keyless),
             Err("physical key changed".to_owned())
         );
     }
