@@ -4255,7 +4255,10 @@ fn arithmetic_type(
         )
     {
         Some(DataType::Float64)
-    } else if left == DataType::UInt64 && right == DataType::UInt64 {
+    } else if left == DataType::UInt64 || right == DataType::UInt64 {
+        // Either BIGINT UNSIGNED operand makes the whole result unsigned,
+        // as in MySQL: CAST(-3 AS UNSIGNED) + 0 answers the wrapped value,
+        // and an out-of-range intermediate errors rather than going signed.
         Some(DataType::UInt64)
     } else {
         Some(DataType::Int64)

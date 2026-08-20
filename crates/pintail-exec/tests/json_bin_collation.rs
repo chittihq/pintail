@@ -605,3 +605,20 @@ fn an_explicit_collate_overrides_a_column_collation() {
          WHERE JSON_UNQUOTE(JSON_EXTRACT(meta,'$.tags[0]')) = 'PREMIUM' COLLATE utf8mb4_bin");
     assert_eq!(rows, vec![vec!["1".to_owned()]]);
 }
+
+#[test]
+fn explicit_casts_wrap_in_both_directions() {
+    for (sql, expected) in [
+        ("SELECT CAST(-2 AS UNSIGNED)", "18446744073709551614"),
+        ("SELECT CAST('-3' AS UNSIGNED)", "18446744073709551613"),
+        ("SELECT CAST('-3' AS UNSIGNED) + 0", "18446744073709551613"),
+        (
+            "SELECT CAST(18446744073709551615 AS UNSIGNED)",
+            "18446744073709551615",
+        ),
+        ("SELECT CAST(CAST(-1 AS UNSIGNED) AS SIGNED)", "-1"),
+    ] {
+        let rows = run(sql);
+        assert_eq!(rows, vec![vec![expected.to_owned()]], "{sql}");
+    }
+}

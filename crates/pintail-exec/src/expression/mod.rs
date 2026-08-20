@@ -2923,13 +2923,26 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
     match data_type.map(DataType::storage_type) {
         None => Ok(Value::Null),
         Some(DataType::Boolean) => Ok(mysql_truth(value)?.map_or(Value::Null, Value::Boolean)),
-        Some(DataType::Int64) => Ok(Value::Int64(mysql_i64(value)?)),
+        // CAST AS SIGNED wraps a value above i64::MAX back down through
+        // two's complement, so CAST(CAST(-1 AS UNSIGNED) AS SIGNED) is -1.
+        Some(DataType::Int64) => Ok(Value::Int64(match value {
+            Value::UInt64(unsigned) if *unsigned > i64::MAX.cast_unsigned() => {
+                (*unsigned).cast_signed()
+            }
+            other => mysql_i64(other)?,
+        })),
         // CAST AS UNSIGNED wraps a negative through two's complement, as
         // MySQL does: CAST(-1 AS UNSIGNED) is 18446744073709551615, not an
-        // overflow (conformance suite). Only the explicit cast wraps -
-        // arithmetic coercions elsewhere still refuse.
+        // overflow (conformance suite). A negative decimal STRING wraps the
+        // same way. Only the explicit cast wraps - arithmetic coercions
+        // elsewhere still refuse.
         Some(DataType::UInt64) => Ok(Value::UInt64(match value {
             Value::Int64(signed) if *signed < 0 => (*signed).cast_unsigned(),
+            Value::Utf8(text) | Value::Enum { label: text, .. }
+                if text.trim_start().starts_with('-') =>
+            {
+                mysql_i64(value)?.cast_unsigned()
+            }
             other => mysql_u64(other)?,
         })),
         Some(DataType::Float64) => Ok(Value::float64(mysql_f64(value)?)),
@@ -5005,6 +5018,28 @@ fn evaluate_arithmetic(
             }
         }
         Some(DataType::UInt64) => {
+            // Signed/unsigned mixes evaluate in the unsigned domain, but a
+            // NEGATIVE signed operand is a subtraction, not a coercion
+            // error: -1 + CAST(1 AS UNSIGNED) is 0 in MySQL, while a
+            // negative RESULT is the out-of-range error.
+            match (op, left, right) {
+                (BinaryOp::Add, Value::UInt64(base), Value::Int64(signed))
+                | (BinaryOp::Add, Value::Int64(signed), Value::UInt64(base))
+                    if *signed < 0 =>
+                {
+                    return base
+                        .checked_sub(signed.unsigned_abs())
+                        .map(Value::UInt64)
+                        .ok_or(ExecError::NumericOverflow);
+                }
+                (BinaryOp::Subtract, Value::UInt64(base), Value::Int64(signed)) if *signed < 0 => {
+                    return base
+                        .checked_add(signed.unsigned_abs())
+                        .map(Value::UInt64)
+                        .ok_or(ExecError::NumericOverflow);
+                }
+                _ => {}
+            }
             let left = mysql_u64(left)?;
             let right = mysql_u64(right)?;
             let result = match op {
