@@ -32,6 +32,12 @@ pub enum Collation {
     /// results of `JSON_UNQUOTE` and friends - measured live: grouping and
     /// comparing them is case-SENSITIVE even in an `ai_ci` session.
     Utf8mb4Bin,
+    /// Not a text collation: `MySQL`'s JSON comparison ladder, carried in
+    /// the same per-key slot so JSON documents compare, group and dedupe
+    /// structurally wherever a collation already dispatches. Named "json"
+    /// internally; no `MySQL` collation name resolves to it by accident
+    /// because the binder validates user-written `COLLATE` names first.
+    Json,
 }
 
 impl Collation {
@@ -46,6 +52,7 @@ impl Collation {
             "utf8mb4_0900_ai_ci" => Some(Self::Utf8mb40900AiCi),
             "utf8mb4_general_ci" => Some(Self::Utf8mb4GeneralCi),
             "utf8mb4_bin" => Some(Self::Utf8mb4Bin),
+            "json" => Some(Self::Json),
             _ => None,
         }
     }
@@ -56,6 +63,7 @@ impl Collation {
             Self::Utf8mb40900AiCi => "utf8mb4_0900_ai_ci",
             Self::Utf8mb4GeneralCi => "utf8mb4_general_ci",
             Self::Utf8mb4Bin => "utf8mb4_bin",
+            Self::Json => "json",
         }
     }
 }

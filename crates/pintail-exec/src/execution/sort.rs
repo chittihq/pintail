@@ -260,7 +260,10 @@ pub(super) fn build_set_operation(
             ascending: true,
             nulls_first: true,
             decimal: matches!(data_type, DataType::Decimal { .. }),
-            collation: None,
+            // JSON columns dedupe structurally: MySQL's set duplicate
+            // handling treats two spellings of one document as one row.
+            collation: matches!(data_type, DataType::Json)
+                .then_some(pintail_sql::JSON_TEXT_COLLATION),
         })
         .collect::<Vec<_>>();
     let left = build_sort(left, &keys, None, None, memory, collation)?;
@@ -299,6 +302,9 @@ pub(super) fn build_distinct(
                 .get(index)
                 .and_then(|name| name.as_deref())
                 .and_then(|name| {
+                    if name == pintail_sql::JSON_TEXT_COLLATION {
+                        return Some(pintail_sql::JSON_TEXT_COLLATION);
+                    }
                     pintail_sql::SUPPORTED_TEXT_COLLATIONS
                         .into_iter()
                         .find(|supported| *supported == name)

@@ -701,6 +701,7 @@ pub(super) fn bind_in_list(
             value, tables, aggregates, windows, subqueries,
         )?);
     }
+    let args = super::rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
         .any(|value| !comparable(args[0].data_type, value.data_type))
@@ -726,6 +727,7 @@ pub(super) fn bind_between(
         bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
     ];
+    let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
     {
@@ -1204,6 +1206,7 @@ pub(super) fn bind_scalar(
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } => (args[0].data_type, args[0].nullable),
+        ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
         ScalarFunction::TrimPattern { .. } => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
@@ -1572,6 +1575,7 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
 }
 
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
+    let (left, right) = super::rewrite_json_comparison(left, right);
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {
             operation: "=".to_owned(),

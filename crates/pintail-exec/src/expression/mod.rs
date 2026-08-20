@@ -1043,6 +1043,7 @@ impl CompiledExpr {
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
                     | ScalarFunction::Collate { .. }
+                    | ScalarFunction::JsonSortKey
                     | ScalarFunction::TrimPattern { .. }
                     | ScalarFunction::Left
                     | ScalarFunction::Right
@@ -1202,6 +1203,7 @@ impl CompiledExpr {
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
                     | ScalarFunction::Collate { .. }
+                    | ScalarFunction::JsonSortKey
                     | ScalarFunction::TrimPattern { .. }
                     | ScalarFunction::Left
                     | ScalarFunction::Right
@@ -1626,6 +1628,15 @@ fn evaluate_eager_scalar_typed(
             }))
         }
         ScalarFunction::Collate { .. } => Ok(values[0].clone()),
+        ScalarFunction::JsonSortKey => match &values[0] {
+            Value::Null => Ok(Value::Null),
+            // Text that fails to parse (unreachable for real JSON columns)
+            // keys as its bytes rather than erroring the whole row.
+            Value::Utf8(text) => Ok(Value::Binary(
+                crate::json_order::json_sort_key(text).unwrap_or_else(|| text.as_bytes().to_vec()),
+            )),
+            _ => Err(ExecError::InvalidExpressionType),
+        },
         ScalarFunction::TrimPattern { leading, trailing } => {
             let subject = scalar_string(&values[0])?;
             let pattern = scalar_string(&values[1])?;
@@ -2696,7 +2707,12 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         })),
         Some(DataType::Float64) => Ok(Value::float64(mysql_f64(value)?)),
         Some(DataType::Utf8) => Ok(Value::Utf8(scalar_string(value)?)),
-        Some(DataType::Binary) => Ok(Value::Binary(scalar_string(value)?.into_bytes())),
+        // Bytes shaped to bytes pass through: a JSON sort key (or any real
+        // binary result) is not UTF-8 and must not detour through text.
+        Some(DataType::Binary) => Ok(match value {
+            Value::Binary(bytes) => Value::Binary(bytes.clone()),
+            other => Value::Binary(scalar_string(other)?.into_bytes()),
+        }),
         Some(_) => unreachable!("storage_type returns a physical scalar type"),
     }
 }

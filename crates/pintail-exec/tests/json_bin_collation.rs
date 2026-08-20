@@ -191,10 +191,9 @@ fn probe_trim_both() {
 }
 #[test]
 fn probe_extract_year_month() {
-    println!(
-        "GOT {:?}",
-        run("SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:00:00')")
-    );
+    // sqlparser rejects composite EXTRACT fields at parse time; the
+    // composite-unit support (in progress) pre-rewrites the SQL text.
+    assert!(parse_statement("SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:00:00')").is_err());
 }
 #[test]
 fn probe_spaceship() {
@@ -246,4 +245,94 @@ fn binary_forces_byte_comparison_in_a_filter() {
     let rows = run("SELECT COUNT(*) FROM orders \
          WHERE BINARY JSON_UNQUOTE(JSON_EXTRACT(meta,'$.tags[0]')) = 'premium'");
     assert_eq!(rows, vec![vec!["2".to_owned()]]);
+}
+
+#[test]
+fn json_documents_compare_by_the_ladder() {
+    // Both sides JSON: the binder keys them, bytes decide. 1 = 1.0
+    // numerically; member order is irrelevant; the ladder puts any array
+    // above any number.
+    let rows = run(
+        "SELECT JSON_EXTRACT('{\"a\":1}','$.a') = JSON_EXTRACT('{\"a\":1.0}','$.a'), \
+                JSON_EXTRACT('[{\"a\":1,\"b\":2}]','$[0]') = JSON_EXTRACT('[{\"b\":2,\"a\":1}]','$[0]'), \
+                JSON_EXTRACT('[9]','$') > JSON_EXTRACT('{\"n\":99}','$.n')",
+    );
+    assert_eq!(
+        rows,
+        vec![vec!["1".to_owned(), "1".to_owned(), "1".to_owned()]]
+    );
+}
+
+#[test]
+fn json_columns_group_and_dedupe_structurally() {
+    let rows = run(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT JSON_EXTRACT(meta,'$.tags') AS t \
+         FROM orders WHERE meta IS NOT NULL) d",
+    );
+    assert_eq!(rows, vec![vec!["3".to_owned()]]);
+    let rows = run("SELECT COUNT(DISTINCT JSON_EXTRACT(meta,'$.tags')) FROM orders");
+    assert_eq!(rows, vec![vec!["3".to_owned()]]);
+    let rows = run("SELECT COUNT(DISTINCT meta) FROM orders");
+    assert_eq!(rows, vec![vec!["4".to_owned()]]);
+}
+
+#[test]
+fn json_group_by_folds_equal_documents() {
+    let rows = run(
+        "SELECT COUNT(*) FROM (SELECT JSON_EXTRACT(meta,'$.tags') AS t, COUNT(*) AS n \
+         FROM orders WHERE meta IS NOT NULL GROUP BY JSON_EXTRACT(meta,'$.tags')) g",
+    );
+    assert_eq!(rows, vec![vec!["3".to_owned()]]);
+}
+
+#[test]
+fn json_order_by_uses_the_ladder() {
+    // Scores 0, 1, 2, 3 as JSON numbers; ordering by the JSON value must
+    // order numerically, with the NULL row first.
+    let rows = run("SELECT id FROM orders ORDER BY JSON_EXTRACT(meta,'$.score'), id");
+    assert_eq!(
+        rows,
+        vec![
+            vec!["4".to_owned()],
+            vec!["5".to_owned()],
+            vec!["1".to_owned()],
+            vec!["2".to_owned()],
+            vec!["3".to_owned()],
+        ]
+    );
+}
+
+#[test]
+fn json_in_and_between_ride_the_same_keys() {
+    let rows = run("SELECT COUNT(*) FROM orders \
+         WHERE JSON_EXTRACT(meta,'$.score') IN (JSON_EXTRACT('[1,3]','$[0]'), JSON_EXTRACT('[1,3]','$[1]'))");
+    assert_eq!(rows, vec![vec!["2".to_owned()]]);
+    let rows = run("SELECT COUNT(*) FROM orders \
+         WHERE JSON_EXTRACT(meta,'$.score') BETWEEN JSON_EXTRACT('[1]','$[0]') AND JSON_EXTRACT('[2]','$[0]')");
+    assert_eq!(rows, vec![vec!["2".to_owned()]]);
+}
+
+#[test]
+fn mixed_json_and_scalar_comparison_stays_rejected() {
+    // MySQL coerces the scalar side to JSON here; Pintail refuses rather
+    // than guessing that rule - one side wrapped would byte-compare
+    // nonsense.
+    let directory = tempfile::tempdir().expect("temporary table");
+    let mut table =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open table");
+    table
+        .bulk_ingest_snapshot(ROWS.iter().map(|(id, meta)| row(*id, *meta)).collect())
+        .expect("bulk snapshot");
+    let entry = TableEntry::new(
+        TableId::new(17),
+        "orders",
+        schema(),
+        TableStatistics::with_row_count(ROWS.len() as u64),
+    )
+    .expect("table entry");
+    let database = DatabaseEntry::new(DatabaseId::new(15), "app", [entry]).expect("database entry");
+    let catalog = CatalogSnapshot::new([database]).expect("catalog");
+    let statement =
+        parse_statement("SELECT COUNT(*) FROM orders WHERE meta = 'x'").expect("parse query");
+    assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
 }

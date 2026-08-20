@@ -340,7 +340,6 @@ impl<'catalog> Binder<'catalog> {
                 }
                 unify_union_layout(&mut left, &mut right)?;
                 if !matches!(quantifier, SetQuantifier::All) {
-                    reject_json_set_keys(&left)?;
                     left.union_distinct = true;
                 }
                 left.union_all.push(right);
@@ -359,7 +358,6 @@ impl<'catalog> Binder<'catalog> {
                     left = self.wrap_set_operand(left);
                 }
                 unify_union_layout(&mut left, &mut right)?;
-                reject_json_set_keys(&left)?;
                 let all = matches!(quantifier, SetQuantifier::All);
                 let kind = match (op, all) {
                     (SetOperator::Intersect, false) => BoundSetOpKind::Intersect,
@@ -723,15 +721,6 @@ impl<'catalog> Binder<'catalog> {
                 return Err(BindError::UnsupportedQueryClause("DISTINCT ON".to_owned()));
             }
         };
-        if distinct
-            && projection
-                .iter()
-                .any(|item| item.expr.data_type == Some(DataType::Json))
-        {
-            return Err(BindError::UnsupportedQueryClause(
-                "DISTINCT over JSON values requires JSON-aware equality".to_owned(),
-            ));
-        }
         if distinct {
             for item in &projection {
                 ensure_supported_text_collation(&[&item.expr])?;
@@ -1796,23 +1785,6 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
     Ok(())
 }
 
-fn has_json_projection(query: &BoundQuery) -> bool {
-    query
-        .projection
-        .iter()
-        .any(|item| item.expr.data_type == Some(DataType::Json))
-}
-
-fn reject_json_set_keys(query: &BoundQuery) -> Result<(), BindError> {
-    if has_json_projection(query) {
-        Err(BindError::IncompatibleSetOperation(
-            "set duplicate handling over JSON values requires JSON-aware equality".to_owned(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 /// Wraps a UNION branch expression in a CAST to the unified decimal type
 /// unless it already has it (or is a bare NULL, which any type absorbs).
 fn wrap_in_decimal_cast(expr: &mut BoundExpr, unified: DataType) {
@@ -2228,14 +2200,6 @@ fn bind_group_by(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if groups
-        .iter()
-        .any(|expression| expression.data_type == Some(DataType::Json))
-    {
-        return Err(BindError::InvalidGrouping(
-            "GROUP BY over JSON values requires JSON-aware equality".to_owned(),
-        ));
-    }
     for expression in &groups {
         ensure_supported_text_collation(&[expression])?;
     }
@@ -2638,6 +2602,7 @@ fn bind_in_subquery(
     };
     let mut args = vec![expr];
     args.extend(values);
+    let args = rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
         .any(|value| !comparable(args[0].data_type, value.data_type))
@@ -3015,6 +2980,19 @@ fn bind_binary(
             vec![left, right],
         );
     }
+    let (left, right) = if matches!(
+        operator,
+        BinaryOperator::Eq
+            | BinaryOperator::NotEq
+            | BinaryOperator::Lt
+            | BinaryOperator::LtEq
+            | BinaryOperator::Gt
+            | BinaryOperator::GtEq
+    ) {
+        rewrite_json_comparison(left, right)
+    } else {
+        (left, right)
+    };
     let (op, data_type) = match operator {
         BinaryOperator::Plus
         | BinaryOperator::Minus
@@ -3463,12 +3441,6 @@ fn bind_aggregate(
             _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
         }
     };
-    if distinct && expr.as_ref().and_then(|expression| expression.data_type) == Some(DataType::Json)
-    {
-        return Err(BindError::UnsupportedAggregate(format!(
-            "{function}: DISTINCT over JSON requires JSON-aware equality"
-        )));
-    }
     if (distinct
         || matches!(
             aggregate_function,
@@ -4177,6 +4149,56 @@ fn arithmetic_type(
     }
 }
 
+/// `MySQL` compares two JSON documents by its JSON type ladder, not as
+/// text. The binder turns such a comparison into a byte comparison of
+/// order-preserving `JsonSortKey` keys, so every downstream consumer -
+/// filters, IN, BETWEEN, constant folding, join keys - inherits the ladder
+/// without a JSON-aware branch of its own. Only fires when BOTH sides are
+/// JSON: mixed JSON/scalar comparison follows a different (coercion) rule
+/// and stays rejected.
+/// The recursive-CTE dedup runs its own fixpoint machinery, which has no
+/// per-key collation slot yet - JSON dedup there stays rejected.
+fn has_json_projection(query: &BoundQuery) -> bool {
+    query
+        .projection
+        .iter()
+        .any(|item| item.expr.data_type == Some(DataType::Json))
+}
+
+fn rewrite_json_comparison(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    if left.data_type == Some(DataType::Json) && right.data_type == Some(DataType::Json) {
+        (json_sort_key_expr(left), json_sort_key_expr(right))
+    } else {
+        (left, right)
+    }
+}
+
+/// The list form of [`rewrite_json_comparison`]: IN and BETWEEN wrap every
+/// operand when the whole list is JSON.
+fn rewrite_json_comparison_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    if args.len() > 1
+        && args
+            .iter()
+            .all(|argument| argument.data_type == Some(DataType::Json))
+    {
+        args.into_iter().map(json_sort_key_expr).collect()
+    } else {
+        args
+    }
+}
+
+fn json_sort_key_expr(expr: BoundExpr) -> BoundExpr {
+    let nullable = expr.nullable;
+    BoundExpr {
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::JsonSortKey,
+            args: vec![expr],
+        },
+        data_type: Some(DataType::Binary),
+        nullable,
+    }
+}
+
 fn comparable(left: Option<DataType>, right: Option<DataType>) -> bool {
     is_mysql_scalar(left)
         && is_mysql_scalar(right)
@@ -4342,15 +4364,6 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                 }
                 Err(error) => return Err(error),
             };
-            if bound
-                .projection
-                .get(index)
-                .is_some_and(|projection| projection.expr.data_type == Some(DataType::Json))
-            {
-                return Err(BindError::InvalidOrderBy(
-                    "ORDER BY over JSON values requires JSON-aware ordering".to_owned(),
-                ));
-            }
             if let Some(projection) = bound.projection.get(index) {
                 ensure_supported_text_collation(&[&projection.expr])?;
             }
@@ -4365,11 +4378,14 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                 // alias of a bin-collated JSON group key must order byte-wise
                 // exactly as ordering by the expression does.
                 collation: bound.projection.get(index).and_then(|projection| {
-                    match &projection.expr.kind {
-                        BoundExprKind::GroupKey(key) => {
-                            bound.group_by.get(*key).and_then(BoundExpr::text_collation)
-                        }
-                        _ => projection.expr.text_collation(),
+                    let key_expr = match &projection.expr.kind {
+                        BoundExprKind::GroupKey(key) => bound.group_by.get(*key)?,
+                        _ => &projection.expr,
+                    };
+                    if key_expr.data_type == Some(DataType::Json) {
+                        Some(crate::bound::JSON_TEXT_COLLATION)
+                    } else {
+                        key_expr.text_collation()
                     }
                 }),
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
@@ -5074,15 +5090,16 @@ mod tests {
             .expect("declared collation");
         bind("SELECT 'a' COLLATE utf8mb4_0900_ai_ci = 'A'")
             .expect("literal with declared collation");
+        bind("SELECT Name COLLATE utf8mb4_bin FROM Events").expect("bin is a declared profile");
+        // Replicated text is stored transcoded to UTF-8, so a supported
+        // override applies even over a latin1-sourced column (MySQL would
+        // raise a charset mismatch; documented divergence).
+        bind("SELECT name COLLATE utf8mb4_0900_ai_ci FROM legacy")
+            .expect("override over a transcoded profile");
 
-        for sql in [
-            "SELECT Name COLLATE utf8mb4_bin FROM Events",
-            "SELECT name COLLATE utf8mb4_0900_ai_ci FROM legacy",
-            "SELECT 1 COLLATE utf8mb4_0900_ai_ci",
-        ] {
-            let error = bind(sql).expect_err("unsupported collation boundary");
-            assert!(error.to_string().contains("unsupported"), "{sql}: {error}");
-        }
+        let sql = "SELECT 1 COLLATE utf8mb4_0900_ai_ci";
+        let error = bind(sql).expect_err("unsupported collation boundary");
+        assert!(error.to_string().contains("unsupported"), "{sql}: {error}");
     }
 
     #[test]
@@ -5366,41 +5383,33 @@ mod tests {
     #[test]
     fn rejects_json_operations_without_json_aware_key_semantics() {
         let json = "JSON_EXTRACT(Name, '$.a')";
+        // JSON-to-JSON comparison and key semantics ride MySQL's ladder now.
+        for sql in [
+            format!("SELECT {json} = {json} FROM Events"),
+            format!("SELECT {json} IN ({json}) FROM Events"),
+            format!("SELECT {json} BETWEEN {json} AND {json} FROM Events"),
+            format!("SELECT {json} FROM Events GROUP BY {json}"),
+            format!("SELECT DISTINCT {json} FROM Events"),
+            format!("SELECT {json} AS document FROM Events ORDER BY document"),
+            format!("SELECT COUNT(DISTINCT {json}) FROM Events"),
+            format!("SELECT {json} FROM Events UNION SELECT {json} FROM Events"),
+            format!("SELECT {json} FROM Events UNION ALL SELECT {json} FROM Events"),
+        ] {
+            bind(&sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+        }
+        // A JSON comparison binds as a byte comparison of ladder keys.
+        let bound = bind(&format!("SELECT {json} = {json} FROM Events")).expect("json equality");
+        assert_eq!(bound.projection[0].expr.data_type, Some(DataType::Boolean));
+        // Residuals that stay rejected: mixed JSON/scalar comparison (MySQL
+        // coerces the scalar to JSON; Pintail does not guess), MIN/MAX,
+        // window keys, GROUP_CONCAT internal ordering.
         assert!(matches!(
-            bind(&format!("SELECT {json} = {json} FROM Events")),
+            bind(&format!("SELECT {json} = 'a' FROM Events")),
             Err(BindError::InvalidBinaryTypes { .. })
-        ));
-        assert!(matches!(
-            bind(&format!("SELECT {json} IN ({json}) FROM Events")),
-            Err(BindError::InvalidScalarFunction(_))
-        ));
-        assert!(matches!(
-            bind(&format!(
-                "SELECT {json} BETWEEN {json} AND {json} FROM Events"
-            )),
-            Err(BindError::InvalidScalarFunction(_))
-        ));
-        assert!(matches!(
-            bind(&format!("SELECT {json} FROM Events GROUP BY {json}")),
-            Err(BindError::InvalidGrouping(_))
-        ));
-        assert!(matches!(
-            bind(&format!("SELECT DISTINCT {json} FROM Events")),
-            Err(BindError::UnsupportedQueryClause(_))
-        ));
-        assert!(matches!(
-            bind(&format!(
-                "SELECT {json} AS document FROM Events ORDER BY document"
-            )),
-            Err(BindError::InvalidOrderBy(_))
         ));
         assert!(matches!(
             bind(&format!("SELECT MIN({json}) FROM Events")),
             Err(BindError::InvalidAggregateType { .. })
-        ));
-        assert!(matches!(
-            bind(&format!("SELECT COUNT(DISTINCT {json}) FROM Events")),
-            Err(BindError::UnsupportedAggregate(_))
         ));
         assert!(matches!(
             bind(&format!(
@@ -5420,18 +5429,6 @@ mod tests {
             )),
             Err(BindError::UnsupportedAggregate(_))
         ));
-        assert!(matches!(
-            bind(&format!(
-                "SELECT {json} FROM Events UNION SELECT {json} FROM Events"
-            )),
-            Err(BindError::IncompatibleSetOperation(_))
-        ));
-        assert!(
-            bind(&format!(
-                "SELECT {json} FROM Events UNION ALL SELECT {json} FROM Events"
-            ))
-            .is_ok()
-        );
     }
 
     #[test]

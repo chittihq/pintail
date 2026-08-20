@@ -19,6 +19,12 @@ pub const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
 /// mode of guessing is a wrong answer rather than an error.
 /// The collation `MySQL` gives every string produced by the JSON functions,
 /// regardless of session or argument collations - measured live.
+/// The internal per-key "collation" name that routes a sort, group, or
+/// distinct key through `MySQL`'s JSON comparison ladder instead of a text
+/// collation. Not a `MySQL` collation name; user-written `COLLATE` clauses
+/// are validated against real names before this can ever be seen.
+pub const JSON_TEXT_COLLATION: &str = "json";
+
 pub const BIN_TEXT_COLLATION: &str = "utf8mb4_bin";
 pub const SUPPORTED_TEXT_COLLATIONS: [&str; 3] = [
     DEFAULT_TEXT_COLLATION,
@@ -369,6 +375,11 @@ pub enum BoundExprKind {
 pub enum ScalarFunction {
     /// Concatenate strings, returning NULL when any argument is NULL.
     Concat,
+    /// The order-preserving byte key of a JSON document, under `MySQL`'s
+    /// JSON comparison ladder. Bind-internal: the binder wraps both sides
+    /// of a JSON-to-JSON comparison in this, turning the comparison into a
+    /// byte comparison of `Binary` keys. Never spelled in SQL.
+    JsonSortKey,
     /// Extract a one-based string slice.
     Substring,
     /// Unicode lowercase conversion.

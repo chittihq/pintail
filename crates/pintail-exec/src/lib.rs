@@ -6,6 +6,7 @@ pub mod collation;
 mod execution;
 mod explain;
 mod expression;
+mod json_order;
 mod logical;
 mod optimizer;
 pub mod spill;

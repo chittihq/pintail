@@ -57,10 +57,15 @@ stays readable as a list of things to fix.
   value's own width. Reading a document back still normalizes numbers through
   the JSON parser, so a DECIMAL extracted out of a document loses trailing
   zeros; only construction is exact (#8).
-- Direct comparison, ordering, grouping, DISTINCT/set duplicate handling,
-  window partition/order keys, `IN`/`BETWEEN`, and `MIN`/`MAX` over JSON reject
-  explicitly. Pintail does not substitute text collation or UTF-8 hashing for
-  MySQL's binary-JSON precedence and equality rules (#8).
+- JSON-to-JSON comparison, `IN`/`BETWEEN`, ordering, grouping, and
+  DISTINCT/set duplicate handling follow MySQL's JSON type-precedence ladder
+  (numbers compare numerically across integer/double spellings; objects are
+  equal regardless of member order). Residuals that still reject explicitly:
+  comparing JSON against a non-JSON scalar (MySQL coerces the scalar to JSON;
+  Pintail does not yet), JSON arithmetic, `MIN`/`MAX` over JSON, window
+  partition/order keys over JSON, `GROUP_CONCAT ... ORDER BY` a JSON key, and
+  the recursive-CTE `UNION DISTINCT` fixpoint over JSON rows. The relative
+  order of unequal objects is deterministic but unspecified, as in MySQL (#8).
 - JSON paths support member and numeric-index steps. Wildcards, recursive
   descent, ranges, and `last`-relative indexes still reject (#8).
 - `REGEXP_LIKE` accepts MySQL's optional `match_type`; the longer positional
@@ -78,9 +83,13 @@ stays readable as a list of things to fix.
   so no program can outlive the row that requested it.
 - Byte-level transcoding among character sets other than UTF-8 and binary is
   unsupported and rejects explicitly.
-- Explicit `COLLATE` names other than `utf8mb4_0900_ai_ci` reject. Cross-profile
-  coercibility is not implemented, so mixed source profiles reject on every
-  collation-sensitive operation (#10).
+- Explicit `COLLATE` accepts the three replicated profiles
+  (`utf8mb4_0900_ai_ci`, `utf8mb4_general_ci`, `utf8mb4_bin`); other names
+  reject. Because replicated text is stored transcoded to UTF-8, a supported
+  `COLLATE` override is accepted even where MySQL would raise a
+  charset-mismatch error (e.g. over a latin1-sourced column). Cross-profile
+  coercibility is not implemented, so mixed source profiles without an
+  explicit override reject on every collation-sensitive operation (#10).
 - The `information_schema` client-discovery interpreter rejects CTEs, set
   operations, window functions, derived tables, and metadata relations outside
   the ten served relations. `VIEWS`, `ROUTINES`, and `CHECK_CONSTRAINTS` are

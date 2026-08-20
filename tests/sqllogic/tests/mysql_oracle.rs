@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1054;
+const EXPECTED_CASES: usize = 1060;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1028,6 +1028,46 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT CAST(-2 AS UNSIGNED), CAST('-3' AS UNSIGNED) + 0, \
                     CAST(18446744073709551615 AS UNSIGNED), \
                     CAST(CAST(-1 AS UNSIGNED) AS SIGNED)",
+        ),
+        // JSON-to-JSON comparison: MySQL's type ladder, numbers numeric
+        // across integer/double spellings, objects equal whatever the member
+        // order. Unequal-object ORDERING is unspecified in MySQL, so no case
+        // depends on it.
+        ordered(
+            "json comparison",
+            "SELECT JSON_EXTRACT('{\"a\":1}','$.a') = JSON_EXTRACT('{\"b\":1.0}','$.b'), \
+                    JSON_EXTRACT('{\"a\":1,\"b\":2}','$') = JSON_EXTRACT('{\"b\":2,\"a\":1}','$'), \
+                    JSON_EXTRACT('[1,2]','$') = JSON_EXTRACT('[1,2]','$'), \
+                    JSON_EXTRACT('[1,2]','$') < JSON_EXTRACT('[1,3]','$')",
+        ),
+        ordered(
+            "json comparison",
+            "SELECT JSON_EXTRACT('[9]','$') > JSON_EXTRACT('{\"n\":99}','$.n'), \
+                    JSON_EXTRACT('true','$') > JSON_EXTRACT('[9]','$'), \
+                    JSON_EXTRACT('null','$') < JSON_EXTRACT('0','$'), \
+                    JSON_EXTRACT('\"a\"','$') > JSON_EXTRACT('9','$'), \
+                    JSON_EXTRACT('false','$') < JSON_EXTRACT('true','$')",
+        ),
+        ordered(
+            "json comparison",
+            "SELECT COUNT(*) FROM events \
+             WHERE JSON_EXTRACT(CONCAT('{\"n\":', id, '}'), '$.n') \
+                   IN (JSON_EXTRACT('[1,3]','$[0]'), JSON_EXTRACT('[1,3]','$[1]'))",
+        ),
+        ordered(
+            "json comparison",
+            "SELECT id FROM events \
+             ORDER BY JSON_EXTRACT(CONCAT('{\"n\":', id * 7 % 5, '}'), '$.n'), id",
+        ),
+        unordered(
+            "json comparison",
+            "SELECT JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n') AS k, COUNT(*) \
+             FROM events GROUP BY JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n')",
+        ),
+        ordered(
+            "json comparison",
+            "SELECT COUNT(DISTINCT JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n')) \
+             FROM events",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(
@@ -2913,14 +2953,14 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "recursive|unsupported|unknown|aggregate",
         ),
         (
-            "reject json compare",
-            "SELECT id FROM orders WHERE meta = CAST('{\"a\":1}' AS JSON)",
-            "json",
+            "reject json mixed compare",
+            "SELECT id FROM orders WHERE meta = 'premium'",
+            "json|=|binary|invalid",
         ),
         (
-            "reject json order by",
-            "SELECT id, meta FROM orders WHERE meta IS NOT NULL ORDER BY meta",
-            "json",
+            "reject json arithmetic",
+            "SELECT meta + 1 FROM orders WHERE meta IS NOT NULL",
+            "json|\\+|binary|invalid",
         ),
         (
             "reject unknown collate",

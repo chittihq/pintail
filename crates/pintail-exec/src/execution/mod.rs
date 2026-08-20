@@ -849,6 +849,11 @@ fn grouping_key_collations(
 }
 
 fn key_collation_of(key: &BoundExpr, fallback: Collation) -> Collation {
+    // A JSON key folds under the JSON ladder, not a text collation: two
+    // spellings of one document are one group.
+    if key.data_type == Some(DataType::Json) {
+        return Collation::Json;
+    }
     key.text_collation()
         .and_then(Collation::from_mysql_name)
         .unwrap_or(fallback)

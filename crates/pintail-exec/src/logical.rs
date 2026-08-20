@@ -285,7 +285,12 @@ impl LogicalPlanner {
         let key_collations: Vec<Option<String>> = if distinct {
             projection
                 .iter()
-                .map(|expression| expression.expr.result_collation())
+                .map(|expression| {
+                    if expression.expr.data_type == Some(pintail_types::DataType::Json) {
+                        return Some(pintail_sql::JSON_TEXT_COLLATION.to_owned());
+                    }
+                    expression.expr.result_collation()
+                })
                 .collect()
         } else {
             Vec::new()

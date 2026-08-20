@@ -70,8 +70,16 @@ impl CompiledAggregate {
         let collation = aggregate
             .expr
             .as_ref()
-            .and_then(pintail_sql::BoundExpr::text_collation)
-            .and_then(Collation::from_mysql_name)
+            .and_then(|expression| {
+                // DISTINCT over JSON folds documents structurally; text
+                // arguments fold under their own column collation.
+                if expression.data_type == Some(pintail_types::DataType::Json) {
+                    return Some(Collation::Json);
+                }
+                expression
+                    .text_collation()
+                    .and_then(Collation::from_mysql_name)
+            })
             .unwrap_or(collation);
         Ok(Self {
             collation,
