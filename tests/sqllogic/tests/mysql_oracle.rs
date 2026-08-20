@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1028;
+const EXPECTED_CASES: usize = 1031;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -895,6 +895,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "like default escape",
             "SELECT 'a%b' LIKE 'a\\%b', 'axb' LIKE 'a\\%b', 'a_b' LIKE 'a\\_b', \
                     'axb' LIKE 'a\\_b', 'a%b' LIKE 'a!%b' ESCAPE '!', 'C:\\\\dir' LIKE 'C:\\\\\\\\%'",
+        ),
+        ordered(
+            "binary operator",
+            "SELECT BINARY 'A' = BINARY 'a', BINARY 'a' = BINARY 'a', \
+                    'a' = BINARY 'A', BINARY 'abc' < BINARY 'abd', BINARY 'a' = BINARY 'a '",
+        ),
+        ordered(
+            "binary operator",
+            "SELECT COUNT(*) FROM events WHERE BINARY note = 'Alpha'",
+        ),
+        ordered(
+            "binary operator",
+            "SELECT COUNT(*) FROM events WHERE BINARY note = 'alpha'",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

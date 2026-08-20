@@ -829,6 +829,38 @@ pub(super) fn bind_cast(
 ) -> Result<BoundExpr, BindError> {
     let target = cast_data_type(data_type)
         .ok_or_else(|| BindError::InvalidScalarFunction(format!("CAST AS {data_type}")))?;
+    // MySQL's prefix BINARY operator binds tightest, but sqlparser parses
+    // its operand at minimal precedence - `BINARY 'A' = BINARY 'a'` arrives
+    // as CAST(('A' = BINARY 'a') AS BINARY), which both answered the wrong
+    // comparison and handed the result back as a blob (conformance suite:
+    // the 'two bugs at once' case). Reassociate exactly as the JSON arrow
+    // operators do: the cast takes the comparison's left operand, and the
+    // comparison applies to the cast. The rare explicit
+    // CAST(a = b AS BINARY) spelling shares this AST and is reassociated
+    // too - MySQL types that as the bytes of '1'/'0', a corner the profile
+    // does not preserve.
+    if target == DataType::Binary
+        && let Expr::BinaryOp {
+            left,
+            op,
+            right: operand,
+        } = expr
+        && !matches!(
+            op,
+            sqlparser::ast::BinaryOperator::Arrow | sqlparser::ast::BinaryOperator::LongArrow
+        )
+    {
+        let recast = Expr::Cast {
+            kind: sqlparser::ast::CastKind::Cast,
+            expr: left.clone(),
+            data_type: data_type.clone(),
+            array: false,
+            format: None,
+        };
+        return super::bind_binary(
+            &recast, op, operand, tables, aggregates, windows, subqueries,
+        );
+    }
     bind_scalar(
         ScalarFunction::Cast(target),
         vec![bind_expr_inner(
