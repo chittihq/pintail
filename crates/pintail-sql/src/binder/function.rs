@@ -1158,15 +1158,22 @@ pub(super) fn bind_scalar(
         | ScalarFunction::Md5
         | ScalarFunction::DayName
         | ScalarFunction::MonthName
-        | ScalarFunction::LastDay
-        | ScalarFunction::FromDays
         | ScalarFunction::SecToTime => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
+        // Rendered as canonical YYYY-MM-DD text - which is exactly the
+        // Date32 carrier - so declaring the real type costs nothing at
+        // evaluation and lets the wire advertise MYSQL_TYPE_DATE. Declared
+        // as Utf8, drivers decoded these as strings where MySQL hands back
+        // Date objects (found via DATE() by a customer's driver-level diff).
+        ScalarFunction::LastDay | ScalarFunction::FromDays => (
+            Some(DataType::Date32),
+            args.iter().any(|argument| argument.nullable),
+        ),
         // NULL out of range / on malformed or unmatched input, like MySQL.
+        ScalarFunction::MakeDate => (Some(DataType::Date32), true),
         ScalarFunction::Elt
-        | ScalarFunction::MakeDate
         | ScalarFunction::StrToDate
         | ScalarFunction::ConvertTz
         | ScalarFunction::RegexpSubstr
@@ -1235,14 +1242,42 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
-        ScalarFunction::Now | ScalarFunction::CurrentDate | ScalarFunction::Curtime => {
-            (Some(DataType::Utf8), false)
-        }
-        ScalarFunction::Date
-        | ScalarFunction::DateFormat
-        | ScalarFunction::DateInterval { .. }
-        | ScalarFunction::FromUnixTime => (
+        ScalarFunction::Now => (Some(DataType::DateTime64 { fsp: 0 }), false),
+        ScalarFunction::CurrentDate => (Some(DataType::Date32), false),
+        ScalarFunction::Curtime => (Some(DataType::Time64 { fsp: 0 }), false),
+        ScalarFunction::Date => (
+            Some(DataType::Date32),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::FromUnixTime => (
+            Some(DataType::DateTime64 { fsp: 0 }),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        // DATE_FORMAT is a string in MySQL too; only the arithmetic
+        // functions carry a temporal type, and theirs depends on the
+        // argument. The arms mirror the evaluator's rendering rule exactly:
+        // a date input stays a date only under pure-date units, anything
+        // temporal otherwise renders as second-precision datetime text, and
+        // a string input stays a string - which is also MySQL's own typing.
+        ScalarFunction::DateFormat => (
             Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::DateInterval { unit, .. } => (
+            Some(match args[0].data_type {
+                Some(DataType::Date32)
+                    if matches!(
+                        unit,
+                        IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day
+                    ) =>
+                {
+                    DataType::Date32
+                }
+                Some(DataType::Date32 | DataType::DateTime64 { .. }) => {
+                    DataType::DateTime64 { fsp: 0 }
+                }
+                _ => DataType::Utf8,
+            }),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::DatePart(_) | ScalarFunction::UnixTimestamp => (

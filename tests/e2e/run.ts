@@ -1375,6 +1375,50 @@ async function phaseControlPlane() {
       await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'cdc' } })
     }
   })
+  await check('wire column types: temporal expressions advertise what MySQL advertises', async () => {
+    // The defect class GEOMETRY had in 0.0.3 and DATE() still had in 0.0.4:
+    // the VALUE matches byte-for-byte while the advertised column type
+    // differs, so drivers decode a different JS/host type - a Date object
+    // from MySQL, a string from Pintail - and every downstream consumer
+    // silently changes behaviour. Value comparisons can never catch it;
+    // only the type bytes can.
+    await pintailQuery('SELECT 1')
+    const battery = `SELECT
+        DATE(happened_at) AS date_fn,
+        LAST_DAY(happened_at) AS last_day_fn,
+        FROM_DAYS(738000) AS from_days_fn,
+        MAKEDATE(2025, 60) AS makedate_fn,
+        CURDATE() AS curdate_fn,
+        NOW() AS now_fn,
+        CURTIME() AS curtime_fn,
+        FROM_UNIXTIME(1735689600) AS from_unixtime_fn,
+        DATE_ADD(DATE(happened_at), INTERVAL 1 DAY) AS date_plus_day,
+        DATE_ADD(DATE(happened_at), INTERVAL 1 HOUR) AS date_plus_hour,
+        DATE_ADD(happened_at, INTERVAL 1 DAY) AS datetime_plus_day,
+        DATE_FORMAT(happened_at, '%Y-%m') AS date_format_fn,
+        happened_at AS plain_datetime
+      FROM events LIMIT 1`
+    const [, mysqlFields] = (await mysqlConnection!.query(battery)) as unknown as [
+      unknown,
+      Array<{ name: string; columnType: number }>,
+    ]
+    const [, pintailFields] = (await pintailWire!.query(battery)) as unknown as [
+      unknown,
+      Array<{ name: string; columnType: number }>,
+    ]
+    const mismatches: string[] = []
+    for (const [index, expected] of mysqlFields.entries()) {
+      const actual = pintailFields[index]
+      if (!actual || actual.name !== expected.name || actual.columnType !== expected.columnType) {
+        mismatches.push(
+          `${expected.name}: mysql type ${expected.columnType}, pintail ${actual?.columnType} (${actual?.name})`,
+        )
+      }
+    }
+    if (mismatches.length) {
+      throw new Error(`wire types diverge: ${mismatches.join('; ')}`)
+    }
+  })
   await check('resync and reconcile are accepted', async () => {
     // A supervisor cycle may hold the job lock at this instant; the 409 is
     // correct API behavior, so retry briefly instead of failing the check.
