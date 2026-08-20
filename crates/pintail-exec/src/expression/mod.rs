@@ -1042,6 +1042,8 @@ impl CompiledExpr {
                         .saturating_add(args.len().saturating_mul(8).saturating_add(2)),
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
+                    | ScalarFunction::Collate { .. }
+                    | ScalarFunction::TrimPattern { .. }
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
@@ -1199,6 +1201,8 @@ impl CompiledExpr {
                         .saturating_add(args.len().saturating_mul(8).saturating_add(2)),
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
+                    | ScalarFunction::Collate { .. }
+                    | ScalarFunction::TrimPattern { .. }
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
@@ -1620,6 +1624,25 @@ fn evaluate_eager_scalar_typed(
             } else {
                 text.to_uppercase()
             }))
+        }
+        ScalarFunction::Collate { .. } => Ok(values[0].clone()),
+        ScalarFunction::TrimPattern { leading, trailing } => {
+            let subject = scalar_string(&values[0])?;
+            let pattern = scalar_string(&values[1])?;
+            let mut result = subject.as_str();
+            if !pattern.is_empty() {
+                if leading {
+                    while let Some(rest) = result.strip_prefix(pattern.as_str()) {
+                        result = rest;
+                    }
+                }
+                if trailing {
+                    while let Some(rest) = result.strip_suffix(pattern.as_str()) {
+                        result = rest;
+                    }
+                }
+            }
+            Ok(Value::Utf8(result.to_owned()))
         }
         ScalarFunction::Trim => Ok(Value::Utf8(
             // MySQL's default TRIM removes the space character only. Rust's
@@ -2663,7 +2686,14 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         None => Ok(Value::Null),
         Some(DataType::Boolean) => Ok(mysql_truth(value)?.map_or(Value::Null, Value::Boolean)),
         Some(DataType::Int64) => Ok(Value::Int64(mysql_i64(value)?)),
-        Some(DataType::UInt64) => Ok(Value::UInt64(mysql_u64(value)?)),
+        // CAST AS UNSIGNED wraps a negative through two's complement, as
+        // MySQL does: CAST(-1 AS UNSIGNED) is 18446744073709551615, not an
+        // overflow (conformance suite). Only the explicit cast wraps -
+        // arithmetic coercions elsewhere still refuse.
+        Some(DataType::UInt64) => Ok(Value::UInt64(match value {
+            Value::Int64(signed) if *signed < 0 => (*signed).cast_unsigned(),
+            other => mysql_u64(other)?,
+        })),
         Some(DataType::Float64) => Ok(Value::float64(mysql_f64(value)?)),
         Some(DataType::Utf8) => Ok(Value::Utf8(scalar_string(value)?)),
         Some(DataType::Binary) => Ok(Value::Binary(scalar_string(value)?.into_bytes())),

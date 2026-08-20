@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1033;
+const EXPECTED_CASES: usize = 1039;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -916,6 +916,33 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "null-only derived",
             "SELECT COUNT(k), COUNT(*) FROM (SELECT NULL AS k UNION ALL SELECT NULL) d",
+        ),
+        ordered(
+            "rejected constructs",
+            "SELECT CAST(-1 AS UNSIGNED), CAST(1 AS UNSIGNED), CAST('7' AS UNSIGNED)",
+        ),
+        ordered(
+            "rejected constructs",
+            "SELECT TRIM(BOTH 'x' FROM 'xxaxx'), TRIM(LEADING 'x' FROM 'xxaxx'), \
+                    TRIM(TRAILING 'x' FROM 'xxaxx'), TRIM('ab' FROM 'ababzab')",
+        ),
+        ordered(
+            "rejected constructs",
+            "SELECT NULL <=> NULL, 1 <=> NULL, NULL <=> 1, 1 <=> 1, 1 <=> 2, 'a' <=> 'A'",
+        ),
+        ordered(
+            "rejected constructs",
+            "SELECT COUNT(*) FROM events WHERE note <=> NULL",
+        ),
+        ordered(
+            "rejected constructs",
+            "SELECT 'A' = 'a' COLLATE utf8mb4_bin, 'A' = 'a' COLLATE utf8mb4_general_ci, \
+                    'a' = 'a ' COLLATE utf8mb4_general_ci, 'a' = 'a ' COLLATE utf8mb4_0900_ai_ci",
+        ),
+        unordered(
+            "rejected constructs",
+            "SELECT note COLLATE utf8mb4_bin AS k, COUNT(*) FROM events \
+             WHERE note IS NOT NULL GROUP BY note COLLATE utf8mb4_bin",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(
@@ -2812,7 +2839,7 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         (
             "reject unknown collate",
-            "SELECT name FROM users ORDER BY name COLLATE utf8mb4_bin",
+            "SELECT name FROM users ORDER BY name COLLATE latin1_swedish_ci",
             "collat",
         ),
         (

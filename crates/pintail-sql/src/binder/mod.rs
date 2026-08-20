@@ -2326,22 +2326,20 @@ fn bind_expr_inner(
             let [name] = parts.as_slice() else {
                 return Err(BindError::UnsupportedExpression(expr.to_string()));
             };
-            if !name.eq_ignore_ascii_case(DEFAULT_TEXT_COLLATION) {
+            let Some(named) = crate::bound::NamedCollation::from_name(name) else {
                 return Err(BindError::UnsupportedExpression(format!(
-                    "COLLATE {name} is unsupported; the initial executable profile is \
-                     {DEFAULT_TEXT_COLLATION}"
+                    "COLLATE {name} is unsupported; supported: {}",
+                    crate::bound::SUPPORTED_TEXT_COLLATIONS.join(", ")
                 )));
-            }
+            };
             let bound = bind_expr_inner(inner, tables, aggregates, windows, subqueries)?;
             if bound.data_type != Some(DataType::Utf8) {
                 return Err(BindError::UnsupportedExpression(expr.to_string()));
             }
-            // COLLATE changes coercibility in MySQL. Pintail exposes one
-            // executable text profile, so applying that same profile is an
-            // execution no-op after validating that the operand does not
-            // carry an incompatible source collation.
-            ensure_supported_text_collation(&[&bound])?;
-            Ok(bound)
+            // COLLATE is MySQL's explicit-coercibility rung: the named
+            // collation overrides whatever flows in, carried by an identity
+            // scalar the collation walks stop at.
+            bind_scalar(ScalarFunction::Collate { collation: named }, vec![bound])
         }
         // sqlparser gives CEIL/FLOOR dedicated nodes (for the `TO field`
         // form); only the plain numeric spelling is supported.
@@ -2480,6 +2478,25 @@ fn bind_expr_inner(
                 )?);
             }
             bind_scalar(ScalarFunction::Substring, args)
+        }
+        Expr::Trim {
+            trim_where,
+            trim_what: Some(what),
+            expr: subject,
+            trim_characters: None,
+        } => {
+            let (leading, trailing) = match trim_where {
+                None | Some(sqlparser::ast::TrimWhereField::Both) => (true, true),
+                Some(sqlparser::ast::TrimWhereField::Leading) => (true, false),
+                Some(sqlparser::ast::TrimWhereField::Trailing) => (false, true),
+            };
+            bind_scalar(
+                ScalarFunction::TrimPattern { leading, trailing },
+                vec![
+                    bind_expr_inner(subject, tables, aggregates, windows, subqueries)?,
+                    bind_expr_inner(what, tables, aggregates, windows, subqueries)?,
+                ],
+            )
         }
         Expr::Trim {
             trim_where: None,
@@ -2940,6 +2957,56 @@ fn bind_binary(
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
     ensure_binary_collation(operator, &left, &right)?;
+    // MySQL's null-safe equality: 1 when both are NULL, 0 when exactly one
+    // is, the plain comparison otherwise - and never NULL itself. Desugared
+    // to COALESCE((l IS NULL AND r IS NULL) OR l = r, FALSE) so every
+    // executor path treats it as ordinary boolean algebra.
+    if matches!(operator, BinaryOperator::Spaceship) {
+        let both_null = BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: false,
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::And,
+                left: Box::new(BoundExpr {
+                    data_type: Some(DataType::Boolean),
+                    nullable: false,
+                    kind: BoundExprKind::IsNull {
+                        expr: Box::new(left.clone()),
+                        negated: false,
+                    },
+                }),
+                right: Box::new(BoundExpr {
+                    data_type: Some(DataType::Boolean),
+                    nullable: false,
+                    kind: BoundExprKind::IsNull {
+                        expr: Box::new(right.clone()),
+                        negated: false,
+                    },
+                }),
+            },
+        };
+        let equal = function::equality_expr(left, right)?;
+        let either = BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: equal.nullable,
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::Or,
+                left: Box::new(both_null),
+                right: Box::new(equal),
+            },
+        };
+        return bind_scalar(
+            ScalarFunction::Coalesce,
+            vec![
+                either,
+                BoundExpr {
+                    data_type: Some(DataType::Boolean),
+                    nullable: false,
+                    kind: BoundExprKind::Literal(Value::Boolean(false)),
+                },
+            ],
+        );
+    }
     if matches!(operator, BinaryOperator::Arrow | BinaryOperator::LongArrow) {
         return bind_scalar(
             ScalarFunction::JsonExtract {

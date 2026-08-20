@@ -1203,6 +1203,11 @@ pub(super) fn bind_scalar(
         // '00:00:01.5'), and the fixed-width temporal carrier truncates to
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
+        ScalarFunction::Collate { .. } => (args[0].data_type, args[0].nullable),
+        ScalarFunction::TrimPattern { .. } => (
+            Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
         ScalarFunction::SecToTime => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
@@ -1566,7 +1571,7 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     }))
 }
 
-fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
+pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {
             operation: "=".to_owned(),

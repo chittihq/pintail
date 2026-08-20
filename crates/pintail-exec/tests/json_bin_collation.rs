@@ -180,3 +180,32 @@ fn a_null_only_derived_table_groups() {
     let rows = run("SELECT k, COUNT(*) FROM (SELECT NULL AS k) d GROUP BY k");
     assert_eq!(rows, vec![vec!["NULL".to_owned(), "1".to_owned()]]);
 }
+
+#[test]
+fn probe_cast_unsigned() {
+    println!("GOT {:?}", run("SELECT CAST(-1 AS UNSIGNED)"));
+}
+#[test]
+fn probe_trim_both() {
+    println!("GOT {:?}", run("SELECT TRIM(BOTH 'x' FROM 'xxaxx')"));
+}
+#[test]
+fn probe_extract_year_month() {
+    println!(
+        "GOT {:?}",
+        run("SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:00:00')")
+    );
+}
+#[test]
+fn probe_spaceship() {
+    println!("GOT {:?}", run("SELECT NULL <=> NULL, 1 <=> NULL, 1 <=> 1"));
+}
+
+#[test]
+fn collate_overrides_the_comparison() {
+    // The operator escape hatch: bin forces case-sensitivity, general_ci
+    // restores insensitivity over a bin-collated JSON result.
+    let rows = run("SELECT 'A' = 'a' COLLATE utf8mb4_bin, \
+                JSON_UNQUOTE(JSON_EXTRACT('{\"k\":\"A\"}','$.k')) = 'a' COLLATE utf8mb4_general_ci");
+    assert_eq!(rows, vec![vec!["0".to_owned(), "1".to_owned()]]);
+}

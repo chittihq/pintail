@@ -483,3 +483,12 @@ but may be wrong.
 - STR_TO_DATE with a time-only format returns NULL where MySQL returns
   a TIME value; the declared column type (TIME) matches MySQL, the
   value does not.
+
+- EXTRACT with a composite unit (YEAR_MONTH, DAY_HOUR, ...) is rejected
+  at parse: the SQL parser dependency does not recognize MySQL's
+  composite date-time fields. Single units work.
+
+- Comparing two JSON values (json_col = json_col) and JSON arithmetic
+  are unsupported; MySQL compares JSON semantically (1.0 equals 1),
+  which the text carrier does not implement. JSON extracted to text via
+  ->> or JSON_UNQUOTE compares fully.

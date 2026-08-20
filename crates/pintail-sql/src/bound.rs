@@ -124,6 +124,43 @@ fn collect_comparison_collations(expr: &BoundExpr, collations: &mut Vec<String>)
     }
 }
 
+/// One of the executable text collations, by name.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NamedCollation {
+    /// `utf8mb4_0900_ai_ci`.
+    Default,
+    /// `utf8mb4_general_ci`.
+    GeneralCi,
+    /// `utf8mb4_bin`.
+    Bin,
+}
+
+impl NamedCollation {
+    /// Resolves a `MySQL` collation name to a supported profile.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case(DEFAULT_TEXT_COLLATION) {
+            Some(Self::Default)
+        } else if name.eq_ignore_ascii_case(GENERAL_CI_TEXT_COLLATION) {
+            Some(Self::GeneralCi)
+        } else if name.eq_ignore_ascii_case(BIN_TEXT_COLLATION) {
+            Some(Self::Bin)
+        } else {
+            None
+        }
+    }
+
+    /// The collation's `MySQL` name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => DEFAULT_TEXT_COLLATION,
+            Self::GeneralCi => GENERAL_CI_TEXT_COLLATION,
+            Self::Bin => BIN_TEXT_COLLATION,
+        }
+    }
+}
+
 /// Whether a scalar function produces JSON-derived text that `MySQL` collates
 /// as `utf8mb4_bin` regardless of inputs.
 fn json_text_producer(function: ScalarFunction) -> bool {
@@ -207,6 +244,10 @@ impl BoundExpr {
                 // what flowed in (measured: JSON_UNQUOTE of an ai_ci column
                 // still compares case-sensitively), so its arguments'
                 // collations must not leak into the expression's tier.
+                if let ScalarFunction::Collate { collation } = function {
+                    collations.push(collation.as_str().to_owned());
+                    return;
+                }
                 if json_text_producer(*function) {
                     return;
                 }
@@ -310,6 +351,22 @@ pub enum ScalarFunction {
     Upper,
     /// Trim surrounding whitespace.
     Trim,
+    /// `expr COLLATE name`: an identity pass-through whose collation
+    /// contribution is the named collation, overriding whatever flows in -
+    /// exactly `MySQL`'s explicit-coercibility rung, and the operator escape
+    /// hatch when a collation default is wrong.
+    Collate {
+        /// Which supported collation the expression compares under.
+        collation: NamedCollation,
+    },
+    /// `TRIM([BOTH|LEADING|TRAILING] remstr FROM str)`: strips complete
+    /// repetitions of a pattern string from the chosen ends.
+    TrimPattern {
+        /// Strip from the start.
+        leading: bool,
+        /// Strip from the end.
+        trailing: bool,
+    },
     /// UTF-8 byte length.
     Length,
     /// Unicode scalar-value count.
