@@ -1153,7 +1153,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
                     EXTRACT(HOUR_SECOND FROM '2025-07-21 10:40:50'), \
                     EXTRACT(MINUTE_SECOND FROM '2025-07-21 10:40:50'), \
                     EXTRACT(YEAR_MONTH FROM '2025-01-05'), \
-                    EXTRACT(MINUTE_SECOND FROM '00:00:07')",
+                    EXTRACT(MINUTE_SECOND FROM '2025-01-05 00:00:07')",
         ),
         // Theta joins: range and inequality ON conditions on the nested
         // loop, plus equality+range mixes on the hash join's residual.
