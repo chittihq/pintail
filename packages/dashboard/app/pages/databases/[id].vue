@@ -17,6 +17,30 @@ const detailTab = computed({
 })
 const tableAction = ref('')
 const tables = ref<TableSummary[]>([])
+
+/// State filter for the tables list. 'all' shows everything; the options
+/// are the states actually present, with counts, so an operator hunting the
+/// one needs_resync table in an 80-table mirror finds it in one click.
+const tableStateFilter = ref('all')
+const tableStateCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const table of tables.value) {
+    counts.set(table.state, (counts.get(table.state) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
+})
+const visibleTables = computed(() =>
+  tableStateFilter.value === 'all'
+    ? tables.value
+    : tables.value.filter((table) => table.state === tableStateFilter.value))
+// A filter naming a state that no longer exists (the table recovered, or a
+// workspace/database switch) quietly widens back to everything rather than
+// presenting an empty list that reads as data loss.
+watch(tableStateCounts, (counts) => {
+  if (tableStateFilter.value !== 'all' && !counts.some(([state]) => state === tableStateFilter.value)) {
+    tableStateFilter.value = 'all'
+  }
+})
 const snapshot = ref<SnapshotStatus | null>(null)
 
 async function loadDatabaseDetail(showLoading = true) {
@@ -269,13 +293,25 @@ function describeTable(table: TableSummary) {
 
       <TabsContent value="tables">
         <Card class="overflow-hidden p-0">
+          <div v-if="tables.length" class="flex items-center justify-between gap-3 border-b p-3">
+            <span class="text-muted-foreground text-sm tabular-nums">{{ visibleTables.length }} of {{ tables.length }} tables</span>
+            <Select v-model="tableStateFilter">
+              <SelectTrigger class="min-w-44" data-testid="table-state-filter"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All states</SelectItem>
+                <SelectItem v-for="[state, count] in tableStateCounts" :key="state" :value="state">
+                  {{ state }} ({{ count }})
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div v-if="!tables.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 text-center"><Table2 :size="26" /><strong class="text-foreground">No mirrored tables</strong><span class="max-w-sm text-sm">Run a snapshot or revise the include list.</span></div>
           <Table v-else>
             <TableHeader>
               <TableRow><TableHead>Table</TableHead><TableHead>State</TableHead><TableHead>Rows</TableHead><TableHead>Schema</TableHead><TableHead>Fault</TableHead><TableHead>Action</TableHead></TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow v-for="table in tables" :key="table.name">
+              <TableRow v-for="table in visibleTables" :key="table.name">
                 <TableCell>
                   <strong>{{ table.name }}</strong>
                   <Badge

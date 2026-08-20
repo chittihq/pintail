@@ -978,6 +978,37 @@ async function main() {
     }
   })
 
+  await check('the tables view filters by state', async () => {
+    // The dead-letter check above leaves at least one quarantined table
+    // (needs_resync) beside streaming ones - exactly the situation the
+    // filter exists for: finding the one broken table in a long list.
+    await page!.goto(`${pintailUrl}/databases`)
+    await page!.getByRole('link', { name: DATABASE }).first().click()
+    await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+    await page!.getByTestId('table-state-filter').waitFor({ timeout: 15_000 })
+
+    const rowCount = async () => page!.locator('table tbody tr').count()
+    const allRows = await rowCount()
+    if (allRows < 2) throw new Error(`expected several tables, saw ${allRows}`)
+
+    await page!.getByTestId('table-state-filter').click()
+    await page!.getByRole('option', { name: /needs_resync/ }).click()
+    await page!.getByText(new RegExp(`\\d+ of ${allRows} tables`)).waitFor({ timeout: 15_000 })
+    const filtered = await rowCount()
+    if (filtered >= allRows || filtered === 0) {
+      throw new Error(`needs_resync filter shows ${filtered} of ${allRows} rows`)
+    }
+    // Every visible row is in the filtered state.
+    const body = (await page!.locator('table tbody').textContent()) ?? ''
+    if (/streaming/i.test(body)) throw new Error('a streaming row leaked through the filter')
+
+    // Back to everything.
+    await page!.getByTestId('table-state-filter').click()
+    await page!.getByRole('option', { name: 'All states' }).click()
+    const restored = await rowCount()
+    if (restored !== allRows) throw new Error(`clearing the filter shows ${restored} of ${allRows}`)
+  })
+
   await check('a teammate is invited, listed and revoked', async () => {
     await page!.goto(`${pintailUrl}/team`)
     await page!.getByRole('heading', { name: 'Team' }).waitFor()
