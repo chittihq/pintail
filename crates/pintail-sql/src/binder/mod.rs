@@ -2883,6 +2883,60 @@ fn bind_binary(
             );
         }
     }
+    // sqlparser gives -> and ->> LOWER precedence than comparison and IS
+    // [NOT] NULL, while MySQL binds them tightest - so `meta->>'$.k' = 'x'`
+    // arrives as `meta ->> ('$.k' = 'x')` and the extractor received the
+    // comparison's boolean as its path (found by the oracle's JSON family:
+    // the filter died on a path of "0"). Reassociate at the AST before
+    // binding: the arrow takes the comparison's LEFT operand as its path,
+    // and the comparison applies to the extraction.
+    if matches!(operator, BinaryOperator::Arrow | BinaryOperator::LongArrow) {
+        match right {
+            Expr::BinaryOp {
+                left: path,
+                op,
+                right: operand,
+            } => {
+                let extracted = Expr::BinaryOp {
+                    left: Box::new(left.clone()),
+                    op: operator.clone(),
+                    right: path.clone(),
+                };
+                return bind_binary(
+                    &extracted, op, operand, tables, aggregates, windows, subqueries,
+                );
+            }
+            Expr::IsNull(path) => {
+                let extracted = Expr::BinaryOp {
+                    left: Box::new(left.clone()),
+                    op: operator.clone(),
+                    right: path.clone(),
+                };
+                return bind_expr_inner(
+                    &Expr::IsNull(Box::new(extracted)),
+                    tables,
+                    aggregates,
+                    windows,
+                    subqueries,
+                );
+            }
+            Expr::IsNotNull(path) => {
+                let extracted = Expr::BinaryOp {
+                    left: Box::new(left.clone()),
+                    op: operator.clone(),
+                    right: path.clone(),
+                };
+                return bind_expr_inner(
+                    &Expr::IsNotNull(Box::new(extracted)),
+                    tables,
+                    aggregates,
+                    windows,
+                    subqueries,
+                );
+            }
+            _ => {}
+        }
+    }
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
     ensure_binary_collation(operator, &left, &right)?;
