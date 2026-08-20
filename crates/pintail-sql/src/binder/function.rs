@@ -377,6 +377,14 @@ pub(super) fn bind_scalar_function(
         "ORD" if args.len() == 1 => ScalarFunction::Ord,
         "HEX" if args.len() == 1 => ScalarFunction::Hex,
         "MD5" if args.len() == 1 => ScalarFunction::Md5,
+        "SHA1" | "SHA" if args.len() == 1 => ScalarFunction::Sha1,
+        "SHA2" if args.len() == 2 => ScalarFunction::Sha2,
+        "CRC32" if args.len() == 1 => ScalarFunction::Crc32,
+        "UUID" if args.is_empty() => ScalarFunction::Uuid,
+        "BIN" if args.len() == 1 => ScalarFunction::Bin,
+        "OCT" if args.len() == 1 => ScalarFunction::Oct,
+        "INET_ATON" if args.len() == 1 => ScalarFunction::InetAton,
+        "INET_NTOA" if args.len() == 1 => ScalarFunction::InetNtoa,
         "UNHEX" if args.len() == 1 => ScalarFunction::Unhex,
         "ELT" if args.len() >= 2 => ScalarFunction::Elt,
         "FIELD" if args.len() >= 2 => ScalarFunction::Field,
@@ -1224,6 +1232,9 @@ pub(super) fn bind_scalar(
         | ScalarFunction::ToBase64
         | ScalarFunction::Hex
         | ScalarFunction::Md5
+        | ScalarFunction::Sha1
+        | ScalarFunction::Bin
+        | ScalarFunction::Oct
         | ScalarFunction::DayName
         | ScalarFunction::MonthName => (
             Some(DataType::Utf8),
@@ -1236,6 +1247,10 @@ pub(super) fn bind_scalar(
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } => (args[0].data_type, args[0].nullable),
         ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
+        // SHA2's width argument, an invalid IPv4 string, and an
+        // out-of-range address number all answer NULL, so these stay
+        // nullable regardless of their inputs.
+        ScalarFunction::Uuid => (Some(DataType::Utf8), false),
         ScalarFunction::JsonOverlaps | ScalarFunction::JsonMemberOf => {
             (Some(DataType::Int64), args.iter().any(|argument| argument.nullable))
         }
@@ -1292,7 +1307,9 @@ pub(super) fn bind_scalar(
         ),
         // MAKETIME and CONVERT_TZ stay strings for the same reason as
         // SEC_TO_TIME: their fractional width follows the input value.
-        ScalarFunction::MakeTime
+        ScalarFunction::Sha2
+        | ScalarFunction::InetNtoa
+        | ScalarFunction::MakeTime
         | ScalarFunction::ConvertTz
         | ScalarFunction::Elt
         | ScalarFunction::RegexpSubstr
@@ -1345,7 +1362,9 @@ pub(super) fn bind_scalar(
         ScalarFunction::JsonContains | ScalarFunction::JsonContainsPath => {
             (Some(DataType::Int64), true)
         }
-        ScalarFunction::JsonLength => (Some(DataType::UInt64), true),
+        ScalarFunction::JsonLength
+        | ScalarFunction::Crc32
+        | ScalarFunction::InetAton => (Some(DataType::UInt64), true),
         ScalarFunction::RegexpInstr => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),

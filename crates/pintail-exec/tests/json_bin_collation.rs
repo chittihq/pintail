@@ -455,3 +455,50 @@ fn json_pretty_matches_mysql_layout() {
         ]]
     );
 }
+
+#[test]
+fn hash_and_net_scalar_batch() {
+    let rows = run(
+        "SELECT SHA1(''), SHA1('abc'), SHA2('abc', 256), SHA2('abc', 0) = SHA2('abc', 256), \
+                SHA2('abc', 7) IS NULL, CRC32('MySQL'), MD5('abc'), \
+                BIN(12), BIN(-1), OCT(64), \
+                INET_ATON('10.0.5.9'), INET_ATON('10.0.5.256') IS NULL, \
+                INET_ATON('1.2.3') IS NULL, INET_NTOA(167773449), \
+                INET_NTOA(4294967296) IS NULL",
+    );
+    assert_eq!(
+        rows,
+        vec![vec![
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709".to_owned(),
+            "a9993e364706816aba3e25717850c26c9cd0d89d".to_owned(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "3259397556".to_owned(),
+            "900150983cd24fb0d6963f7d28e17f72".to_owned(),
+            "1100".to_owned(),
+            "1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
+            "100".to_owned(),
+            "167773449".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "10.0.5.9".to_owned(),
+            "1".to_owned(),
+        ]]
+    );
+}
+
+#[test]
+fn uuid_is_well_formed_and_fresh() {
+    let rows = run("SELECT UUID(), UUID()");
+    let (a, b) = (&rows[0][0], &rows[0][1]);
+    assert_eq!(a.len(), 36);
+    assert_ne!(a, b);
+    assert!(a.chars().enumerate().all(|(index, character)| {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            character == '-'
+        } else {
+            character.is_ascii_hexdigit()
+        }
+    }));
+}

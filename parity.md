@@ -12,7 +12,7 @@ dependent-correlation, bushy-join, and set-scoping cases.
 
 | Area | Status |
 |---|---|
-| Callable functions | 144 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
+| Callable functions | 153 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `ANY_VALUE`, `STDDEV`/`STD`/`STDDEV_POP`/`STDDEV_SAMP`, `VARIANCE`/`VAR_POP`/`VAR_SAMP`, `BIT_AND`/`BIT_OR`/`BIT_XOR` |
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; value-based `RANGE` bounds over numeric keys (including exact fractional DECIMAL offsets) and simple temporal `INTERVAL` offsets; `GROUPS` and DISTINCT window aggregates reject as MySQL 8.4 requires |
@@ -183,7 +183,7 @@ read as far worse than the engine is.
 | `ATAN2` | ❌ | ✅ |
 | `AVG` | ✅ | ✅ |
 | `BENCHMARK` | ❌ | ❌ |
-| `BIN` | ❌ | ✅ |
+| `BIN` | ✅ | ✅ |
 | `BIN_TO_UUID` | ❌ | ❌ |
 | `BIT_AND` | ✅ | ✅ |
 | `BIT_COUNT` | ❌ | ❌ |
@@ -214,7 +214,7 @@ read as far worse than the engine is.
 | `COS` | ❌ | ✅ |
 | `COT` | ❌ | ❌ |
 | `COUNT` | ✅ | ✅ |
-| `CRC32` | ❌ | ✅ |
+| `CRC32` | ✅ | ✅ |
 | `CREATE_ASYMMETRIC_PRIV_KEY` | ❌ | ❌ |
 | `CREATE_ASYMMETRIC_PUB_KEY` | ❌ | ❌ |
 | `CREATE_DIGEST` | ❌ | ❌ |
@@ -271,8 +271,8 @@ read as far worse than the engine is.
 | `IN` | ❌ | ✅ |
 | `INET6_ATON` | ❌ | ✅ |
 | `INET6_NTOA` | ❌ | ✅ |
-| `INET_ATON` | ❌ | ✅ |
-| `INET_NTOA` | ❌ | ✅ |
+| `INET_ATON` | ✅ | ✅ |
+| `INET_NTOA` | ✅ | ✅ |
 | `INSTR` | ✅ | ✅ |
 | `INTERNAL_AUTO_INCREMENT` | ❌ | ❌ |
 | `INTERNAL_AVG_ROW_LENGTH` | ❌ | ❌ |
@@ -383,7 +383,7 @@ read as far worse than the engine is.
 | `NTH_VALUE` | ❌ | ✅ |
 | `NTILE` | ❌ | ✅ |
 | `NULLIF` | ✅ | ✅ |
-| `OCT` | ❌ | ❌ |
+| `OCT` | ✅ | ❌ |
 | `OCTET_LENGTH` | ❌ | ✅ |
 | `OR` | ❌ | ✅ |
 | `ORD` | ✅ | ❌ |
@@ -421,8 +421,8 @@ read as far worse than the engine is.
 | `SECOND` | ✅ | ✅ |
 | `SEC_TO_TIME` | ✅ | ❌ |
 | `SESSION_USER` | ❌ | ❌ |
-| `SHA1` | ❌ | ✅ |
-| `SHA2` | ❌ | ❌ |
+| `SHA1` | ✅ | ✅ |
+| `SHA2` | ✅ | ❌ |
 | `SIGN` | ✅ | ✅ |
 | `SIN` | ❌ | ✅ |
 | `SLEEP` | ❌ | ✅ |
@@ -542,7 +542,7 @@ read as far worse than the engine is.
 | `UTC_DATE` | ❌ | ❌ |
 | `UTC_TIME` | ❌ | ❌ |
 | `UTC_TIMESTAMP` | ❌ | ✅ |
-| `UUID` | ❌ | ❌ |
+| `UUID` | ✅ | ❌ |
 | `UUID_SHORT` | ❌ | ❌ |
 | `UUID_TO_BIN` | ❌ | ❌ |
 | `VALIDATE_PASSWORD_STRENGTH` | ❌ | ❌ |

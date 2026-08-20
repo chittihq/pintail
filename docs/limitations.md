@@ -35,6 +35,7 @@ stays readable as a list of things to fix.
   not implemented.
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
+- `SOUNDEX` and the trigonometric family are unimplemented.
 - `JSON_TYPE` matches MySQL for JSON parsed from text — `DOUBLE`, `INTEGER`,
   `STRING`, `BOOLEAN`, `NULL`, `ARRAY`, `OBJECT` all agree, measured. It
   diverges only for a value carrying a SQL type into the document, where MySQL
@@ -94,9 +95,6 @@ stays readable as a list of things to fix.
   the ten served relations. `VIEWS`, `ROUTINES`, and `CHECK_CONSTRAINTS` are
   deliberately empty: the compact replica does not retain source view/routine
   definitions or CHECK expressions.
-- `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
-  `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
-  the BI corpus (#17).
 - `ENUM` values carry their declaration index and order by it, matching
   MySQL. A value not present in the declaration - which a source can hold
   after the column was altered - has no index and stays plain text, so it

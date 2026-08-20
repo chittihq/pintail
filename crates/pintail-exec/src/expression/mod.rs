@@ -1115,8 +1115,14 @@ impl CompiledExpr {
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
-                    // CONV and MAKETIME render short fixed-width strings.
+                    // CONV and MAKETIME render short fixed-width strings,
+                    // as do BIN (64 digits at most), OCT and the INET forms.
                     | ScalarFunction::Conv
+                    | ScalarFunction::Bin
+                    | ScalarFunction::Oct
+                    | ScalarFunction::Crc32
+                    | ScalarFunction::InetAton
+                    | ScalarFunction::InetNtoa
                     | ScalarFunction::MakeTime => 64,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
@@ -1167,6 +1173,10 @@ impl CompiledExpr {
                     | ScalarFunction::Lpad
                     | ScalarFunction::Rpad => STRING_BUILD_CAP,
                     ScalarFunction::Md5 => 32,
+                    ScalarFunction::Sha1 => 40,
+                    // The widest SHA-2 answer (512 bits) in hex.
+                    ScalarFunction::Sha2 => 128,
+                    ScalarFunction::Uuid => 36,
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
@@ -1284,8 +1294,14 @@ impl CompiledExpr {
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
-                    // CONV and MAKETIME render short fixed-width strings.
+                    // CONV and MAKETIME render short fixed-width strings,
+                    // as do BIN (64 digits at most), OCT and the INET forms.
                     | ScalarFunction::Conv
+                    | ScalarFunction::Bin
+                    | ScalarFunction::Oct
+                    | ScalarFunction::Crc32
+                    | ScalarFunction::InetAton
+                    | ScalarFunction::InetNtoa
                     | ScalarFunction::MakeTime => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
@@ -1334,6 +1350,10 @@ impl CompiledExpr {
                     | ScalarFunction::Lpad
                     | ScalarFunction::Rpad => STRING_BUILD_CAP,
                     ScalarFunction::Md5 => 32,
+                    ScalarFunction::Sha1 => 40,
+                    // The widest SHA-2 answer (512 bits) in hex.
+                    ScalarFunction::Sha2 => 128,
+                    ScalarFunction::Uuid => 36,
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
@@ -2068,6 +2088,90 @@ fn evaluate_eager_scalar_typed(
             Value::Binary(bytes) => Ok(Value::Utf8(hex_upper(bytes))),
             value => Ok(Value::Utf8(hex_upper(scalar_string(value)?.as_bytes()))),
         },
+        ScalarFunction::Sha1 => {
+            use sha1::Digest as _;
+            let digest = match &values[0] {
+                Value::Binary(bytes) => sha1::Sha1::digest(bytes),
+                value => sha1::Sha1::digest(scalar_string(value)?.as_bytes()),
+            };
+            Ok(Value::Utf8(hex_lower(&digest)))
+        }
+        ScalarFunction::Sha2 => {
+            use sha2::Digest as _;
+            let input = match &values[0] {
+                Value::Binary(bytes) => bytes.clone(),
+                value => scalar_string(value)?.into_bytes(),
+            };
+            let digest = match mysql_i64(&values[1])? {
+                224 => hex_lower(&sha2::Sha224::digest(&input)),
+                0 | 256 => hex_lower(&sha2::Sha256::digest(&input)),
+                384 => hex_lower(&sha2::Sha384::digest(&input)),
+                512 => hex_lower(&sha2::Sha512::digest(&input)),
+                // MySQL answers NULL for any other width.
+                _ => return Ok(Value::Null),
+            };
+            Ok(Value::Utf8(digest))
+        }
+        ScalarFunction::Crc32 => {
+            let input = match &values[0] {
+                Value::Binary(bytes) => bytes.clone(),
+                value => scalar_string(value)?.into_bytes(),
+            };
+            Ok(Value::UInt64(u64::from(crc32fast::hash(&input))))
+        }
+        ScalarFunction::Uuid => {
+            // Version-4 layout from the same generator RAND uses. MySQL
+            // emits time-based version-1 values; both are opaque unique
+            // identifiers, and nothing byte-exact can hold for either.
+            let bytes: [u8; 16] = rand::random();
+            let mut bytes = bytes;
+            bytes[6] = (bytes[6] & 0x0f) | 0x40;
+            bytes[8] = (bytes[8] & 0x3f) | 0x80;
+            let hex = hex_lower(&bytes);
+            Ok(Value::Utf8(format!(
+                "{}-{}-{}-{}-{}",
+                &hex[0..8],
+                &hex[8..12],
+                &hex[12..16],
+                &hex[16..20],
+                &hex[20..32]
+            )))
+        }
+        ScalarFunction::Bin => Ok(Value::Utf8(format!(
+            "{:b}",
+            mysql_i64(&values[0])?.cast_unsigned()
+        ))),
+        ScalarFunction::Oct => Ok(Value::Utf8(format!(
+            "{:o}",
+            mysql_i64(&values[0])?.cast_unsigned()
+        ))),
+        ScalarFunction::InetAton => {
+            let text = scalar_string(&values[0])?;
+            let mut parts = Vec::new();
+            for part in text.split('.') {
+                match part.parse::<u8>() {
+                    Ok(octet) => parts.push(octet),
+                    Err(_) => return Ok(Value::Null),
+                }
+            }
+            if parts.len() != 4 {
+                return Ok(Value::Null);
+            }
+            Ok(Value::UInt64(u64::from(u32::from_be_bytes([
+                parts[0], parts[1], parts[2], parts[3],
+            ]))))
+        }
+        ScalarFunction::InetNtoa => {
+            let number = mysql_i64(&values[0])?;
+            let Ok(address) = u32::try_from(number) else {
+                return Ok(Value::Null);
+            };
+            let octets = address.to_be_bytes();
+            Ok(Value::Utf8(format!(
+                "{}.{}.{}.{}",
+                octets[0], octets[1], octets[2], octets[3]
+            )))
+        }
         ScalarFunction::Md5 => {
             let digest = match &values[0] {
                 Value::Binary(bytes) => Md5::digest(bytes),
@@ -2741,6 +2845,15 @@ fn evaluate_eager_scalar_typed(
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => Ok(value),
         _ => cast_scalar(&value, data_type),
     })
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 0x0f)]));
+    }
+    hex
 }
 
 fn scalar_string(value: &Value) -> Result<String, ExecError> {

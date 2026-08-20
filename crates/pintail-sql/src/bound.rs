@@ -534,6 +534,22 @@ pub enum ScalarFunction {
     Hex,
     /// `MD5(value)`: lowercase hexadecimal digest of the coerced value bytes.
     Md5,
+    /// `SHA1(str)`: 40 hex characters.
+    Sha1,
+    /// `SHA2(str, bits)`: 224/256/384/512, with 0 meaning 256.
+    Sha2,
+    /// `CRC32(str)`: the IEEE polynomial, as an unsigned number.
+    Crc32,
+    /// `UUID()`: a fresh random identifier per call (volatile, like RAND).
+    Uuid,
+    /// `BIN(n)`: base-2 digits of the 64-bit value.
+    Bin,
+    /// `OCT(n)`: base-8 digits of the 64-bit value.
+    Oct,
+    /// `INET_ATON('a.b.c.d')`: the IPv4 address as a number, NULL if invalid.
+    InetAton,
+    /// `INET_NTOA(n)`: the dotted-quad form, NULL outside the IPv4 range.
+    InetNtoa,
     /// `UNHEX(str)`: binary from hex text, NULL when malformed.
     Unhex,
     /// `ELT(n, ...)`: 1-based pick, NULL out of range.

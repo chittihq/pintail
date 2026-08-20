@@ -1034,7 +1034,8 @@ fn joins_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan
 fn is_volatile(expr: &BoundExpr) -> bool {
     match &expr.kind {
         BoundExprKind::Scalar { function, args } => {
-            matches!(function, ScalarFunction::Rand) || args.iter().any(is_volatile)
+            matches!(function, ScalarFunction::Rand | ScalarFunction::Uuid)
+                || args.iter().any(is_volatile)
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => is_volatile(expr),
         BoundExprKind::Binary { left, right, .. } => is_volatile(left) || is_volatile(right),
