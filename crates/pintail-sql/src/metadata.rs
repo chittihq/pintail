@@ -2015,14 +2015,18 @@ fn order_metadata_result(result: &mut MetadataResult, query: &Query) -> Result<(
     Ok(())
 }
 
-fn metadata_order(left: &Value, right: &Value, binary: bool) -> Ordering {
+// Measured against MySQL 8.4: ORDER BY table_name on information_schema
+// answers BYTE order ('Dim' < 'Person' < 'audit_log'), not a case fold -
+// the dictionary's name columns order binary whatever collation the view
+// declares. The case-insensitive fold here survived every gate until the
+// conformance corpus introduced capitalized table names beside lowercase
+// ones. The `binary` flag stays for explicit BINARY casts, which now agree
+// with the default.
+fn metadata_order(left: &Value, right: &Value, _binary: bool) -> Ordering {
     match (left, right) {
         (Value::Null, Value::Null) => Ordering::Equal,
         (Value::Null, _) => Ordering::Less,
         (_, Value::Null) => Ordering::Greater,
-        (Value::Utf8(left), Value::Utf8(right)) if !binary => {
-            left.to_lowercase().cmp(&right.to_lowercase())
-        }
         _ => left.cmp(right),
     }
 }
@@ -3424,9 +3428,10 @@ mod tests {
 
         let upper = Value::Utf8("Z".to_owned());
         let lower = Value::Utf8("a".to_owned());
+        // Byte order with and without a BINARY cast, as MySQL answers.
         assert_eq!(
             super::metadata_order(&upper, &lower, false),
-            std::cmp::Ordering::Greater
+            std::cmp::Ordering::Less
         );
         assert_eq!(
             super::metadata_order(&upper, &lower, true),
