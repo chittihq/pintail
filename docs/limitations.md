@@ -473,3 +473,9 @@ but may be wrong.
   MYSQL_TYPE_VAR_STRING on the wire where MySQL advertises a temporal
   type (format-dependent for STR_TO_DATE, DATETIME and TIME for the
   others). Values match byte-for-byte; drivers decode them as strings.
+
+- A stored TIMESTAMP column advertises MYSQL_TYPE_DATETIME (12) on the
+  wire where MySQL advertises MYSQL_TYPE_TIMESTAMP (7). Values match;
+  common drivers decode both as date-time objects, but a client that
+  keys session-timezone conversion off the type byte will treat the
+  column as a naive DATETIME.
