@@ -4,6 +4,53 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc7] - 2026-08-20
+
+A production-shaped browser soak suite, and the transaction-size bug it
+caught on its first run.
+
+### Added
+
+- A `soak` validation stage: the dashboard driven end to end in headless
+  Chromium at production volume - a 2,048,000-row initial sync through
+  the wizard with visible progress, dashboard actions during live drip
+  ingest with a two-minute convergence requirement, an 18.4M-row CDC
+  backfill under a liveness contract (the mirrored count must grow at
+  every sample), a full Reset at 20,480,000 rows demanding moving
+  progress, and the vendored sakila dataset (ENUM, SET, YEAR, GEOMETRY,
+  foreign keys) registered and value-checked against MySQL through the
+  SQL console. Opt-in only; the two-minute smoke gate still runs
+  everywhere. Measured on the shared host: 2M sync in 23s, 32,000
+  rows/s sustained CDC ingest, 20M reset in 292s.
+- A page-level copy progress strip on the database detail page while a
+  snapshot or reset rewrites tables: N of M tables complete, overall
+  percent from durable chunks, and the note that leaving the page is
+  safe.
+
+### Fixed
+
+- One source transaction was capped at 65,535 row mutations by two
+  independent 16-bit gates - the row-version ordinal and a hardcoded
+  guard - so a single real backfill batch quarantined its table
+  permanently while the database badge kept saying streaming. GTID mode
+  now budgets 24 ordinal bits (16,777,215 mutations per transaction,
+  upgrade-safe since GTID sequences only increase); the file-position
+  fallback keeps 65,535 and is recorded in docs/limitations.md. Proven
+  live at 65,536, 131,072 and 262,144 rows per transaction, then by the
+  soak's full 20M run.
+- Long-running mirror actions are visibly alive: the job-slot wait
+  announces itself immediately (queued toast) and waits minutes rather
+  than seconds, non-transient conflicts fail fast with the server's own
+  words, and the reset dialog closes at the moment of intent.
+- A workspace switch tears down before it swaps identity: caches clear
+  into a loading state, the overview navigation happens first (taking
+  the old page's pollers with it), and every async loader carries a
+  session epoch so a late response from the previous workspace can
+  never write into the new one. A failed switch rolls the token back.
+- The default request deadline rose to 60s: a production mirror
+  mid-copy answered /tables in just over 30s and the abort turned a
+  slow-but-working control plane into an error banner.
+
 ## [0.0.4-rc6] - 2026-08-20
 
 The "whole flow stuck" report, run to ground: four bugs in one causal
