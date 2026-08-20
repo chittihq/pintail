@@ -387,3 +387,71 @@ fn json_wildcard_misses_and_single_target_refusals() {
     let result = std::panic::catch_unwind(|| run("SELECT JSON_VALUE('{\"a\":1}','$.*')"));
     assert!(result.is_err());
 }
+
+#[test]
+fn json_modification_family() {
+    let rows = run("SELECT JSON_SET('{\"a\":1}','$.b',2), \
+                JSON_SET('{\"a\":1}','$.a','x'), \
+                JSON_INSERT('{\"a\":1}','$.a',9,'$.b',2), \
+                JSON_REPLACE('{\"a\":1}','$.a',9,'$.b',2), \
+                JSON_REMOVE('{\"a\":1,\"b\":2}','$.b'), \
+                JSON_REMOVE('[1,2,3]','$[1]'), \
+                JSON_SET('[1,2]','$[5]',3), \
+                JSON_SET('1','$[1]',2)");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "{\"a\": 1, \"b\": 2}".to_owned(),
+            "{\"a\": \"x\"}".to_owned(),
+            "{\"a\": 1, \"b\": 2}".to_owned(),
+            "{\"a\": 9}".to_owned(),
+            "{\"a\": 1}".to_owned(),
+            "[1, 3]".to_owned(),
+            "[1, 2, 3]".to_owned(),
+            "[1, 2]".to_owned(),
+        ]]
+    );
+}
+
+#[test]
+fn json_merge_patch_and_predicates() {
+    let rows = run(
+        "SELECT JSON_MERGE_PATCH('{\"a\":1,\"b\":2}','{\"b\":null,\"c\":3}'), \
+                JSON_MERGE_PATCH('{\"a\":{\"x\":1}}','{\"a\":{\"y\":2}}'), \
+                JSON_MERGE_PATCH('{\"a\":1}','[1]'), \
+                JSON_DEPTH('{}'), JSON_DEPTH('[1,[2,3]]'), \
+                JSON_QUOTE('a\"b'), \
+                JSON_OVERLAPS('[1,2]','[2,9]'), JSON_OVERLAPS('[1,2]','[8,9]'), \
+                JSON_OVERLAPS('{\"a\":1,\"b\":2}','{\"a\":9,\"b\":2}'), \
+                1 MEMBER OF('[1.0, 2]'), 'x' MEMBER OF('[\"x\"]'), \
+                3 MEMBER OF('[1,2]')",
+    );
+    assert_eq!(
+        rows,
+        vec![vec![
+            "{\"a\": 1, \"c\": 3}".to_owned(),
+            "{\"a\": {\"x\": 1, \"y\": 2}}".to_owned(),
+            "[1]".to_owned(),
+            "1".to_owned(),
+            "3".to_owned(),
+            "\"a\\\"b\"".to_owned(),
+            "1".to_owned(),
+            "0".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "0".to_owned(),
+        ]]
+    );
+}
+
+#[test]
+fn json_pretty_matches_mysql_layout() {
+    let rows = run("SELECT JSON_PRETTY('{\"b\":[1,{}],\"a\":2}')");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "{\n  \"a\": 2,\n  \"b\": [\n    1,\n    {}\n  ]\n}".to_owned()
+        ]]
+    );
+}

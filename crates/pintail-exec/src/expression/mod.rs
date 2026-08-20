@@ -1053,6 +1053,7 @@ impl CompiledExpr {
                     | ScalarFunction::FromBase64
                     | ScalarFunction::RegexpSubstr
                     | ScalarFunction::JsonUnquote
+                    | ScalarFunction::JsonRemove
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
                     // JSON_SEARCH renders paths, JSON_VALUE a member: both
@@ -1065,11 +1066,24 @@ impl CompiledExpr {
                     // Numeric and temporal casts can expand compact input
                     // (`'12'` -> `00:00:12`, scaled DECIMAL, and so on).
                     ScalarFunction::Cast(_) => first.max(128),
+                    // Modification results hold the document plus every
+                    // inserted value and separators; a merge holds both docs.
+                    ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add)
+                        .saturating_add(args.len().saturating_mul(8).saturating_add(2)),
+                    ScalarFunction::JsonQuote => first.saturating_mul(2).saturating_add(2),
+                    // Pretty-printing adds an indent per nesting level.
+                    ScalarFunction::JsonPretty => first.saturating_mul(8).saturating_add(64),
                     ScalarFunction::JsonExtract { .. } => first
                         .saturating_mul(args.len().saturating_sub(1))
                         .saturating_add(args.len().saturating_mul(2)),
                     // JSON_TYPE returns one of a handful of fixed names.
                     ScalarFunction::JsonType => 16,
+                    ScalarFunction::JsonDepth
+                    | ScalarFunction::JsonOverlaps
+                    | ScalarFunction::JsonMemberOf => 24,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate => string_arguments.saturating_mul(12),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
@@ -1213,6 +1227,7 @@ impl CompiledExpr {
                     | ScalarFunction::FromBase64
                     | ScalarFunction::RegexpSubstr
                     | ScalarFunction::JsonUnquote
+                    | ScalarFunction::JsonRemove
                     // JSON_KEYS is bounded by the document it reads.
                     | ScalarFunction::JsonKeys
                     // JSON_SEARCH renders paths, JSON_VALUE a member: both
@@ -1223,6 +1238,16 @@ impl CompiledExpr {
                     | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
                     ScalarFunction::Cast(_) => first.max(128),
+                    // Modification results hold the document plus every
+                    // inserted value and separators; a merge holds both docs.
+                    ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
+                        .iter()
+                        .map(|argument| argument.string_value_upper_bound(batch, row))
+                        .fold(0_usize, usize::saturating_add)
+                        .saturating_add(args.len().saturating_mul(8).saturating_add(2)),
+                    ScalarFunction::JsonQuote => first.saturating_mul(2).saturating_add(2),
+                    // Pretty-printing adds an indent per nesting level.
+                    ScalarFunction::JsonPretty => first.saturating_mul(8).saturating_add(64),
                     ScalarFunction::JsonExtract { .. } => first
                         .saturating_mul(args.len().saturating_sub(1))
                         .saturating_add(args.len().saturating_mul(2)),
@@ -1300,7 +1325,10 @@ impl CompiledExpr {
                     | ScalarFunction::JsonValid
                     | ScalarFunction::JsonLength
                     | ScalarFunction::JsonContains
-                    | ScalarFunction::JsonContainsPath => 24,
+                    | ScalarFunction::JsonContainsPath
+                    | ScalarFunction::JsonDepth
+                    | ScalarFunction::JsonOverlaps
+                    | ScalarFunction::JsonMemberOf => 24,
                     ScalarFunction::Repeat
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
@@ -1628,6 +1656,80 @@ fn evaluate_eager_scalar_typed(
             }))
         }
         ScalarFunction::Collate { .. } => Ok(values[0].clone()),
+        ScalarFunction::JsonModify { insert, replace } => {
+            if values.iter().any(|value| matches!(value, Value::Null)) {
+                // A NULL document or path is NULL; a NULL VALUE argument is
+                // the JSON null, which sql_value_to_json handles below - but
+                // only paths and the document short-circuit.
+                if matches!(values[0], Value::Null)
+                    || values[1..]
+                        .iter()
+                        .step_by(2)
+                        .any(|path| matches!(path, Value::Null))
+                {
+                    return Ok(Value::Null);
+                }
+            }
+            let mut document = parse_json_argument(&values[0])?;
+            for pair in values[1..].chunks(2) {
+                let steps = json_path_steps(&scalar_string(&pair[0])?)?;
+                if steps.iter().any(JsonStep::multi) {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                let new_value = sql_value_to_json(&pair[1]);
+                json_modify_in_place(&mut document, &steps, new_value, insert, replace);
+            }
+            Ok(Value::Utf8(mysql_json_text(&document)))
+        }
+        ScalarFunction::JsonRemove => {
+            let mut document = parse_json_argument(&values[0])?;
+            for path in &values[1..] {
+                let steps = json_path_steps(&scalar_string(path)?)?;
+                // Removing the whole document, or a many-target path, is an
+                // error in MySQL too.
+                if steps.is_empty() || steps.iter().any(JsonStep::multi) {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                json_remove_in_place(&mut document, &steps);
+            }
+            Ok(Value::Utf8(mysql_json_text(&document)))
+        }
+        ScalarFunction::JsonMergePatch => {
+            let mut merged = parse_json_argument(&values[0])?;
+            for patch in &values[1..] {
+                let patch = parse_json_argument(patch)?;
+                merged = json_merge_patch(merged, patch);
+            }
+            Ok(Value::Utf8(mysql_json_text(&merged)))
+        }
+        ScalarFunction::JsonDepth => {
+            let parsed = parse_json_argument(&values[0])?;
+            Ok(Value::Int64(json_depth(&parsed)))
+        }
+        ScalarFunction::JsonQuote => Ok(Value::Utf8(mysql_json_text(&serde_json::Value::String(
+            scalar_string(&values[0])?,
+        )))),
+        ScalarFunction::JsonPretty => {
+            let parsed = parse_json_argument(&values[0])?;
+            Ok(Value::Utf8(json_pretty(&parsed, 0)))
+        }
+        ScalarFunction::JsonOverlaps => {
+            let left = parse_json_argument(&values[0])?;
+            let right = parse_json_argument(&values[1])?;
+            Ok(Value::Int64(i64::from(json_overlaps(&left, &right))))
+        }
+        ScalarFunction::JsonMemberOf => {
+            let candidate = sql_value_to_json(&values[0]);
+            let target = parse_json_argument(&values[1])?;
+            let key = crate::json_order::value_sort_key(&candidate);
+            let found = match &target {
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .any(|item| crate::json_order::value_sort_key(item) == key),
+                other => crate::json_order::value_sort_key(other) == key,
+            };
+            Ok(Value::Int64(i64::from(found)))
+        }
         ScalarFunction::JsonSortKey => match &values[0] {
             Value::Null => Ok(Value::Null),
             // Text that fails to parse (unreachable for real JSON columns)
@@ -4158,6 +4260,245 @@ fn json_path_lookup<'a>(
         }
     }
     Ok(Some(current))
+}
+
+/// A SQL scalar as a JSON value. Strings arrive pre-marked by the binder:
+/// JSON-typed text parses as a document, JSON_QUOTE-wrapped text parses as
+/// a JSON string literal, so "parse, else keep the text as a string" is
+/// unambiguous rather than a guess.
+fn sql_value_to_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Null => serde_json::Value::Null,
+        Value::Boolean(flag) => serde_json::Value::Bool(*flag),
+        Value::Int64(number) => serde_json::Value::from(*number),
+        Value::UInt64(number) => serde_json::Value::from(*number),
+        Value::Float64(number) => serde_json::Number::from_f64(number.get())
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        Value::Utf8(text) | Value::Enum { label: text, .. } => {
+            serde_json::from_str(text).unwrap_or_else(|_| serde_json::Value::String(text.clone()))
+        }
+        Value::Binary(bytes) => {
+            serde_json::Value::String(String::from_utf8_lossy(bytes).into_owned())
+        }
+    }
+}
+
+/// Applies one single-target path assignment, with `MySQL`'s rules: missing
+/// intermediate legs are never created, an index past the end of an array
+/// appends, and a non-array autowraps under an index step.
+fn json_modify_in_place(
+    document: &mut serde_json::Value,
+    steps: &[JsonStep],
+    new_value: serde_json::Value,
+    insert: bool,
+    replace: bool,
+) {
+    let Some((step, rest)) = steps.split_first() else {
+        if replace {
+            *document = new_value;
+        }
+        return;
+    };
+    if rest.is_empty() {
+        match step {
+            JsonStep::Member(key) => {
+                if let serde_json::Value::Object(members) = document {
+                    match members.get_mut(key) {
+                        Some(existing) => {
+                            if replace {
+                                *existing = new_value;
+                            }
+                        }
+                        None => {
+                            if insert {
+                                members.insert(key.clone(), new_value);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            JsonStep::Index(_) | JsonStep::LastIndex(_) => {
+                let target = json_array_position(document, step);
+                match (document, target) {
+                    (serde_json::Value::Array(items), Some(index)) => {
+                        if index < items.len() {
+                            if replace {
+                                items[index] = new_value;
+                            }
+                        } else if insert {
+                            items.push(new_value);
+                        }
+                    }
+                    (other, None) => {
+                        // Autowrap: [0]/[last] address the value itself;
+                        // a farther index appends beside it.
+                        if matches!(step, JsonStep::Index(0) | JsonStep::LastIndex(0)) {
+                            if replace {
+                                *other = new_value;
+                            }
+                        } else if insert {
+                            let existing = std::mem::take(other);
+                            *other = serde_json::Value::Array(vec![existing, new_value]);
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
+    if let Some(next) = json_step_into(document, step) {
+        json_modify_in_place(next, rest, new_value, insert, replace);
+    }
+}
+
+/// Resolves an index step against an array document; `None` when the
+/// document is not an array (the autowrap cases handle that at the caller).
+fn json_array_position(document: &serde_json::Value, step: &JsonStep) -> Option<usize> {
+    let serde_json::Value::Array(items) = document else {
+        return None;
+    };
+    match step {
+        JsonStep::Index(index) => Some(*index),
+        JsonStep::LastIndex(back) => Some(items.len().checked_sub(1 + back).unwrap_or(usize::MAX)),
+        _ => None,
+    }
+}
+
+/// One mutable navigation step, mirroring the immutable walker's autowrap.
+fn json_step_into<'a>(
+    document: &'a mut serde_json::Value,
+    step: &JsonStep,
+) -> Option<&'a mut serde_json::Value> {
+    match step {
+        JsonStep::Member(key) => document.get_mut(key),
+        JsonStep::Index(index) => match document {
+            serde_json::Value::Array(items) => items.get_mut(*index),
+            other if *index == 0 => Some(other),
+            _ => None,
+        },
+        JsonStep::LastIndex(back) => match document {
+            serde_json::Value::Array(items) => items
+                .len()
+                .checked_sub(1 + back)
+                .and_then(|index| items.get_mut(index)),
+            other if *back == 0 => Some(other),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn json_remove_in_place(document: &mut serde_json::Value, steps: &[JsonStep]) {
+    let Some((step, rest)) = steps.split_first() else {
+        return;
+    };
+    if rest.is_empty() {
+        match (step, &mut *document) {
+            (JsonStep::Member(key), serde_json::Value::Object(members)) => {
+                members.remove(key);
+            }
+            (JsonStep::Index(_) | JsonStep::LastIndex(_), serde_json::Value::Array(_)) => {
+                if let Some(index) = json_array_position(document, step)
+                    && let serde_json::Value::Array(items) = document
+                    && index < items.len()
+                {
+                    items.remove(index);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    if let Some(next) = json_step_into(document, step) {
+        json_remove_in_place(next, rest);
+    }
+}
+
+/// RFC 7386: an object patch merges member-wise, null members remove, and
+/// any non-object patch replaces the target outright.
+fn json_merge_patch(target: serde_json::Value, patch: serde_json::Value) -> serde_json::Value {
+    let serde_json::Value::Object(patch_members) = patch else {
+        return patch;
+    };
+    let mut merged = match target {
+        serde_json::Value::Object(members) => members,
+        _ => serde_json::Map::new(),
+    };
+    for (key, value) in patch_members {
+        if value.is_null() {
+            merged.remove(&key);
+        } else {
+            let base = merged.remove(&key).unwrap_or(serde_json::Value::Null);
+            merged.insert(key, json_merge_patch(base, value));
+        }
+    }
+    serde_json::Value::Object(merged)
+}
+
+fn json_depth(value: &serde_json::Value) -> i64 {
+    match value {
+        serde_json::Value::Array(items) => 1 + items.iter().map(json_depth).max().unwrap_or(0),
+        serde_json::Value::Object(members) => {
+            1 + members.values().map(json_depth).max().unwrap_or(0)
+        }
+        _ => 1,
+    }
+}
+
+/// `MySQL`'s `JSON_PRETTY` layout: two-space indent per level, every member
+/// and cell on its own line, empty containers inline.
+fn json_pretty(value: &serde_json::Value, indent: usize) -> String {
+    let pad = "  ".repeat(indent + 1);
+    let close = "  ".repeat(indent);
+    match value {
+        serde_json::Value::Array(items) if !items.is_empty() => {
+            let body = items
+                .iter()
+                .map(|item| format!("{pad}{}", json_pretty(item, indent + 1)))
+                .collect::<Vec<_>>()
+                .join(",\n");
+            format!("[\n{body}\n{close}]")
+        }
+        serde_json::Value::Object(members) if !members.is_empty() => {
+            let body = ordered_members(members)
+                .into_iter()
+                .map(|(key, member)| {
+                    format!(
+                        "{pad}{}: {}",
+                        mysql_json_text(&serde_json::Value::String(key.clone())),
+                        json_pretty(member, indent + 1)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n");
+            format!("{{\n{body}\n{close}}}")
+        }
+        other => mysql_json_text(other),
+    }
+}
+
+/// `MySQL`'s `JSON_OVERLAPS`: arrays intersect element-wise, an array against
+/// anything else is membership, two objects share a member, and two scalars
+/// compare equal - all under JSON equality.
+fn json_overlaps(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    let equal = |a: &serde_json::Value, b: &serde_json::Value| {
+        crate::json_order::value_sort_key(a) == crate::json_order::value_sort_key(b)
+    };
+    match (left, right) {
+        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => a
+            .iter()
+            .any(|item| b.iter().any(|other| equal(item, other))),
+        (serde_json::Value::Array(items), other) | (other, serde_json::Value::Array(items)) => {
+            items.iter().any(|item| equal(item, other))
+        }
+        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => a
+            .iter()
+            .any(|(key, value)| b.get(key).is_some_and(|member| equal(member, value))),
+        (a, b) => equal(a, b),
+    }
 }
 
 fn mysql_substring(value: &str, start: i64, length: i64) -> String {

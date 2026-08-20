@@ -35,11 +35,6 @@ stays readable as a list of things to fix.
   not implemented.
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
-- The JSON modification family (`JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`,
-  `JSON_MERGE*`, `JSON_REMOVE`) and `JSON_TABLE` are unimplemented and out of
-  scope by decision. `JSON_TABLE` is a table-valued function, so it needs a new
-  table source through the binder, planner and executor plus the `COLUMNS`
-  clause — structural work, not a function addition (#8).
 - `JSON_TYPE` matches MySQL for JSON parsed from text — `DOUBLE`, `INTEGER`,
   `STRING`, `BOOLEAN`, `NULL`, `ARRAY`, `OBJECT` all agree, measured. It
   diverges only for a value carrying a SQL type into the document, where MySQL
@@ -102,43 +97,6 @@ stays readable as a list of things to fix.
 - `SHA1`, `SHA2`, `CRC32`, `UUID`, `INET_ATON`/`INET_NTOA`, `BIN`, `OCT`,
   `SOUNDEX` and the trigonometric family are unimplemented; none appeared in
   the BI corpus (#17).
-- `JSON_DEPTH`, `JSON_QUOTE`, `JSON_PRETTY`, `JSON_OVERLAPS` and `MEMBER OF`
-  are unimplemented. `JSON_STORAGE_SIZE`/`JSON_STORAGE_FREE` report bytes of
-  MySQL's binary JSON format, which has no counterpart here, so any number
-  they returned would be invented; they stay unimplemented rather than
-  approximated. `JSON_SCHEMA_VALID`/`JSON_SCHEMA_VALIDATION_REPORT` need a
-  JSON Schema implementation (#8).
-
-### What an unsupported construct looks like
-
-Rejection is always an explicit error, never a silently different answer. The
-messages below are what a client receives, so a message seen in `mysql`, a BI
-tool, or the HTTP API can be matched back to the boundary that produced it.
-
-| Message | Raised when |
-|---|---|
-| `unsupported statement: …` | The statement kind has no binding (DDL against the replica, writes, administrative commands) |
-| `unsupported query clause: …` | A clause on a supported statement is out of scope — the recursive-CTE restrictions in this section report here |
-| `unsupported query body: …` | A set-operation shape outside MySQL's left-associative semantics |
-| `unsupported table expression: …` | A `FROM` item that is not a table, derived table, or non-recursive CTE |
-| `unsupported projection: …` | A select item the binder cannot resolve to a column or expression |
-| `unsupported join operator: …` | A join kind outside inner/left/right/semi/anti |
-| `unsupported join constraint: …` | A join condition that is not an `AND` of equality pairs |
-| `unsupported expression: …` | A function, operator, or literal form with no implementation — the window-function gaps in this section report here |
-| `hash join requires one equality between left and right input expressions` | A join condition binds but has no cross-input equality to hash on |
-| `cross join requires known catalog row counts for every input` | An unqualified cross join whose inputs have no exact catalog cardinality |
-| `cross join estimate N exceeds safety limit M` | An unqualified cross join above the one-million-row guard |
-| `scalar subquery produced N rows` | A scalar subquery returned more than one row at execution time |
-| `physical operator X is not implemented` | A logical plan reached a physical operator that does not exist yet |
-| `query memory limit exceeded` | The per-query ceiling was reached by an operator that does not spill |
-
-Two of these are capability boundaries rather than bugs: the hash-join message
-means the join is expressible but not with an equality to hash on, and the
-cross-join guard means the query would have been correct but large enough to be
-worth refusing.
-
-### MySQL semantic differences
-
 - `ENUM` values carry their declaration index and order by it, matching
   MySQL. A value not present in the declaration - which a source can hold
   after the column was altered - has no index and stays plain text, so it

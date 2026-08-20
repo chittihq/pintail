@@ -435,6 +435,33 @@ pub(super) fn bind_scalar_function(
         "JSON_KEYS" if matches!(args.len(), 1 | 2) => ScalarFunction::JsonKeys,
         "JSON_CONTAINS" if matches!(args.len(), 2 | 3) => ScalarFunction::JsonContains,
         "JSON_CONTAINS_PATH" if args.len() >= 3 => ScalarFunction::JsonContainsPath,
+        "JSON_SET" if args.len() >= 3 && args.len() % 2 == 1 => {
+            wrap_json_modify_values(&mut args);
+            ScalarFunction::JsonModify {
+                insert: true,
+                replace: true,
+            }
+        }
+        "JSON_INSERT" if args.len() >= 3 && args.len() % 2 == 1 => {
+            wrap_json_modify_values(&mut args);
+            ScalarFunction::JsonModify {
+                insert: true,
+                replace: false,
+            }
+        }
+        "JSON_REPLACE" if args.len() >= 3 && args.len() % 2 == 1 => {
+            wrap_json_modify_values(&mut args);
+            ScalarFunction::JsonModify {
+                insert: false,
+                replace: true,
+            }
+        }
+        "JSON_REMOVE" if args.len() >= 2 => ScalarFunction::JsonRemove,
+        "JSON_MERGE_PATCH" if args.len() >= 2 => ScalarFunction::JsonMergePatch,
+        "JSON_DEPTH" if args.len() == 1 => ScalarFunction::JsonDepth,
+        "JSON_QUOTE" if args.len() == 1 => ScalarFunction::JsonQuote,
+        "JSON_PRETTY" if args.len() == 1 => ScalarFunction::JsonPretty,
+        "JSON_OVERLAPS" if args.len() == 2 => ScalarFunction::JsonOverlaps,
         "JSON_OBJECT" if args.len() % 2 == 0 => ScalarFunction::JsonObject,
         "JSON_ARRAY" => ScalarFunction::JsonArray,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
@@ -1124,9 +1151,10 @@ pub(super) fn bind_scalar(
             )
         }
         // MySQL's CEIL/FLOOR of an exact numeric is an exact integer value.
-        ScalarFunction::Ceil { decimal: true } | ScalarFunction::Floor { decimal: true } => {
-            (Some(DataType::Int64), args[0].nullable)
-        }
+        ScalarFunction::Ceil { decimal: true }
+        | ScalarFunction::Floor { decimal: true }
+        | ScalarFunction::Sign
+        | ScalarFunction::JsonDepth => (Some(DataType::Int64), args[0].nullable),
         ScalarFunction::Truncate { decimal: true } => {
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned()));
@@ -1167,7 +1195,6 @@ pub(super) fn bind_scalar(
             },
             args[0].nullable,
         ),
-        ScalarFunction::Sign => (Some(DataType::Int64), args[0].nullable),
         ScalarFunction::Power
         | ScalarFunction::Sqrt
         | ScalarFunction::Exp
@@ -1185,7 +1212,9 @@ pub(super) fn bind_scalar(
             common_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::ConcatWs => (Some(DataType::Utf8), args[0].nullable),
+        ScalarFunction::ConcatWs
+        | ScalarFunction::JsonQuote
+        | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse
         | ScalarFunction::Repeat
         | ScalarFunction::Space
@@ -1207,6 +1236,9 @@ pub(super) fn bind_scalar(
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } => (args[0].data_type, args[0].nullable),
         ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
+        ScalarFunction::JsonOverlaps | ScalarFunction::JsonMemberOf => {
+            (Some(DataType::Int64), args.iter().any(|argument| argument.nullable))
+        }
         ScalarFunction::TrimPattern { .. } => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
@@ -1301,7 +1333,10 @@ pub(super) fn bind_scalar(
         ),
         ScalarFunction::JsonExtract { unquote: false }
         | ScalarFunction::JsonKeys
-        | ScalarFunction::JsonSearch => (Some(DataType::Json), true),
+        | ScalarFunction::JsonSearch
+        | ScalarFunction::JsonModify { .. }
+        | ScalarFunction::JsonRemove
+        | ScalarFunction::JsonMergePatch => (Some(DataType::Json), true),
         // NULL arguments become JSON nulls, never a NULL result.
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Json), false),
         // JSON_VALID answers 0/1 for any input, so it is the one predicate
@@ -1572,6 +1607,42 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     } else {
         format!("text collation {detail} is unsupported; supported: {supported}")
     }))
+}
+
+/// A modification VALUE argument that is a string stays a STRING in the
+/// document; a JSON-typed argument nests as a document. The binder encodes
+/// that distinction by wrapping non-JSON text-shaped values in `JSON_QUOTE`,
+/// so the evaluator can just parse everything.
+fn wrap_json_modify_values(args: &mut [BoundExpr]) {
+    for value in args.iter_mut().skip(2).step_by(2) {
+        wrap_json_scalar(value);
+    }
+}
+
+pub(super) fn wrap_json_scalar(value: &mut BoundExpr) {
+    let wrap = match value.data_type {
+        Some(DataType::Json) | None => false,
+        Some(data_type) => data_type.storage_type() == DataType::Utf8,
+    };
+    if wrap {
+        let nullable = value.nullable;
+        let inner = std::mem::replace(
+            value,
+            BoundExpr {
+                kind: BoundExprKind::Literal(pintail_types::Value::Null),
+                data_type: None,
+                nullable: true,
+            },
+        );
+        *value = BoundExpr {
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::JsonQuote,
+                args: vec![inner],
+            },
+            data_type: Some(DataType::Utf8),
+            nullable,
+        };
+    }
 }
 
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {

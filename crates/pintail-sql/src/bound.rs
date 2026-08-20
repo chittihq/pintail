@@ -375,6 +375,30 @@ pub enum BoundExprKind {
 pub enum ScalarFunction {
     /// Concatenate strings, returning NULL when any argument is NULL.
     Concat,
+    /// `JSON_SET`/`JSON_INSERT`/`JSON_REPLACE`: `(doc, path, value, ...)`.
+    /// `insert` admits new members/cells, `replace` overwrites existing
+    /// ones; SET does both.
+    JsonModify {
+        /// Whether a nonexisting target is created.
+        insert: bool,
+        /// Whether an existing target is overwritten.
+        replace: bool,
+    },
+    /// `JSON_REMOVE(doc, path, ...)`.
+    JsonRemove,
+    /// `JSON_MERGE_PATCH(doc, doc, ...)`: RFC 7386, folded left.
+    JsonMergePatch,
+    /// `JSON_DEPTH(doc)`.
+    JsonDepth,
+    /// `JSON_QUOTE(string)`: also the binder's marker that a modification
+    /// value argument is a STRING, not a JSON document.
+    JsonQuote,
+    /// `JSON_PRETTY(doc)`.
+    JsonPretty,
+    /// `JSON_OVERLAPS(doc, doc)`.
+    JsonOverlaps,
+    /// `value MEMBER OF(array)`.
+    JsonMemberOf,
     /// The order-preserving byte key of a JSON document, under `MySQL`'s
     /// JSON comparison ladder. Bind-internal: the binder wraps both sides
     /// of a JSON-to-JSON comparison in this, turning the comparison into a

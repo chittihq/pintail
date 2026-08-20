@@ -42,6 +42,16 @@ pub(crate) fn compare_json_text(left: &str, right: &str) -> Option<Ordering> {
     Some(json_sort_key(left)?.cmp(&json_sort_key(right)?))
 }
 
+/// The order-preserving key of an already-parsed value: JSON equality for
+/// `MEMBER OF`, `JSON_OVERLAPS`, and friends (1 equals 1.0; member order is
+/// irrelevant).
+#[must_use]
+pub(crate) fn value_sort_key(value: &serde_json::Value) -> Vec<u8> {
+    let mut key = Vec::new();
+    encode(value, &mut key);
+    key
+}
+
 fn encode(value: &serde_json::Value, key: &mut Vec<u8>) {
     match value {
         serde_json::Value::Null => key.push(TAG_NULL),

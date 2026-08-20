@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1063;
+const EXPECTED_CASES: usize = 1066;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1093,6 +1093,35 @@ fn hand_written_cases() -> Vec<OracleCase> {
                     JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','all','$**.b','$.a.*'), \
                     JSON_CONTAINS_PATH('{\"a\":1}','one','$**.zz'), \
                     JSON_EXTRACT('{\"a\":[{\"b\":1},{\"b\":2}]}','$.a[*].b')",
+        ),
+        // The JSON modification family and the remaining predicates.
+        ordered(
+            "json modification",
+            "SELECT JSON_SET('{\"a\":1}','$.b',2), \
+                    JSON_SET('{\"a\":1}','$.a','x'), \
+                    JSON_INSERT('{\"a\":1}','$.a',9,'$.b',2), \
+                    JSON_REPLACE('{\"a\":1}','$.a',9,'$.b',2), \
+                    JSON_REMOVE('{\"a\":1,\"b\":2}','$.b'), \
+                    JSON_REMOVE('[1,2,3]','$[1]'), \
+                    JSON_SET('[1,2]','$[5]',3), \
+                    JSON_SET('1','$[1]',2)",
+        ),
+        ordered(
+            "json modification",
+            "SELECT JSON_MERGE_PATCH('{\"a\":1,\"b\":2}','{\"b\":null,\"c\":3}'), \
+                    JSON_MERGE_PATCH('{\"a\":{\"x\":1}}','{\"a\":{\"y\":2}}'), \
+                    JSON_MERGE_PATCH('{\"a\":1}','[1]'), \
+                    JSON_SET('{}','$.s','[1]'), \
+                    JSON_SET('{}','$.j',JSON_EXTRACT('[1]','$'))",
+        ),
+        ordered(
+            "json modification",
+            "SELECT JSON_DEPTH('{}'), JSON_DEPTH('[1,[2,3]]'), \
+                    JSON_QUOTE('a\"b'), JSON_PRETTY('{\"b\":[1,{}],\"a\":2}'), \
+                    JSON_OVERLAPS('[1,2]','[2,9]'), JSON_OVERLAPS('[1,2]','[8,9]'), \
+                    JSON_OVERLAPS('{\"a\":1,\"b\":2}','{\"a\":9,\"b\":2}'), \
+                    1 MEMBER OF('[1.0, 2]'), 'x' MEMBER OF('[\"x\"]'), \
+                    3 MEMBER OF('[1,2]')",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(
