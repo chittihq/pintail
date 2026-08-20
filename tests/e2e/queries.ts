@@ -33,11 +33,15 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['Fact', 'Person'],
   },
   {
+    // Which equal spelling represents a ci group is undefined in MySQL
+    // itself, so the projection folds it: both engines must agree on the
+    // groups, counts and sums, never on an unspecified representative.
     name: 'conformance: mixed-collation double grouping',
     sql:
-      'SELECT d.code, d.label, COUNT(*) AS n, ROUND(SUM(f.amount), 2) AS total ' +
+      'SELECT UPPER(d.code) AS code_key, UPPER(d.label) AS label_key, ' +
+      'COUNT(*) AS n, ROUND(SUM(f.amount), 2) AS total ' +
       'FROM Dim d JOIN Fact f ON f.dimId = d.dimId ' +
-      'GROUP BY d.code, d.label ORDER BY d.code, d.label, n',
+      'GROUP BY d.code, d.label ORDER BY code_key, label_key, n',
     tables: ['Dim', 'Fact'],
   },
   {
@@ -46,13 +50,14 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['Dim'],
   },
   {
+    // TRIM folds the PAD-space representative the same way UPPER folds case.
     name: 'conformance: trailing-space grouping under PAD semantics',
-    sql: 'SELECT padded, COUNT(*) AS n FROM Dim GROUP BY padded ORDER BY padded, n',
+    sql: "SELECT CONCAT('[', TRIM(padded), ']') AS k, COUNT(*) AS n FROM Dim GROUP BY padded ORDER BY k, n",
     tables: ['Dim'],
   },
   {
     name: 'conformance: case-variant code grouping',
-    sql: 'SELECT code, COUNT(*) AS n FROM Fact GROUP BY code ORDER BY code, n',
+    sql: 'SELECT UPPER(code) AS code_key, COUNT(*) AS n FROM Fact GROUP BY code ORDER BY code_key, n',
     tables: ['Fact'],
   },
   {
