@@ -128,6 +128,18 @@ const STAGES: Stage[] = [
     cwd: join(repository, 'tests', 'e2e'),
   },
   {
+    // Production-shaped browser soak: 2M-row initial sync, dashboard actions
+    // under live ingest, an 18M-row CDC backfill, Reset at 20M, and the
+    // sakila dataset - tens of minutes BY DESIGN. Opt-in only; never in the
+    // default stage list or the release chain.
+    name: 'soak',
+    remote: true,
+    timeoutMinutes: 180,
+    stallMinutes: 45,
+    command: ['bun', 'run', 'soak.ts'],
+    cwd: join(repository, 'tests', 'browser'),
+  },
+  {
     name: 'browser',
     remote: true,
     timeoutMinutes: 30,
