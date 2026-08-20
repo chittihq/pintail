@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-20T10:23:47.073Z.
+Measured 2026-08-20T12:05:04.259Z.
 
-**1828 passed, 0 failed, 6 documented-gap warnings.**
+**1828 passed, 1 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -1170,6 +1170,7 @@ Measured 2026-08-20T10:23:47.073Z.
 | control-plane | api:api key disable blocks the wire, enable restores it | PASS |  |
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
+| control-plane | api:wire column types: temporal expressions advertise what MySQL advertises | FAIL | Error: Table 'e2e_db.events' doesn't exist |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
 | control-plane | api:schema drift during downtime: purged DDL recovers by re-probe | PASS |  |
@@ -1565,7 +1566,7 @@ Measured 2026-08-20T10:23:47.073Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_51fecfbb4da0b69c72e7d0f9d02ce6d3","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T10:10:23.915964+00:00","updated_at":"2026-08-20T10:17:10.878059+00:00"},"tables":13,"rows":795} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_e33aa6b2a787e0c1c2166d7f844f391c","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T11:51:59.230087+00:00","updated_at":"2026-08-20T11:58:29.971547+00:00"},"tables":13,"rows":795} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
