@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-20T20:14:37.948Z.
+Measured 2026-08-20T21:16:00.036Z.
 
-**2076 passed, 21 failed, 5 documented-gap warnings.**
+**2094 passed, 2 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -16,7 +16,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | snapshot | converge:order_items | PASS |  |
 | snapshot | converge:orders | PASS |  |
 | snapshot | converge:staff | PASS |  |
-| snapshot | converge:information_schema.columns | FAIL | row 0: |
+| snapshot | converge:information_schema.columns | PASS |  |
 | snapshot | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | snapshot | query:conformance: mixed-collation double grouping | PASS |  |
 | snapshot | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -146,7 +146,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | orm-compat | converge:order_items | PASS |  |
 | orm-compat | converge:orders | PASS |  |
 | orm-compat | converge:staff | PASS |  |
-| orm-compat | converge:information_schema.columns | FAIL | row 0: |
+| orm-compat | converge:information_schema.columns | PASS |  |
 | orm-compat | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | orm-compat | query:conformance: mixed-collation double grouping | PASS |  |
 | orm-compat | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -252,7 +252,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | crud | converge:order_items | PASS |  |
 | crud | converge:orders | PASS |  |
 | crud | converge:staff | PASS |  |
-| crud | converge:information_schema.columns | FAIL | row 0: |
+| crud | converge:information_schema.columns | PASS |  |
 | crud | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | crud | query:conformance: mixed-collation double grouping | PASS |  |
 | crud | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -358,7 +358,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | type-edges | converge:order_items | PASS |  |
 | type-edges | converge:orders | PASS |  |
 | type-edges | converge:staff | PASS |  |
-| type-edges | converge:information_schema.columns | FAIL | row 0: |
+| type-edges | converge:information_schema.columns | PASS |  |
 | type-edges | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | type-edges | query:conformance: mixed-collation double grouping | PASS |  |
 | type-edges | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -465,7 +465,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | ddl | converge:orders | PASS |  |
 | ddl | converge:shipments | PASS |  |
 | ddl | converge:staff | PASS |  |
-| ddl | converge:information_schema.columns | FAIL | row 0: |
+| ddl | converge:information_schema.columns | PASS |  |
 | ddl | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | ddl | query:conformance: mixed-collation double grouping | PASS |  |
 | ddl | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -572,7 +572,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | schema-drift-minimal | converge:orders | PASS |  |
 | schema-drift-minimal | converge:shipments | PASS |  |
 | schema-drift-minimal | converge:staff | PASS |  |
-| schema-drift-minimal | converge:information_schema.columns | FAIL | row 0: |
+| schema-drift-minimal | converge:information_schema.columns | PASS |  |
 | schema-drift-minimal | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | schema-drift-minimal | query:conformance: mixed-collation double grouping | PASS |  |
 | schema-drift-minimal | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -679,7 +679,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | schema-drift-unseen | converge:orders | PASS |  |
 | schema-drift-unseen | converge:shipments | PASS |  |
 | schema-drift-unseen | converge:staff | PASS |  |
-| schema-drift-unseen | converge:information_schema.columns | FAIL | row 0: |
+| schema-drift-unseen | converge:information_schema.columns | PASS |  |
 | schema-drift-unseen | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | schema-drift-unseen | query:conformance: mixed-collation double grouping | PASS |  |
 | schema-drift-unseen | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -792,7 +792,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | churn | converge:orders | PASS |  |
 | churn | converge:shipments | PASS |  |
 | churn | converge:staff | PASS |  |
-| churn | converge:information_schema.columns | FAIL | row 0: |
+| churn | converge:information_schema.columns | PASS |  |
 | churn | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | churn | query:conformance: mixed-collation double grouping | PASS |  |
 | churn | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -904,7 +904,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | execution-budget | converge:orders | PASS |  |
 | execution-budget | converge:shipments | PASS |  |
 | execution-budget | converge:staff | PASS |  |
-| execution-budget | converge:information_schema.columns | FAIL | row 0: |
+| execution-budget | converge:information_schema.columns | PASS |  |
 | execution-budget | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | execution-budget | query:conformance: mixed-collation double grouping | PASS |  |
 | execution-budget | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1015,7 +1015,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | spill | converge:orders | PASS |  |
 | spill | converge:shipments | PASS |  |
 | spill | converge:staff | PASS |  |
-| spill | converge:information_schema.columns | FAIL | row 0: |
+| spill | converge:information_schema.columns | PASS |  |
 | spill | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | spill | query:conformance: mixed-collation double grouping | PASS |  |
 | spill | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1125,7 +1125,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | pooling | converge:orders | PASS |  |
 | pooling | converge:shipments | PASS |  |
 | pooling | converge:staff | PASS |  |
-| pooling | converge:information_schema.columns | FAIL | row 0: |
+| pooling | converge:information_schema.columns | PASS |  |
 | pooling | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | pooling | query:conformance: mixed-collation double grouping | PASS |  |
 | pooling | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1232,7 +1232,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | restart | converge:orders | PASS |  |
 | restart | converge:shipments | PASS |  |
 | restart | converge:staff | PASS |  |
-| restart | converge:information_schema.columns | FAIL | row 0: |
+| restart | converge:information_schema.columns | PASS |  |
 | restart | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | restart | query:conformance: mixed-collation double grouping | PASS |  |
 | restart | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1359,7 +1359,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
 | control-plane | converge:staff | PASS |  |
-| control-plane | converge:information_schema.columns | FAIL | row 0: |
+| control-plane | converge:information_schema.columns | PASS |  |
 | control-plane | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | control-plane | query:conformance: mixed-collation double grouping | PASS |  |
 | control-plane | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1468,7 +1468,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | snapshot-ddl-window | converge:orders | PASS |  |
 | snapshot-ddl-window | converge:shipments | PASS |  |
 | snapshot-ddl-window | converge:staff | PASS |  |
-| snapshot-ddl-window | converge:information_schema.columns | FAIL | row 0: |
+| snapshot-ddl-window | converge:information_schema.columns | PASS |  |
 | snapshot-ddl-window | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | snapshot-ddl-window | query:conformance: mixed-collation double grouping | PASS |  |
 | snapshot-ddl-window | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1581,7 +1581,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | drop-table-cdc | converge:orders | PASS |  |
 | drop-table-cdc | converge:shipments | PASS |  |
 | drop-table-cdc | converge:staff | PASS |  |
-| drop-table-cdc | converge:information_schema.columns | FAIL | row 0: |
+| drop-table-cdc | converge:information_schema.columns | PASS |  |
 | drop-table-cdc | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-table-cdc | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-table-cdc | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1692,7 +1692,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | drop-table-recreate | converge:orders | PASS |  |
 | drop-table-recreate | converge:shipments | PASS |  |
 | drop-table-recreate | converge:staff | PASS |  |
-| drop-table-recreate | converge:information_schema.columns | FAIL | row 0: |
+| drop-table-recreate | converge:information_schema.columns | PASS |  |
 | drop-table-recreate | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-table-recreate | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-table-recreate | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1791,7 +1791,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_1b3f2943284e0b2be3bbeeaa8128f9ff","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T19:04:25.206906+00:00","updated_at":"2026-08-20T20:01:32.508872+00:00"},"tables":17,"rows":814} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_7fd5d0205e471110788b2e8aa9b95ae5","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T21:00:11.272342+00:00","updated_at":"2026-08-20T21:08:58.283888+00:00"},"tables":17,"rows":815} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -1805,7 +1805,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | drop-table-polling | converge:orders | PASS |  |
 | drop-table-polling | converge:shipments | PASS |  |
 | drop-table-polling | converge:staff | PASS |  |
-| drop-table-polling | converge:information_schema.columns | FAIL | row 0: |
+| drop-table-polling | converge:information_schema.columns | PASS |  |
 | drop-table-polling | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-table-polling | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-table-polling | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1921,7 +1921,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | drop-database | converge:orders | PASS |  |
 | drop-database | converge:shipments | PASS |  |
 | drop-database | converge:staff | PASS |  |
-| drop-database | converge:information_schema.columns | FAIL | row 0: |
+| drop-database | converge:information_schema.columns | PASS |  |
 | drop-database | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-database | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-database | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2029,7 +2029,7 @@ Measured 2026-08-20T20:14:37.948Z.
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
-| ddl-documented-gaps | converge:information_schema.columns | FAIL | row 0: |
+| ddl-documented-gaps | converge:information_schema.columns | WARN | row 20: |
 | ddl-documented-gaps | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | ddl-documented-gaps | query:conformance: mixed-collation double grouping | PASS |  |
 | ddl-documented-gaps | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |

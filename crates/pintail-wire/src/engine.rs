@@ -686,6 +686,15 @@ fn column_facts(replica: &LoadedReplica) -> SourceFacts {
                 delete_rule: key.delete_rule.clone(),
             });
         }
+        for index in &source.secondary_indexes {
+            facts.indexes.push(IndexFacts {
+                database: replica.database.name.clone(),
+                table: source.name.clone(),
+                index_name: index.name.clone(),
+                unique: false,
+                columns: index.columns.clone(),
+            });
+        }
         for (position, unique) in source.unique_keys.iter().enumerate() {
             let is_chosen = chosen_unique
                 && unique.len() == source.key.columns.len()

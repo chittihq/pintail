@@ -2478,6 +2478,7 @@ mod tests {
             unique_keys: Vec::new(),
             requires_reconciliation: false,
             foreign_keys: Vec::new(),
+            secondary_indexes: Vec::new(),
             warnings: Vec::new(),
         }
     }

@@ -715,7 +715,7 @@ fn table_indexes(
     key_columns: &[String],
     key_mode: KeyMode,
     facts: &SourceFacts,
-) -> Vec<(String, Vec<String>)> {
+) -> Vec<(String, Vec<String>, bool)> {
     let mut indexes = Vec::new();
     if !key_columns.is_empty() {
         let index_name = if key_mode == KeyMode::Primary {
@@ -735,17 +735,22 @@ fn table_indexes(
                     |index| index.index_name.clone(),
                 )
         };
-        indexes.push((index_name, key_columns.to_vec()));
+        indexes.push((index_name, key_columns.to_vec(), true));
     }
+    // Every remaining index the probe retained: further unique constraints,
+    // then the non-unique secondaries introspection tools read.
     for index in &facts.indexes {
         if !index.database.eq_ignore_ascii_case(database)
             || !index.table.eq_ignore_ascii_case(table_name)
-            || !index.unique
         {
             continue;
         }
-        if !same_columns(&index.columns, key_columns) {
-            indexes.push((index.index_name.clone(), index.columns.clone()));
+        if !(index.unique && same_columns(&index.columns, key_columns)) {
+            indexes.push((
+                index.index_name.clone(),
+                index.columns.clone(),
+                index.unique,
+            ));
         }
     }
     indexes
@@ -837,7 +842,7 @@ fn statistics_rows_for_table(
 ) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
     let key_names = catalog_key_names(table);
-    for (index_name, columns) in table_indexes(
+    for (index_name, columns, unique) in table_indexes(
         database.name(),
         table.name(),
         &key_names,
@@ -860,7 +865,7 @@ fn statistics_rows_for_table(
                 utf8("def"),
                 utf8(database.name()),
                 utf8(table.name()),
-                Value::Int64(0),
+                Value::Int64(i64::from(!unique)),
                 utf8(database.name()),
                 utf8(&index_name),
                 Value::UInt64(u64::try_from(sequence + 1).expect("sequence fits u64")),
@@ -958,13 +963,18 @@ fn information_key_column_usage(catalog: &CatalogSnapshot, facts: &SourceFacts) 
     for database in catalog.databases() {
         for table in database.tables() {
             let key_names = catalog_key_names(table);
-            for (index_name, columns) in table_indexes(
+            for (index_name, columns, unique) in table_indexes(
                 database.name(),
                 table.name(),
                 &key_names,
                 table.schema().key_mode(),
                 facts,
             ) {
+                // KEY_COLUMN_USAGE lists constraints; a plain secondary
+                // index is not one.
+                if !unique {
+                    continue;
+                }
                 for (sequence, column_name) in columns.iter().enumerate() {
                     rows.push(vec![
                         utf8("def"),
@@ -1074,13 +1084,16 @@ fn information_table_constraints(catalog: &CatalogSnapshot, facts: &SourceFacts)
     for database in catalog.databases() {
         for table in database.tables() {
             let key_names = catalog_key_names(table);
-            for (index_name, _) in table_indexes(
+            for (index_name, _, unique) in table_indexes(
                 database.name(),
                 table.name(),
                 &key_names,
                 table.schema().key_mode(),
                 facts,
             ) {
+                if !unique {
+                    continue;
+                }
                 let constraint_type = if index_name == "PRIMARY" {
                     "PRIMARY KEY"
                 } else {
@@ -1163,7 +1176,7 @@ fn show_create_table(
         }
     }
     let key_names = catalog_key_names(table);
-    for (index_name, columns) in table_indexes(
+    for (index_name, columns, unique) in table_indexes(
         database.name(),
         table.name(),
         &key_names,
@@ -1177,8 +1190,10 @@ fn show_create_table(
             .join(", ");
         if index_name == "PRIMARY" {
             let _ = write!(ddl, ",\n  PRIMARY KEY ({column_list})");
-        } else {
+        } else if unique {
             let _ = write!(ddl, ",\n  UNIQUE KEY `{index_name}` ({column_list})");
+        } else {
+            let _ = write!(ddl, ",\n  KEY `{index_name}` ({column_list})");
         }
     }
     ddl.push_str("\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -2586,13 +2601,22 @@ mod tests {
                     mysql_column_type: Some("varchar(255)".to_owned()),
                 },
             ],
-            indexes: vec![crate::IndexFacts {
-                database: "Analytics".to_owned(),
-                table: "Events".to_owned(),
-                index_name: "unique_name".to_owned(),
-                unique: true,
-                columns: vec!["name".to_owned()],
-            }],
+            indexes: vec![
+                crate::IndexFacts {
+                    database: "Analytics".to_owned(),
+                    table: "Events".to_owned(),
+                    index_name: "unique_name".to_owned(),
+                    unique: true,
+                    columns: vec!["name".to_owned()],
+                },
+                crate::IndexFacts {
+                    database: "Analytics".to_owned(),
+                    table: "Events".to_owned(),
+                    index_name: "idx_name".to_owned(),
+                    unique: false,
+                    columns: vec!["name".to_owned()],
+                },
+            ],
             foreign_keys: vec![crate::ForeignKeyFacts {
                 database: "Analytics".to_owned(),
                 table: "Events".to_owned(),
@@ -2613,11 +2637,17 @@ mod tests {
             &facts,
         )
         .expect("statistics");
-        assert_eq!(statistics.rows.len(), 2);
+        // PRIMARY, the further unique constraint, and the non-unique
+        // secondary that introspection tools read.
+        assert_eq!(statistics.rows.len(), 3);
         assert_eq!(statistics.rows[0][5], Value::Utf8("PRIMARY".to_owned()));
+        assert_eq!(statistics.rows[0][3], Value::Int64(0));
         assert_eq!(statistics.rows[0][7], Value::Utf8("id".to_owned()));
         assert_eq!(statistics.rows[1][5], Value::Utf8("unique_name".to_owned()));
+        assert_eq!(statistics.rows[1][3], Value::Int64(0));
         assert_eq!(statistics.rows[1][12], Value::Utf8(String::new()));
+        assert_eq!(statistics.rows[2][5], Value::Utf8("idx_name".to_owned()));
+        assert_eq!(statistics.rows[2][3], Value::Int64(1));
 
         let source_nullability = execute_metadata(
             &parse_statement(

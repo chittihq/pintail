@@ -116,6 +116,11 @@ pub struct SourceTable {
     /// Foreign-key constraints on this table, for metadata fidelity.
     #[serde(default)]
     pub foreign_keys: Vec<SourceForeignKey>,
+    /// Non-unique secondary indexes, name and columns in index order, for
+    /// metadata fidelity (introspection tools read them; replication never
+    /// uses them).
+    #[serde(default)]
+    pub secondary_indexes: Vec<SourceSecondaryIndex>,
     /// Table-specific mapping warnings.
     pub warnings: Vec<String>,
 }
@@ -695,6 +700,7 @@ async fn probe_table(
         .collect::<Vec<_>>();
     let key = choose_key(&raw_columns, &index_parts);
     let unique_keys = usable_unique_keys(&raw_columns, &index_parts);
+    let secondary = secondary_indexes(&index_parts);
     let cascade_rules: Vec<CascadeRuleRow> = connection
         .exec(
             "SELECT CONSTRAINT_NAME, DELETE_RULE, UPDATE_RULE, \
@@ -819,6 +825,7 @@ async fn probe_table(
                 invisible_fk_rule(delete_rule) || invisible_fk_rule(update_rule)
             }),
         foreign_keys,
+        secondary_indexes: secondary,
         warnings,
     })
 }
@@ -920,6 +927,35 @@ fn generated_flags(generation_expression: &str, extra: &str) -> (bool, bool) {
         || extra.contains("virtual generated")
         || extra.contains("stored generated");
     (generated, generated && extra.contains("stored generated"))
+}
+
+/// One non-unique secondary index, retained for metadata fidelity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SourceSecondaryIndex {
+    /// Index name as the source declares it.
+    pub name: String,
+    /// Column names in index order.
+    pub columns: Vec<String>,
+}
+
+/// Every non-unique index, grouped by name with columns in index order.
+fn secondary_indexes(parts: &[RawIndexPart]) -> Vec<SourceSecondaryIndex> {
+    let mut indexes = BTreeMap::<&str, Vec<&RawIndexPart>>::new();
+    for part in parts {
+        if part.non_unique {
+            indexes.entry(&part.name).or_default().push(part);
+        }
+    }
+    indexes
+        .into_iter()
+        .map(|(name, mut index)| {
+            index.sort_by_key(|part| part.sequence);
+            SourceSecondaryIndex {
+                name: name.to_owned(),
+                columns: index.iter().map(|part| part.column.clone()).collect(),
+            }
+        })
+        .collect()
 }
 
 fn choose_key(columns: &[RawColumn], parts: &[RawIndexPart]) -> SourceKey {
@@ -1410,6 +1446,7 @@ mod tests {
             unique_keys: vec![vec!["id".to_owned()]],
             requires_reconciliation: false,
             foreign_keys: Vec::new(),
+            secondary_indexes: Vec::new(),
             warnings: Vec::new(),
         };
         let schema = table.table_schema().expect("table schema");
