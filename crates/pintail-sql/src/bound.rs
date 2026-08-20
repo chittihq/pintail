@@ -110,6 +110,20 @@ pub struct BoundExpr {
     pub nullable: bool,
 }
 
+/// Collects the collations one COMPARED expression contributes, applying the
+/// coercibility ladder: a JSON-text producer that brings no column collation
+/// of its own contributes `utf8mb4_bin` - so `DISTINCT` and `ORDER BY` over
+/// JSON results dedupe and order case-sensitively, as `MySQL` does. (The
+/// grouping path resolves per-key via `text_collation`, which already carries
+/// the ladder; this is the query-level resolution `Distinct` consumes.)
+fn collect_comparison_collations(expr: &BoundExpr, collations: &mut Vec<String>) {
+    let before = collations.len();
+    expr.collect_source_collations(collations);
+    if collations.len() == before && expr.reads_json_text() {
+        collations.push(BIN_TEXT_COLLATION.to_owned());
+    }
+}
+
 /// Whether a scalar function produces JSON-derived text that `MySQL` collates
 /// as `utf8mb4_bin` regardless of inputs.
 fn json_text_producer(function: ScalarFunction) -> bool {
@@ -1001,12 +1015,12 @@ impl BoundQuery {
         }
         if self.distinct {
             for projection in &self.projection {
-                projection.expr.collect_source_collations(collations);
+                collect_comparison_collations(&projection.expr, collations);
             }
         } else {
             for key in &self.order_by {
                 if let Some(projection) = self.projection.get(key.index) {
-                    projection.expr.collect_source_collations(collations);
+                    collect_comparison_collations(&projection.expr, collations);
                 }
             }
         }
