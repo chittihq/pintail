@@ -4,6 +4,52 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc6] - 2026-08-20
+
+The "whole flow stuck" report, run to ground: four bugs in one causal
+chain, each fixed at its own layer, plus the operator's reset escape
+hatch.
+
+### Added
+
+- `POST /databases/{id}/reset` and a confirmed **Reset mirror** action in
+  database settings: clears every tracked table (cascading to snapshot
+  chunks, schema history and poll state), the replication checkpoint,
+  quarantined events and the on-disk stores - holding the job slot
+  through the wipe - then re-probes with the saved connection and copies
+  everything fresh, continuing in the configured mode. Nothing about the
+  connection is asked again.
+- e2e: a schema-drift check reproducing the reported flow end to end
+  (pause, DROP COLUMN at the source, purge the binlogs holding the DDL,
+  resume, resync - asserting byte-identical convergence AND a live
+  stream afterwards), and a full reset-lifecycle check. The gate is now
+  1,828 checks.
+
+### Fixed
+
+- Resuming a paused database to `auto` no longer unschedules it forever.
+  Two supervisor gates conspired: switching to `auto` clears
+  `effective_mode` for a recomputation nothing ever ran, and the pause
+  wrote `state='paused'` which the resume never rewrote - so the
+  supervisor skipped the database every cadence while the badge kept
+  saying streaming. A resumed database is now scheduled, the cycle
+  derives cdc/polling the way the snapshot handoff would, and the first
+  successful cycle re-persists both.
+- Repair paths copy the source as it IS, not as it was probed. A source
+  migrated while nothing was streaming - with the binlog holding the DDL
+  purged before the stream returned - left every copy path SELECTing the
+  remembered column list and dying on the source's own ERROR 1054
+  "Unknown column", forever. The per-table resync and reconcile now
+  re-probe first and persist the fresh report; the CDC auto-resnapshot
+  re-probes before recopying its targets, evolving each store and
+  recording the schema version the way the DDL path does.
+- Schema history that cannot bridge off-stream drift no longer wedges
+  the copy on a fingerprint mismatch: history is only written by DDL
+  events, so the store-open shared by the copy paths adopts a fresh
+  probe as a new schema version, or rebuilds the store outright when no
+  history record exists - only for callers about to recopy the table
+  wholesale. A resumable first snapshot and reconcile stay strict.
+
 ## [0.0.4-rc5] - 2026-08-19
 
 Restart-safe table copies and a two-pass dashboard audit (data layer,
