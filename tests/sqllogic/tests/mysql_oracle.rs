@@ -1117,7 +1117,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "json modification",
             "SELECT JSON_DEPTH('{}'), JSON_DEPTH('[1,[2,3]]'), \
-                    JSON_QUOTE('a\"b'), JSON_PRETTY('{\"b\":[1,{}],\"a\":2}'), \
+                    JSON_QUOTE('a\"b'), MD5(JSON_PRETTY('{\"b\":[1,{}],\"a\":2}')), \
                     JSON_OVERLAPS('[1,2]','[2,9]'), JSON_OVERLAPS('[1,2]','[8,9]'), \
                     JSON_OVERLAPS('{\"a\":1,\"b\":2}','{\"a\":9,\"b\":2}'), \
                     1 MEMBER OF('[1.0, 2]'), 'x' MEMBER OF('[\"x\"]'), \

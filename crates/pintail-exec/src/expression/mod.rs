@@ -2146,20 +2146,37 @@ fn evaluate_eager_scalar_typed(
             mysql_i64(&values[0])?.cast_unsigned()
         ))),
         ScalarFunction::InetAton => {
+            // MySQL accepts the classful 1-4 part shorthands: the LAST part
+            // fills the remaining bytes ('1.2.3' is 1.2.0.3, measured
+            // 16908291), each earlier part is one byte.
             let text = scalar_string(&values[0])?;
-            let mut parts = Vec::new();
-            for part in text.split('.') {
-                match part.parse::<u8>() {
-                    Ok(octet) => parts.push(octet),
-                    Err(_) => return Ok(Value::Null),
-                }
-            }
-            if parts.len() != 4 {
+            let parts = text.split('.').collect::<Vec<_>>();
+            if parts.is_empty() || parts.len() > 4 {
                 return Ok(Value::Null);
             }
-            Ok(Value::UInt64(u64::from(u32::from_be_bytes([
-                parts[0], parts[1], parts[2], parts[3],
-            ]))))
+            let tail_bytes = 4 - (parts.len() - 1);
+            let tail_limit = if tail_bytes == 4 {
+                u64::from(u32::MAX)
+            } else {
+                (1_u64 << (8 * tail_bytes)) - 1
+            };
+            let mut address: u64 = 0;
+            for (index, part) in parts.iter().enumerate() {
+                let last = index == parts.len() - 1;
+                let limit = if last { tail_limit } else { 255 };
+                let Ok(value) = part.parse::<u64>() else {
+                    return Ok(Value::Null);
+                };
+                if value > limit {
+                    return Ok(Value::Null);
+                }
+                if last {
+                    address = (address << (8 * tail_bytes)) | value;
+                } else {
+                    address = (address << 8) | value;
+                }
+            }
+            Ok(Value::UInt64(address))
         }
         ScalarFunction::InetNtoa => {
             let number = mysql_i64(&values[0])?;
@@ -4255,8 +4272,8 @@ fn ordered_members(
 
 /// Collects every value the remaining steps select from `current`,
 /// depth-first in document order. Non-array values autowrap where `MySQL`'s
-/// path evaluation says they do: `[0]`, `[last]`, and `[*]` on a non-array
-/// address the value itself.
+/// path evaluation says they do: `[0]` and `[last]` on a non-array address
+/// the value itself; `[*]` does not (measured).
 fn collect_json_matches<'a>(
     current: &'a serde_json::Value,
     steps: &[JsonStep],
@@ -4320,14 +4337,15 @@ fn collect_json_matches<'a>(
                 }
             }
         }
-        JsonStep::WildIndex => match current {
-            serde_json::Value::Array(items) => {
+        // Measured: [*] selects array cells ONLY - a non-array does not
+        // autowrap here the way [0] and [last] address it.
+        JsonStep::WildIndex => {
+            if let serde_json::Value::Array(items) = current {
                 for value in items {
                     collect_json_matches(value, rest, out);
                 }
             }
-            other => collect_json_matches(other, rest, out),
-        },
+        }
         JsonStep::Descent => {
             collect_json_matches(current, rest, out);
             match current {
@@ -4964,6 +4982,8 @@ pub(crate) fn compare_utf8_mysql(left: &str, right: &str, collation: Collation) 
     crate::execution::compare_collated_text(left, right, collation)
 }
 
+// One arm per storage domain; splitting hides the correspondence.
+#[allow(clippy::too_many_lines)]
 fn evaluate_arithmetic(
     op: BinaryOp,
     left: &Value,

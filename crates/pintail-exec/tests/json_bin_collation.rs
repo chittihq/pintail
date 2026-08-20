@@ -363,7 +363,7 @@ fn json_path_wildcards_descent_ranges_and_last() {
                 JSON_EXTRACT('[1,2,3]','$[last]'), \
                 JSON_EXTRACT('[1,2,3]','$[last-1]'), \
                 JSON_EXTRACT('3','$[0]'), \
-                JSON_EXTRACT('{\"a\":1}','$[*]')");
+                JSON_EXTRACT('{\"a\":1}','$[*]') IS NULL");
     assert_eq!(
         rows,
         vec![vec![
@@ -375,7 +375,7 @@ fn json_path_wildcards_descent_ranges_and_last() {
             "3".to_owned(),
             "2".to_owned(),
             "3".to_owned(),
-            "[{\"a\": 1}]".to_owned(),
+            "1".to_owned(),
         ]]
     );
 }
@@ -479,7 +479,7 @@ fn hash_and_net_scalar_batch() {
                 SHA2('abc', 7) IS NULL, CRC32('MySQL'), MD5('abc'), \
                 BIN(12), BIN(-1), OCT(64), \
                 INET_ATON('10.0.5.9'), INET_ATON('10.0.5.256') IS NULL, \
-                INET_ATON('1.2.3') IS NULL, INET_NTOA(167773449), \
+                INET_ATON('1.2.3'), INET_NTOA(167773449), \
                 INET_NTOA(4294967296) IS NULL",
     );
     assert_eq!(
@@ -497,7 +497,7 @@ fn hash_and_net_scalar_batch() {
             "100".to_owned(),
             "167773449".to_owned(),
             "1".to_owned(),
-            "1".to_owned(),
+            "16908291".to_owned(),
             "10.0.5.9".to_owned(),
             "1".to_owned(),
         ]]
@@ -621,4 +621,40 @@ fn explicit_casts_wrap_in_both_directions() {
         let rows = run(sql);
         assert_eq!(rows, vec![vec![expected.to_owned()]], "{sql}");
     }
+}
+
+#[test]
+fn binary_prefix_reassociates_like_and_between() {
+    // Measured: BINARY binds to the operand, so LIKE and BETWEEN run
+    // byte-wise. sqlparser parses BINARY x LIKE p as CAST(x LIKE p).
+    let rows = run("SELECT BINARY 'a' LIKE 'A', BINARY 'a' LIKE 'a', \
+             BINARY 'b' BETWEEN 'A' AND 'B', BINARY 'B' BETWEEN 'A' AND 'C'");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "0".to_owned(),
+            "1".to_owned(),
+            "0".to_owned(),
+            "1".to_owned(),
+        ]]
+    );
+}
+
+#[test]
+fn inet_aton_accepts_the_classful_shorthands() {
+    let rows = run(
+        "SELECT INET_ATON('1.2.3'), INET_ATON('1.2'), INET_ATON('1'), \
+             INET_ATON('1.2.3.4'), INET_ATON('1.2.3.65536') IS NULL, INET_ATON('1.256.3') IS NULL",
+    );
+    assert_eq!(
+        rows,
+        vec![vec![
+            "16908291".to_owned(),
+            "16777218".to_owned(),
+            "1".to_owned(),
+            "16909060".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+        ]]
+    );
 }

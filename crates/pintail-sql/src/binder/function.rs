@@ -898,6 +898,55 @@ pub(super) fn bind_cast(
             &recast, op, operand, tables, aggregates, windows, subqueries,
         );
     }
+    // The same parser bug swallows LIKE and BETWEEN: BINARY x LIKE p parses
+    // as CAST(x LIKE p), where MySQL binds BINARY to the operand and the
+    // match runs byte-wise (measured: BINARY 'a' LIKE 'A' is 0).
+    if target == DataType::Binary
+        && let Expr::Like {
+            negated,
+            expr: operand,
+            pattern,
+            escape_char,
+            any: false,
+        } = expr
+    {
+        let recast = Expr::Cast {
+            kind: sqlparser::ast::CastKind::Cast,
+            expr: operand.clone(),
+            data_type: data_type.clone(),
+            array: false,
+            format: None,
+        };
+        return bind_like(
+            &recast,
+            pattern,
+            *negated,
+            escape_char.as_ref(),
+            tables,
+            aggregates,
+            windows,
+            subqueries,
+        );
+    }
+    if target == DataType::Binary
+        && let Expr::Between {
+            expr: operand,
+            negated,
+            low,
+            high,
+        } = expr
+    {
+        let recast = Expr::Cast {
+            kind: sqlparser::ast::CastKind::Cast,
+            expr: operand.clone(),
+            data_type: data_type.clone(),
+            array: false,
+            format: None,
+        };
+        return bind_between(
+            &recast, low, high, *negated, tables, aggregates, windows, subqueries,
+        );
+    }
     bind_scalar(
         ScalarFunction::Cast(target),
         vec![bind_expr_inner(
