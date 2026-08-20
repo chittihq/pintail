@@ -1161,10 +1161,13 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        // Canonical MySQL TIME text including sign, clamping and fractional
-        // digits - the Time64 carrier - so the wire can say MYSQL_TYPE_TIME.
+        // SEC_TO_TIME stays a string DELIBERATELY: MySQL gives its result a
+        // fractional width that follows the input value (SEC_TO_TIME(1.5) is
+        // '00:00:01.5'), and the fixed-width temporal carrier truncates to
+        // the declared precision - typing it Time64 cost the fraction, which
+        // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::SecToTime => (
-            Some(DataType::Time64 { fsp: 0 }),
+            Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
         // Rendered as canonical YYYY-MM-DD text - which is exactly the
@@ -1178,8 +1181,6 @@ pub(super) fn bind_scalar(
         ),
         // NULL out of range / on malformed or unmatched input, like MySQL.
         ScalarFunction::MakeDate => (Some(DataType::Date32), true),
-        ScalarFunction::MakeTime => (Some(DataType::Time64 { fsp: 0 }), true),
-        ScalarFunction::ConvertTz => (Some(DataType::DateTime64 { fsp: 0 }), true),
         // With a literal format the output shape is static: the evaluator
         // parses as a datetime when the format carries time specifiers and
         // as a bare date otherwise, so the declared type follows the format.
@@ -1212,7 +1213,11 @@ pub(super) fn bind_scalar(
             }),
             true,
         ),
-        ScalarFunction::Elt
+        // MAKETIME and CONVERT_TZ stay strings for the same reason as
+        // SEC_TO_TIME: their fractional width follows the input value.
+        ScalarFunction::MakeTime
+        | ScalarFunction::ConvertTz
+        | ScalarFunction::Elt
         | ScalarFunction::RegexpSubstr
         | ScalarFunction::JsonUnquote
         // JSON_TYPE raises on a non-JSON document; JSON_KEYS answers NULL for

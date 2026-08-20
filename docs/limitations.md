@@ -469,6 +469,12 @@ but may be wrong.
   bits). A larger transaction quarantines its table to needs_resync; a
   per-table resync captures the data and recovers.
 
+- SEC_TO_TIME, MAKETIME and CONVERT_TZ advertise MYSQL_TYPE_VAR_STRING
+  where MySQL advertises TIME/DATETIME. Their fractional-second width
+  follows the input value, which the fixed-width temporal carrier
+  cannot represent - typing them truncated the fraction. Values match
+  MySQL byte-for-byte as strings.
+
 - STR_TO_DATE with a non-literal format expression advertises
   MYSQL_TYPE_VAR_STRING - the output shape is unknowable at bind time.
   With a literal format the declared type follows the format's
