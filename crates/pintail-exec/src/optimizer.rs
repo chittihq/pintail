@@ -623,14 +623,19 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
         BoundExprKind::Binary { op, left, right } => {
             let left = evaluate_constant(left)?;
             let right = evaluate_constant(right)?;
-            // Constant folding sees only literals, never a column, so no column
-            // collation can reach it; the default is the only reachable answer.
+            // Constant folding sees only literals, never a column, so the
+            // CONNECTION collation is the one that applies - exactly as it
+            // does in MySQL, where 'x' = 'x   ' answers differently under a
+            // PAD SPACE session collation than under the NO PAD default.
             evaluate_runtime_binary(
                 *op,
                 &left,
                 &right,
                 expr.data_type,
-                crate::collation::Collation::default(),
+                crate::collation::Collation::from_mysql_name(
+                    pintail_sql::session_default_collation(),
+                )
+                .unwrap_or_default(),
             )
             .ok()
         }
