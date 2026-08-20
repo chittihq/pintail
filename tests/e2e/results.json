@@ -5821,12 +5821,6 @@
   },
   {
     "phase": "control-plane",
-    "check": "api:wire column types: temporal expressions advertise what MySQL advertises",
-    "status": "FAIL",
-    "detail": "Error: Table 'e2e_db.events' doesn't exist"
-  },
-  {
-    "phase": "control-plane",
     "check": "api:resync and reconcile are accepted",
     "status": "PASS"
   },
@@ -7806,7 +7800,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_e33aa6b2a787e0c1c2166d7f844f391c\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-20T11:51:59.230087+00:00\",\"updated_at\":\"2026-08-20T11:58:29.971547+00:00\"},\"tables\":13,\"rows\":795}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_51fecfbb4da0b69c72e7d0f9d02ce6d3\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-20T10:10:23.915964+00:00\",\"updated_at\":\"2026-08-20T10:17:10.878059+00:00\"},\"tables\":13,\"rows\":795}"
   },
   {
     "phase": "drop-table-polling",
