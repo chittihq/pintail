@@ -71,9 +71,10 @@ const creatingWorkspace = ref(false)
 
 async function onSwitchWorkspace(workspaceId: string) {
   if (workspaceId === session.value?.workspace_id) return
-  // Navigating is the "you are in the new workspace" signal; a failed
-  // switch used to land on the OLD workspace's overview anyway.
-  if (await switchWorkspace(workspaceId)) await navigateTo('/')
+  // The navigation to the overview happens INSIDE the switch, before the
+  // token changes, so the old page's pollers are gone by the time the new
+  // workspace's identity takes effect.
+  await switchWorkspace(workspaceId)
 }
 
 async function submitCreateWorkspace() {
@@ -83,7 +84,6 @@ async function submitCreateWorkspace() {
     await createWorkspace(newWorkspaceName.value.trim())
     createWorkspaceOpen.value = false
     newWorkspaceName.value = ''
-    await navigateTo('/')
   } catch (failure) {
     toast(messageOf(failure))
   } finally {

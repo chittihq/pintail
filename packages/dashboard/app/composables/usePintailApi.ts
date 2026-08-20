@@ -13,7 +13,10 @@ export class ApiFailure extends Error {
 /// server that accepted and never answered - leaves the promise pending
 /// forever, and the UI shows a spinner that never resolves and never errors.
 /// That is indistinguishable to a user from the request still working.
-const DEFAULT_TIMEOUT_MS = 30_000
+/// 60s rather than 30: a production mirror mid-copy answered /tables in just
+/// over 30s and the abort turned a slow-but-working control plane into an
+/// error banner.
+const DEFAULT_TIMEOUT_MS = 60_000
 
 /// Analytical queries are the one call that is legitimately slow, so they get
 /// their own ceiling rather than forcing the control-plane deadline up to

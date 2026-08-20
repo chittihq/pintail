@@ -49,6 +49,11 @@ export function useControlPlane() {
     () => ({}),
   )
   const loading = useState('cp-loading', () => false)
+  /// Bumped whenever the session's identity changes (workspace switch,
+  /// logout). Async loaders capture it when they start and refuse to write
+  /// state once it has moved, so a late response from the previous workspace
+  /// can never contaminate the new one - regardless of request timing.
+  const sessionEpoch = useState('cp-epoch', () => 0)
   const error = useState('cp-error', () => '')
   const dark = useState('cp-dark', () => false)
   const eventAbort = useState<AbortController | undefined>('cp-event-abort', () => undefined)
@@ -79,6 +84,7 @@ export function useControlPlane() {
   }
 
   async function loadControlPlane() {
+    const epoch = sessionEpoch.value
     loading.value = true
     error.value = ''
     try {
@@ -87,18 +93,21 @@ export function useControlPlane() {
         request<ActivityRecord[]>('/activity?limit=200'),
         request<DlqRecord[]>('/dlq?limit=100'),
       ])
+      if (epoch !== sessionEpoch.value) return
       databases.value = databaseRows
       activity.value = activityRows
       deadLetters.value = dlqRows
       await refreshStatuses()
     } catch (failure) {
+      if (epoch !== sessionEpoch.value) return
       if (!expiredSession(failure)) error.value = messageOf(failure)
     } finally {
-      loading.value = false
+      if (epoch === sessionEpoch.value) loading.value = false
     }
   }
 
   async function refreshStatuses() {
+    const epoch = sessionEpoch.value
     // allSettled, not all: one database mid-restart used to reject the whole
     // batch and freeze every OTHER database's status at its last value.
     const settled = await Promise.allSettled(
@@ -107,6 +116,7 @@ export function useControlPlane() {
         return [database.id, status] as const
       }),
     )
+    if (epoch !== sessionEpoch.value) return
     const fresh = Object.fromEntries(
       settled
         .filter((outcome): outcome is PromiseFulfilledResult<readonly [string, DatabaseStatus]> =>
@@ -120,6 +130,7 @@ export function useControlPlane() {
   }
 
   async function refreshLiveData() {
+    const epoch = sessionEpoch.value
     // Each surface refreshes independently: a failing activity endpoint must
     // not also freeze the DLQ list and per-database statuses (or vice versa).
     const [activityRows, dlqRows] = await Promise.allSettled([
@@ -127,6 +138,7 @@ export function useControlPlane() {
       request<DlqRecord[]>('/dlq?limit=100'),
       refreshStatuses(),
     ])
+    if (epoch !== sessionEpoch.value) return
     if (activityRows.status === 'fulfilled') activity.value = activityRows.value as ActivityRecord[]
     if (dlqRows.status === 'fulfilled') deadLetters.value = dlqRows.value as DlqRecord[]
   }
@@ -173,6 +185,7 @@ export function useControlPlane() {
 
   function clearSessionState() {
     stopEventStream()
+    sessionEpoch.value += 1
     setToken(null)
     session.value = null
     error.value = ''
@@ -304,11 +317,25 @@ export function useControlPlane() {
 
   async function enterWorkspace(response: { token: string, workspace: Workspace }) {
     stopEventStream()
+    sessionEpoch.value += 1
+    const epoch = sessionEpoch.value
     // The empty caches below are indistinguishable from a workspace with no
     // databases, and the pages key their empty states on exactly that - so
     // the whole span from here to the reload completing must read as
     // loading, or the connection wizard flashes on every switch.
     loading.value = true
+    databases.value = []
+    statuses.value = {}
+    activity.value = []
+    deadLetters.value = []
+    tableProgress.value = {}
+    error.value = ''
+    // Leave the old workspace's page BEFORE its identity changes: unmounting
+    // takes its pollers with it, so nothing keeps asking the new workspace
+    // about ids that only existed in the old one. Landing back on the
+    // overview mid-switch shows the loading state set above, never a flash
+    // of the wrong workspace's data.
+    await navigateTo('/')
     const previousToken = token.value
     try {
       setToken(response.token)
@@ -317,20 +344,17 @@ export function useControlPlane() {
       } catch (failure) {
         // The new token never proved itself, so keep the credential that
         // was working - otherwise a failed switch strands the operator
-        // signed out of BOTH workspaces.
+        // signed out of BOTH workspaces. The old workspace's data reloads
+        // behind the failure toast.
         setToken(previousToken)
+        sessionEpoch.value += 1
+        void loadControlPlane()
         throw failure
       }
-      databases.value = []
-      statuses.value = {}
-      activity.value = []
-      deadLetters.value = []
-      tableProgress.value = {}
-      error.value = ''
       await loadWorkspaces()
       await loadControlPlane()
     } finally {
-      loading.value = false
+      if (epoch === sessionEpoch.value) loading.value = false
     }
     // Deliberately not awaited: startEventStream consumes an SSE stream in a
     // loop that only ends when the session does, so awaiting it never
@@ -587,6 +611,7 @@ export function useControlPlane() {
     runTableAction,
     tableProgress,
     seedTableProgress,
+    sessionEpoch,
     resetDatabase,
     removeDatabase,
     discardDlq,

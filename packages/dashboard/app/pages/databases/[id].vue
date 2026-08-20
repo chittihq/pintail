@@ -7,7 +7,7 @@ import type { DlqRecord, QueryResponse, SnapshotStatus, TableSummary } from '@/t
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, resetDatabase, runTableAction, discardDlq, retryDlq, tableProgress, seedTableProgress } = useControlPlane()
+const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, resetDatabase, runTableAction, discardDlq, retryDlq, tableProgress, seedTableProgress, sessionEpoch } = useControlPlane()
 
 const databaseId = computed(() => String(route.params.id))
 const database = computed(() => databases.value.find((item) => item.id === databaseId.value) ?? null)
@@ -20,12 +20,16 @@ const tables = ref<TableSummary[]>([])
 const snapshot = ref<SnapshotStatus | null>(null)
 
 async function loadDatabaseDetail(showLoading = true) {
+  const epoch = sessionEpoch.value
   if (showLoading) loading.value = true
   try {
     const [tableRows, snapshotStatus] = await Promise.all([
       request<TableSummary[]>(`/tables?db=${encodeURIComponent(databaseId.value)}`),
       request<SnapshotStatus>(`/databases/${encodeURIComponent(databaseId.value)}/snapshot/status`),
     ])
+    // A response that started under the previous workspace's session says
+    // nothing about this one.
+    if (epoch !== sessionEpoch.value) return
     tables.value = tableRows
     snapshot.value = snapshotStatus
     // A copy that was already running when this page loaded gets its bar
@@ -37,16 +41,14 @@ async function loadDatabaseDetail(showLoading = true) {
     // A load that succeeds is the evidence the last failure is over.
     error.value = ''
   } catch (failure) {
-    // During a workspace switch this poll can fire once with the NEW
-    // workspace's token and the OLD route's database id; the resulting
-    // "database does not exist" landed in the shared banner and outlived
-    // the navigation. A failure only belongs on the banner while this
-    // database is still part of the workspace being shown.
-    if (databases.value.some((item) => item.id === databaseId.value)) {
+    // A failure only belongs on the banner while this database is still part
+    // of the workspace being shown AND the session that asked is the session
+    // on screen; both go stale during a workspace switch.
+    if (epoch === sessionEpoch.value && databases.value.some((item) => item.id === databaseId.value)) {
       error.value = messageOf(failure)
     }
   } finally {
-    if (showLoading) loading.value = false
+    if (showLoading && epoch === sessionEpoch.value) loading.value = false
   }
 }
 
