@@ -468,3 +468,8 @@ but may be wrong.
   file-position, where the file index and byte position leave no spare
   bits). A larger transaction quarantines its table to needs_resync; a
   per-table resync captures the data and recovers.
+
+- STR_TO_DATE, CONVERT_TZ, SEC_TO_TIME and MAKETIME advertise
+  MYSQL_TYPE_VAR_STRING on the wire where MySQL advertises a temporal
+  type (format-dependent for STR_TO_DATE, DATETIME and TIME for the
+  others). Values match byte-for-byte; drivers decode them as strings.
