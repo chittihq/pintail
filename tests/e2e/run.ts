@@ -1384,20 +1384,20 @@ async function phaseControlPlane() {
     // only the type bytes can.
     await pintailQuery('SELECT 1')
     const battery = `SELECT
-        DATE(happened_at) AS date_fn,
-        LAST_DAY(happened_at) AS last_day_fn,
+        DATE(placed_on) AS date_fn,
+        LAST_DAY(placed_on) AS last_day_fn,
         FROM_DAYS(738000) AS from_days_fn,
         MAKEDATE(2025, 60) AS makedate_fn,
         CURDATE() AS curdate_fn,
         NOW() AS now_fn,
         CURTIME() AS curtime_fn,
         FROM_UNIXTIME(1735689600) AS from_unixtime_fn,
-        DATE_ADD(DATE(happened_at), INTERVAL 1 DAY) AS date_plus_day,
-        DATE_ADD(DATE(happened_at), INTERVAL 1 HOUR) AS date_plus_hour,
-        DATE_ADD(happened_at, INTERVAL 1 DAY) AS datetime_plus_day,
-        DATE_FORMAT(happened_at, '%Y-%m') AS date_format_fn,
-        happened_at AS plain_datetime
-      FROM events LIMIT 1`
+        DATE_ADD(placed_on, INTERVAL 1 DAY) AS date_plus_day,
+        DATE_ADD(placed_on, INTERVAL 1 HOUR) AS date_plus_hour,
+        DATE_ADD(updated_at, INTERVAL 1 DAY) AS datetime_plus_day,
+        DATE_FORMAT(placed_on, '%Y-%m') AS date_format_fn,
+        placed_on AS plain_date
+      FROM orders LIMIT 1`
     const [, mysqlFields] = (await mysqlConnection!.query(battery)) as unknown as [
       unknown,
       Array<{ name: string; columnType: number }>,
