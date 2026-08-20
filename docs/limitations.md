@@ -12,10 +12,14 @@ stays readable as a list of things to fix.
 
 ### SQL surface
 
-- Correlated subquery shapes outside the canonical single-table equality form
-  are rejected during binding. Correlated `NOT IN` additionally requires both
-  membership sides to be provably non-nullable: with a possible NULL, MySQL's
-  three-valued `NOT IN` diverges from an anti join, so those shapes reject.
+- Correlated subqueries decorrelate when the inner side is a single filtered
+  table and every correlated conjunct is a comparison spanning the two scopes
+  (equalities key the hash join; ranges ride the residual or nested loop).
+  Other shapes fall back to bounded dependent execution where the engine
+  classifies them, and reject otherwise. Correlated `NOT IN` additionally
+  requires both membership sides to be provably non-nullable: with a possible
+  NULL, MySQL's three-valued `NOT IN` diverges from an anti join, so those
+  shapes reject.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather

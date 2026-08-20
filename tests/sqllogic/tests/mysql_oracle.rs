@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1074;
+const EXPECTED_CASES: usize = 1078;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1175,6 +1175,30 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "theta joins",
             "SELECT COUNT(*) FROM events a JOIN events b \
              ON a.id = b.id AND b.id BETWEEN 2 AND 4",
+        ),
+        // Correlated subqueries with range predicates: decorrelated where a
+        // comparison spans the scopes, dependent execution elsewhere - and
+        // in a self-join, where table keys collapse, the predicate must
+        // never sink into the scan.
+        ordered(
+            "correlated ranges",
+            "SELECT COUNT(*) FROM events a \
+             WHERE EXISTS (SELECT 1 FROM events b WHERE b.id < a.id)",
+        ),
+        ordered(
+            "correlated ranges",
+            "SELECT COUNT(*) FROM events a \
+             WHERE NOT EXISTS (SELECT 1 FROM events b WHERE b.id = a.id AND b.id > 3)",
+        ),
+        ordered(
+            "correlated ranges",
+            "SELECT COUNT(*) FROM events a \
+             WHERE a.id IN (SELECT b.id FROM events b WHERE b.id >= a.id AND b.id > 2)",
+        ),
+        ordered(
+            "correlated ranges",
+            "SELECT COUNT(*) FROM events e \
+             WHERE EXISTS (SELECT 1 FROM users u WHERE u.id <> e.id)",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

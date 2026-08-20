@@ -859,7 +859,13 @@ impl<'catalog> Binder<'catalog> {
         tables: &mut Vec<BoundTable>,
         ctes: &[BoundCte],
     ) -> Result<(), BindError> {
-        let unsupported = || BindError::UnsupportedSubquery(subquery.to_string());
+        let unsupported = || {
+            eprintln!(
+                "DECORR-EXISTS bail {}",
+                std::backtrace::Backtrace::force_capture()
+            );
+            BindError::UnsupportedSubquery(subquery.to_string())
+        };
         let SetExpr::Select(inner) = subquery.body.as_ref() else {
             return Err(unsupported());
         };
@@ -3239,8 +3245,19 @@ fn is_correlation_equality(
     expr: &BoundExpr,
     inner_key: (pintail_catalog::DatabaseId, pintail_catalog::TableId),
 ) -> bool {
+    // Any comparison spanning the two scopes decorrelates: an equality
+    // becomes a hash-join key, anything else rides the join's residual or
+    // the nested loop. NULL comparisons filter the pair in the join exactly
+    // as they filter the inner row in MySQL's subquery, for semi and anti
+    // alike.
     let BoundExprKind::Binary {
-        op: BinaryOp::Equal,
+        op:
+            BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual,
         left,
         right,
     } = &expr.kind

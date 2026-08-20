@@ -555,3 +555,22 @@ fn theta_joins_run_on_the_nested_loop() {
     let rows = run("SELECT COUNT(*) FROM orders a JOIN orders b ON a.id = b.id AND b.id > 2");
     assert_eq!(rows, vec![vec!["3".to_owned()]]);
 }
+
+#[test]
+fn correlated_exists_pure_range() {
+    let rows = run("SELECT COUNT(*) FROM orders a \
+         WHERE EXISTS (SELECT 1 FROM orders b WHERE b.id < a.id)");
+    assert_eq!(rows, vec![vec!["4".to_owned()]]);
+}
+#[test]
+fn correlated_not_exists_mixed() {
+    let rows = run("SELECT COUNT(*) FROM orders a \
+         WHERE NOT EXISTS (SELECT 1 FROM orders b WHERE b.id = a.id AND b.id > 3)");
+    assert_eq!(rows, vec![vec!["3".to_owned()]]);
+}
+#[test]
+fn correlated_in_with_range_conjunct() {
+    let rows = run("SELECT COUNT(*) FROM orders a \
+         WHERE a.id IN (SELECT b.id FROM orders b WHERE b.id >= a.id AND b.id > 2)");
+    assert_eq!(rows, vec![vec!["3".to_owned()]]);
+}

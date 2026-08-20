@@ -804,6 +804,14 @@ fn and_expr(left: BoundExpr, right: BoundExpr) -> BoundExpr {
 }
 
 fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
+    // A subquery surviving to this point is dependent (uncorrelated ones
+    // were materialized during logical planning), and dependent resolution
+    // exists only at Filter level. Pushing one into a scan looked safe for
+    // a self-join, where the outer and inner references collapse to one
+    // table key, and compiled into "unresolved subquery".
+    if expression_contains_subquery(predicate) {
+        return false;
+    }
     let referenced_tables = referenced_tables(predicate);
     if referenced_tables.len() != 1 {
         return false;
@@ -1383,6 +1391,26 @@ fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
         | BoundExprKind::Window(_) => {}
+    }
+}
+
+fn expression_contains_subquery(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. }
+        | BoundExprKind::InSubquery { .. } => true,
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            expression_contains_subquery(expr)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            expression_contains_subquery(left) || expression_contains_subquery(right)
+        }
+        BoundExprKind::Scalar { args, .. } => args.iter().any(expression_contains_subquery),
+        BoundExprKind::Column(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_) => false,
     }
 }
 
