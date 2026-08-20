@@ -52,6 +52,21 @@ pub struct QueryField {
     pub geometry: bool,
     /// Source `TIMESTAMP` column: advertised as `MYSQL_TYPE_TIMESTAMP`.
     pub timestamp: bool,
+    /// Wire-metadata override for direct projections whose VALUES stay
+    /// variable-width text deliberately (`SEC_TO_TIME`'s fraction follows
+    /// its input), but whose column TYPE matches `MySQL`'s.
+    pub wire_hint: Option<WireTypeHint>,
+}
+
+/// The column type `MySQL` advertises for a handful of text-carried results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WireTypeHint {
+    /// `SEC_TO_TIME`/`MAKETIME`: `MYSQL_TYPE_TIME`.
+    Time,
+    /// `CONVERT_TZ`: `MYSQL_TYPE_DATETIME`.
+    Datetime,
+    /// `JSON_UNQUOTE`/`->>`: `MYSQL_TYPE_BLOB` with the binary collation.
+    JsonText,
 }
 
 /// Physical work observed while executing one query.
@@ -381,6 +396,26 @@ impl ReplicaEngine {
                     })
             })
             .collect::<Vec<_>>();
+        let wire_hints = bound
+            .projection
+            .iter()
+            .map(|projection| {
+                let pintail_sql::BoundExprKind::Scalar { function, .. } = &projection.expr.kind
+                else {
+                    return None;
+                };
+                match function {
+                    pintail_sql::ScalarFunction::SecToTime
+                    | pintail_sql::ScalarFunction::MakeTime => Some(WireTypeHint::Time),
+                    pintail_sql::ScalarFunction::ConvertTz => Some(WireTypeHint::Datetime),
+                    pintail_sql::ScalarFunction::JsonUnquote
+                    | pintail_sql::ScalarFunction::JsonExtract { unquote: true } => {
+                        Some(WireTypeHint::JsonText)
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
         // Carried from binding: the binder resolved one collation for this
         // query, and every operator below compares text with it.
         let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
@@ -412,6 +447,7 @@ impl ReplicaEngine {
                 group_concat: group_concat.get(index).copied().unwrap_or(false),
                 geometry: field.geometry,
                 timestamp: field.timestamp,
+                wire_hint: wire_hints.get(index).copied().flatten(),
             })
             .collect();
         let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
@@ -461,6 +497,7 @@ impl ReplicaEngine {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             }],
             rows: vec![vec![Value::Utf8(plan)]],
             stats,
@@ -581,6 +618,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             })
             .collect(),
         stats: QueryStats {

@@ -1413,6 +1413,10 @@ async function phaseControlPlane() {
         STR_TO_DATE('2025-01-15', '%Y-%m-%d') AS str_to_date_date,
         STR_TO_DATE('2025-01-15 10:30', '%Y-%m-%d %H:%i') AS str_to_date_datetime,
         STR_TO_DATE('10:30', '%H:%i') AS str_to_date_time,
+        SEC_TO_TIME(3661) AS sec_to_time_fn,
+        MAKETIME(10, 30, 0) AS maketime_fn,
+        CONVERT_TZ(updated_at, '+00:00', '+05:30') AS convert_tz_fn,
+        JSON_UNQUOTE(JSON_EXTRACT('{"k":"v"}', '$.k')) AS json_unquote_fn,
         placed_on AS plain_date,
         updated_at AS plain_timestamp
       FROM orders LIMIT 1`

@@ -1268,6 +1268,8 @@ fn text_column_value(value: &Value) -> Option<Vec<u8>> {
 /// and temporal columns, length-encoded text for everything else. Getting a
 /// column's width wrong here is silent — the client decodes *something*,
 /// just not the value that was meant.
+// One arm per wire type: splitting it hides the correspondence.
+#[allow(clippy::too_many_lines)]
 fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<Vec<u8>>> {
     let length_encoded = |bytes: &[u8]| {
         let mut encoded = Vec::new();
@@ -1336,7 +1338,41 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
             )
         }
         (_, Value::Utf8(value) | Value::Enum { label: value, .. }) => {
-            length_encoded(value.as_bytes())
+            match field.wire_hint {
+                // The advertised type decides the binary encoding; the
+                // carried value is canonical text.
+                Some(crate::engine::WireTypeHint::Time) => {
+                    let time = MysqlTimeValue::parse(value).map_err(io_invalid)?;
+                    encode_binary_time(
+                        time.negative,
+                        time.days,
+                        time.hours,
+                        time.minutes,
+                        time.seconds,
+                        Some(time.micros),
+                    )
+                }
+                Some(crate::engine::WireTypeHint::Datetime) => {
+                    let datetime = parse_datetime(value).ok_or_else(|| {
+                        io_invalid(format!("invalid canonical MySQL DATETIME value: {value}"))
+                    })?;
+                    let micros = datetime.and_utc().timestamp_subsec_micros();
+                    encode_binary_datetime(
+                        u16::try_from(datetime.year()).unwrap_or(0),
+                        u8::try_from(datetime.month()).map_err(io_invalid)?,
+                        u8::try_from(datetime.day()).map_err(io_invalid)?,
+                        Some((
+                            u8::try_from(datetime.hour()).map_err(io_invalid)?,
+                            u8::try_from(datetime.minute()).map_err(io_invalid)?,
+                            u8::try_from(datetime.second()).map_err(io_invalid)?,
+                            Some(micros),
+                        )),
+                    )
+                }
+                Some(crate::engine::WireTypeHint::JsonText) | None => {
+                    length_encoded(value.as_bytes())
+                }
+            }
         }
         (_, Value::Binary(value)) => length_encoded(value),
     }))
@@ -1418,43 +1454,50 @@ fn mysql_text_character_set(charset: &str) -> u16 {
 }
 
 fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) -> Column {
-    let (coltype, unsigned) = match field.data_type {
-        Some(DataType::Utf8) if field.group_concat && group_concat_max_len > 512 => {
-            (ColumnType::MysqlTypeBlob, false)
-        }
-        Some(DataType::Boolean | DataType::Int8 | DataType::UInt8) => (
-            ColumnType::MysqlTypeTiny,
-            matches!(field.data_type, Some(DataType::UInt8)),
-        ),
-        Some(DataType::Int16 | DataType::UInt16) => (
-            ColumnType::MysqlTypeShort,
-            matches!(field.data_type, Some(DataType::UInt16)),
-        ),
-        Some(DataType::Int32 | DataType::UInt32) => (
-            ColumnType::MysqlTypeLong,
-            matches!(field.data_type, Some(DataType::UInt32)),
-        ),
-        Some(DataType::Int64 | DataType::UInt64) => (
-            ColumnType::MysqlTypeLonglong,
-            matches!(field.data_type, Some(DataType::UInt64)),
-        ),
-        Some(DataType::Float32) => (ColumnType::MysqlTypeFloat, false),
-        Some(DataType::Float64) => (ColumnType::MysqlTypeDouble, false),
-        Some(DataType::Decimal { .. }) => (ColumnType::MysqlTypeNewdecimal, false),
-        Some(DataType::Date32) => (ColumnType::MysqlTypeDate, false),
-        // A TIMESTAMP column's values are identical canonical text; the type
-        // byte is what lets clients apply session-timezone semantics the way
-        // they do against MySQL.
-        Some(DataType::DateTime64 { .. }) if field.timestamp => {
-            (ColumnType::MysqlTypeTimestamp, false)
-        }
-        Some(DataType::DateTime64 { .. }) => (ColumnType::MysqlTypeDatetime, false),
-        Some(DataType::Time64 { .. }) => (ColumnType::MysqlTypeTime, false),
-        Some(DataType::Year) => (ColumnType::MysqlTypeYear, true),
-        Some(DataType::Binary) if field.geometry => (ColumnType::MysqlTypeGeometry, false),
-        Some(DataType::Binary) => (ColumnType::MysqlTypeBlob, false),
-        Some(DataType::Json) => (ColumnType::MysqlTypeJson, false),
-        Some(DataType::Utf8) | None => (ColumnType::MysqlTypeVarString, false),
+    let (coltype, unsigned) = match (field.wire_hint, field.data_type) {
+        // Values stay variable-width text (SEC_TO_TIME's fraction follows
+        // its input), but the column TYPE matches what MySQL advertises.
+        (Some(crate::engine::WireTypeHint::Time), _) => (ColumnType::MysqlTypeTime, false),
+        (Some(crate::engine::WireTypeHint::Datetime), _) => (ColumnType::MysqlTypeDatetime, false),
+        (Some(crate::engine::WireTypeHint::JsonText), _) => (ColumnType::MysqlTypeLongBlob, false),
+        (None, data_type) => match data_type {
+            Some(DataType::Utf8) if field.group_concat && group_concat_max_len > 512 => {
+                (ColumnType::MysqlTypeBlob, false)
+            }
+            Some(DataType::Boolean | DataType::Int8 | DataType::UInt8) => (
+                ColumnType::MysqlTypeTiny,
+                matches!(field.data_type, Some(DataType::UInt8)),
+            ),
+            Some(DataType::Int16 | DataType::UInt16) => (
+                ColumnType::MysqlTypeShort,
+                matches!(field.data_type, Some(DataType::UInt16)),
+            ),
+            Some(DataType::Int32 | DataType::UInt32) => (
+                ColumnType::MysqlTypeLong,
+                matches!(field.data_type, Some(DataType::UInt32)),
+            ),
+            Some(DataType::Int64 | DataType::UInt64) => (
+                ColumnType::MysqlTypeLonglong,
+                matches!(field.data_type, Some(DataType::UInt64)),
+            ),
+            Some(DataType::Float32) => (ColumnType::MysqlTypeFloat, false),
+            Some(DataType::Float64) => (ColumnType::MysqlTypeDouble, false),
+            Some(DataType::Decimal { .. }) => (ColumnType::MysqlTypeNewdecimal, false),
+            Some(DataType::Date32) => (ColumnType::MysqlTypeDate, false),
+            // A TIMESTAMP column's values are identical canonical text; the type
+            // byte is what lets clients apply session-timezone semantics the way
+            // they do against MySQL.
+            Some(DataType::DateTime64 { .. }) if field.timestamp => {
+                (ColumnType::MysqlTypeTimestamp, false)
+            }
+            Some(DataType::DateTime64 { .. }) => (ColumnType::MysqlTypeDatetime, false),
+            Some(DataType::Time64 { .. }) => (ColumnType::MysqlTypeTime, false),
+            Some(DataType::Year) => (ColumnType::MysqlTypeYear, true),
+            Some(DataType::Binary) if field.geometry => (ColumnType::MysqlTypeGeometry, false),
+            Some(DataType::Binary) => (ColumnType::MysqlTypeBlob, false),
+            Some(DataType::Json) => (ColumnType::MysqlTypeJson, false),
+            Some(DataType::Utf8) | None => (ColumnType::MysqlTypeVarString, false),
+        },
     };
     let mut colflags = ColumnFlags::empty();
     colflags.set(ColumnFlags::UNSIGNED_FLAG, unsigned);
@@ -1475,31 +1518,40 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) 
         Some(DataType::Float32 | DataType::Float64) => 31,
         _ => 0,
     };
-    let column_length = match field.data_type {
-        Some(DataType::Boolean | DataType::Int8 | DataType::UInt8 | DataType::Year) => 4,
-        Some(DataType::Int16 | DataType::UInt16) => 6,
-        Some(DataType::Int32 | DataType::UInt32) => 11,
-        Some(DataType::Int64 | DataType::UInt64) => 20,
-        Some(DataType::Float32) => 12,
-        Some(DataType::Float64) => 22,
-        Some(DataType::Decimal { precision, scale }) => {
-            u32::from(precision) + 1 + u32::from(scale > 0)
-        }
-        Some(DataType::Date32) => 10,
-        Some(DataType::DateTime64 { fsp }) => 19 + u32::from(fsp > 0) + u32::from(fsp),
-        Some(DataType::Time64 { fsp }) => 10 + u32::from(fsp > 0) + u32::from(fsp),
-        Some(DataType::Utf8) if field.group_concat => {
-            u32::try_from(group_concat_max_len).unwrap_or(u32::MAX)
-        }
-        Some(DataType::Utf8 | DataType::Binary | DataType::Json) | None => 1024,
+    let column_length = match field.wire_hint {
+        // MySQL's own metadata widths for these results.
+        Some(crate::engine::WireTypeHint::Time) => 17,
+        Some(crate::engine::WireTypeHint::Datetime) => 26,
+        Some(crate::engine::WireTypeHint::JsonText) => u32::MAX,
+        None => match field.data_type {
+            Some(DataType::Boolean | DataType::Int8 | DataType::UInt8 | DataType::Year) => 4,
+            Some(DataType::Int16 | DataType::UInt16) => 6,
+            Some(DataType::Int32 | DataType::UInt32) => 11,
+            Some(DataType::Int64 | DataType::UInt64) => 20,
+            Some(DataType::Float32) => 12,
+            Some(DataType::Float64) => 22,
+            Some(DataType::Decimal { precision, scale }) => {
+                u32::from(precision) + 1 + u32::from(scale > 0)
+            }
+            Some(DataType::Date32) => 10,
+            Some(DataType::DateTime64 { fsp }) => 19 + u32::from(fsp > 0) + u32::from(fsp),
+            Some(DataType::Time64 { fsp }) => 10 + u32::from(fsp > 0) + u32::from(fsp),
+            Some(DataType::Utf8) if field.group_concat => {
+                u32::try_from(group_concat_max_len).unwrap_or(u32::MAX)
+            }
+            Some(DataType::Utf8 | DataType::Binary | DataType::Json) | None => 1024,
+        },
     };
     // Text results follow the connection's result charset; numeric, temporal,
-    // binary and JSON results use MySQL's binary character set (63).
-    let character_set = if matches!(field.data_type, Some(DataType::Utf8)) {
-        mysql_text_character_set(charset)
-    } else {
-        63
-    };
+    // binary and JSON results use MySQL's binary character set (63). The
+    // temporal and JSON-text hints are binary-charset results too, exactly
+    // as MySQL reports them.
+    let character_set =
+        if matches!(field.data_type, Some(DataType::Utf8)) && field.wire_hint.is_none() {
+            mysql_text_character_set(charset)
+        } else {
+            63
+        };
     let mut column = Column::new(field.name.clone(), coltype);
     column.column_length = column_length;
     column.character_set = character_set;
@@ -1671,6 +1723,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
             group_concat: false,
             geometry: false,
             timestamp: false,
+            wire_hint: None,
         }],
         rows: vec![vec![value]],
         stats: QueryStats {
@@ -1692,6 +1745,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             QueryField {
                 name: "Code".to_owned(),
@@ -1701,6 +1755,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             QueryField {
                 name: "Message".to_owned(),
@@ -1710,6 +1765,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
         ],
         rows: (1..=session.group_concat_warnings)
@@ -1999,6 +2055,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2020,6 +2077,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: true,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2034,6 +2092,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2052,6 +2111,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2069,6 +2129,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2085,6 +2146,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2109,6 +2171,7 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
@@ -2126,12 +2189,55 @@ mod tests {
                 group_concat: false,
                 geometry: false,
                 timestamp: false,
+                wire_hint: None,
             },
             1024,
             "utf8mb4",
         );
         assert_eq!(datetime.decimals, 6);
         assert_eq!(datetime.column_length, 26);
+    }
+
+    #[test]
+    fn wire_hints_advertise_mysqls_own_types() {
+        // The values stay variable-width text; the advertised column type,
+        // width, and binary charset match what MySQL reports for these
+        // functions (measured: TIME 11, DATETIME 12, LONG_BLOB 251).
+        for (hint, coltype, length) in [
+            (
+                crate::engine::WireTypeHint::Time,
+                ColumnType::MysqlTypeTime,
+                17,
+            ),
+            (
+                crate::engine::WireTypeHint::Datetime,
+                ColumnType::MysqlTypeDatetime,
+                26,
+            ),
+            (
+                crate::engine::WireTypeHint::JsonText,
+                ColumnType::MysqlTypeLongBlob,
+                u32::MAX,
+            ),
+        ] {
+            let column = mysql_column(
+                &QueryField {
+                    name: "value".to_owned(),
+                    data_type: Some(DataType::Utf8),
+                    nullable: true,
+                    collation: None,
+                    group_concat: false,
+                    geometry: false,
+                    timestamp: false,
+                    wire_hint: Some(hint),
+                },
+                1024,
+                "utf8mb4",
+            );
+            assert_eq!(column.coltype, coltype);
+            assert_eq!(column.column_length, length);
+            assert_eq!(column.character_set, 63);
+        }
     }
 
     #[test]
@@ -2144,6 +2250,7 @@ mod tests {
             group_concat: true,
             geometry: false,
             timestamp: false,
+            wire_hint: None,
         };
         assert_eq!(
             mysql_column(&field, 512, "utf8mb4").coltype,
@@ -2165,6 +2272,7 @@ mod tests {
             group_concat: false,
             geometry: false,
             timestamp: false,
+            wire_hint: None,
         };
         assert_eq!(mysql_column(&field, 1024, "utf8mb3").character_set, 33);
         let binary = mysql_column(&field, 1024, "binary");

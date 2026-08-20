@@ -438,15 +438,10 @@ but may be wrong.
   bits). A larger transaction quarantines its table to needs_resync; a
   per-table resync captures the data and recovers.
 
-- JSON_UNQUOTE and the ->> operator advertise MYSQL_TYPE_VAR_STRING
-  where MySQL advertises LONG_BLOB (251); both carry utf8mb4 text and
-  common drivers decode them identically as strings.
-
-- SEC_TO_TIME, MAKETIME and CONVERT_TZ advertise MYSQL_TYPE_VAR_STRING
-  where MySQL advertises TIME/DATETIME. Their fractional-second width
-  follows the input value, which the fixed-width temporal carrier
-  cannot represent - typing them truncated the fraction. Values match
-  MySQL byte-for-byte as strings.
+- SEC_TO_TIME, MAKETIME, CONVERT_TZ and JSON_UNQUOTE/->> advertise
+  MySQL's own column types (TIME, DATETIME, LONG_BLOB) as direct
+  projections; wrapped in another expression they fall back to
+  MYSQL_TYPE_VAR_STRING, because the wrapper's shape owns the result.
 
 - STR_TO_DATE with a non-literal format expression advertises
   MYSQL_TYPE_VAR_STRING - the output shape is unknowable at bind time.
