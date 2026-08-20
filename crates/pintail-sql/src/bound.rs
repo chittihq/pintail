@@ -217,6 +217,13 @@ impl BoundExpr {
         if self.data_type != Some(DataType::Utf8) {
             return None;
         }
+        let mut explicit = Vec::new();
+        self.collect_explicit_collations(&mut explicit);
+        explicit.sort_unstable();
+        explicit.dedup();
+        if let [only] = explicit.as_slice() {
+            return Some(only.clone());
+        }
         let mut collations = Vec::new();
         self.collect_source_collations(&mut collations);
         collations.sort_unstable();
@@ -249,6 +256,32 @@ impl BoundExpr {
                 left.reads_json_text() || right.reads_json_text()
             }
             _ => false,
+        }
+    }
+
+    /// Every explicit `COLLATE` name in this expression. Coercibility 0 in
+    /// `MySQL`'s ladder: one explicit collation dictates the comparison no
+    /// matter what the columns underneath carry; the subtree UNDER a
+    /// `COLLATE` is not walked because the override replaces it.
+    pub(crate) fn collect_explicit_collations(&self, collations: &mut Vec<String>) {
+        match &self.kind {
+            BoundExprKind::Scalar { function, args } => {
+                if let ScalarFunction::Collate { collation } = function {
+                    collations.push(collation.as_str().to_owned());
+                    return;
+                }
+                for argument in args {
+                    argument.collect_explicit_collations(collations);
+                }
+            }
+            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+                expr.collect_explicit_collations(collations);
+            }
+            BoundExprKind::Binary { left, right, .. } => {
+                left.collect_explicit_collations(collations);
+                right.collect_explicit_collations(collations);
+            }
+            _ => {}
         }
     }
 
@@ -1101,6 +1134,17 @@ impl BoundExpr {
     /// and they simply do not have to agree with each other.
     #[must_use]
     pub fn text_collation(&self) -> Option<&'static str> {
+        // Coercibility 0: one explicit COLLATE dictates the whole
+        // comparison, whatever the columns underneath carry.
+        let mut explicit = Vec::new();
+        self.collect_explicit_collations(&mut explicit);
+        explicit.sort_unstable();
+        explicit.dedup();
+        if let [only] = explicit.as_slice() {
+            return SUPPORTED_TEXT_COLLATIONS
+                .into_iter()
+                .find(|supported| supported == only);
+        }
         let mut collations = Vec::new();
         self.collect_source_collations(&mut collations);
         collations.sort_unstable();

@@ -1599,6 +1599,28 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
 }
 
 pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Result<(), BindError> {
+    // Coercibility 0 first: one explicit COLLATE dictates the comparison
+    // and a source-collation mixture underneath it stops mattering. Two
+    // CONFLICTING explicit collations tie at coercibility 0, which MySQL
+    // itself refuses.
+    let mut explicit = Vec::new();
+    for expression in expressions {
+        expression.collect_explicit_collations(&mut explicit);
+    }
+    explicit.sort_unstable();
+    explicit.dedup();
+    match explicit.as_slice() {
+        [] => {}
+        [only] if crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&only.as_str()) => {
+            return Ok(());
+        }
+        _ => {
+            return Err(BindError::UnsupportedExpression(format!(
+                "comparing text across collations {} is unsupported",
+                explicit.join(", ")
+            )));
+        }
+    }
     let mut collations = Vec::new();
     for expression in expressions {
         expression.collect_source_collations(&mut collations);

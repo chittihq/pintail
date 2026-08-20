@@ -595,3 +595,13 @@ fn chained_right_joins_preserve_the_right_side() {
         ]
     );
 }
+
+#[test]
+fn an_explicit_collate_overrides_a_column_collation() {
+    // Case 733's shape: the column carries the ai_ci default, the literal
+    // carries an explicit COLLATE - coercibility 0 wins and the comparison
+    // runs case-sensitively.
+    let rows = run("SELECT COUNT(*) FROM orders \
+         WHERE JSON_UNQUOTE(JSON_EXTRACT(meta,'$.tags[0]')) = 'PREMIUM' COLLATE utf8mb4_bin");
+    assert_eq!(rows, vec![vec!["1".to_owned()]]);
+}
