@@ -3150,11 +3150,16 @@ fn build_operator(
         }
         PhysicalPlan::Derived { input, columns } => {
             let fields = input.output_fields();
+            // A field with no data type is an untyped NULL projection
+            // (SELECT NULL AS k) - compatible with any bound column type,
+            // and refusing it made GROUP BY over a NULL-only derived table
+            // an internal error (conformance suite).
             if fields.len() != columns.len()
-                || fields
-                    .iter()
-                    .zip(&columns)
-                    .any(|(field, column)| field.data_type != Some(column.data_type))
+                || fields.iter().zip(&columns).any(|(field, column)| {
+                    field
+                        .data_type
+                        .is_some_and(|data_type| data_type != column.data_type)
+                })
             {
                 return Err(ExecError::InvalidPhysicalPlan(
                     "derived input layout does not match its bound columns",

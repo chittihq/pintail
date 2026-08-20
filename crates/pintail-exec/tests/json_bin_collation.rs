@@ -172,3 +172,11 @@ fn probe_extract_no_unquote_filter() {
     let rows = run("SELECT COUNT(*) FROM orders WHERE JSON_EXTRACT(meta,'$.tags[0]') IS NOT NULL");
     assert_eq!(rows, vec![vec!["3".to_owned()]]);
 }
+
+#[test]
+fn a_null_only_derived_table_groups() {
+    // An untyped NULL projection is compatible with any derived column
+    // type; this shape was an internal 'invalid physical plan' error.
+    let rows = run("SELECT k, COUNT(*) FROM (SELECT NULL AS k) d GROUP BY k");
+    assert_eq!(rows, vec![vec!["NULL".to_owned(), "1".to_owned()]]);
+}
