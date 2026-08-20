@@ -322,9 +322,13 @@ stays readable as a list of things to fix.
   unknowable.
 - The optional secondary-UNIQUE read policy inherits the collation
   approximation above.
-- ALTER operations other than pure ADD/DROP COLUMN — rename, type/key changes,
-  index-only changes, default-only changes — conservatively mark that table
-  `needs_resync`.
+- ALTER handling evolves in place for pure ADD/DROP COLUMN, pure column
+  RENAME (verified mid-stream: stable column IDs carry across, rows before
+  and after the rename stay intact with no resync), storage-compatible
+  MODIFY/CHANGE type changes, and index-only changes. What still marks the
+  table `needs_resync`: table RENAME (the on-disk directory identity derives
+  from the table name, so a rename is a safe resnapshot boundary),
+  storage-incompatible type changes, and key-strategy changes.
 - Adding or removing a stable key is therefore a safe resnapshot boundary, not
   an in-place identity change. After the replacement generation is published,
   the refreshed probe promotes the table to row-level primary/unique-key CDC or
