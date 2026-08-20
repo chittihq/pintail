@@ -604,7 +604,11 @@ pub(crate) fn open_tracked_store(
         Err(message)
             if wipe_on_schema_mismatch
                 && (message.contains("schema fingerprint mismatch")
-                    || message.contains("schema version mismatch")) =>
+                    || message.contains("schema version mismatch")
+                    // stabilize's in-place refusals: adoptable here because
+                    // the branch below deletes the store before rebuilding.
+                    || message.contains("changed physical type")
+                    || message.contains("physical key changed")) =>
         {
             // The store on disk was built from a shape this control plane has
             // no usable record of - schema history is only written by DDL
@@ -622,8 +626,17 @@ pub(crate) fn open_tracked_store(
                         serde_json::from_str(&record.columns_json).map_err(display)?;
                     let mut previous = source.clone();
                     previous.columns = stored;
-                    let adopted = pintail_probe::stabilize_source_table(&previous, source.clone())?;
-                    source.columns = adopted.columns;
+                    // Stable-ID continuity is a property of LIVE evolution;
+                    // this store was just deleted, so a column whose physical
+                    // type changed (which stabilize rightly refuses to adopt
+                    // in place) simply takes a fresh identity - refusing here
+                    // left "column X changed physical type" looping forever
+                    // on the exact path that exists to repair it.
+                    if let Ok(adopted) =
+                        pintail_probe::stabilize_source_table(&previous, source.clone())
+                    {
+                        source.columns = adopted.columns;
+                    }
                     let version = record
                         .version
                         .checked_add(1)
