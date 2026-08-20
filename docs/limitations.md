@@ -358,12 +358,11 @@ stays readable as a list of things to fix.
 
 ## MySQL wire protocol
 
-- The `caching_sha2_password` full-authentication fallback (RSA key exchange or
-  cleartext-over-TLS) is not implemented; only the fast-auth exchange is
-  served, which requires the verifier stored at key creation. Keys created
-  before metadata schema version 13 must be rotated before use with
-  caching_sha2_password clients; keys from before schema version 6 also lack
-  the mysql_native_password verifier.
+- `caching_sha2_password` serves both the fast-auth exchange and the
+  full-authentication fallback (RSA key exchange toward a per-process
+  keypair, or cleartext from a client that trusts its transport), validated
+  against the stored verifiers. Keys from before metadata schema version 6
+  lack both verifiers and must still be rotated.
 - The endpoint is read-only. `SET sql_mode` accepts only modes that are
   genuinely inert on a read-only replica: write and DDL modes
   (`STRICT_*`, `NO_ZERO_*`, `NO_ENGINE_SUBSTITUTION`) are stored and
@@ -383,7 +382,11 @@ stays readable as a list of things to fix.
   not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
-- Explicit `KILL QUERY` is unsupported.
+- `KILL QUERY <id>` interrupts the target connection's running statement;
+  the interrupted side reports MySQL's query-interrupted error. Bare `KILL`
+  and `KILL CONNECTION` reject explicitly - terminating another session is
+  not meaningful on a read-only replica and pretending otherwise would leave
+  clients believing a connection died that did not.
 - DBeaver and Metabase application-level smokes are not automated in CI.
 ## Operations and backup
 

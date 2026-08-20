@@ -33,6 +33,62 @@ use crate::{
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 
+/// The process-wide RSA keypair `caching_sha2_password` full
+/// authentication encrypts toward. Generated once; a failure disables the
+/// RSA leg (cleartext-over-TLS still works) rather than the server.
+static FULL_AUTH_RSA: std::sync::LazyLock<Option<(rsa::RsaPrivateKey, Vec<u8>)>> =
+    std::sync::LazyLock::new(|| {
+        let mut rng = rand_core06::OsRng;
+        let private = rsa::RsaPrivateKey::new(&mut rng, 2048).ok()?;
+        let pem = rsa::pkcs8::EncodePublicKey::to_public_key_pem(
+            &private.to_public_key(),
+            rsa::pkcs8::LineEnding::LF,
+        )
+        .ok()?;
+        Some((private, pem.into_bytes()))
+    });
+
+/// The query each connection is currently executing, by connection id, so
+/// `KILL QUERY <id>` from another connection can interrupt it. Entries are
+/// registered for exactly the duration of one statement.
+static RUNNING_QUERIES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<u32, pintail_exec::ExecutionCancellation>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Removes this connection's registry entry when the statement finishes.
+struct RunningQueryGuard(u32);
+
+impl RunningQueryGuard {
+    fn register(connection_id: u32, cancellation: &pintail_exec::ExecutionCancellation) -> Self {
+        if let Ok(mut running) = RUNNING_QUERIES.lock() {
+            running.insert(connection_id, cancellation.clone());
+        }
+        Self(connection_id)
+    }
+}
+
+impl Drop for RunningQueryGuard {
+    fn drop(&mut self) {
+        if let Ok(mut running) = RUNNING_QUERIES.lock() {
+            running.remove(&self.0);
+        }
+    }
+}
+
+/// `KILL QUERY <id>`: cancels whatever statement the target connection is
+/// running. Idempotent and racy by design, as in `MySQL`: a statement that
+/// finished first simply isn't there to cancel.
+fn kill_query(connection_id: u32) -> bool {
+    RUNNING_QUERIES
+        .lock()
+        .ok()
+        .and_then(|running| running.get(&connection_id).cloned())
+        .is_some_and(|cancellation| {
+            cancellation.cancel();
+            true
+        })
+}
+
 /// Default time an authenticated wire connection may remain idle.
 pub const DEFAULT_WIRE_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
@@ -644,6 +700,40 @@ impl Backend {
         Ok(true)
     }
 
+    /// Full-authentication admission: the cleartext password recovered by
+    /// the exchange, validated against the stored verifiers.
+    fn authenticate_wire_cleartext(&self, username: &[u8], password: &[u8]) -> io::Result<bool> {
+        let Ok(username_text) = std::str::from_utf8(username) else {
+            return Ok(false);
+        };
+        let metadata = MetaStore::open(&self.metadata_path).map_err(io_other)?;
+        let Some(database) = metadata
+            .databases()
+            .map_err(io_other)?
+            .into_iter()
+            .find(|database| database.name.eq_ignore_ascii_case(username_text))
+        else {
+            return Ok(false);
+        };
+        let key = metadata
+            .api_keys(&database.id)
+            .map_err(io_other)?
+            .into_iter()
+            .find(|key| wire_key_matches_cleartext(key, password));
+        let Some(key) = key else {
+            return Ok(false);
+        };
+        metadata
+            .touch_api_key(&key.id, &Utc::now().to_rfc3339())
+            .map_err(io_other)?;
+        *self.authentication.lock().map_err(io_other)? = Some(Authenticated {
+            database_id: database.id,
+            database_name: database.name,
+            key_name: key.name,
+        });
+        Ok(true)
+    }
+
     fn verify_wire_key(
         &self,
         username: &[u8],
@@ -780,6 +870,7 @@ impl Backend {
             })
             .flatten();
         let cancellation = pintail_exec::ExecutionCancellation::new();
+        let _running_guard = RunningQueryGuard::register(self.connection_id, &cancellation);
         let mut cancel_on_drop = CancelExecutionOnDrop::new(cancellation.clone());
         let engine = self.engine.clone();
         let database_id = authenticated.database_id;
@@ -844,6 +935,8 @@ impl Backend {
 
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
     /// cannot be honored.
+    // One arm per session command; splitting hides the correspondence.
+    #[allow(clippy::too_many_lines)]
     fn apply_session_command(&self, sql: &str) -> Result<(), String> {
         let command = sql.trim().trim_end_matches(';').trim();
         let lowered = command.to_ascii_lowercase();
@@ -858,6 +951,9 @@ impl Backend {
                 return Ok(());
             }
             return Err(format!("Unknown character set: '{charset}'"));
+        }
+        if let Some(rest) = lowered.strip_prefix("kill ") {
+            return apply_kill_command(rest);
         }
         let assignment = lowered.strip_prefix("set ").map(|rest| {
             rest.trim_start_matches("session ")
@@ -999,6 +1095,20 @@ impl Handler for Backend {
             session.collation_connection = collation;
         }
         self.authenticate_wire_key(&response.username, scramble, &response.auth_response)
+            .unwrap_or(false)
+    }
+
+    fn full_auth_public_key(&self) -> Option<Vec<u8>> {
+        FULL_AUTH_RSA.as_ref().map(|(_, pem)| pem.clone())
+    }
+
+    fn decrypt_full_auth_password(&self, encrypted: &[u8]) -> Option<Vec<u8>> {
+        let (private, _) = FULL_AUTH_RSA.as_ref()?;
+        private.decrypt(rsa::Oaep::new::<Sha1>(), encrypted).ok()
+    }
+
+    fn authenticate_cleartext(&mut self, username: &[u8], password: &[u8]) -> bool {
+        self.authenticate_wire_cleartext(username, password)
             .unwrap_or(false)
     }
 
@@ -1588,6 +1698,33 @@ fn key_has_query_scope(key: &ApiKeyRecord) -> bool {
     })
 }
 
+/// Whether a cleartext password (recovered by full authentication)
+/// matches one of the key's stored verifiers: `SHA256(SHA256(pw))` for
+/// `caching_sha2_password`, `SHA1(SHA1(pw))` for `mysql_native_password`.
+fn wire_key_matches_cleartext(key: &ApiKeyRecord, password: &[u8]) -> bool {
+    if !key.enabled
+        || key.expires_at.as_deref().is_some_and(is_expired)
+        || !key_has_query_scope(key)
+    {
+        return false;
+    }
+    let caching = key
+        .caching_sha2_password_hash
+        .as_deref()
+        .is_some_and(|expected| {
+            let candidate = Sha256::digest(Sha256::digest(password));
+            constant_time_equal(candidate.as_slice(), expected)
+        });
+    let native = key
+        .mysql_native_password_hash
+        .as_deref()
+        .is_some_and(|expected| {
+            let candidate = Sha1::digest(Sha1::digest(password));
+            constant_time_equal(candidate.as_slice(), expected)
+        });
+    caching || native
+}
+
 /// Verifies a `caching_sha2_password` fast-auth response against the stored
 /// `SHA256(SHA256(password))` verifier.
 ///
@@ -1815,11 +1952,40 @@ fn compatibility_charset_query(
     Some((name, Value::Utf8(value)))
 }
 
+/// `KILL QUERY <id>`. Bare KILL and KILL CONNECTION terminate the whole
+/// session in `MySQL`; only the query form is meaningful on a read-only
+/// replica, and pretending otherwise would leave the client believing a
+/// connection died that did not.
+fn apply_kill_command(rest: &str) -> Result<(), String> {
+    let rest = rest.trim();
+    let Some(id_text) = rest.strip_prefix("query ") else {
+        return Err(
+            "KILL CONNECTION is not supported on a read-only replica; use KILL QUERY".to_owned(),
+        );
+    };
+    let id: u32 = id_text
+        .trim()
+        .parse()
+        .map_err(|_| format!("Unknown thread id: {}", id_text.trim()))?;
+    if kill_query(id) {
+        Ok(())
+    } else {
+        Err(format!("Unknown thread id: {id}"))
+    }
+}
+
 fn is_session_command(sql: &str) -> bool {
     let command = sql.trim_start().to_ascii_lowercase();
-    ["set ", "begin", "start transaction", "commit", "rollback"]
-        .iter()
-        .any(|prefix| command.starts_with(prefix))
+    [
+        "set ",
+        "begin",
+        "start transaction",
+        "commit",
+        "rollback",
+        "kill ",
+    ]
+    .iter()
+    .any(|prefix| command.starts_with(prefix))
 }
 
 fn placeholder_count(sql: &str) -> usize {
@@ -2038,9 +2204,9 @@ mod tests {
     use sha2::Digest as _;
 
     use super::{
-        LOGIN_TIMEOUT, Session, Sha256, compatibility_query, mysql_column, placeholder_offsets,
-        placeholder_preview_literals, substitute_parameters, verify_caching_sha2,
-        verify_native_password,
+        LOGIN_TIMEOUT, RunningQueryGuard, Session, Sha256, compatibility_query, kill_query,
+        mysql_column, placeholder_offsets, placeholder_preview_literals, substitute_parameters,
+        verify_caching_sha2, verify_native_password, wire_key_matches_cleartext,
     };
     use crate::QueryField;
 
@@ -2335,6 +2501,59 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(verify_native_password(&stage_two, salt, &response));
         assert!(!verify_native_password(&stage_two, salt, &[0; 20]));
+    }
+
+    fn stub_query_key() -> pintail_meta::ApiKeyRecord {
+        pintail_meta::ApiKeyRecord {
+            id: "key_test".to_owned(),
+            database_id: "db_test".to_owned(),
+            name: "test".to_owned(),
+            sha256: Vec::new(),
+            mysql_native_password_hash: None,
+            caching_sha2_password_hash: None,
+            enabled: true,
+            scopes_json: "[\"query\"]".to_owned(),
+            expires_at: None,
+            last_used_at: None,
+            created_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn cleartext_full_auth_matches_stored_verifiers() {
+        let password = b"pt_key_secret_0123456789";
+        let caching = Sha256::digest(Sha256::digest(password)).to_vec();
+        let native = Sha1::digest(Sha1::digest(password)).to_vec();
+        let key = pintail_meta::ApiKeyRecord {
+            caching_sha2_password_hash: Some(caching),
+            mysql_native_password_hash: None,
+            ..stub_query_key()
+        };
+        assert!(wire_key_matches_cleartext(&key, password));
+        assert!(!wire_key_matches_cleartext(&key, b"wrong"));
+        let key = pintail_meta::ApiKeyRecord {
+            caching_sha2_password_hash: None,
+            mysql_native_password_hash: Some(native),
+            ..stub_query_key()
+        };
+        assert!(wire_key_matches_cleartext(&key, password));
+        let key = pintail_meta::ApiKeyRecord {
+            enabled: false,
+            ..stub_query_key()
+        };
+        assert!(!wire_key_matches_cleartext(&key, password));
+    }
+
+    #[test]
+    fn kill_query_cancels_only_registered_connections() {
+        let cancellation = pintail_exec::ExecutionCancellation::new();
+        {
+            let _guard = RunningQueryGuard::register(913, &cancellation);
+            assert!(kill_query(913));
+        }
+        // The guard dropped with the statement: the id is gone.
+        assert!(!kill_query(913));
+        assert!(!kill_query(914));
     }
 
     #[test]

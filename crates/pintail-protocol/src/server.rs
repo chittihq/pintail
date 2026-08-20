@@ -88,6 +88,27 @@ pub trait Handler: Send + Sync {
     /// produces an access-denied error and closes the connection.
     async fn authenticate(&mut self, response: &HandshakeResponse, scramble: &[u8]) -> bool;
 
+    /// The PEM-encoded RSA public key served to a `caching_sha2_password`
+    /// client that requests it during full authentication; `None` disables
+    /// the RSA leg of the exchange.
+    fn full_auth_public_key(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Decrypts one RSA-encrypted full-authentication password blob.
+    /// Returns the scramble-XORed plaintext, or `None` when decryption
+    /// fails or is unsupported.
+    fn decrypt_full_auth_password(&self, encrypted: &[u8]) -> Option<Vec<u8>> {
+        let _ = encrypted;
+        None
+    }
+
+    /// Verifies a cleartext password recovered by full authentication.
+    fn authenticate_cleartext(&mut self, username: &[u8], password: &[u8]) -> bool {
+        let _ = (username, password);
+        false
+    }
+
     /// Runs a text-protocol statement.
     async fn query(&mut self, sql: &[u8]) -> Response;
 
@@ -272,17 +293,79 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             let ok = encode_ok(OkPacket::default(), "");
             self.writer.write_payload(&ok).await?;
             self.writer.flush().await?;
-            Ok(response)
-        } else {
-            self.writer.set_sequence(self.reader.sequence());
-            let denied = encode_error(ErrorKind::ErAccessDeniedError, "access denied");
-            self.writer.write_payload(&denied).await?;
-            self.writer.flush().await?;
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "authentication failed",
-            ))
+            return Ok(response);
         }
+        // caching_sha2_password's full authentication: the fast path found
+        // no matching cached verifier, so ask the client for the password
+        // itself - sent cleartext when the client trusts its transport, or
+        // RSA-encrypted toward our public key otherwise.
+        if response.auth_plugin.as_deref() == Some(b"caching_sha2_password")
+            && let Some(password) = self.full_authentication_password(handler, scramble).await?
+            && handler.authenticate_cleartext(&response.username, &password)
+        {
+            self.writer.set_sequence(self.reader.sequence());
+            let ok = encode_ok(OkPacket::default(), "");
+            self.writer.write_payload(&ok).await?;
+            self.writer.flush().await?;
+            return Ok(response);
+        }
+        self.writer.set_sequence(self.reader.sequence());
+        let denied = encode_error(ErrorKind::ErAccessDeniedError, "access denied");
+        self.writer.write_payload(&denied).await?;
+        self.writer.flush().await?;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "authentication failed",
+        ))
+    }
+
+    /// Runs the full-authentication continuation and returns the recovered
+    /// cleartext password, or `None` when the exchange cannot complete.
+    async fn full_authentication_password(
+        &mut self,
+        handler: &mut dyn Handler,
+        scramble: &[u8],
+    ) -> std::io::Result<Option<Vec<u8>>> {
+        self.writer.set_sequence(self.reader.sequence());
+        // 0x01: auth-more-data; 0x04: perform_full_authentication.
+        self.writer.write_payload(&[0x01, 0x04]).await?;
+        self.writer.flush().await?;
+        let Some(payload) = self.reader.next_payload().await? else {
+            return Ok(None);
+        };
+        let mut password = if payload.as_slice() == [0x02] {
+            // The client asked for our RSA public key.
+            let Some(pem) = handler.full_auth_public_key() else {
+                return Ok(None);
+            };
+            self.writer.set_sequence(self.reader.sequence());
+            let mut key_packet = Vec::with_capacity(pem.len() + 1);
+            key_packet.push(0x01);
+            key_packet.extend_from_slice(&pem);
+            self.writer.write_payload(&key_packet).await?;
+            self.writer.flush().await?;
+            let Some(encrypted) = self.reader.next_payload().await? else {
+                return Ok(None);
+            };
+            let Some(mut decrypted) = handler.decrypt_full_auth_password(&encrypted) else {
+                return Ok(None);
+            };
+            // The client XORs the NUL-terminated password with the
+            // scramble before encrypting; undo that here.
+            if !scramble.is_empty() {
+                for (index, byte) in decrypted.iter_mut().enumerate() {
+                    *byte ^= scramble[index % scramble.len()];
+                }
+            }
+            decrypted
+        } else {
+            // Cleartext, sent when the client's transport is secure.
+            payload
+        };
+        if password.last() == Some(&0) {
+            password.pop();
+        }
+        Ok(Some(password))
     }
 
     /// Runs the opening handshake over one plaintext or already-upgraded
@@ -674,6 +757,133 @@ mod tests {
             payload.extend_from_slice(b"mysql_native_password\0");
         }
         payload
+    }
+
+    /// A handler whose fast path always refuses, driving the
+    /// `caching_sha2_password` full-authentication continuation.
+    struct FullAuthFixture {
+        expected_password: Vec<u8>,
+        rsa: Option<rsa::RsaPrivateKey>,
+        accepted: bool,
+    }
+
+    #[async_trait]
+    impl Handler for FullAuthFixture {
+        async fn authenticate(&mut self, _: &HandshakeResponse, _: &[u8]) -> bool {
+            false
+        }
+
+        fn full_auth_public_key(&self) -> Option<Vec<u8>> {
+            let private = self.rsa.as_ref()?;
+            rsa::pkcs8::EncodePublicKey::to_public_key_pem(
+                &private.to_public_key(),
+                rsa::pkcs8::LineEnding::LF,
+            )
+            .ok()
+            .map(String::into_bytes)
+        }
+
+        fn decrypt_full_auth_password(&self, encrypted: &[u8]) -> Option<Vec<u8>> {
+            self.rsa
+                .as_ref()?
+                .decrypt(rsa::Oaep::new::<sha1::Sha1>(), encrypted)
+                .ok()
+        }
+
+        fn authenticate_cleartext(&mut self, _: &[u8], password: &[u8]) -> bool {
+            self.accepted = password == self.expected_password.as_slice();
+            self.accepted
+        }
+
+        async fn query(&mut self, _: &[u8]) -> Response {
+            Response::Ok(OkPacket::default(), String::new())
+        }
+
+        async fn prepare(&mut self, _: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
+            Err((ErrorKind::ErUnknownError, String::new()))
+        }
+
+        async fn execute(&mut self, _: u32, _: &[u8]) -> Response {
+            Response::Ok(OkPacket::default(), String::new())
+        }
+
+        async fn close_statement(&mut self, _: u32) {}
+
+        async fn init_database(&mut self, _: &[u8]) -> Result<(), (ErrorKind, String)> {
+            Ok(())
+        }
+    }
+
+    fn caching_sha2_response() -> Vec<u8> {
+        let capabilities =
+            CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_PLUGIN_AUTH;
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&capabilities.bits().to_le_bytes());
+        payload.extend_from_slice(&16_777_216_u32.to_le_bytes());
+        payload.push(255);
+        payload.extend_from_slice(&[0_u8; 23]);
+        payload.extend_from_slice(b"analytics\0");
+        payload.push(32);
+        payload.extend_from_slice(&[0_u8; 32]);
+        payload.extend_from_slice(b"caching_sha2_password\0");
+        payload
+    }
+
+    #[tokio::test]
+    async fn full_authentication_accepts_a_cleartext_password() {
+        let mut input = packet(1, &caching_sha2_response());
+        input.extend_from_slice(&packet(3, b"pw-secret\0"));
+        let mut output = Vec::new();
+        let mut handler = FullAuthFixture {
+            expected_password: b"pw-secret".to_vec(),
+            rsa: None,
+            accepted: false,
+        };
+        let mut connection = Connection::new(input.as_slice(), &mut output);
+        connection
+            .handshake(&mut handler, [7_u8; SCRAMBLE_SIZE])
+            .await
+            .expect("full auth succeeds");
+        assert!(handler.accepted);
+        // Greeting, perform-full-authentication, then OK.
+        let mut reader = PacketReader::new(output.as_slice());
+        let _greeting = reader.next_payload().await.expect("io").expect("greeting");
+        let more = reader.next_payload().await.expect("io").expect("more data");
+        assert_eq!(more, vec![0x01, 0x04]);
+        let ok = reader.next_payload().await.expect("io").expect("ok");
+        assert_eq!(ok[0], 0x00);
+    }
+
+    #[tokio::test]
+    async fn full_authentication_serves_the_rsa_leg() {
+        let mut rng = rand_core06::OsRng;
+        let private = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("test keypair");
+        let public = private.to_public_key();
+        let scramble = [7_u8; SCRAMBLE_SIZE];
+        // The client XORs the NUL-terminated password with the scramble
+        // and encrypts toward the server's key.
+        let mut plaintext = b"pw-secret\0".to_vec();
+        for (index, byte) in plaintext.iter_mut().enumerate() {
+            *byte ^= scramble[index % scramble.len()];
+        }
+        let encrypted = public
+            .encrypt(&mut rng, rsa::Oaep::new::<sha1::Sha1>(), &plaintext)
+            .expect("encrypt");
+        let mut input = packet(1, &caching_sha2_response());
+        input.extend_from_slice(&packet(3, &[0x02]));
+        input.extend_from_slice(&packet(5, &encrypted));
+        let mut output = Vec::new();
+        let mut handler = FullAuthFixture {
+            expected_password: b"pw-secret".to_vec(),
+            rsa: Some(private),
+            accepted: false,
+        };
+        let mut connection = Connection::new(input.as_slice(), &mut output);
+        connection
+            .handshake(&mut handler, scramble)
+            .await
+            .expect("rsa full auth succeeds");
+        assert!(handler.accepted);
     }
 
     /// Frames a payload as one packet with the given sequence.
