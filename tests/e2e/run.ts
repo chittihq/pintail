@@ -19,7 +19,7 @@
 ///           E2E_PHASES=crud,ddl ...   (subset while iterating)
 
 import { createServer } from 'node:net'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
@@ -545,6 +545,20 @@ async function waitForState(database: string, wanted: string, timeoutMs: number)
 }
 
 async function phaseSeed() {
+  // Chitti's conformance seed, vendored: case variants, trailing spaces,
+  // mixed collations per column, an ENUM declared out of alphabetical
+  // order, NULL join keys, a dangling FK alias, and timestamp ties - the
+  // classes real parity bugs lived in. Loaded into the corpus schema with
+  // its own DATABASE header stripped.
+  const conformance = readFileSync(
+    join(import.meta.dir, '..', 'corpus', 'conformance', 'seed.sql'),
+    'utf8',
+  )
+    .split('\n')
+    .filter((line) => !/^(DROP DATABASE|CREATE DATABASE|USE )/.test(line))
+    .join('\n')
+  await mysqlConnection!.query(conformance)
+
   // Self-referential fixture, shaped for the alias-misattribution class: a
   // table read through two aliases at once (created_by/updated_by), where
   // every wrong resolution is VISIBLE. created_by and updated_by differ on

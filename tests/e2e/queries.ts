@@ -22,6 +22,71 @@ export interface DifferentialQuery {
 }
 
 export const differentialQueries: DifferentialQuery[] = [
+  // conformance: Chitti's adversarial seed, exercised by design intent.
+  {
+    name: 'conformance: triple-alias person join with a dangling FK',
+    sql:
+      'SELECT f.factId, c.name AS created_by, u.name AS updated_by, o.name AS owned_by ' +
+      'FROM Fact f LEFT JOIN Person c ON c.personId = f.createdBy ' +
+      'LEFT JOIN Person u ON u.personId = f.updatedBy ' +
+      'LEFT JOIN Person o ON o.personId = f.ownedBy ORDER BY f.factId',
+    tables: ['Fact', 'Person'],
+  },
+  {
+    name: 'conformance: mixed-collation double grouping',
+    sql:
+      'SELECT d.code, d.label, COUNT(*) AS n, ROUND(SUM(f.amount), 2) AS total ' +
+      'FROM Dim d JOIN Fact f ON f.dimId = d.dimId ' +
+      'GROUP BY d.code, d.label ORDER BY d.code, d.label, n',
+    tables: ['Dim', 'Fact'],
+  },
+  {
+    name: 'conformance: enum ordinal ordering disagrees with labels',
+    sql: 'SELECT dimId, status FROM Dim ORDER BY status, dimId',
+    tables: ['Dim'],
+  },
+  {
+    name: 'conformance: trailing-space grouping under PAD semantics',
+    sql: 'SELECT padded, COUNT(*) AS n FROM Dim GROUP BY padded ORDER BY padded, n',
+    tables: ['Dim'],
+  },
+  {
+    name: 'conformance: case-variant code grouping',
+    sql: 'SELECT code, COUNT(*) AS n FROM Fact GROUP BY code ORDER BY code, n',
+    tables: ['Fact'],
+  },
+  {
+    name: 'conformance: anti-join finds the event-less dimension',
+    sql:
+      'SELECT d.dimId FROM Dim d LEFT JOIN Event e ON e.dimId = d.dimId ' +
+      'WHERE e.eventId IS NULL ORDER BY d.dimId',
+    tables: ['Dim', 'Event'],
+  },
+  {
+    name: 'conformance: nullable join key NULL-extends',
+    sql:
+      'SELECT f.factId, d.code FROM Fact f LEFT JOIN Dim d ON d.dimId = f.nullableDimId ' +
+      'ORDER BY f.factId',
+    tables: ['Fact', 'Dim'],
+  },
+  {
+    name: 'conformance: timestamp ties page deterministically with a tiebreaker',
+    sql: 'SELECT factId, createdAt FROM Fact ORDER BY createdAt DESC, factId DESC LIMIT 5',
+    tables: ['Fact'],
+  },
+  {
+    name: 'conformance: date bucketing over the fact table',
+    sql:
+      'SELECT DATE(createdAt) AS d, COUNT(*) AS n, ROUND(SUM(amount), 2) AS total ' +
+      'FROM Fact GROUP BY DATE(createdAt) ORDER BY d',
+    tables: ['Fact'],
+  },
+  {
+    name: 'conformance: decimal aggregate spanning negatives and zero',
+    sql:
+      'SELECT ROUND(SUM(amount), 2), ROUND(MIN(amount), 2), ROUND(MAX(amount), 2), COUNT(*) FROM Fact',
+    tables: ['Fact'],
+  },
   {
     name: 'point lookup by key',
     sql: 'SELECT id, name, email, tier, balance FROM customers WHERE id = 7',
