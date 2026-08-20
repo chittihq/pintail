@@ -226,3 +226,24 @@ fn ordering_by_a_group_key_alias_is_byte_wise() {
         ]
     );
 }
+
+#[test]
+fn one_binary_operand_forces_byte_comparison() {
+    let rows = run("SELECT 'a' = BINARY 'A', BINARY 'A' = 'a', 'a' = BINARY 'a', 'b' > BINARY 'a'");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "0".to_owned(),
+            "0".to_owned(),
+            "1".to_owned(),
+            "1".to_owned()
+        ]]
+    );
+}
+
+#[test]
+fn binary_forces_byte_comparison_in_a_filter() {
+    let rows = run("SELECT COUNT(*) FROM orders \
+         WHERE BINARY JSON_UNQUOTE(JSON_EXTRACT(meta,'$.tags[0]')) = 'premium'");
+    assert_eq!(rows, vec![vec!["2".to_owned()]]);
+}

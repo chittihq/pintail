@@ -4227,6 +4227,11 @@ pub(crate) fn compare_mysql(
             Ok(compare_utf8_mysql(left, right, collation))
         }
         (Value::Binary(left), Value::Binary(right)) => Ok(left.cmp(right)),
+        // One binary operand forces the WHOLE comparison binary, as in
+        // MySQL: 'a' = BINARY 'A' is a byte comparison (NO PAD), not the
+        // numeric coercion the untyped fallback would apply.
+        (Value::Utf8(text), Value::Binary(bytes)) => Ok(text.as_bytes().cmp(bytes.as_slice())),
+        (Value::Binary(bytes), Value::Utf8(text)) => Ok(bytes.as_slice().cmp(text.as_bytes())),
         (Value::Boolean(left), Value::Boolean(right)) => Ok(left.cmp(right)),
         (Value::Int64(left), Value::Int64(right)) => Ok(left.cmp(right)),
         (Value::UInt64(left), Value::UInt64(right)) => Ok(left.cmp(right)),
