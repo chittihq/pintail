@@ -1841,6 +1841,7 @@ fn decode_row_pair(
                     row: StoredRow::new(key, values, version, false),
                 }],
                 maximum_bytes,
+                position.ordinal_budget(),
             )
         }
         (Some(before), None) => {
@@ -1864,6 +1865,7 @@ fn decode_row_pair(
                     ),
                 }],
                 maximum_bytes,
+                position.ordinal_budget(),
             )
         }
         (Some(before), Some(after)) => {
@@ -1904,7 +1906,7 @@ fn decode_row_pair(
                     false,
                 ),
             });
-            push_mutations(pending, mutations, maximum_bytes)
+            push_mutations(pending, mutations, maximum_bytes, position.ordinal_budget())
         }
         (None, None) => Err(CdcError::Decode(
             "row event contains neither before nor after image".to_owned(),
@@ -1916,6 +1918,7 @@ fn push_mutations(
     pending: &mut PendingTransaction,
     mutations: Vec<PendingMutation>,
     maximum_bytes: usize,
+    ordinal_budget: u32,
 ) -> Result<(), CdcError> {
     let mutation_count = u32::try_from(mutations.len())
         .map_err(|error| CdcError::Decode(format!("mutation count conversion failed: {error}")))?;
@@ -1923,10 +1926,13 @@ fn push_mutations(
         .ordinal
         .checked_add(mutation_count)
         .ok_or_else(|| CdcError::Decode("mutation ordinal overflowed".to_owned()))?;
-    if next_ordinal > u32::from(u16::MAX) {
-        return Err(CdcError::Decode(
-            "one source transaction exceeds 65,535 row mutations".to_owned(),
-        ));
+    // This gate fired at u16::MAX regardless of mode even after the GTID
+    // version layout grew its 24-bit ordinal - the browser soak's 65,536-row
+    // transaction quarantined HERE while version() stood ready to encode it.
+    if next_ordinal > ordinal_budget {
+        return Err(CdcError::Decode(format!(
+            "one source transaction exceeds {ordinal_budget} row mutations"
+        )));
     }
     let added_bytes = mutations.iter().fold(0_usize, |bytes, mutation| {
         bytes
@@ -2160,17 +2166,49 @@ impl StreamPosition {
         Ok(request)
     }
 
+    /// How many row mutations one source transaction may carry: 24 ordinal
+    /// bits under GTID, 16 under file-position, matching the version layout.
+    fn ordinal_budget(&self) -> u32 {
+        match self.kind {
+            PositionKind::MysqlGtid => 0xFF_FFFF,
+            PositionKind::FilePosition => 0xFFFF,
+        }
+    }
+
     fn version(&self, event_position: u64, ordinal: u32) -> Result<u64, CdcError> {
-        let ordinal = u16::try_from(ordinal + 1).map_err(|_| {
-            CdcError::Decode("one source transaction exceeds 65,535 row mutations".to_owned())
-        })?;
         if let Some(gtid) = &self.pending_gtid {
+            // 24 ordinal bits, not 16. A production backfill routinely
+            // commits hundreds of thousands of rows in one transaction, and
+            // the old 65,535-mutation budget quarantined the table the first
+            // time one arrived - measured by the browser soak at its very
+            // first 256k-row batch. Growing the ordinal is upgrade-safe
+            // because GTID sequences only increase: for any seq2 > seq1,
+            // seq2 << 24 exceeds seq1 << 16, so every new version stays
+            // above every stored one; and a transaction applies atomically
+            // at commit, so no single transaction ever spans encodings.
+            // 40 bits of sequence remain - a trillion transactions.
+            let ordinal = u64::from(ordinal) + 1;
+            if ordinal > 0xFF_FFFF {
+                return Err(CdcError::Decode(
+                    "one source transaction exceeds 16,777,215 row mutations".to_owned(),
+                ));
+            }
             return gtid
                 .sequence
-                .checked_shl(16)
-                .and_then(|base| base.checked_add(u64::from(ordinal)))
+                .checked_shl(24)
+                .and_then(|base| base.checked_add(ordinal))
                 .ok_or_else(|| CdcError::Decode("GTID version exceeds UInt64".to_owned()));
         }
+        // File-position mode has no spare bits: 16 for the file index, 32
+        // for the byte position, 16 for the ordinal. The budget stays at
+        // 65,535 mutations per transaction there - recorded in
+        // docs/limitations.md; GTID mode is the fix.
+        let ordinal = u16::try_from(ordinal + 1).map_err(|_| {
+            CdcError::Decode(
+                "one source transaction exceeds 65,535 row mutations                  (file-position mode; GTID mode raises the budget to 16,777,215)"
+                    .to_owned(),
+            )
+        })?;
         let file_index = self
             .file
             .rsplit_once('.')
@@ -2258,6 +2296,48 @@ mod tests {
             position.version(200, 3).expect("deterministic")
         );
         assert_ne!(generated_server_id("a"), 0);
+    }
+
+    #[test]
+    fn gtid_versions_carry_backfill_sized_transactions() {
+        let mut position = StreamPosition::from_checkpoint(
+            SnapshotCheckpointRecord {
+                kind: "gtid".to_owned(),
+                gtid_set: Some("3E11FA47-71CA-11E1-9E33-C80AA9429562:1-4".to_owned()),
+                binlog_file: Some("mysql-bin.000002".to_owned()),
+                binlog_pos: Some(4),
+            },
+            SourceFlavor::Mysql,
+        )
+        .expect("position");
+        position.pending_gtid = Some(super::GtidIdentity {
+            sid: [7; 16],
+            tag: None,
+            sequence: 5,
+        });
+        // The soak's first 256k-row backfill batch quarantined its table
+        // under the old 65,535-mutation budget; that size must encode.
+        position
+            .version(200, 256_000)
+            .expect("a 256k-row transaction encodes");
+        assert!(
+            position.version(200, 100_000).expect("low")
+                < position.version(200, 100_001).expect("high")
+        );
+        // The 24-bit budget still refuses the truly absurd, by name.
+        let refusal = position.version(200, 0xFF_FFFF).expect_err("over budget");
+        assert!(refusal.to_string().contains("16,777,215"));
+
+        // Upgrade safety: any later transaction's version under the 24-bit
+        // layout exceeds any earlier one stored under the old 16-bit layout,
+        // because GTID sequences only increase.
+        let old_layout_ceiling = (5_u64 << 16) | 0xFFFF;
+        position.pending_gtid = Some(super::GtidIdentity {
+            sid: [7; 16],
+            tag: None,
+            sequence: 6,
+        });
+        assert!(position.version(200, 0).expect("next transaction") > old_layout_ceiling);
     }
 
     #[test]
@@ -2418,6 +2498,7 @@ mod tests {
                 row: row.clone(),
             }],
             1,
+            0xFFFF,
         )
         .expect("spill mutation");
 

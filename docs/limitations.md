@@ -461,3 +461,10 @@ but may be wrong.
   does). Pintail's decimal columns carry one canonical text scale per
   COLUMN, regenerated whenever a batch is repacked, so a per-VALUE scale
   does not survive execution. Numerically the answers are equal.
+
+- One source transaction may carry at most 16,777,215 row mutations in GTID
+  mode, and 65,535 in file-position mode - the per-transaction ordinal is
+  encoded into the 64-bit row version (24 bits under GTID, 16 under
+  file-position, where the file index and byte position leave no spare
+  bits). A larger transaction quarantines its table to needs_resync; a
+  per-table resync captures the data and recovers.
