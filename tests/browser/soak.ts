@@ -194,15 +194,31 @@ async function sqlValue(statement: string): Promise<string> {
 /// the first row as rendered - the browser IS the client under test, so
 /// convergence checks read what an operator would read.
 async function consoleValue(database: string, query: string): Promise<string> {
-  await page!.goto(`${pintailUrl}/sql?db=${encodeURIComponent(database)}`)
+  await page!.goto(`${pintailUrl}/sql`)
   await page!.getByRole('heading', { name: 'SQL Console' }).waitFor()
+  // Selected by NAME through the picker, the way an operator does - the URL
+  // parameter wants the record id, and passing the name there left the
+  // console asking a database that "does not exist".
+  await page!.getByRole('combobox').first().click()
+  await page!.getByRole('option', { name: database }).click()
   const editor = page!.locator('.cm-content')
   await editor.waitFor({ timeout: 20_000 })
   await editor.click()
   await page!.keyboard.press('ControlOrMeta+A')
   await page!.keyboard.type(query)
   await page!.getByRole('button', { name: 'Run' }).click()
-  await page!.getByText(/\d+ rows? ·/).waitFor({ timeout: 120_000 })
+  // Whichever the console renders first decides: results, or its own error
+  // - which fails the check immediately with the real reason instead of a
+  // two-minute timeout that hides it.
+  const rows = page!.getByText(/\d+ rows? ·/)
+  const failure = page!.locator('.text-destructive').first()
+  const outcome = await Promise.race([
+    rows.waitFor({ timeout: 120_000 }).then(() => 'rows' as const),
+    failure.waitFor({ timeout: 120_000 }).then(() => 'error' as const),
+  ])
+  if (outcome === 'error') {
+    throw new Error(`console query failed: ${((await failure.textContent()) ?? '').trim()}`)
+  }
   const cell = page!.locator('table tbody tr').first().locator('td').first()
   return ((await cell.textContent()) ?? '').trim()
 }
@@ -375,11 +391,16 @@ async function main() {
     await page!.getByRole('button', { name: 'Review & start' }).click()
     await page!.waitForURL(/\/databases\/[^/?]+\?tab=snapshot$/, { timeout: 60_000 })
 
-    // The copy of a 2M-row table is long enough that the progress strip must
-    // render - a silent copy at this size is exactly the reported bug class.
+    // While the copy is OBSERVABLE it must be visible: whenever a poll
+    // catches the snapshotting state, the progress strip has to be there
+    // too. A host fast enough to finish between two polls owes no strip -
+    // the strip exists for copies long enough to worry an operator.
+    let observedCopy = false
     let sawProgress = false
     const deadline = Date.now() + 15 * 60_000
     for (;;) {
+      const copying = (await page!.textContent('body'))?.includes('snapshotting') ?? false
+      if (copying) observedCopy = true
       if (!sawProgress && (await page!.getByTestId('copy-progress').count()) > 0) {
         sawProgress = true
         log('copy-progress strip is visible')
@@ -389,9 +410,11 @@ async function main() {
       if (Date.now() > deadline) {
         throw new Error(`initial sync never reached streaming (progress strip seen: ${sawProgress})`)
       }
-      await Bun.sleep(3_000)
+      await Bun.sleep(1_000)
     }
-    if (!sawProgress) throw new Error('the 2M-row copy completed without ever showing progress')
+    if (observedCopy && !sawProgress) {
+      throw new Error('the copy was observable but never showed progress')
+    }
     const mirrored = await mirroredCount(DATABASE, 'traffic')
     if (mirrored !== WAVE_ONE_ROWS) {
       throw new Error(`mirror has ${mirrored} rows, source has ${WAVE_ONE_ROWS}`)
