@@ -280,6 +280,7 @@ pub(super) fn build_set_operation(
 pub(super) fn build_distinct(
     input: &mut PullOperator,
     column_types: &[DataType],
+    key_collations: &[Option<String>],
     memory: &MemoryTracker,
     collation: Collation,
 ) -> Result<DistinctRows, ExecError> {
@@ -291,7 +292,17 @@ pub(super) fn build_distinct(
             ascending: true,
             nulls_first: true,
             decimal: matches!(data_type, DataType::Decimal { .. }),
-            collation: None,
+            // The projection's own coercibility-ladder collation, so a
+            // JSON-text column dedupes case-sensitively (utf8mb4_bin) even
+            // when the plan default is case-insensitive.
+            collation: key_collations
+                .get(index)
+                .and_then(|name| name.as_deref())
+                .and_then(|name| {
+                    pintail_sql::SUPPORTED_TEXT_COLLATIONS
+                        .into_iter()
+                        .find(|supported| *supported == name)
+                }),
         })
         .collect::<Vec<_>>();
     let sorted = build_sort(input, &keys, None, None, memory, collation)?;

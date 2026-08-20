@@ -277,7 +277,7 @@ fn write_plan(
             )?;
             write_plan(input, depth + 1, output, provider)
         }
-        PhysicalPlan::Distinct { input } => {
+        PhysicalPlan::Distinct { input, .. } => {
             writeln!(output, "Distinct")?;
             write_plan(input, depth + 1, output, provider)
         }

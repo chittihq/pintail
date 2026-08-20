@@ -135,6 +135,11 @@ pub enum LogicalPlan {
     Distinct {
         /// Input relation.
         input: Box<LogicalPlan>,
+        /// Per projected column: the collation its values dedupe under, from
+        /// the expression's own coercibility ladder (a JSON-text projection
+        /// dedupes case-sensitively under `utf8mb4_bin` even in an `ai_ci`
+        /// session). `None` falls back to the plan collation.
+        key_collations: Vec<Option<String>>,
     },
     /// Ordered result rows.
     Sort {
@@ -188,7 +193,7 @@ impl LogicalPlan {
             Self::Derived { input, .. }
             | Self::Filter { input, .. }
             | Self::Window { input, .. }
-            | Self::Distinct { input }
+            | Self::Distinct { input, .. }
             | Self::Project { input, .. }
             | Self::Aggregate { input, .. }
             | Self::Sort { input, .. } => input.estimated_rows(),
@@ -277,6 +282,14 @@ impl LogicalPlanner {
                 outputs,
             };
         }
+        let key_collations: Vec<Option<String>> = if distinct {
+            projection
+                .iter()
+                .map(|expression| expression.expr.result_collation())
+                .collect()
+        } else {
+            Vec::new()
+        };
         plan = LogicalPlan::Project {
             input: Box::new(plan),
             expressions: projection,
@@ -284,6 +297,7 @@ impl LogicalPlanner {
         if distinct {
             plan = LogicalPlan::Distinct {
                 input: Box::new(plan),
+                key_collations,
             };
         }
         if !union_all.is_empty() {
@@ -294,8 +308,11 @@ impl LogicalPlanner {
             // MySQL's plain UNION deduplicates the whole left-associative
             // chain; the existing Distinct node provides exactly that.
             if union_distinct {
+                // A UNION chain's branches may disagree per column; the plan
+                // collation stays the arbiter there.
                 plan = LogicalPlan::Distinct {
                     input: Box::new(plan),
+                    key_collations: Vec::new(),
                 };
             }
         }

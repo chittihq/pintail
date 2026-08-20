@@ -19,7 +19,7 @@ pub use bound::{
     BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
     BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
-    IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
+    IntervalUnit, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp, WindowFunction,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{

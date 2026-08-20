@@ -140,7 +140,11 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(push_aggregates_through_identity_joins(*input)),
             expressions,
         },
-        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+        LogicalPlan::Distinct {
+            input,
+            key_collations,
+        } => LogicalPlan::Distinct {
+            key_collations,
             input: Box::new(push_aggregates_through_identity_joins(*input)),
         },
         LogicalPlan::Window {
@@ -284,7 +288,11 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(replace_metadata_counts(*input)),
             expressions,
         },
-        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+        LogicalPlan::Distinct {
+            input,
+            key_collations,
+        } => LogicalPlan::Distinct {
+            key_collations,
             input: Box::new(replace_metadata_counts(*input)),
         },
         LogicalPlan::Window {
@@ -395,7 +403,11 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
                 })
                 .collect(),
         },
-        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+        LogicalPlan::Distinct {
+            input,
+            key_collations,
+        } => LogicalPlan::Distinct {
+            key_collations,
             input: Box::new(fold_constants(*input)),
         },
         LogicalPlan::Window {
@@ -644,6 +656,7 @@ fn literal_truth(expr: &BoundExpr) -> Option<bool> {
     mysql_truth(value).ok().map(|value| value.unwrap_or(false))
 }
 
+#[allow(clippy::too_many_lines)] // structural walk, one arm per plan node
 fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
     match plan {
         LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
@@ -721,7 +734,11 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             group_by,
             aggregates,
         },
-        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+        LogicalPlan::Distinct {
+            input,
+            key_collations,
+        } => LogicalPlan::Distinct {
+            key_collations,
             input: Box::new(push_predicates(*input)),
         },
         LogicalPlan::Window {
@@ -858,7 +875,7 @@ fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => contains_table(input, table),
         LogicalPlan::Empty | LogicalPlan::OneRow => false,
@@ -1101,7 +1118,11 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(reorder_cross_joins(*input)),
             expressions,
         },
-        LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
+        LogicalPlan::Distinct {
+            input,
+            key_collations,
+        } => LogicalPlan::Distinct {
+            key_collations,
             input: Box::new(reorder_cross_joins(*input)),
         },
         LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
@@ -1218,7 +1239,7 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             }
             collect_plan_columns(input, required);
         }
-        LogicalPlan::Distinct { input }
+        LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => {
             collect_plan_columns(input, required);
@@ -1256,7 +1277,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Window { input, .. }
         | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => prune_scan_columns(input, required),
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
@@ -1286,7 +1307,7 @@ fn push_limits(plan: &mut LogicalPlan) {
         LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Window { input, .. }
         | LogicalPlan::Aggregate { input, .. } => push_limits(input),
@@ -1640,7 +1661,7 @@ mod tests {
         let LogicalPlan::Limit { input, .. } = plan else {
             panic!("limit");
         };
-        let LogicalPlan::Distinct { input } = *input else {
+        let LogicalPlan::Distinct { input, .. } = *input else {
             panic!("distinct");
         };
         let LogicalPlan::Project { input, .. } = *input else {

@@ -284,6 +284,9 @@ pub enum PhysicalPlan {
     Distinct {
         /// Input operator.
         input: Box<Self>,
+        /// Per projected column: the collation it dedupes under; `None`
+        /// falls back to the plan collation.
+        key_collations: Vec<Option<String>>,
     },
     /// Materialized full or top-K result sort.
     Sort {
@@ -341,7 +344,7 @@ impl PhysicalPlan {
             Self::SetOp { left: input, .. }
             | Self::Recursive { anchor: input, .. }
             | Self::Filter { input, .. }
-            | Self::Distinct { input }
+            | Self::Distinct { input, .. }
             | Self::Limit { input, .. } => input.output_fields(),
             Self::Sort { input, trim, .. } => {
                 let mut fields = input.output_fields();
@@ -531,8 +534,12 @@ impl PhysicalPlanner {
                     .map(|input| Self::plan(input, collation))
                     .collect::<Result<Vec<_>, _>>()?,
             }),
-            LogicalPlan::Distinct { input } => Ok(PhysicalPlan::Distinct {
+            LogicalPlan::Distinct {
+                input,
+                key_collations,
+            } => Ok(PhysicalPlan::Distinct {
                 input: Box::new(Self::plan(*input, collation)?),
+                key_collations,
             }),
             LogicalPlan::Window {
                 input,
@@ -923,7 +930,7 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<RelationKey>
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Window { input, .. }
         | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => collect_logical_tables(input, tables),
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
@@ -1453,7 +1460,7 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
             bytes.saturating_add(bound_regex_memory_upper_bound(expression))
         }),
         PhysicalPlan::Derived { input, .. }
-        | PhysicalPlan::Distinct { input }
+        | PhysicalPlan::Distinct { input, .. }
         | PhysicalPlan::Sort { input, .. }
         | PhysicalPlan::Limit { input, .. } => nested(input),
         PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => inputs
@@ -1642,7 +1649,7 @@ fn resolve_plan_subqueries(
             }
         }
         PhysicalPlan::Derived { input, .. }
-        | PhysicalPlan::Distinct { input }
+        | PhysicalPlan::Distinct { input, .. }
         | PhysicalPlan::Sort { input, .. }
         | PhysicalPlan::Limit { input, .. } => {
             resolve_plan_subqueries(
@@ -2652,8 +2659,11 @@ enum PullOperator {
         input: Box<Self>,
         column_types: Vec<DataType>,
         state: Option<DistinctRows>,
-        /// The plan's collation: DISTINCT decides row identity.
+        /// The plan's collation: DISTINCT decides row identity for keys
+        /// without one of their own.
         collation: Collation,
+        /// Per projected column, from the expression's coercibility ladder.
+        key_collations: Vec<Option<String>>,
     },
     SetOp {
         left: Option<Box<Self>>,
@@ -3004,9 +3014,16 @@ impl PullOperator {
                 column_types,
                 state,
                 collation,
+                key_collations,
             } => {
                 if state.is_none() {
-                    *state = Some(build_distinct(input, column_types, memory, *collation)?);
+                    *state = Some(build_distinct(
+                        input,
+                        column_types,
+                        key_collations,
+                        memory,
+                        *collation,
+                    )?);
                 }
                 state
                     .as_mut()
@@ -3618,7 +3635,10 @@ fn build_operator(
                 columns,
             ))
         }
-        PhysicalPlan::Distinct { input } => {
+        PhysicalPlan::Distinct {
+            input,
+            key_collations,
+        } => {
             let column_types = input
                 .output_fields()
                 .into_iter()
@@ -3631,6 +3651,7 @@ fn build_operator(
                     column_types,
                     state: None,
                     collation,
+                    key_collations,
                 },
                 columns,
             ))
