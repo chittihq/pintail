@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1060;
+const EXPECTED_CASES: usize = 1063;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1068,6 +1068,31 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "json comparison",
             "SELECT COUNT(DISTINCT JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n')) \
              FROM events",
+        ),
+        // JSON path wildcards, recursive descent, ranges, last-relative
+        // indexes, and the non-array autowrap rules.
+        ordered(
+            "json path wildcards",
+            "SELECT JSON_EXTRACT('{\"b\":2,\"aa\":1}','$.*'), \
+                    JSON_EXTRACT('[1,2,3]','$[*]'), \
+                    JSON_EXTRACT('{\"a\":{\"b\":1},\"c\":{\"b\":2}}','$**.b'), \
+                    JSON_EXTRACT('[1,2,3,4]','$[1 to 2]'), \
+                    JSON_EXTRACT('[1,2,3,4]','$[last-2 to last]')",
+        ),
+        ordered(
+            "json path wildcards",
+            "SELECT JSON_EXTRACT('[1,2,3]','$[last]'), \
+                    JSON_EXTRACT('[1,2,3]','$[last-1]'), \
+                    JSON_EXTRACT('3','$[0]'), \
+                    JSON_EXTRACT('{\"a\":1}','$[*]'), \
+                    JSON_EXTRACT('{}','$.*') IS NULL",
+        ),
+        ordered(
+            "json path wildcards",
+            "SELECT JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','one','$**.b'), \
+                    JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','all','$**.b','$.a.*'), \
+                    JSON_CONTAINS_PATH('{\"a\":1}','one','$**.zz'), \
+                    JSON_EXTRACT('{\"a\":[{\"b\":1},{\"b\":2}]}','$.a[*].b')",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

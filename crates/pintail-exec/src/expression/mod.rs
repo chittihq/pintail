@@ -2371,20 +2371,26 @@ fn evaluate_eager_scalar_typed(
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&document) else {
                 return Err(ExecError::InvalidExpressionType);
             };
-            if values.len() > 2 {
-                let mut found = Vec::with_capacity(values.len() - 1);
-                for path in &values[1..] {
-                    if let Some(value) = json_path_lookup(&parsed, &scalar_string(path)?)? {
-                        found.push(value.clone());
-                    }
-                }
+            // MySQL wraps the result as an array exactly when it COULD hold
+            // several values: several paths, or any wildcard/descent/range
+            // step - even when only one value actually matched.
+            let mut wrap = values.len() > 2;
+            let mut found: Vec<&serde_json::Value> = Vec::new();
+            for path in &values[1..] {
+                let steps = json_path_steps(&scalar_string(path)?)?;
+                wrap |= steps.iter().any(JsonStep::multi);
+                collect_json_matches(&parsed, &steps, &mut found);
+            }
+            if wrap {
                 return Ok(if found.is_empty() {
                     Value::Null
                 } else {
-                    Value::Utf8(mysql_json_text(&serde_json::Value::Array(found)))
+                    Value::Utf8(mysql_json_text(&serde_json::Value::Array(
+                        found.into_iter().cloned().collect(),
+                    )))
                 });
             }
-            let Some(found) = json_path_lookup(&parsed, &scalar_string(&values[1])?)? else {
+            let Some(found) = found.first() else {
                 return Ok(Value::Null);
             };
             Ok(Value::Utf8(match found {
@@ -2547,7 +2553,13 @@ fn evaluate_eager_scalar_typed(
             let mut found = 0_usize;
             let paths = &values[2..];
             for path in paths {
-                if json_path_lookup(&parsed, &scalar_string(path)?)?.is_some() {
+                // JSON_CONTAINS_PATH is a match-exists question, so MySQL
+                // allows wildcards here where single-target functions refuse
+                // them.
+                let steps = json_path_steps(&scalar_string(path)?)?;
+                let mut matches: Vec<&serde_json::Value> = Vec::new();
+                collect_json_matches(&parsed, &steps, &mut matches);
+                if !matches.is_empty() {
                     found += 1;
                 }
             }
@@ -3865,11 +3877,56 @@ fn json_search(
     }
 }
 
-/// One step of a `MySQL` JSON path: an object member or an array position.
+/// One step of a `MySQL` JSON path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum JsonStep {
     Member(String),
     Index(usize),
+    /// `[last]` / `[last-N]`: N cells back from the end.
+    LastIndex(usize),
+    /// `[M to N]`, inclusive on both ends.
+    Range(JsonBound, JsonBound),
+    /// `.*`: every member value of an object.
+    WildMember,
+    /// `[*]`: every cell of an array.
+    WildIndex,
+    /// `**`: this node and every descendant, before the following leg.
+    Descent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JsonBound {
+    Forward(usize),
+    Last(usize),
+}
+
+impl JsonStep {
+    /// Whether the step can select more than one target, which autowraps
+    /// the result as an array and is refused by single-target functions.
+    const fn multi(&self) -> bool {
+        matches!(
+            self,
+            Self::Range(..) | Self::WildMember | Self::WildIndex | Self::Descent
+        )
+    }
+}
+
+fn parse_json_bound(text: &str) -> Result<JsonBound, ExecError> {
+    let text = text.trim();
+    if let Some(rest) = text.strip_prefix("last") {
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return Ok(JsonBound::Last(0));
+        }
+        let back = rest
+            .strip_prefix('-')
+            .and_then(|digits| digits.trim().parse().ok())
+            .ok_or(ExecError::InvalidExpressionType)?;
+        return Ok(JsonBound::Last(back));
+    }
+    text.parse()
+        .map(JsonBound::Forward)
+        .map_err(|_| ExecError::InvalidExpressionType)
 }
 
 /// Parses `$.a[0].b` into its steps. Every JSON function that walks a path
@@ -3884,6 +3941,11 @@ fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
     while let Some(step) = chars.next() {
         match step {
             '.' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    steps.push(JsonStep::WildMember);
+                    continue;
+                }
                 let mut key = String::new();
                 if chars.peek() == Some(&'"') {
                     chars.next();
@@ -3902,27 +3964,44 @@ fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
                         chars.next();
                     }
                 }
-                // A wildcard selects many targets, which a single-target
-                // mutation cannot express; rejecting beats picking one.
-                if key.is_empty() || key == "*" {
+                if key.is_empty() || key.contains('*') {
                     return Err(ExecError::InvalidExpressionType);
                 }
                 steps.push(JsonStep::Member(key));
             }
+            '*' => {
+                // `**` is its own leg: `$**.b`. A single `*` here, or a
+                // path that ENDS with `**`, is invalid in MySQL too.
+                if chars.next() != Some('*') {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                if chars.peek().is_none() {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                steps.push(JsonStep::Descent);
+            }
             '[' => {
-                let mut digits = String::new();
+                let mut inside = String::new();
                 for inner in chars.by_ref() {
                     if inner == ']' {
                         break;
                     }
-                    digits.push(inner);
+                    inside.push(inner);
                 }
-                steps.push(JsonStep::Index(
-                    digits
-                        .trim()
-                        .parse()
-                        .map_err(|_| ExecError::InvalidExpressionType)?,
-                ));
+                let inside = inside.trim();
+                if inside == "*" {
+                    steps.push(JsonStep::WildIndex);
+                } else if let Some((from, to)) = inside.split_once(" to ") {
+                    steps.push(JsonStep::Range(
+                        parse_json_bound(from)?,
+                        parse_json_bound(to)?,
+                    ));
+                } else {
+                    steps.push(match parse_json_bound(inside)? {
+                        JsonBound::Forward(index) => JsonStep::Index(index),
+                        JsonBound::Last(back) => JsonStep::LastIndex(back),
+                    });
+                }
             }
             _ => return Err(ExecError::InvalidExpressionType),
         }
@@ -3930,15 +4009,148 @@ fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
     Ok(steps)
 }
 
+/// Object members in `MySQL`'s binary-JSON order: shortest key first, then
+/// bytewise. Wildcard and descent traversal must agree with `JSON_KEYS`
+/// and the object renderer about what "document order" means.
+fn ordered_members(
+    members: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<(&String, &serde_json::Value)> {
+    let mut ordered: Vec<_> = members.iter().collect();
+    ordered.sort_by(|left, right| {
+        left.0
+            .len()
+            .cmp(&right.0.len())
+            .then_with(|| left.0.cmp(right.0))
+    });
+    ordered
+}
+
+/// Collects every value the remaining steps select from `current`,
+/// depth-first in document order. Non-array values autowrap where `MySQL`'s
+/// path evaluation says they do: `[0]`, `[last]`, and `[*]` on a non-array
+/// address the value itself.
+fn collect_json_matches<'a>(
+    current: &'a serde_json::Value,
+    steps: &[JsonStep],
+    out: &mut Vec<&'a serde_json::Value>,
+) {
+    let Some((step, rest)) = steps.split_first() else {
+        out.push(current);
+        return;
+    };
+    match step {
+        JsonStep::Member(key) => {
+            if let Some(value) = current.get(key) {
+                collect_json_matches(value, rest, out);
+            }
+        }
+        JsonStep::Index(index) => match current {
+            serde_json::Value::Array(items) => {
+                if let Some(value) = items.get(*index) {
+                    collect_json_matches(value, rest, out);
+                }
+            }
+            other if *index == 0 => collect_json_matches(other, rest, out),
+            _ => {}
+        },
+        JsonStep::LastIndex(back) => match current {
+            serde_json::Value::Array(items) => {
+                if let Some(value) = items
+                    .len()
+                    .checked_sub(1 + back)
+                    .and_then(|index| items.get(index))
+                {
+                    collect_json_matches(value, rest, out);
+                }
+            }
+            other if *back == 0 => collect_json_matches(other, rest, out),
+            _ => {}
+        },
+        JsonStep::Range(from, to) => match current {
+            serde_json::Value::Array(items) if !items.is_empty() => {
+                let resolve = |bound: &JsonBound| match bound {
+                    JsonBound::Forward(index) => *index,
+                    JsonBound::Last(back) => items.len().saturating_sub(1 + back),
+                };
+                let start = resolve(from);
+                let end = resolve(to).min(items.len() - 1);
+                for index in start..=end {
+                    if let Some(value) = items.get(index) {
+                        collect_json_matches(value, rest, out);
+                    }
+                }
+            }
+            other if matches!(from, JsonBound::Forward(0) | JsonBound::Last(0)) => {
+                collect_json_matches(other, rest, out);
+            }
+            _ => {}
+        },
+        JsonStep::WildMember => {
+            if let serde_json::Value::Object(members) = current {
+                for (_, value) in ordered_members(members) {
+                    collect_json_matches(value, rest, out);
+                }
+            }
+        }
+        JsonStep::WildIndex => match current {
+            serde_json::Value::Array(items) => {
+                for value in items {
+                    collect_json_matches(value, rest, out);
+                }
+            }
+            other => collect_json_matches(other, rest, out),
+        },
+        JsonStep::Descent => {
+            collect_json_matches(current, rest, out);
+            match current {
+                serde_json::Value::Array(items) => {
+                    for value in items {
+                        collect_json_matches(value, steps, out);
+                    }
+                }
+                serde_json::Value::Object(members) => {
+                    for (_, value) in ordered_members(members) {
+                        collect_json_matches(value, steps, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Single-target path resolution: the shape modification and typed-answer
+/// functions require. A path that could select several values (wildcards,
+/// descent, ranges) errors here, exactly as `MySQL` refuses those tokens in
+/// single-target positions.
 fn json_path_lookup<'a>(
     document: &'a serde_json::Value,
     path: &str,
 ) -> Result<Option<&'a serde_json::Value>, ExecError> {
     let mut current = document;
     for step in json_path_steps(path)? {
+        if step.multi() {
+            return Err(ExecError::InvalidExpressionType);
+        }
         let next = match step {
             JsonStep::Member(key) => current.get(&key),
-            JsonStep::Index(index) => current.get(index),
+            JsonStep::Index(index) => match current {
+                serde_json::Value::Array(_) => current.get(index),
+                other if index == 0 => Some(other),
+                _ => None,
+            },
+            JsonStep::LastIndex(back) => match current {
+                serde_json::Value::Array(items) => items
+                    .len()
+                    .checked_sub(1 + back)
+                    .and_then(|index| items.get(index)),
+                other if back == 0 => Some(other),
+                _ => None,
+            },
+            JsonStep::Range(..)
+            | JsonStep::WildMember
+            | JsonStep::WildIndex
+            | JsonStep::Descent => unreachable!("multi() refused above"),
         };
         match next {
             Some(value) => current = value,

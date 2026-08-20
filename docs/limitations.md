@@ -66,8 +66,12 @@ stays readable as a list of things to fix.
   partition/order keys over JSON, `GROUP_CONCAT ... ORDER BY` a JSON key, and
   the recursive-CTE `UNION DISTINCT` fixpoint over JSON rows. The relative
   order of unequal objects is deterministic but unspecified, as in MySQL (#8).
-- JSON paths support member and numeric-index steps. Wildcards, recursive
-  descent, ranges, and `last`-relative indexes still reject (#8).
+- JSON paths support member steps, numeric and `last`-relative indexes,
+  ranges (`[M to N]`), wildcards (`.*`, `[*]`) and recursive descent (`**`)
+  in the multi-target functions (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`), with
+  MySQL's array autowrap rules. Single-target functions (`JSON_VALUE`,
+  `JSON_LENGTH`, `JSON_KEYS`, `JSON_CONTAINS`) accept `last` but refuse
+  multi-target tokens, as MySQL does (#8).
 - `REGEXP_LIKE` accepts MySQL's optional `match_type`; the longer positional
   overloads of `REGEXP_INSTR`, `REGEXP_REPLACE`, and `REGEXP_SUBSTR`, plus
   `REGEXP_COUNT`, remain unimplemented (#8). Regex uses Rust's linear-time

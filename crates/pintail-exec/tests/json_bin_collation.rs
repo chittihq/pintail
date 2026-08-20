@@ -336,3 +336,54 @@ fn mixed_json_and_scalar_comparison_stays_rejected() {
         parse_statement("SELECT COUNT(*) FROM orders WHERE meta = 'x'").expect("parse query");
     assert!(Binder::new(&catalog, Some("app")).bind(&statement).is_err());
 }
+
+#[test]
+fn json_path_wildcards_descent_ranges_and_last() {
+    let rows = run("SELECT JSON_EXTRACT('{\"b\":2,\"aa\":1}','$.*'), \
+                JSON_EXTRACT('[1,2,3]','$[*]'), \
+                JSON_EXTRACT('{\"a\":{\"b\":1},\"c\":{\"b\":2}}','$**.b'), \
+                JSON_EXTRACT('[1,2,3,4]','$[1 to 2]'), \
+                JSON_EXTRACT('[1,2,3,4]','$[last-2 to last]'), \
+                JSON_EXTRACT('[1,2,3]','$[last]'), \
+                JSON_EXTRACT('[1,2,3]','$[last-1]'), \
+                JSON_EXTRACT('3','$[0]'), \
+                JSON_EXTRACT('{\"a\":1}','$[*]')");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "[2, 1]".to_owned(),
+            "[1, 2, 3]".to_owned(),
+            "[1, 2]".to_owned(),
+            "[2, 3]".to_owned(),
+            "[2, 3, 4]".to_owned(),
+            "3".to_owned(),
+            "2".to_owned(),
+            "3".to_owned(),
+            "[{\"a\": 1}]".to_owned(),
+        ]]
+    );
+}
+
+#[test]
+fn json_wildcard_misses_and_single_target_refusals() {
+    let rows = run("SELECT JSON_EXTRACT('{}','$.*') IS NULL, \
+                JSON_EXTRACT('[1]','$[5]') IS NULL, \
+                JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','one','$**.b'), \
+                JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','all','$**.b','$.a.*'), \
+                JSON_CONTAINS_PATH('{\"a\":1}','one','$**.zz')");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "1".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "0".to_owned(),
+        ]]
+    );
+    // Single-target functions refuse multi-target paths, as MySQL does.
+    let directory = tempfile::tempdir().expect("temporary table");
+    drop(directory);
+    let result = std::panic::catch_unwind(|| run("SELECT JSON_VALUE('{\"a\":1}','$.*')"));
+    assert!(result.is_err());
+}
