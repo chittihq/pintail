@@ -121,7 +121,10 @@ const STAGES: Stage[] = [
   {
     name: 'e2e',
     remote: true,
-    timeoutMinutes: 60,
+    // The drift and reset checks each force a full-corpus recopy and the
+    // harness re-diffs every query after each phase; the grown gate runs
+    // ~65 minutes on the shared host.
+    timeoutMinutes: 90,
     // Builds a container image before it says anything.
     stallMinutes: 25,
     command: ['bun', 'run', 'run.ts'],
