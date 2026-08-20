@@ -1227,24 +1227,12 @@ impl<'catalog> Binder<'catalog> {
         for table_with_joins in from_items {
             let flattened = flatten_parenthesized_root_joins(table_with_joins)?;
             let table_with_joins = flattened.as_ref().unwrap_or(table_with_joins);
-            // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs; the linear
-            // join chain expresses the two-table form directly. RIGHT JOINs
-            // inside longer chains keep rejecting in bind_join_operator.
-            let flipped = if let [join] = table_with_joins.joins.as_slice()
-                && let JoinOperator::Right(constraint) | JoinOperator::RightOuter(constraint) =
-                    &join.join_operator
-            {
-                Some(sqlparser::ast::TableWithJoins {
-                    relation: join.relation.clone(),
-                    joins: vec![sqlparser::ast::Join {
-                        relation: table_with_joins.relation.clone(),
-                        global: false,
-                        join_operator: JoinOperator::LeftOuter(constraint.clone()),
-                    }],
-                })
-            } else {
-                None
-            };
+            // MySQL RIGHT JOIN is LEFT JOIN with swapped inputs. In a longer
+            // chain, everything joined so far is the left operand, so the
+            // rewrite wraps that prefix as a nested group and makes it the
+            // LEFT JOIN's right input - the bushy shape bind_join_relation
+            // already lowers as a derived input.
+            let flipped = rewrite_right_joins(table_with_joins);
             let table_with_joins = flipped.as_ref().unwrap_or(table_with_joins);
             let base = self.bind_table(&table_with_joins.relation, ctes)?;
             reject_duplicate_relation(&tables, &base)?;
@@ -2010,6 +1998,46 @@ fn flatten_parenthesized_root_joins(
     }
     flattened.joins.extend(table.joins.iter().cloned());
     Ok(Some(flattened))
+}
+
+/// Rewrites every RIGHT JOIN in a chain as `right LEFT JOIN (prefix)`,
+/// leftmost first, so later joins keep applying to the preserved side the
+/// way `MySQL`'s left-to-right grammar reads.
+fn rewrite_right_joins(item: &TableWithJoins) -> Option<TableWithJoins> {
+    let position = item.joins.iter().position(|join| {
+        matches!(
+            join.join_operator,
+            JoinOperator::Right(_) | JoinOperator::RightOuter(_)
+        )
+    })?;
+    let (JoinOperator::Right(constraint) | JoinOperator::RightOuter(constraint)) =
+        &item.joins[position].join_operator
+    else {
+        unreachable!("position matched a RIGHT operator");
+    };
+    let prefix = TableWithJoins {
+        relation: item.relation.clone(),
+        joins: item.joins[..position].to_vec(),
+    };
+    let prefix_factor = if prefix.joins.is_empty() {
+        prefix.relation
+    } else {
+        TableFactor::NestedJoin {
+            table_with_joins: Box::new(prefix),
+            alias: None,
+        }
+    };
+    let rewritten = TableWithJoins {
+        relation: item.joins[position].relation.clone(),
+        joins: std::iter::once(sqlparser::ast::Join {
+            relation: prefix_factor,
+            global: false,
+            join_operator: JoinOperator::LeftOuter(constraint.clone()),
+        })
+        .chain(item.joins[position + 1..].iter().cloned())
+        .collect(),
+    };
+    Some(rewrite_right_joins(&rewritten).unwrap_or(rewritten))
 }
 
 fn validate_select_shape(select: &Select) -> Result<(), BindError> {
@@ -5371,14 +5399,15 @@ mod tests {
             .expect("right join flips");
         assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
         assert_eq!(query.from[0].base.table_name, "users");
-        // RIGHT JOIN inside a longer chain still rejects.
-        assert!(matches!(
-            bind(
-                "SELECT * FROM Events e JOIN users u ON e.id = u.id \
-                 RIGHT JOIN users x ON x.id = e.id"
-            ),
-            Err(BindError::UnsupportedJoinOperator(_))
-        ));
+        // RIGHT JOIN inside a longer chain rewrites as `right LEFT JOIN
+        // (prefix group)`: the preserved table becomes the base relation.
+        let query = bind(
+            "SELECT COUNT(*) FROM Events e JOIN users u ON e.id = u.id \
+             RIGHT JOIN users x ON x.id = e.id",
+        )
+        .expect("chained right join rewrites");
+        assert_eq!(query.from[0].base.relation_name, "x");
+        assert_eq!(query.from[0].joins[0].kind, BoundJoinKind::Left);
         // USING desugars to the left-right equality with the join column
         // leading the wildcard once and the right copy shadowed.
         let query = bind("SELECT * FROM Events JOIN users USING (id)").expect("using join binds");

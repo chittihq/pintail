@@ -37,9 +37,10 @@ stays readable as a list of things to fix.
   storage types matching the anchor's. Pintail bounds
   `cte_max_recursion_depth` to `1..=1000000`; MySQL's unbounded value `0` is
   rejected so a session cannot disable the recursive resource guard.
-- `RIGHT JOIN` supports only the two-table form.
-- Aliased parenthesized join groups reject because a group-wide namespace is
-  not implemented.
+- An aliased parenthesized join group rejects, as it does in MySQL (a
+  parenthesized join is not a derived table and cannot take an alias). A
+  nested group can be a later join's right input; a RIGHT JOIN *inside* a
+  parenthesized group still rejects.
 - MySQL warning categories other than `GROUP_CONCAT` truncation are not yet
   retained in a general diagnostics area.
 - `SOUNDEX` and the trigonometric family are unimplemented.

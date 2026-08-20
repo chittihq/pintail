@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1078;
+const EXPECTED_CASES: usize = 1081;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1199,6 +1199,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "correlated ranges",
             "SELECT COUNT(*) FROM events e \
              WHERE EXISTS (SELECT 1 FROM users u WHERE u.id <> e.id)",
+        ),
+        // RIGHT JOIN in longer chains and nested join groups as right
+        // inputs.
+        unordered(
+            "chained right joins",
+            "SELECT c.id, a.id FROM events a JOIN events b ON a.id = b.id AND a.id < 3 \
+             RIGHT JOIN events c ON c.id = a.id",
+        ),
+        unordered(
+            "chained right joins",
+            "SELECT e.id, u.id FROM events e \
+             LEFT JOIN (users u JOIN events x ON u.id = x.id) ON e.id = u.id",
+        ),
+        ordered(
+            "chained right joins",
+            "SELECT COUNT(*) FROM events a RIGHT JOIN users u ON u.id = a.id \
+             RIGHT JOIN events c ON c.id = u.id",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

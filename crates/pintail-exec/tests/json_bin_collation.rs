@@ -574,3 +574,24 @@ fn correlated_in_with_range_conjunct() {
          WHERE a.id IN (SELECT b.id FROM orders b WHERE b.id >= a.id AND b.id > 2)");
     assert_eq!(rows, vec![vec!["3".to_owned()]]);
 }
+
+#[test]
+fn chained_right_joins_preserve_the_right_side() {
+    // orders has ids 1..=5. The prefix (a JOIN b ON a.id = b.id AND a.id < 3)
+    // matches ids 1,2; RIGHT JOIN preserves every c row, NULL-extending the
+    // prefix for ids 3,4,5.
+    let rows = run(
+        "SELECT c.id, a.id FROM orders a JOIN orders b ON a.id = b.id AND a.id < 3 \
+         RIGHT JOIN orders c ON c.id = a.id ORDER BY c.id",
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["3".to_owned(), "NULL".to_owned()],
+            vec!["4".to_owned(), "NULL".to_owned()],
+            vec!["5".to_owned(), "NULL".to_owned()],
+        ]
+    );
+}
