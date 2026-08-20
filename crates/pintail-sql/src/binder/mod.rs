@@ -230,6 +230,7 @@ impl<'catalog> Binder<'catalog> {
                 collation: anchor.result_collation(&projection.expr),
                 enum_labels: None,
                 geometry: false,
+                timestamp: false,
                 outer: false,
                 using_shadowed: false,
             })
@@ -1653,6 +1654,7 @@ impl<'catalog> Binder<'catalog> {
                     .enum_labels()
                     .map(|labels| std::sync::Arc::new(labels.to_vec())),
                 geometry: column.is_geometry(),
+                timestamp: column.is_timestamp(),
                 outer: false,
                 using_shadowed: false,
             })
@@ -1702,6 +1704,7 @@ impl<'catalog> Binder<'catalog> {
                 collation: input.result_collation(&projection.expr),
                 enum_labels: None,
                 geometry: false,
+                timestamp: false,
                 outer: false,
                 using_shadowed: false,
             })

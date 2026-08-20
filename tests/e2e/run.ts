@@ -1396,7 +1396,14 @@ async function phaseControlPlane() {
         DATE_ADD(placed_on, INTERVAL 1 HOUR) AS date_plus_hour,
         DATE_ADD(updated_at, INTERVAL 1 DAY) AS datetime_plus_day,
         DATE_FORMAT(placed_on, '%Y-%m') AS date_format_fn,
-        placed_on AS plain_date
+        SEC_TO_TIME(90061.5) AS sec_to_time_fn,
+        MAKETIME(12, 15, 30) AS maketime_fn,
+        CONVERT_TZ(updated_at, '+00:00', '+05:30') AS convert_tz_fn,
+        STR_TO_DATE('2025-01-15', '%Y-%m-%d') AS str_to_date_date,
+        STR_TO_DATE('2025-01-15 10:30', '%Y-%m-%d %H:%i') AS str_to_date_datetime,
+        STR_TO_DATE('10:30', '%H:%i') AS str_to_date_time,
+        placed_on AS plain_date,
+        updated_at AS plain_timestamp
       FROM orders LIMIT 1`
     const [, mysqlFields] = (await mysqlConnection!.query(battery)) as unknown as [
       unknown,

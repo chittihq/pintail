@@ -195,6 +195,7 @@ impl SourceTable {
                                 | "multipolygon"
                                 | "geometrycollection"
                         ))
+                        .with_timestamp(column.mysql_data_type.eq_ignore_ascii_case("timestamp"))
                         // A SET sorts by its member bitmask; the members and
                         // their declaration order are that mask's bits.
                         .with_set_members(

@@ -1157,9 +1157,14 @@ pub(super) fn bind_scalar(
         | ScalarFunction::Hex
         | ScalarFunction::Md5
         | ScalarFunction::DayName
-        | ScalarFunction::MonthName
-        | ScalarFunction::SecToTime => (
+        | ScalarFunction::MonthName => (
             Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        // Canonical MySQL TIME text including sign, clamping and fractional
+        // digits - the Time64 carrier - so the wire can say MYSQL_TYPE_TIME.
+        ScalarFunction::SecToTime => (
+            Some(DataType::Time64 { fsp: 0 }),
             args.iter().any(|argument| argument.nullable),
         ),
         // Rendered as canonical YYYY-MM-DD text - which is exactly the
@@ -1173,9 +1178,41 @@ pub(super) fn bind_scalar(
         ),
         // NULL out of range / on malformed or unmatched input, like MySQL.
         ScalarFunction::MakeDate => (Some(DataType::Date32), true),
+        ScalarFunction::MakeTime => (Some(DataType::Time64 { fsp: 0 }), true),
+        ScalarFunction::ConvertTz => (Some(DataType::DateTime64 { fsp: 0 }), true),
+        // With a literal format the output shape is static: the evaluator
+        // parses as a datetime when the format carries time specifiers and
+        // as a bare date otherwise, so the declared type follows the format.
+        // A time-only format is declared TIME for metadata parity with
+        // MySQL; the evaluator's NULL there is a pre-existing value gap
+        // recorded in docs/limitations.md. A non-literal format stays a
+        // string - the shape genuinely is unknown until runtime.
+        ScalarFunction::StrToDate => (
+            Some(match args.get(1) {
+                Some(BoundExpr {
+                    kind: BoundExprKind::Literal(Value::Utf8(format)),
+                    ..
+                }) => {
+                    let time = str_to_date_has_specifier(
+                        format,
+                        &['H', 'h', 'I', 'k', 'l', 'i', 's', 'f', 'p', 'r', 'T'],
+                    );
+                    let date = str_to_date_has_specifier(
+                        format,
+                        &['Y', 'y', 'm', 'c', 'd', 'e', 'b', 'M', 'j', 'W', 'a'],
+                    );
+                    match (date, time) {
+                        (true, true) => DataType::DateTime64 { fsp: 0 },
+                        (true, false) => DataType::Date32,
+                        (false, true) => DataType::Time64 { fsp: 0 },
+                        (false, false) => DataType::Utf8,
+                    }
+                }
+                _ => DataType::Utf8,
+            }),
+            true,
+        ),
         ScalarFunction::Elt
-        | ScalarFunction::StrToDate
-        | ScalarFunction::ConvertTz
         | ScalarFunction::RegexpSubstr
         | ScalarFunction::JsonUnquote
         // JSON_TYPE raises on a non-JSON document; JSON_KEYS answers NULL for
@@ -1187,8 +1224,7 @@ pub(super) fn bind_scalar(
         | ScalarFunction::JsonValue
         // CONV and MAKETIME answer NULL for an unparseable number or an
         // out-of-range minute/second.
-        | ScalarFunction::Conv
-        | ScalarFunction::MakeTime => (Some(DataType::Utf8), true),
+        | ScalarFunction::Conv => (Some(DataType::Utf8), true),
         // SUBSTRING_INDEX always returns a string for non-NULL input; an
         // absent delimiter yields the whole subject rather than NULL.
         ScalarFunction::SubstringIndex => (
@@ -1296,6 +1332,21 @@ pub(super) fn bind_scalar(
         data_type,
         nullable,
     })
+}
+
+/// Whether a `STR_TO_DATE` format string carries any of the given specifier
+/// letters (scanning `%x` pairs only, so literal text never matches).
+fn str_to_date_has_specifier(format: &str, wanted: &[char]) -> bool {
+    let mut characters = format.chars();
+    while let Some(character) = characters.next() {
+        if character == '%'
+            && let Some(specifier) = characters.next()
+            && wanted.contains(&specifier)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn str_to_date_format_supported(format: &str) -> bool {

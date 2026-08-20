@@ -1413,6 +1413,12 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) 
         Some(DataType::Float64) => (ColumnType::MysqlTypeDouble, false),
         Some(DataType::Decimal { .. }) => (ColumnType::MysqlTypeNewdecimal, false),
         Some(DataType::Date32) => (ColumnType::MysqlTypeDate, false),
+        // A TIMESTAMP column's values are identical canonical text; the type
+        // byte is what lets clients apply session-timezone semantics the way
+        // they do against MySQL.
+        Some(DataType::DateTime64 { .. }) if field.timestamp => {
+            (ColumnType::MysqlTypeTimestamp, false)
+        }
         Some(DataType::DateTime64 { .. }) => (ColumnType::MysqlTypeDatetime, false),
         Some(DataType::Time64 { .. }) => (ColumnType::MysqlTypeTime, false),
         Some(DataType::Year) => (ColumnType::MysqlTypeYear, true),
@@ -1635,6 +1641,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
                 .then(|| DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: false,
             geometry: false,
+            timestamp: false,
         }],
         rows: vec![vec![value]],
         stats: QueryStats {
@@ -1655,6 +1662,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             QueryField {
                 name: "Code".to_owned(),
@@ -1663,6 +1671,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 collation: None,
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             QueryField {
                 name: "Message".to_owned(),
@@ -1671,6 +1680,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
         ],
         rows: (1..=session.group_concat_warnings)
@@ -1959,11 +1969,47 @@ mod tests {
                 collation: None,
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             1024,
             "utf8mb4",
         );
         assert_eq!(column.coltype, ColumnType::MysqlTypeJson);
+    }
+
+    #[test]
+    fn a_timestamp_column_advertises_mysql_type_timestamp() {
+        // Same values as a DATETIME on the wire; the type byte is what lets
+        // clients apply session-timezone semantics the way MySQL's own
+        // TIMESTAMP does. Without the flag this advertised DATETIME (12).
+        let stamped = mysql_column(
+            &QueryField {
+                name: "updated_at".to_owned(),
+                data_type: Some(DataType::DateTime64 { fsp: 6 }),
+                nullable: true,
+                collation: None,
+                group_concat: false,
+                geometry: false,
+                timestamp: true,
+            },
+            1024,
+            "utf8mb4",
+        );
+        assert_eq!(stamped.coltype, ColumnType::MysqlTypeTimestamp);
+        let plain = mysql_column(
+            &QueryField {
+                name: "created_at".to_owned(),
+                data_type: Some(DataType::DateTime64 { fsp: 0 }),
+                nullable: false,
+                collation: None,
+                group_concat: false,
+                geometry: false,
+                timestamp: false,
+            },
+            1024,
+            "utf8mb4",
+        );
+        assert_eq!(plain.coltype, ColumnType::MysqlTypeDatetime);
     }
 
     #[test]
@@ -1976,6 +2022,7 @@ mod tests {
                 collation: None,
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             1024,
             "utf8mb4",
@@ -1992,6 +2039,7 @@ mod tests {
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             1024,
             "utf8mb4",
@@ -2007,6 +2055,7 @@ mod tests {
                 collation: None,
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             1024,
             "utf8mb4",
@@ -2030,6 +2079,7 @@ mod tests {
                 collation: None,
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             1024,
             "utf8mb4",
@@ -2046,6 +2096,7 @@ mod tests {
                 collation: None,
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             },
             1024,
             "utf8mb4",
@@ -2063,6 +2114,7 @@ mod tests {
             collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: true,
             geometry: false,
+            timestamp: false,
         };
         assert_eq!(
             mysql_column(&field, 512, "utf8mb4").coltype,
@@ -2083,6 +2135,7 @@ mod tests {
             collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
             group_concat: false,
             geometry: false,
+            timestamp: false,
         };
         assert_eq!(mysql_column(&field, 1024, "utf8mb3").character_set, 33);
         let binary = mysql_column(&field, 1024, "binary");

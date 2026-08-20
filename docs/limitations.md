@@ -469,13 +469,11 @@ but may be wrong.
   bits). A larger transaction quarantines its table to needs_resync; a
   per-table resync captures the data and recovers.
 
-- STR_TO_DATE, CONVERT_TZ, SEC_TO_TIME and MAKETIME advertise
-  MYSQL_TYPE_VAR_STRING on the wire where MySQL advertises a temporal
-  type (format-dependent for STR_TO_DATE, DATETIME and TIME for the
-  others). Values match byte-for-byte; drivers decode them as strings.
+- STR_TO_DATE with a non-literal format expression advertises
+  MYSQL_TYPE_VAR_STRING - the output shape is unknowable at bind time.
+  With a literal format the declared type follows the format's
+  specifiers, as in MySQL.
 
-- A stored TIMESTAMP column advertises MYSQL_TYPE_DATETIME (12) on the
-  wire where MySQL advertises MYSQL_TYPE_TIMESTAMP (7). Values match;
-  common drivers decode both as date-time objects, but a client that
-  keys session-timezone conversion off the type byte will treat the
-  column as a naive DATETIME.
+- STR_TO_DATE with a time-only format returns NULL where MySQL returns
+  a TIME value; the declared column type (TIME) matches MySQL, the
+  value does not.

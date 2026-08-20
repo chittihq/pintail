@@ -263,6 +263,7 @@ impl LogicalPlanner {
                     collation: None,
                     enum_labels: None,
                     geometry: false,
+                    timestamp: false,
                     outer: false,
                     using_shadowed: false,
                 })

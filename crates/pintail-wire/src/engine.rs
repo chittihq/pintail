@@ -38,6 +38,7 @@ pub const DEFAULT_MAX_ROWS: usize = 10_000;
 
 /// A query output field in `MySQL` presentation order.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // independent per-column wire facts
 pub struct QueryField {
     pub name: String,
     pub data_type: Option<DataType>,
@@ -49,6 +50,8 @@ pub struct QueryField {
     pub group_concat: bool,
     /// Spatial column: advertised as `MYSQL_TYPE_GEOMETRY` on the wire.
     pub geometry: bool,
+    /// Source `TIMESTAMP` column: advertised as `MYSQL_TYPE_TIMESTAMP`.
+    pub timestamp: bool,
 }
 
 /// Physical work observed while executing one query.
@@ -408,6 +411,7 @@ impl ReplicaEngine {
                 collation: result_collations.get(index).cloned().flatten(),
                 group_concat: group_concat.get(index).copied().unwrap_or(false),
                 geometry: field.geometry,
+                timestamp: field.timestamp,
             })
             .collect();
         let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
@@ -456,6 +460,7 @@ impl ReplicaEngine {
                 collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             }],
             rows: vec![vec![Value::Utf8(plan)]],
             stats,
@@ -575,6 +580,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
                     .then(|| DEFAULT_TEXT_COLLATION.to_owned()),
                 group_concat: false,
                 geometry: false,
+                timestamp: false,
             })
             .collect(),
         stats: QueryStats {

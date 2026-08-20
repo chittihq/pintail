@@ -87,6 +87,13 @@ pub struct Column {
     /// the wire advertises `MYSQL_TYPE_GEOMETRY` so clients decode it as
     /// `MySQL` does.
     geometry: bool,
+    /// Whether the source column is a `TIMESTAMP`. Storage stays canonical
+    /// date-time text; the wire advertises `MYSQL_TYPE_TIMESTAMP` so clients
+    /// that key session-timezone conversion off the type byte behave as they
+    /// do against `MySQL`. Outside the schema fingerprint (which hashes id,
+    /// type, nullability and name only), so existing stores keep opening;
+    /// rebuilt from the durable source column type on every open.
+    timestamp: bool,
 }
 
 impl Column {
@@ -102,6 +109,7 @@ impl Column {
             enum_labels: None,
             set_members: None,
             geometry: false,
+            timestamp: false,
         }
     }
 
@@ -146,6 +154,19 @@ impl Column {
     #[must_use]
     pub fn is_geometry(&self) -> bool {
         self.geometry
+    }
+
+    /// Marks the column as a source `TIMESTAMP`.
+    #[must_use]
+    pub fn with_timestamp(mut self, timestamp: bool) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    /// Whether the source column is a `TIMESTAMP`.
+    #[must_use]
+    pub fn is_timestamp(&self) -> bool {
+        self.timestamp
     }
 
     /// Returns the declared SET members, when the column is a SET.

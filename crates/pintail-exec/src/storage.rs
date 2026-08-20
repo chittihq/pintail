@@ -1357,6 +1357,7 @@ fn build_prewhere_spec(
             collation: column.collation().map(str::to_owned),
             enum_labels: None,
             geometry: false,
+            timestamp: false,
             outer: false,
             using_shadowed: false,
         });

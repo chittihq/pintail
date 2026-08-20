@@ -170,6 +170,8 @@ pub struct OutputField {
     /// Whether the result is a spatial column, advertised on the wire as
     /// `MYSQL_TYPE_GEOMETRY` so clients decode it as `MySQL` does.
     pub geometry: bool,
+    /// Whether the field is a source `TIMESTAMP`; drives the wire type byte.
+    pub timestamp: bool,
 }
 
 /// Physical pull operators selected for an executable query.
@@ -330,6 +332,10 @@ impl PhysicalPlan {
                         &expression.expr.kind,
                         pintail_sql::BoundExprKind::Column(column) if column.geometry
                     ),
+                    timestamp: matches!(
+                        &expression.expr.kind,
+                        pintail_sql::BoundExprKind::Column(column) if column.timestamp
+                    ),
                 })
                 .collect(),
             Self::SetOp { left: input, .. }
@@ -349,6 +355,7 @@ impl PhysicalPlan {
                     data_type: Some(column.data_type),
                     nullable: column.nullable,
                     geometry: false,
+                    timestamp: false,
                 }));
                 fields
             }
@@ -366,12 +373,17 @@ impl PhysicalPlan {
                         &expression.kind,
                         pintail_sql::BoundExprKind::Column(column) if column.geometry
                     ),
+                    timestamp: matches!(
+                        &expression.kind,
+                        pintail_sql::BoundExprKind::Column(column) if column.timestamp
+                    ),
                 })
                 .chain(aggregates.iter().map(|aggregate| OutputField {
                     name: String::new(),
                     data_type: aggregate.data_type,
                     nullable: aggregate.nullable,
                     geometry: false,
+                    timestamp: false,
                 }))
                 .collect(),
             Self::CrossJoin { inputs, .. } => inputs.iter().flat_map(Self::output_fields).collect(),
@@ -410,6 +422,7 @@ impl PhysicalPlan {
                     data_type: Some(column.data_type),
                     nullable: column.nullable,
                     geometry: column.geometry,
+                    timestamp: column.timestamp,
                 })
                 .collect(),
             Self::Derived { columns, .. } => columns
@@ -419,6 +432,7 @@ impl PhysicalPlan {
                     data_type: Some(column.data_type),
                     nullable: column.nullable,
                     geometry: column.geometry,
+                    timestamp: column.timestamp,
                 })
                 .collect(),
             Self::Empty | Self::OneRow => Vec::new(),
@@ -3375,6 +3389,7 @@ fn build_operator(
                     collation: None,
                     enum_labels: None,
                     geometry: false,
+                    timestamp: false,
                     outer: false,
                     using_shadowed: false,
                 };
@@ -3457,6 +3472,7 @@ fn build_operator(
                         collation: None,
                         enum_labels: None,
                         geometry: false,
+                        timestamp: false,
                         outer: false,
                         using_shadowed: false,
                     },

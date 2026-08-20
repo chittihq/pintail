@@ -81,6 +81,8 @@ pub struct BoundColumn {
     /// Whether the source column is a spatial type; the wire advertises
     /// `MYSQL_TYPE_GEOMETRY` for it so clients decode as `MySQL` does.
     pub geometry: bool,
+    /// Whether the source column is a `TIMESTAMP`; drives the wire type byte.
+    pub timestamp: bool,
     /// Whether this reference resolves in an enclosing query scope rather
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.
