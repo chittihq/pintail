@@ -518,3 +518,40 @@ fn uuid_is_well_formed_and_fresh() {
         }
     }));
 }
+
+#[test]
+fn theta_joins_run_on_the_nested_loop() {
+    // Range join: each order pairs with every LOWER id. Inner and left
+    // shapes both answer; the left join keeps unmatched row 1 with NULLs.
+    let rows = run(
+        "SELECT a.id, COUNT(b.id) FROM orders a JOIN orders b ON b.id < a.id \
+         GROUP BY a.id ORDER BY a.id",
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["2".to_owned(), "1".to_owned()],
+            vec!["3".to_owned(), "2".to_owned()],
+            vec!["4".to_owned(), "3".to_owned()],
+            vec!["5".to_owned(), "4".to_owned()],
+        ]
+    );
+    let rows = run(
+        "SELECT a.id, COUNT(b.id) FROM orders a LEFT JOIN orders b ON b.id < a.id \
+         GROUP BY a.id ORDER BY a.id",
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["1".to_owned(), "0".to_owned()],
+            vec!["2".to_owned(), "1".to_owned()],
+            vec!["3".to_owned(), "2".to_owned()],
+            vec!["4".to_owned(), "3".to_owned()],
+            vec!["5".to_owned(), "4".to_owned()],
+        ]
+    );
+    // Mixed shape: an equality PLUS a range rides the hash join with a
+    // residual; this only pins that the combination still answers.
+    let rows = run("SELECT COUNT(*) FROM orders a JOIN orders b ON a.id = b.id AND b.id > 2");
+    assert_eq!(rows, vec![vec!["3".to_owned()]]);
+}

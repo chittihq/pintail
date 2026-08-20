@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1070;
+const EXPECTED_CASES: usize = 1074;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1154,6 +1154,27 @@ fn hand_written_cases() -> Vec<OracleCase> {
                     EXTRACT(MINUTE_SECOND FROM '2025-07-21 10:40:50'), \
                     EXTRACT(YEAR_MONTH FROM '2025-01-05'), \
                     EXTRACT(MINUTE_SECOND FROM '00:00:07')",
+        ),
+        // Theta joins: range and inequality ON conditions on the nested
+        // loop, plus equality+range mixes on the hash join's residual.
+        unordered(
+            "theta joins",
+            "SELECT a.id, COUNT(b.id) FROM events a JOIN events b ON b.id < a.id \
+             GROUP BY a.id",
+        ),
+        unordered(
+            "theta joins",
+            "SELECT a.id, COUNT(b.id) FROM events a LEFT JOIN events b \
+             ON b.id < a.id AND b.id > 2 GROUP BY a.id",
+        ),
+        ordered(
+            "theta joins",
+            "SELECT COUNT(*) FROM events a JOIN events b ON a.id <> b.id",
+        ),
+        ordered(
+            "theta joins",
+            "SELECT COUNT(*) FROM events a JOIN events b \
+             ON a.id = b.id AND b.id BETWEEN 2 AND 4",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(
@@ -3019,9 +3040,9 @@ fn documented_rejects_stay_explicit() {
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         (
-            "reject non-equality join",
-            "SELECT e.id, u.id FROM events e JOIN users u ON e.id > u.id",
-            "join|equality|unsupported|bind",
+            "reject json window key",
+            "SELECT ROW_NUMBER() OVER (PARTITION BY JSON_EXTRACT(note, '$.a')) FROM events",
+            "json|grouping|partition",
         ),
         (
             "reject json table",

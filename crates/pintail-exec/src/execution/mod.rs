@@ -595,9 +595,16 @@ impl PhysicalPlanner {
                 // An ON clause routinely carries ordinary predicates beside
                 // its join keys. Apply those to one input instead of letting
                 // a single non-key conjunct reject the whole join.
+                let original_condition = condition.clone();
                 let (condition, left_filter, right_filter) =
                     split_join_condition(condition, &left, &right, kind);
-                let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
+                let Some(condition) = condition else {
+                    // No conjunct spans the two inputs at all: a pure theta
+                    // shape like ON a.x > 5. The nested loop answers it,
+                    // bounded by the cross-join guard because every pair is
+                    // tested.
+                    return plan_theta_join(left, right, kind, original_condition, collation);
+                };
                 // An ON clause may also compare the two inputs with something
                 // that is not equality. The hash join still runs on the
                 // equalities; the rest becomes a residual tested per candidate
@@ -605,7 +612,11 @@ impl PhysicalPlanner {
                 // valid MySQL that names a perfectly good join key.
                 let (equalities, residual) =
                     split_join_residual(&condition, &left, &right, collation);
-                let condition = equalities.ok_or(ExecError::UnsupportedJoinCondition)?;
+                let Some(condition) = equalities else {
+                    // Spanning conjuncts exist but none is a hashable
+                    // equality - a range join. Same nested-loop fallback.
+                    return plan_theta_join(left, right, kind, original_condition, collation);
+                };
                 let mut pairs = equi_join_key_pairs(&condition, &left, &right, collation)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
@@ -623,6 +634,34 @@ impl PhysicalPlanner {
             }
         }
     }
+}
+
+/// A join with no hashable equality key: every left/right pair is tested
+/// against the ON condition, so the cross-join cardinality guard applies
+/// verbatim - the work IS a filtered cross product, whatever the join kind.
+fn plan_theta_join(
+    left: Box<LogicalPlan>,
+    right: Box<LogicalPlan>,
+    kind: BoundJoinKind,
+    condition: BoundExpr,
+    collation: Collation,
+) -> Result<PhysicalPlan, ExecError> {
+    let estimated_rows = left
+        .estimated_rows()
+        .and_then(|rows| rows.checked_mul(right.estimated_rows()?))
+        .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
+    if estimated_rows > MAX_CROSS_JOIN_ROWS {
+        return Err(ExecError::CrossJoinGuardExceeded {
+            estimated_rows,
+            limit: MAX_CROSS_JOIN_ROWS,
+        });
+    }
+    Ok(PhysicalPlan::NestedLoopJoin {
+        left: Box::new(PhysicalPlanner::plan(*left, collation)?),
+        right: Box::new(PhysicalPlanner::plan(*right, collation)?),
+        kind,
+        condition,
+    })
 }
 
 fn plan_limit(

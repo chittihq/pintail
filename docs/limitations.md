@@ -16,7 +16,10 @@ stays readable as a list of things to fix.
   are rejected during binding. Correlated `NOT IN` additionally requires both
   membership sides to be provably non-nullable: with a possible NULL, MySQL's
   three-valued `NOT IN` diverges from an anti join, so those shapes reject.
-- Non-equality join conditions are rejected.
+- A join with no hashable equality key (a pure range/theta join) runs on
+  the nested loop and tests every row pair, so it sits behind the same
+  cardinality guard as a cross join; above the guard it rejects rather
+  than running an unbounded quadratic scan.
 - Compound temporal `RANGE` interval qualifiers reject because sqlparser does
   not accept their MySQL spelling (#13, #25).
 - A window frame with a bounded start recomputes its aggregate over the frame
