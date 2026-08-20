@@ -516,3 +516,70 @@ fn take_u32(bytes: &[u8], position: &mut usize) -> u32 {
 fn read_u32(bytes: &[u8], position: usize) -> u32 {
     u32::from_le_bytes(bytes[position..position + 4].try_into().expect("u32"))
 }
+
+#[test]
+fn background_compaction_merges_while_ingest_continues() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let options = StoreOptions {
+        compaction_fan_in: 4,
+        // Tiny memtable so every batch flushes a segment and the ingest
+        // path itself drives spawn/poll.
+        memtable_bytes: 1,
+        background_compaction: true,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    let mut expected: BTreeMap<u64, String> = BTreeMap::new();
+    let mut version = 0_u64;
+    // Keep ingesting until a background merge publishes (the manifest holds
+    // fewer segments than flushes produced), bounded by a deadline.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut batches = 0_u64;
+    let mut merged = false;
+    while std::time::Instant::now() < deadline {
+        version += 1;
+        batches += 1;
+        let key = batches % 37;
+        let value = format!("value-{batches}");
+        table
+            .ingest(vec![row(key, &value, version, false)])
+            .expect("ingest");
+        expected.insert(key, value);
+        let status = table.compaction_status().expect("status");
+        if batches > 8 && (status.segment_count() as u64) < batches {
+            merged = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(merged, "a background merge never published");
+    // Let any in-flight merge publish through further ingest polls, then
+    // verify every key reads back its latest value: nothing lost across
+    // the manifest swaps.
+    for _ in 0..200 {
+        version += 1;
+        table
+            .ingest(vec![row(0, "settle", version, false)])
+            .expect("settle ingest");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    expected.insert(0, "settle".to_owned());
+    let rows = table.snapshot().scan().expect("scan after merges");
+    let read: BTreeMap<u64, String> = rows
+        .iter()
+        .map(|stored| {
+            let KeyPart::UInt64(key) = stored.key().parts()[0] else {
+                panic!("unexpected key shape");
+            };
+            let Value::Utf8(text) = &stored.values()[1] else {
+                panic!("unexpected value shape");
+            };
+            (key, text.clone())
+        })
+        .collect();
+    assert_eq!(read, expected);
+    drop(table);
+    let reopened = TableStore::open(directory.path(), schema(), options).expect("reopen");
+    let rows = reopened.snapshot().scan().expect("reopen scan");
+    assert_eq!(rows.len(), expected.len());
+}

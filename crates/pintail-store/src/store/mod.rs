@@ -134,6 +134,9 @@ pub struct StoreOptions {
     /// their size again transiently; below this floor the pass is deferred
     /// rather than risking a full volume mid-write.
     pub compaction_disk_reserve_bytes: u64,
+    /// Whether size-tier merges run on a background thread instead of
+    /// inline on the ingest path.
+    pub background_compaction: bool,
     /// Local writable-table mode: rows become visible only through
     /// [`TableStore::commit`], and recovery replays exactly the committed
     /// WAL prefix (docs/design/writable-mode.md, phase 1).
@@ -153,6 +156,7 @@ impl Default for StoreOptions {
             max_compaction_output_bytes: DEFAULT_MAX_COMPACTION_OUTPUT_BYTES,
             compaction_file_pressure: DEFAULT_COMPACTION_FILE_PRESSURE,
             compaction_disk_reserve_bytes: DEFAULT_COMPACTION_DISK_RESERVE_BYTES,
+            background_compaction: true,
         }
     }
 }
@@ -346,6 +350,19 @@ pub struct TableStore {
     next_append_row_id: u64,
     table_id: u64,
     truncate_wal_on_flush: bool,
+    /// In-flight background merge, at most one. The thread only reads
+    /// immutable input segments and writes chunk files nothing references
+    /// yet; publication happens on this handle's thread.
+    background: Option<BackgroundMerge>,
+    /// The most recent background-merge failure, surfaced for diagnostics;
+    /// the merge itself is retried by the next eligible pass.
+    last_background_error: Option<String>,
+}
+
+/// One background size-tier merge in flight.
+struct BackgroundMerge {
+    receiver: std::sync::mpsc::Receiver<Result<Vec<segment::SegmentMeta>, StoreError>>,
+    input_files: Vec<String>,
 }
 
 impl TableStore {
@@ -470,6 +487,8 @@ impl TableStore {
             table_id,
             truncate_wal_on_flush,
             commit_version,
+            background: None,
+            last_background_error: None,
         })
     }
 
@@ -534,9 +553,7 @@ impl TableStore {
         self.commit_version = version;
         if self.memtable.estimated_bytes() >= self.options.memtable_bytes {
             self.flush()?;
-            if self.manifest.segments.len() >= self.options.compaction_fan_in {
-                self.compact()?;
-            }
+            self.advance_compaction()?;
             self.reclaim_obsolete_segments()?;
         }
         Ok(version)
@@ -751,9 +768,7 @@ impl TableStore {
         let should_flush = self.memtable.estimated_bytes() >= self.options.memtable_bytes;
         if should_flush {
             self.flush()?;
-            if self.manifest.segments.len() >= self.options.compaction_fan_in {
-                self.compact()?;
-            }
+            self.advance_compaction()?;
             self.reclaim_obsolete_segments()?;
         }
 
@@ -1058,6 +1073,151 @@ impl TableStore {
         })
     }
 
+    /// Moves compaction forward without stalling ingest: publishes a
+    /// finished background merge, spawns a new one when pressure calls for
+    /// it, or falls back to the inline pass when backgrounding is off.
+    fn advance_compaction(&mut self) -> Result<(), StoreError> {
+        if !self.options.background_compaction {
+            if self.manifest.segments.len() >= self.options.compaction_fan_in {
+                self.compact()?;
+            }
+            return Ok(());
+        }
+        self.poll_background_merge()?;
+        if self.background.is_none()
+            && self.manifest.segments.len() >= self.options.compaction_fan_in
+        {
+            self.spawn_background_merge()?;
+        }
+        Ok(())
+    }
+
+    /// Publishes a background merge that has finished, if any. Cheap when
+    /// the merge is still running.
+    fn poll_background_merge(&mut self) -> Result<(), StoreError> {
+        let Some(merge) = &self.background else {
+            return Ok(());
+        };
+        let outcome = match merge.receiver.try_recv() {
+            Ok(outcome) => outcome,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.background = None;
+                self.last_background_error =
+                    Some("background merge thread exited without a result".to_owned());
+                return Ok(());
+            }
+        };
+        let Some(merge) = self.background.take() else {
+            return Ok(());
+        };
+        let outputs = match outcome {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                // The merge is optional: unmerged segments still resolve by
+                // streaming merge-on-read, and orphan chunk files are swept
+                // at the next open. Record and move on.
+                self.last_background_error = Some(error.to_string());
+                return Ok(());
+            }
+        };
+        let inputs = merge
+            .input_files
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = next_manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        let retired_paths = next_manifest
+            .segments
+            .iter()
+            .filter(|meta| inputs.contains(&meta.file_name))
+            .map(|meta| self.directory.join(&meta.file_name))
+            .collect::<Vec<_>>();
+        // Publication removes exactly the merged inputs BY NAME: flushes
+        // during the merge appended segments this filter must keep.
+        next_manifest
+            .segments
+            .retain(|meta| !inputs.contains(&meta.file_name));
+        next_manifest.segments.extend(outputs);
+        manifest::publish(&self.directory, &next_manifest)?;
+        let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
+        self.retired.push(RetiredGeneration {
+            readers: Arc::downgrade(&previous),
+            paths: retired_paths,
+        });
+        Ok(())
+    }
+
+    /// Starts a size-tier merge on a background thread. The thread reads
+    /// immutable inputs and writes chunk files nothing references; segment
+    /// IDs come from a range reserved here so concurrent flushes never
+    /// collide with them.
+    fn spawn_background_merge(&mut self) -> Result<(), StoreError> {
+        const RESERVED_SEGMENT_IDS: u64 = 65_536;
+        let Some(plan) = self.compaction_plan()? else {
+            return Ok(());
+        };
+        if !self.merge_fits_on_disk(&plan)? {
+            return Ok(());
+        }
+        let full_merge = plan.indices.len() == self.manifest.segments.len();
+        let input_metas = plan
+            .indices
+            .iter()
+            .map(|index| self.manifest.segments[*index].clone())
+            .collect::<Vec<_>>();
+        let input_files = input_metas
+            .iter()
+            .map(|meta| meta.file_name.clone())
+            .collect::<Vec<_>>();
+        // Reserve an ID range through a manifest publish, so the reservation
+        // survives a restart mid-merge.
+        let id_base = self.manifest.next_segment_id;
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.next_segment_id = next_manifest
+            .next_segment_id
+            .checked_add(RESERVED_SEGMENT_IDS)
+            .ok_or(StoreError::SequenceOverflow)?;
+        manifest::publish(&self.directory, &next_manifest)?;
+        self.manifest = Arc::new(next_manifest);
+        let directory = self.directory.clone();
+        let schema = self.schema.clone();
+        let options = self.options;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("pintail-compaction".to_owned())
+            .spawn(move || {
+                let result = run_background_merge(
+                    &directory,
+                    &schema,
+                    options,
+                    &input_metas,
+                    full_merge,
+                    id_base,
+                );
+                // A dropped receiver means the store is gone; the orphan
+                // sweep at the next open cleans any chunks written.
+                let _ = sender.send(result);
+            })
+            .map_err(|error| StoreError::io("spawn compaction thread", error))?;
+        self.background = Some(BackgroundMerge {
+            receiver,
+            input_files,
+        });
+        Ok(())
+    }
+
     /// Runs one bounded size-tier merge of similarly sized overlapping files.
     ///
     /// A merge that covers the complete manifest drops tombstones immediately
@@ -1070,6 +1230,17 @@ impl TableStore {
     /// manifest publication fails.
     #[allow(clippy::too_many_lines)]
     pub fn compact(&mut self) -> Result<CompactionOutcome, StoreError> {
+        if self.background.is_some() {
+            self.poll_background_merge()?;
+            if self.background.is_some() {
+                return Ok(CompactionOutcome {
+                    input_segments: 0,
+                    output_rows: 0,
+                    output_path: None,
+                    deferred: Some("a background merge is in flight"),
+                });
+            }
+        }
         let Some(plan) = self.compaction_plan()? else {
             return Ok(CompactionOutcome {
                 input_segments: 0,
@@ -1434,6 +1605,93 @@ fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
     {
         rows.insert(row.key().clone(), row);
     }
+}
+
+/// The background thread's merge: same winner-per-key loop as the inline
+/// pass, writing chunks from a reserved segment-ID range and returning
+/// their metadata for publication on the store's thread.
+fn run_background_merge(
+    directory: &Path,
+    schema: &TableSchema,
+    options: StoreOptions,
+    input_metas: &[segment::SegmentMeta],
+    full_merge: bool,
+    id_base: u64,
+) -> Result<Vec<segment::SegmentMeta>, StoreError> {
+    let mut streams = Vec::with_capacity(input_metas.len());
+    for meta in input_metas {
+        streams.push(segment::SegmentRowStream::open(directory, meta, schema)?);
+    }
+    let mut heads = streams
+        .iter_mut()
+        .map(segment::SegmentRowStream::next_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    let compression = if full_merge {
+        segment::Compression::Zstd
+    } else {
+        segment::Compression::AdaptiveLz4
+    };
+    let output_row_limit = usize::try_from(options.max_compaction_rows).unwrap_or(usize::MAX);
+    let mut rows = Vec::with_capacity(output_row_limit.min(64 * 1024));
+    let mut buffered_bytes = 0_usize;
+    let mut next_id = id_base;
+    let mut outputs = Vec::new();
+    let mut write_chunk = |rows: &[StoredRow], next_id: &mut u64| -> Result<(), StoreError> {
+        let output = segment::write(
+            directory,
+            *next_id,
+            schema,
+            rows,
+            options.block_rows,
+            compression,
+            full_merge,
+        )?;
+        *next_id = next_id.checked_add(1).ok_or(StoreError::SequenceOverflow)?;
+        outputs.push(output);
+        Ok(())
+    };
+    while let Some(minimum) = heads
+        .iter()
+        .filter_map(|row| row.as_ref().map(StoredRow::key))
+        .min()
+        .cloned()
+    {
+        let mut winner = None;
+        for (stream, head) in streams.iter_mut().zip(&mut heads) {
+            while head.as_ref().is_some_and(|row| row.key() == &minimum) {
+                let Some(candidate) = head.take() else {
+                    return Err(StoreError::FormatLimit(
+                        "matching compaction head disappeared".into(),
+                    ));
+                };
+                if winner
+                    .as_ref()
+                    .is_none_or(|current: &StoredRow| candidate.version() >= current.version())
+                {
+                    winner = Some(candidate);
+                }
+                *head = stream.next_row()?;
+            }
+        }
+        let Some(winner) = winner else {
+            return Err(StoreError::FormatLimit(
+                "compaction minimum has no winning row".into(),
+            ));
+        };
+        if !full_merge || !winner.is_deleted() {
+            buffered_bytes = buffered_bytes.saturating_add(winner.estimated_bytes());
+            rows.push(winner);
+        }
+        if rows.len() >= output_row_limit || buffered_bytes >= options.max_compaction_output_bytes {
+            write_chunk(&rows, &mut next_id)?;
+            rows.clear();
+            buffered_bytes = 0;
+        }
+    }
+    if !rows.is_empty() {
+        write_chunk(&rows, &mut next_id)?;
+    }
+    Ok(outputs)
 }
 
 fn write_compaction_chunk(

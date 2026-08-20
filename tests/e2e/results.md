@@ -1,18 +1,32 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-20T14:06:19.294Z.
+Measured 2026-08-20T20:14:37.948Z.
 
-**1829 passed, 0 failed, 6 documented-gap warnings.**
+**2076 passed, 21 failed, 5 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
+| snapshot | converge:Dim | PASS |  |
+| snapshot | converge:Event | PASS |  |
+| snapshot | converge:Fact | PASS |  |
+| snapshot | converge:Person | PASS |  |
 | snapshot | converge:audit_log | PASS |  |
 | snapshot | converge:counters | PASS |  |
 | snapshot | converge:customers | PASS |  |
 | snapshot | converge:order_items | PASS |  |
 | snapshot | converge:orders | PASS |  |
 | snapshot | converge:staff | PASS |  |
-| snapshot | converge:information_schema.columns | PASS |  |
+| snapshot | converge:information_schema.columns | FAIL | row 0: |
+| snapshot | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| snapshot | query:conformance: mixed-collation double grouping | PASS |  |
+| snapshot | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| snapshot | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| snapshot | query:conformance: case-variant code grouping | PASS |  |
+| snapshot | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| snapshot | query:conformance: nullable join key NULL-extends | PASS |  |
+| snapshot | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| snapshot | query:conformance: date bucketing over the fact table | PASS |  |
+| snapshot | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | snapshot | query:point lookup by key | PASS |  |
 | snapshot | query:range scan with compound predicate | PASS |  |
 | snapshot | query:inner join with aggregation | PASS |  |
@@ -106,7 +120,7 @@ Measured 2026-08-20T14:06:19.294Z.
 | orm-compat | sequelize:relation-read:generated-sql | PASS |  |
 | orm-compat | sequelize:grouped-aggregate:result | PASS |  |
 | orm-compat | sequelize:grouped-aggregate:generated-sql | PASS |  |
-| orm-compat | drizzle:introspection:result | PASS |  |
+| orm-compat | drizzle:introspection:result | FAIL | mysql {"meta/0000_snapshot.json":"{\n  \"id\": \"00000000-0000-0000-0000-000000000000\",\n  \"prevId\": \"\",\n  \"version\": \"5\",\n  \"dialect\": \"mysql\",\n  \"tables\": {\n    \"Dim\": {\n      \"name\": \"Dim\",\n      \"columns\": {\n        \"dimId\": {\n          \"autoincrement\": false,\n          \"name\": \"dimId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"code\": {\n          \"autoincrement\": false,\n          \"name\": \"code\",\n          \"type\": \"varchar(32)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"label\": {\n          \"autoincrement\": false,\n          \"name\": \"label\",\n          \"type\": \"varchar(64)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"padded\": {\n          \"autoincrement\": false,\n          \"name\": \"padded\",\n          \"type\": \"varchar(32)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"status\": {\n          \"autoincrement\": false,\n          \"name\": \"status\",\n          \"type\": \"enum('zebra','active','beta')\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"Dim_dimId\": {\n          \"name\": \"Dim_dimId\",\n          \"columns\": [\n            \"dimId\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"Event\": {\n      \"name\": \"Event\",\n      \"columns\": {\n        \"eventId\": {\n          \"autoincrement\": false,\n          \"name\": \"eventId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"dimId\": {\n          \"autoincrement\": false,\n          \"name\": \"dimId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"at\": {\n          \"autoincrement\": false,\n          \"name\": \"at\",\n          \"type\": \"datetime\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"Event_eventId\": {\n          \"name\": \"Event_eventId\",\n          \"columns\": [\n            \"eventId\"\n          ]\n        }\n      },\n      \"indexes\": {\n        \"idx_dim\": {\n          \"name\": \"idx_dim\",\n          \"columns\": [\n            \"dimId\"\n          ],\n          \"isUnique\": false\n        }\n      },\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"Fact\": {\n      \"name\": \"Fact\",\n      \"columns\": {\n        \"factId\": {\n          \"autoincrement\": false,\n          \"name\": \"factId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"dimId\": {\n          \"autoincrement\": false,\n          \"name\": \"dimId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"nullableDimId\": {\n          \"autoincrement\": false,\n          \"name\": \"nullableDimId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"code\": {\n          \"autoincrement\": false,\n          \"name\": \"code\",\n          \"type\": \"varchar(32)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"amount\": {\n          \"autoincrement\": false,\n          \"name\": \"amount\",\n          \"type\": \"decimal(12,2)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"createdBy\": {\n          \"autoincrement\": false,\n          \"name\": \"createdBy\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"updatedBy\": {\n          \"autoincrement\": false,\n          \"name\": \"updatedBy\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"ownedBy\": {\n          \"autoincrement\": false,\n          \"name\": \"ownedBy\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"effectiveFrom\": {\n          \"autoincrement\": false,\n          \"name\": \"effectiveFrom\",\n          \"type\": \"date\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"createdAt\": {\n          \"autoincrement\": false,\n          \"name\": \"createdAt\",\n          \"type\": \"datetime\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"Fact_factId\": {\n          \"name\": \"Fact_factId\",\n          \"columns\": [\n            \"factId\"\n          ]\n        }\n      },\n      \"indexes\": {\n        \"idx_dim\": {\n          \"name\": \"idx_dim\",\n          \"columns\": [\n            \"dimId\"\n          ],\n          \"isUnique\": false\n        }\n      },\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"Person\": {\n      \"name\": \"Person\",\n      \"columns\": {\n        \"personId\": {\n          \"autoincrement\": false,\n          \"name\": \"personId\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"name\": {\n          \"autoincrement\": false,\n          \"name\": \"name\",\n          \"type\": \"varchar(64)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"Person_personId\": {\n          \"name\": \"Person_personId\",\n          \"columns\": [\n            \"personId\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"audit_log\": {\n      \"name\": \"audit_log\",\n      \"columns\": {\n        \"note\": {\n          \"autoincrement\": false,\n          \"name\": \"note\",\n          \"type\": \"varchar(128)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {},\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"counters\": {\n      \"name\": \"counters\",\n      \"columns\": {\n        \"id\": {\n          \"autoincrement\": false,\n          \"name\": \"id\",\n          \"type\": \"tinyint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"u8\": {\n          \"autoincrement\": false,\n          \"name\": \"u8\",\n          \"type\": \"tinyint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"u16\": {\n          \"autoincrement\": false,\n          \"name\": \"u16\",\n          \"type\": \"smallint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"u32\": {\n          \"autoincrement\": false,\n          \"name\": \"u32\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"u64\": {\n          \"autoincrement\": false,\n          \"name\": \"u64\",\n          \"type\": \"bigint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"s64\": {\n          \"autoincrement\": false,\n          \"name\": \"s64\",\n          \"type\": \"bigint\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"counters_id\": {\n          \"name\": \"counters_id\",\n          \"columns\": [\n            \"id\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"customers\": {\n      \"name\": \"customers\",\n      \"columns\": {\n        \"id\": {\n          \"autoincrement\": true,\n          \"name\": \"id\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"name\": {\n          \"autoincrement\": false,\n          \"name\": \"name\",\n          \"type\": \"varchar(64)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"email\": {\n          \"autoincrement\": false,\n          \"name\": \"email\",\n          \"type\": \"varchar(96)\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"tier\": {\n          \"default\": \"'free'\",\n          \"autoincrement\": false,\n          \"name\": \"tier\",\n          \"type\": \"enum('free','pro','enterprise')\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"tags\": {\n          \"default\": \"''\",\n          \"autoincrement\": false,\n          \"name\": \"tags\",\n          \"type\": \"set('alpha','beta','vip')\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"balance\": {\n          \"default\": \"'0.00'\",\n          \"autoincrement\": false,\n          \"name\": \"balance\",\n          \"type\": \"decimal(12,2)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"meta\": {\n          \"autoincrement\": false,\n          \"name\": \"meta\",\n          \"type\": \"json\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"avatar\": {\n          \"autoincrement\": false,\n          \"name\": \"avatar\",\n          \"type\": \"varbinary(16)\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"latin_note\": {\n          \"autoincrement\": false,\n          \"name\": \"latin_note\",\n          \"type\": \"varchar(32)\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"legacy_label\": {\n          \"autoincrement\": false,\n          \"name\": \"legacy_label\",\n          \"type\": \"varchar(64)\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"created_at\": {\n          \"default\": \"(CURRENT_TIMESTAMP(6))\",\n          \"autoincrement\": false,\n          \"name\": \"created_at\",\n          \"type\": \"datetime(6)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"customers_id\": {\n          \"name\": \"customers_id\",\n          \"columns\": [\n            \"id\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"order_items\": {\n      \"name\": \"order_items\",\n      \"columns\": {\n        \"order_id\": {\n          \"autoincrement\": false,\n          \"name\": \"order_id\",\n          \"type\": \"bigint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"line_no\": {\n          \"autoincrement\": false,\n          \"name\": \"line_no\",\n          \"type\": \"int\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"product\": {\n          \"autoincrement\": false,\n          \"name\": \"product\",\n          \"type\": \"varchar(64)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"qty\": {\n          \"autoincrement\": false,\n          \"name\": \"qty\",\n          \"type\": \"smallint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"price\": {\n          \"autoincrement\": false,\n          \"name\": \"price\",\n          \"type\": \"decimal(10,2)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"order_items_order_id_line_no\": {\n          \"name\": \"order_items_order_id_line_no\",\n          \"columns\": [\n            \"order_id\",\n            \"line_no\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"orders\": {\n      \"name\": \"orders\",\n      \"columns\": {\n        \"id\": {\n          \"autoincrement\": true,\n          \"name\": \"id\",\n          \"type\": \"bigint unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"customer_id\": {\n          \"autoincrement\": false,\n          \"name\": \"customer_id\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"status\": {\n          \"autoincrement\": false,\n          \"name\": \"status\",\n          \"type\": \"enum('pending','processing','shipped','delivered','cancelled')\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"total\": {\n          \"autoincrement\": false,\n          \"name\": \"total\",\n          \"type\": \"decimal(12,2)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"placed_on\": {\n          \"autoincrement\": false,\n          \"name\": \"placed_on\",\n          \"type\": \"date\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"updated_at\": {\n          \"autoincrement\": false,\n          \"name\": \"updated_at\",\n          \"type\": \"timestamp(6)\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"orders_id\": {\n          \"name\": \"orders_id\",\n          \"columns\": [\n            \"id\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    },\n    \"staff\": {\n      \"name\": \"staff\",\n      \"columns\": {\n        \"id\": {\n          \"autoincrement\": false,\n          \"name\": \"id\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"name\": {\n          \"autoincrement\": false,\n          \"name\": \"name\",\n          \"type\": \"varchar(64)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        },\n        \"manager_id\": {\n          \"autoincrement\": false,\n          \"name\": \"manager_id\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"created_by\": {\n          \"autoincrement\": false,\n          \"name\": \"created_by\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"updated_by\": {\n          \"autoincrement\": false,\n          \"name\": \"updated_by\",\n          \"type\": \"int unsigned\",\n          \"primaryKey\": false,\n          \"notNull\": false\n        },\n        \"active\": {\n          \"default\": 1,\n          \"autoincrement\": false,\n          \"name\": \"active\",\n          \"type\": \"tinyint(1)\",\n          \"primaryKey\": false,\n          \"notNull\": true\n        }\n      },\n      \"compositePrimaryKeys\": {\n        \"staff_id\": {\n          \"name\": \"staff_id\",\n          \"columns\": [\n            \"id\"\n          ]\n        }\n      },\n      \"indexes\": {},\n      \"foreignKeys\": {},\n      \"uniqueConstraints\": {},\n      \"checkConstraint\": {}\n    }\n  },\n  \"views\": {},\n  \"_meta\": {\n    \"schemas\": {},\n    \"tables\": {},\n    \"columns\": {}\n  },\n  \"internal\": {\n    \"tables\": {\n      \"customers\": {\n        \"columns\": {\n          \"created_at\": {\n            \"isDefaultAnExpression\": true\n          }\n        }\n      }\n    },\n    \"indexes\": {}\n  }\n}","migration.sql":"-- Current sql file was generated after introspecting the database\n-- If you want to run this migration please uncomment this code before executing migrations\n/*\nCREATE TABLE `Dim` (\n\t`dimId` int NOT NULL,\n\t`code` varchar(32) NOT NULL,\n\t`label` varchar(64) NOT NULL,\n\t`padded` varchar(32) NOT NULL,\n\t`status` enum('zebra','active','beta') NOT NULL,\n\tCONSTRAINT `Dim_dimId` PRIMARY KEY(`dimId`)\n);\n--> statement-breakpoint\nCREATE TABLE `Event` (\n\t`eventId` int NOT NULL,\n\t`dimId` int NOT NULL,\n\t`at` datetime NOT NULL,\n\tCONSTRAINT `Event_eventId` PRIMARY KEY(`eventId`)\n);\n--> statement-breakpoint\nCREATE TABLE `Fact` (\n\t`factId` int NOT NULL,\n\t`dimId` int NOT NULL,\n\t`nullableDimId` int,\n\t`code` varchar(32) NOT NULL,\n\t`amount` decimal(12,2) NOT NULL,\n\t`createdBy` int,\n\t`updatedBy` int,\n\t`ownedBy` int,\n\t`effectiveFrom` date,\n\t`createdAt` datetime NOT NULL,\n\tCONSTRAINT `Fact_factId` PRIMARY KEY(`factId`)\n);\n--> statement-breakpoint\nCREATE TABLE `Person` (\n\t`personId` int NOT NULL,\n\t`name` varchar(64) NOT NULL,\n\tCONSTRAINT `Person_personId` PRIMARY KEY(`personId`)\n);\n--> statement-breakpoint\nCREATE TABLE `audit_log` (\n\t`note` varchar(128) NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `counters` (\n\t`id` tinyint unsigned NOT NULL,\n\t`u8` tinyint unsigned NOT NULL,\n\t`u16` smallint unsigned NOT NULL,\n\t`u32` int unsigned NOT NULL,\n\t`u64` bigint unsigned NOT NULL,\n\t`s64` bigint NOT NULL,\n\tCONSTRAINT `counters_id` PRIMARY KEY(`id`)\n);\n--> statement-breakpoint\nCREATE TABLE `customers` (\n\t`id` int unsigned AUTO_INCREMENT NOT NULL,\n\t`name` varchar(64) NOT NULL,\n\t`email` varchar(96),\n\t`tier` enum('free','pro','enterprise') NOT NULL DEFAULT 'free',\n\t`tags` set('alpha','beta','vip') NOT NULL DEFAULT '',\n\t`balance` decimal(12,2) NOT NULL DEFAULT '0.00',\n\t`meta` json,\n\t`avatar` varbinary(16),\n\t`latin_note` varchar(32),\n\t`legacy_label` varchar(64),\n\t`created_at` datetime(6) NOT NULL DEFAULT (CURRENT_TIMESTAMP(6)),\n\tCONSTRAINT `customers_id` PRIMARY KEY(`id`)\n);\n--> statement-breakpoint\nCREATE TABLE `order_items` (\n\t`order_id` bigint unsigned NOT NULL,\n\t`line_no` int NOT NULL,\n\t`product` varchar(64) NOT NULL,\n\t`qty` smallint unsigned NOT NULL,\n\t`price` decimal(10,2) NOT NULL,\n\tCONSTRAINT `order_items_order_id_line_no` PRIMARY KEY(`order_id`,`line_no`)\n);\n--> statement-breakpoint\nCREATE TABLE `orders` (\n\t`id` bigint unsigned AUTO_INCREMENT NOT NULL,\n\t`customer_id` int unsigned NOT NULL,\n\t`status` enum('pending','processing','shipped','delivered','cancelled') NOT NULL,\n\t`total` decimal(12,2) NOT NULL,\n\t`placed_on` date NOT NULL,\n\t`updated_at` timestamp(6),\n\tCONSTRAINT `orders_id` PRIMARY KEY(`id`)\n);\n--> statement-breakpoint\nCREATE TABLE `staff` (\n\t`id` int unsigned NOT NULL,\n\t`name` varchar(64) NOT NULL,\n\t`manager_id` int unsigned,\n\t`created_by` int unsigned,\n\t`updated_by` int unsigned,\n\t`active` tinyint(1) NOT NULL DEFAULT 1,\n\tCONSTRAINT `staff_id` PRIMARY KEY(`id`)\n);\n--> statement-breakpoint\nCREATE INDEX `idx_dim` ON `Event` (`dimId`);--> statement-breakpoint\nCREATE INDEX `idx_dim` ON `Fact` (`dimId`);\n*/","relations.ts":"import { relations } from \"drizzle-orm/relations\";\nimport {  } from \"./schema\";\n\n","schema.ts":"import { mysqlTable, mysqlSchema, AnyMySqlColumn, primaryKey, int, varchar, mysqlEnum, index, datetime, decimal, date, tinyint, smallint, bigint, json, varbinary } from \"drizzle-orm/mysql-core\"\nimport { sql } from \"drizzle-orm\"\n\nexport const Dim = mysqlTable(\"Dim\", {\n\tdimId: int().notNull(),\n\tcode: varchar({ length: 32 }).notNull(),\n\tlabel: varchar({ length: 64 }).notNull(),\n\tpadded: varchar({ length: 32 }).notNull(),\n\tstatus: mysqlEnum(['zebra','active','beta']).notNull(),\n},\n(table) => [\n\tprimaryKey({ columns: [table.dimId], name: \"Dim_dimId\"}),\n]);\n\nexport const Event = mysqlTable(\"Event\", {\n\teventId: int().notNull(),\n\tdimId: int().notNull(),\n\tat: datetime({ mode: 'string'}).notNull(),\n},\n(table) => [\n\tindex(\"idx_dim\").on(table.dimId),\n\tprimaryKey({ columns: [table.eventId], name: \"Event_eventId\"}),\n]);\n\nexport const Fact = mysqlTable(\"Fact\", {\n\tfactId: int().notNull(),\n\tdimId: int().notNull(),\n\tnullableDimId: int(),\n\tcode: varchar({ length: 32 }).notNull(),\n\tamount: decimal({ precision: 12, scale: 2 }).notNull(),\n\tcreatedBy: int(),\n\tupdatedBy: int(),\n\townedBy: int(),\n\t// you can use { mode: 'date' }, if you want to have Date as type for this column\n\teffectiveFrom: date({ mode: 'string' }),\n\tcreatedAt: datetime({ mode: 'string'}).notNull(),\n},\n(table) => [\n\tindex(\"idx_dim\").on(table.dimId),\n\tprimaryKey({ columns: [table.factId], name: \"Fact_factId\"}),\n]);\n\nexport const Person = mysqlTable(\"Person\", {\n\tpersonId: int().notNull(),\n\tname: varchar({ length: 64 }).notNull(),\n},\n(table) => [\n\tprimaryKey({ columns: [table.personId], name: \"Person_personId\"}),\n]);\n\nexport const audit_log = mysqlTable(\"audit_log\", {\n\tnote: varchar({ length: 128 }).notNull(),\n});\n\nexport const counters = mysqlTable(\"counters\", {\n\tid: tinyint({ unsigned: true }).notNull(),\n\tu8: tinyint({ unsigned: true }).notNull(),\n\tu16: smallint({ unsigned: true }).notNull(),\n\tu32: int({ unsigned: true }).notNull(),\n\tu64: bigint({ mode: \"number\", unsigned: true }).notNull(),\n\ts64: bigint({ mode: \"number\" }).notNull(),\n},\n(table) => [\n\tprimaryKey({ columns: [table.id], name: \"counters_id\"}),\n]);\n\nexport const customers = mysqlTable(\"customers\", {\n\tid: int({ unsigned: true }).autoincrement().notNull(),\n\tname: varchar({ length: 64 }).notNull(),\n\temail: varchar({ length: 96 }),\n\ttier: mysqlEnum(['free','pro','enterprise']).default('free').notNull(),\n\t// Warning: Can't parse set('alpha','beta','vip') from database\n\t// set('alpha','beta','vip')Type: set('alpha','beta','vip')(\"tags\").notNull(),\n\tbalance: decimal({ precision: 12, scale: 2 }).default('0.00').notNull(),\n\tmeta: json(),\n\tavatar: varbinary({ length: 16 }),\n\tlatin_note: varchar({ length: 32 }),\n\tlegacy_label: varchar({ length: 64 }),\n\tcreated_at: datetime({ mode: 'string', fsp: 6 }).default(sql`(CURRENT_TIMESTAMP(6))`).notNull(),\n},\n(table) => [\n\tprimaryKey({ columns: [table.id], name: \"customers_id\"}),\n]);\n\nexport const order_items = mysqlTable(\"order_items\", {\n\torder_id: bigint({ mode: \"number\", unsigned: true }).notNull(),\n\tline_no: int().notNull(),\n\tproduct: varchar({ length: 64 }).notNull(),\n\tqty: smallint({ unsigned: true }).notNull(),\n\tprice: decimal({ precision: 10, scale: 2 }).notNull(),\n},\n(table) => [\n\tprimaryKey({ columns: [table.order_id, table.line_no], name: \"order_items_order_id_line_no\"}),\n]);\n\nexport const orders = mysqlTable(\"orders\", {\n\tid: bigint({ mode: \"number\", unsigned: true }).autoincrement().notNull(),\n\tcustomer_id: int({ unsigned: true }).notNull(),\n\tstatus: mysqlEnum(['pending','processing','shipped','delivered','cancelled']).notNull(),\n\ttotal: decimal({ precision: 12, scale: 2 }).notNull(),\n\t// you can use { mode: 'date' }, if you want to have Date as type for this column\n\tplaced_on: date({ mode: 'string' }).notNull(),\n\tupdated_at: timestamp({ fsp: 6, mode: 'string' }),\n},\n(table) => [\n\tprimaryKey({ columns: [table.id], name: \"orders_id\"}),\n]);\n\nexport const staff = mysqlTable(\"staff\", {\n\tid: int({ unsigned: true }).notNull(),\n\tname: varchar({ length: 64 }).notNull(),\n\tmanager_id: int({ unsigned: true }),\n\tcreated_by: int({ unsigned: true }),\n\tupdated_by: int({ unsigned: true }),\n\tactive: tinyint().default(1).notNull(),\n},\n(table) => [\n\tprimaryKey({ columns: [table.id], name: \"staff_id\"}),\n]);\n"} |
 | orm-compat | drizzle:introspection:generated-sql | PASS |  |
 | orm-compat | drizzle:point-and-filtered-reads:result | PASS |  |
 | orm-compat | drizzle:point-and-filtered-reads:generated-sql | PASS |  |
@@ -114,7 +128,7 @@ Measured 2026-08-20T14:06:19.294Z.
 | orm-compat | drizzle:relation-read:generated-sql | PASS |  |
 | orm-compat | drizzle:grouped-aggregate:result | PASS |  |
 | orm-compat | drizzle:grouped-aggregate:generated-sql | PASS |  |
-| orm-compat | prisma:introspection:result | PASS |  |
+| orm-compat | prisma:introspection:result | FAIL | mysql "generator client {\n  provider     = \"prisma-client\"\n  output       = \"../generated/prisma\"\n  moduleFormat = \"esm\"\n}\n\ndatasource db {\n  provider = \"mysql\"\n}\n\nmodel Customer {\n  id           Int          @id @default(autoincrement()) @db.UnsignedInt\n  name         String       @db.VarChar(64)\n  email        String?      @db.VarChar(96)\n  tier         CustomerTier @default(free)\n  tags         String       @default(\"\")\n  balance      Decimal      @default(0.00) @db.Decimal(12, 2)\n  meta         Json?\n  avatar       Bytes?       @db.VarBinary(16)\n  latin_note   String?      @db.VarChar(32)\n  legacy_label String?      @db.VarChar(64)\n  created_at   DateTime     @default(now()) @db.DateTime(6)\n\n  @@map(\"customers\")\n}\n\nmodel Order {\n  id         BigInt      @id @default(autoincrement()) @db.UnsignedBigInt\n  customerId Int         @map(\"customer_id\") @db.UnsignedInt\n  status     OrderStatus\n  total      Decimal     @db.Decimal(12, 2)\n  placedOn   DateTime    @map(\"placed_on\") @db.Date\n  updated_at DateTime?   @db.Timestamp(6)\n\n  @@map(\"orders\")\n}\n\nmodel Dim {\n  dimId  Int        @id\n  code   String     @db.VarChar(32)\n  label  String     @db.VarChar(64)\n  padded String     @db.VarChar(32)\n  status Dim_status\n}\n\nmodel Event {\n  eventId Int      @id\n  dimId   Int\n  at      DateTime @db.DateTime(0)\n\n  @@index([dimId], map: \"idx_dim\")\n}\n\nmodel Fact {\n  factId        Int       @id\n  dimId         Int\n  nullableDimId Int?\n  code          String    @db.VarChar(32)\n  amount        Decimal   @db.Decimal(12, 2)\n  createdBy     Int?\n  updatedBy     Int?\n  ownedBy       Int?\n  effectiveFrom DateTime? @db.Date\n  createdAt     DateTime  @db.DateTime(0)\n\n  @@index([dimId], map: \"idx_dim\")\n}\n\nmodel Person {\n  personId Int    @id\n  name     String @db.VarChar(64)\n}\n\n/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.\nmodel audit_log {\n  note String @db.VarChar(128)\n\n  @@ignore\n}\n\nmodel counters {\n  id  Int    @id @db.UnsignedTinyInt\n  u8  Int    @db.UnsignedTinyInt\n  u16 Int    @db.UnsignedSmallInt\n  u32 Int    @db.UnsignedInt\n  u64 BigInt @db.UnsignedBigInt\n  s64 BigInt\n}\n\nmodel order_items {\n  order_id BigInt  @db.UnsignedBigInt\n  line_no  Int\n  product  String  @db.VarChar(64)\n  qty      Int     @db.UnsignedSmallInt\n  price    Decimal @db.Decimal(10, 2)\n\n  @@id([order_id, line_no])\n}\n\nmodel staff {\n  id         Int     @id @db.UnsignedInt\n  name       String  @db.VarChar(64)\n  manager_id Int?    @db.UnsignedInt\n  created_by Int?    @db.UnsignedInt\n  updated_by Int?    @db.UnsignedInt\n  active     Boolean @default(true)\n}\n\nenum CustomerTier {\n  free\n  pro\n  enterprise\n}\n\nenum OrderStatus {\n  pending\n  processing\n  shipped\n  delivered\n  cancelled\n}\n\nenum Dim_status {\n  zebra\n  active\n  beta\n}" |
 | orm-compat | prisma:introspection:generated-sql | PASS |  |
 | orm-compat | prisma:point-and-filtered-reads:result | PASS |  |
 | orm-compat | prisma:point-and-filtered-reads:generated-sql | PASS |  |
@@ -122,13 +136,27 @@ Measured 2026-08-20T14:06:19.294Z.
 | orm-compat | prisma:relation-read:generated-sql | PASS |  |
 | orm-compat | prisma:grouped-aggregate:result | PASS |  |
 | orm-compat | prisma:grouped-aggregate:generated-sql | PASS |  |
+| orm-compat | converge:Dim | PASS |  |
+| orm-compat | converge:Event | PASS |  |
+| orm-compat | converge:Fact | PASS |  |
+| orm-compat | converge:Person | PASS |  |
 | orm-compat | converge:audit_log | PASS |  |
 | orm-compat | converge:counters | PASS |  |
 | orm-compat | converge:customers | PASS |  |
 | orm-compat | converge:order_items | PASS |  |
 | orm-compat | converge:orders | PASS |  |
 | orm-compat | converge:staff | PASS |  |
-| orm-compat | converge:information_schema.columns | PASS |  |
+| orm-compat | converge:information_schema.columns | FAIL | row 0: |
+| orm-compat | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| orm-compat | query:conformance: mixed-collation double grouping | PASS |  |
+| orm-compat | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| orm-compat | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| orm-compat | query:conformance: case-variant code grouping | PASS |  |
+| orm-compat | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| orm-compat | query:conformance: nullable join key NULL-extends | PASS |  |
+| orm-compat | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| orm-compat | query:conformance: date bucketing over the fact table | PASS |  |
+| orm-compat | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | orm-compat | query:point lookup by key | PASS |  |
 | orm-compat | query:range scan with compound predicate | PASS |  |
 | orm-compat | query:inner join with aggregation | PASS |  |
@@ -214,13 +242,27 @@ Measured 2026-08-20T14:06:19.294Z.
 | orm-compat | query:set: order by walks the member bitmask | SKIP |  |
 | orm-compat | query:set: grouping orders groups by bitmask | SKIP |  |
 | orm-compat | query:geometry: hex round-trips the internal format | SKIP |  |
+| crud | converge:Dim | PASS |  |
+| crud | converge:Event | PASS |  |
+| crud | converge:Fact | PASS |  |
+| crud | converge:Person | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
 | crud | converge:order_items | PASS |  |
 | crud | converge:orders | PASS |  |
 | crud | converge:staff | PASS |  |
-| crud | converge:information_schema.columns | PASS |  |
+| crud | converge:information_schema.columns | FAIL | row 0: |
+| crud | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| crud | query:conformance: mixed-collation double grouping | PASS |  |
+| crud | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| crud | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| crud | query:conformance: case-variant code grouping | PASS |  |
+| crud | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| crud | query:conformance: nullable join key NULL-extends | PASS |  |
+| crud | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| crud | query:conformance: date bucketing over the fact table | PASS |  |
+| crud | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | crud | query:point lookup by key | PASS |  |
 | crud | query:range scan with compound predicate | PASS |  |
 | crud | query:inner join with aggregation | PASS |  |
@@ -306,13 +348,27 @@ Measured 2026-08-20T14:06:19.294Z.
 | crud | query:set: order by walks the member bitmask | SKIP |  |
 | crud | query:set: grouping orders groups by bitmask | SKIP |  |
 | crud | query:geometry: hex round-trips the internal format | SKIP |  |
+| type-edges | converge:Dim | PASS |  |
+| type-edges | converge:Event | PASS |  |
+| type-edges | converge:Fact | PASS |  |
+| type-edges | converge:Person | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
 | type-edges | converge:order_items | PASS |  |
 | type-edges | converge:orders | PASS |  |
 | type-edges | converge:staff | PASS |  |
-| type-edges | converge:information_schema.columns | PASS |  |
+| type-edges | converge:information_schema.columns | FAIL | row 0: |
+| type-edges | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| type-edges | query:conformance: mixed-collation double grouping | PASS |  |
+| type-edges | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| type-edges | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| type-edges | query:conformance: case-variant code grouping | PASS |  |
+| type-edges | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| type-edges | query:conformance: nullable join key NULL-extends | PASS |  |
+| type-edges | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| type-edges | query:conformance: date bucketing over the fact table | PASS |  |
+| type-edges | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | type-edges | query:point lookup by key | PASS |  |
 | type-edges | query:range scan with compound predicate | PASS |  |
 | type-edges | query:inner join with aggregation | PASS |  |
@@ -398,6 +454,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | type-edges | query:set: order by walks the member bitmask | SKIP |  |
 | type-edges | query:set: grouping orders groups by bitmask | SKIP |  |
 | type-edges | query:geometry: hex round-trips the internal format | SKIP |  |
+| ddl | converge:Dim | PASS |  |
+| ddl | converge:Event | PASS |  |
+| ddl | converge:Fact | PASS |  |
+| ddl | converge:Person | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
@@ -405,7 +465,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | ddl | converge:orders | PASS |  |
 | ddl | converge:shipments | PASS |  |
 | ddl | converge:staff | PASS |  |
-| ddl | converge:information_schema.columns | PASS |  |
+| ddl | converge:information_schema.columns | FAIL | row 0: |
+| ddl | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| ddl | query:conformance: mixed-collation double grouping | PASS |  |
+| ddl | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| ddl | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| ddl | query:conformance: case-variant code grouping | PASS |  |
+| ddl | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| ddl | query:conformance: nullable join key NULL-extends | PASS |  |
+| ddl | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| ddl | query:conformance: date bucketing over the fact table | PASS |  |
+| ddl | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | ddl | query:point lookup by key | PASS |  |
 | ddl | query:range scan with compound predicate | PASS |  |
 | ddl | query:inner join with aggregation | PASS |  |
@@ -491,6 +561,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | ddl | query:set: order by walks the member bitmask | PASS |  |
 | ddl | query:set: grouping orders groups by bitmask | PASS |  |
 | ddl | query:geometry: hex round-trips the internal format | PASS |  |
+| schema-drift-minimal | converge:Dim | PASS |  |
+| schema-drift-minimal | converge:Event | PASS |  |
+| schema-drift-minimal | converge:Fact | PASS |  |
+| schema-drift-minimal | converge:Person | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
@@ -498,7 +572,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | schema-drift-minimal | converge:orders | PASS |  |
 | schema-drift-minimal | converge:shipments | PASS |  |
 | schema-drift-minimal | converge:staff | PASS |  |
-| schema-drift-minimal | converge:information_schema.columns | PASS |  |
+| schema-drift-minimal | converge:information_schema.columns | FAIL | row 0: |
+| schema-drift-minimal | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| schema-drift-minimal | query:conformance: mixed-collation double grouping | PASS |  |
+| schema-drift-minimal | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| schema-drift-minimal | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| schema-drift-minimal | query:conformance: case-variant code grouping | PASS |  |
+| schema-drift-minimal | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| schema-drift-minimal | query:conformance: nullable join key NULL-extends | PASS |  |
+| schema-drift-minimal | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| schema-drift-minimal | query:conformance: date bucketing over the fact table | PASS |  |
+| schema-drift-minimal | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | schema-drift-minimal | query:point lookup by key | PASS |  |
 | schema-drift-minimal | query:range scan with compound predicate | PASS |  |
 | schema-drift-minimal | query:inner join with aggregation | PASS |  |
@@ -584,6 +668,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | schema-drift-minimal | query:set: order by walks the member bitmask | PASS |  |
 | schema-drift-minimal | query:set: grouping orders groups by bitmask | PASS |  |
 | schema-drift-minimal | query:geometry: hex round-trips the internal format | PASS |  |
+| schema-drift-unseen | converge:Dim | PASS |  |
+| schema-drift-unseen | converge:Event | PASS |  |
+| schema-drift-unseen | converge:Fact | PASS |  |
+| schema-drift-unseen | converge:Person | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
@@ -591,7 +679,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | schema-drift-unseen | converge:orders | PASS |  |
 | schema-drift-unseen | converge:shipments | PASS |  |
 | schema-drift-unseen | converge:staff | PASS |  |
-| schema-drift-unseen | converge:information_schema.columns | PASS |  |
+| schema-drift-unseen | converge:information_schema.columns | FAIL | row 0: |
+| schema-drift-unseen | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| schema-drift-unseen | query:conformance: mixed-collation double grouping | PASS |  |
+| schema-drift-unseen | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| schema-drift-unseen | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| schema-drift-unseen | query:conformance: case-variant code grouping | PASS |  |
+| schema-drift-unseen | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| schema-drift-unseen | query:conformance: nullable join key NULL-extends | PASS |  |
+| schema-drift-unseen | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| schema-drift-unseen | query:conformance: date bucketing over the fact table | PASS |  |
+| schema-drift-unseen | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | schema-drift-unseen | query:point lookup by key | PASS |  |
 | schema-drift-unseen | query:range scan with compound predicate | PASS |  |
 | schema-drift-unseen | query:inner join with aggregation | PASS |  |
@@ -677,12 +775,16 @@ Measured 2026-08-20T14:06:19.294Z.
 | schema-drift-unseen | query:set: order by walks the member bitmask | PASS |  |
 | schema-drift-unseen | query:set: grouping orders groups by bitmask | PASS |  |
 | schema-drift-unseen | query:geometry: hex round-trips the internal format | PASS |  |
-| churn-live | live:point lookup by key | PASS |  |
-| churn-live | live:range scan with compound predicate | PASS |  |
-| churn-live | live:inner join with aggregation | PASS |  |
-| churn-live | live:join with a residual comparison between both inputs | PASS |  |
-| churn-live | live:left join keeps rows whose only matches fail the residual | PASS |  |
-| churn-live | live:residual comparison through coalesce on a nullable column | PASS |  |
+| churn-live | live:conformance: triple-alias person join with a dangling FK | PASS |  |
+| churn-live | live:conformance: mixed-collation double grouping | PASS |  |
+| churn-live | live:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| churn-live | live:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| churn-live | live:conformance: case-variant code grouping | PASS |  |
+| churn-live | live:conformance: anti-join finds the event-less dimension | PASS |  |
+| churn | converge:Dim | PASS |  |
+| churn | converge:Event | PASS |  |
+| churn | converge:Fact | PASS |  |
+| churn | converge:Person | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
@@ -690,7 +792,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | churn | converge:orders | PASS |  |
 | churn | converge:shipments | PASS |  |
 | churn | converge:staff | PASS |  |
-| churn | converge:information_schema.columns | PASS |  |
+| churn | converge:information_schema.columns | FAIL | row 0: |
+| churn | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| churn | query:conformance: mixed-collation double grouping | PASS |  |
+| churn | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| churn | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| churn | query:conformance: case-variant code grouping | PASS |  |
+| churn | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| churn | query:conformance: nullable join key NULL-extends | PASS |  |
+| churn | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| churn | query:conformance: date bucketing over the fact table | PASS |  |
+| churn | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | churn | query:point lookup by key | PASS |  |
 | churn | query:range scan with compound predicate | PASS |  |
 | churn | query:inner join with aggregation | PASS |  |
@@ -781,6 +893,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
 | execution-budget | hint:cannot loosen the session ceiling | PASS |  |
 | execution-budget | hint:an unimplemented hint rejects | PASS |  |
+| execution-budget | converge:Dim | PASS |  |
+| execution-budget | converge:Event | PASS |  |
+| execution-budget | converge:Fact | PASS |  |
+| execution-budget | converge:Person | PASS |  |
 | execution-budget | converge:audit_log | PASS |  |
 | execution-budget | converge:counters | PASS |  |
 | execution-budget | converge:customers | PASS |  |
@@ -788,7 +904,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | execution-budget | converge:orders | PASS |  |
 | execution-budget | converge:shipments | PASS |  |
 | execution-budget | converge:staff | PASS |  |
-| execution-budget | converge:information_schema.columns | PASS |  |
+| execution-budget | converge:information_schema.columns | FAIL | row 0: |
+| execution-budget | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| execution-budget | query:conformance: mixed-collation double grouping | PASS |  |
+| execution-budget | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| execution-budget | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| execution-budget | query:conformance: case-variant code grouping | PASS |  |
+| execution-budget | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| execution-budget | query:conformance: nullable join key NULL-extends | PASS |  |
+| execution-budget | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| execution-budget | query:conformance: date bucketing over the fact table | PASS |  |
+| execution-budget | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | execution-budget | query:point lookup by key | PASS |  |
 | execution-budget | query:range scan with compound predicate | PASS |  |
 | execution-budget | query:inner join with aggregation | PASS |  |
@@ -878,6 +1004,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
 | spill | forced-spill:join | PASS |  |
+| spill | converge:Dim | PASS |  |
+| spill | converge:Event | PASS |  |
+| spill | converge:Fact | PASS |  |
+| spill | converge:Person | PASS |  |
 | spill | converge:audit_log | PASS |  |
 | spill | converge:counters | PASS |  |
 | spill | converge:customers | PASS |  |
@@ -885,7 +1015,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | spill | converge:orders | PASS |  |
 | spill | converge:shipments | PASS |  |
 | spill | converge:staff | PASS |  |
-| spill | converge:information_schema.columns | PASS |  |
+| spill | converge:information_schema.columns | FAIL | row 0: |
+| spill | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| spill | query:conformance: mixed-collation double grouping | PASS |  |
+| spill | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| spill | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| spill | query:conformance: case-variant code grouping | PASS |  |
+| spill | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| spill | query:conformance: nullable join key NULL-extends | PASS |  |
+| spill | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| spill | query:conformance: date bucketing over the fact table | PASS |  |
+| spill | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | spill | query:point lookup by key | PASS |  |
 | spill | query:range scan with compound predicate | PASS |  |
 | spill | query:inner join with aggregation | PASS |  |
@@ -974,6 +1114,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
+| pooling | converge:Dim | PASS |  |
+| pooling | converge:Event | PASS |  |
+| pooling | converge:Fact | PASS |  |
+| pooling | converge:Person | PASS |  |
 | pooling | converge:audit_log | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
@@ -981,7 +1125,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | pooling | converge:orders | PASS |  |
 | pooling | converge:shipments | PASS |  |
 | pooling | converge:staff | PASS |  |
-| pooling | converge:information_schema.columns | PASS |  |
+| pooling | converge:information_schema.columns | FAIL | row 0: |
+| pooling | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| pooling | query:conformance: mixed-collation double grouping | PASS |  |
+| pooling | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| pooling | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| pooling | query:conformance: case-variant code grouping | PASS |  |
+| pooling | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| pooling | query:conformance: nullable join key NULL-extends | PASS |  |
+| pooling | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| pooling | query:conformance: date bucketing over the fact table | PASS |  |
+| pooling | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | pooling | query:point lookup by key | PASS |  |
 | pooling | query:range scan with compound predicate | PASS |  |
 | pooling | query:inner join with aggregation | PASS |  |
@@ -1067,6 +1221,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | pooling | query:set: order by walks the member bitmask | PASS |  |
 | pooling | query:set: grouping orders groups by bitmask | PASS |  |
 | pooling | query:geometry: hex round-trips the internal format | PASS |  |
+| restart | converge:Dim | PASS |  |
+| restart | converge:Event | PASS |  |
+| restart | converge:Fact | PASS |  |
+| restart | converge:Person | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
@@ -1074,7 +1232,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | restart | converge:orders | PASS |  |
 | restart | converge:shipments | PASS |  |
 | restart | converge:staff | PASS |  |
-| restart | converge:information_schema.columns | PASS |  |
+| restart | converge:information_schema.columns | FAIL | row 0: |
+| restart | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| restart | query:conformance: mixed-collation double grouping | PASS |  |
+| restart | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| restart | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| restart | query:conformance: case-variant code grouping | PASS |  |
+| restart | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| restart | query:conformance: nullable join key NULL-extends | PASS |  |
+| restart | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| restart | query:conformance: date bucketing over the fact table | PASS |  |
+| restart | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | restart | query:point lookup by key | PASS |  |
 | restart | query:range scan with compound predicate | PASS |  |
 | restart | query:inner join with aggregation | PASS |  |
@@ -1171,6 +1339,7 @@ Measured 2026-08-20T14:06:19.294Z.
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:wire column types: temporal expressions advertise what MySQL advertises | PASS |  |
+| control-plane | api:the audit trail records the network peer of every action | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
 | control-plane | api:schema drift during downtime: purged DDL recovers by re-probe | PASS |  |
@@ -1178,6 +1347,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | control-plane | api:keyless policy: ambiguity quarantines and exact multiplicity repairs | PASS |  |
 | control-plane | api:a connection string carrying client driver options registers | PASS |  |
 | control-plane | api:throwaway database lifecycle: create, update, delete | PASS |  |
+| control-plane | converge:Dim | PASS |  |
+| control-plane | converge:Event | PASS |  |
+| control-plane | converge:Fact | PASS |  |
+| control-plane | converge:Person | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
@@ -1186,7 +1359,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | control-plane | converge:orders | PASS |  |
 | control-plane | converge:shipments | PASS |  |
 | control-plane | converge:staff | PASS |  |
-| control-plane | converge:information_schema.columns | PASS |  |
+| control-plane | converge:information_schema.columns | FAIL | row 0: |
+| control-plane | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| control-plane | query:conformance: mixed-collation double grouping | PASS |  |
+| control-plane | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| control-plane | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| control-plane | query:conformance: case-variant code grouping | PASS |  |
+| control-plane | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| control-plane | query:conformance: nullable join key NULL-extends | PASS |  |
+| control-plane | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| control-plane | query:conformance: date bucketing over the fact table | PASS |  |
+| control-plane | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | control-plane | query:point lookup by key | PASS |  |
 | control-plane | query:range scan with compound predicate | PASS |  |
 | control-plane | query:inner join with aggregation | PASS |  |
@@ -1273,6 +1456,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | control-plane | query:set: grouping orders groups by bitmask | PASS |  |
 | control-plane | query:geometry: hex round-trips the internal format | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
+| snapshot-ddl-window | converge:Dim | PASS |  |
+| snapshot-ddl-window | converge:Event | PASS |  |
+| snapshot-ddl-window | converge:Fact | PASS |  |
+| snapshot-ddl-window | converge:Person | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
 | snapshot-ddl-window | converge:customers | PASS |  |
@@ -1281,7 +1468,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | snapshot-ddl-window | converge:orders | PASS |  |
 | snapshot-ddl-window | converge:shipments | PASS |  |
 | snapshot-ddl-window | converge:staff | PASS |  |
-| snapshot-ddl-window | converge:information_schema.columns | PASS |  |
+| snapshot-ddl-window | converge:information_schema.columns | FAIL | row 0: |
+| snapshot-ddl-window | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| snapshot-ddl-window | query:conformance: mixed-collation double grouping | PASS |  |
+| snapshot-ddl-window | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| snapshot-ddl-window | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| snapshot-ddl-window | query:conformance: case-variant code grouping | PASS |  |
+| snapshot-ddl-window | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| snapshot-ddl-window | query:conformance: nullable join key NULL-extends | PASS |  |
+| snapshot-ddl-window | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| snapshot-ddl-window | query:conformance: date bucketing over the fact table | PASS |  |
+| snapshot-ddl-window | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | snapshot-ddl-window | query:point lookup by key | PASS |  |
 | snapshot-ddl-window | query:range scan with compound predicate | PASS |  |
 | snapshot-ddl-window | query:inner join with aggregation | PASS |  |
@@ -1372,6 +1569,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
 | drop-table-cdc | drop-table:orphan is retired without an operator re-probe | WARN | DROP TABLE retains the replica as an orphan and does not refresh the stored probe report, so the table stays in the replica catalog until an operator re-probes (3 rows still served) |
 | drop-table-cdc | drop-table:re-probe retires the orphan from the catalog | PASS |  |
+| drop-table-cdc | converge:Dim | PASS |  |
+| drop-table-cdc | converge:Event | PASS |  |
+| drop-table-cdc | converge:Fact | PASS |  |
+| drop-table-cdc | converge:Person | PASS |  |
 | drop-table-cdc | converge:audit_log | PASS |  |
 | drop-table-cdc | converge:counters | PASS |  |
 | drop-table-cdc | converge:customers | PASS |  |
@@ -1380,7 +1581,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-table-cdc | converge:orders | PASS |  |
 | drop-table-cdc | converge:shipments | PASS |  |
 | drop-table-cdc | converge:staff | PASS |  |
-| drop-table-cdc | converge:information_schema.columns | PASS |  |
+| drop-table-cdc | converge:information_schema.columns | FAIL | row 0: |
+| drop-table-cdc | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| drop-table-cdc | query:conformance: mixed-collation double grouping | PASS |  |
+| drop-table-cdc | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| drop-table-cdc | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| drop-table-cdc | query:conformance: case-variant code grouping | PASS |  |
+| drop-table-cdc | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| drop-table-cdc | query:conformance: nullable join key NULL-extends | PASS |  |
+| drop-table-cdc | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| drop-table-cdc | query:conformance: date bucketing over the fact table | PASS |  |
+| drop-table-cdc | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | drop-table-cdc | query:point lookup by key | PASS |  |
 | drop-table-cdc | query:range scan with compound predicate | PASS |  |
 | drop-table-cdc | query:inner join with aggregation | PASS |  |
@@ -1469,6 +1680,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
+| drop-table-recreate | converge:Dim | PASS |  |
+| drop-table-recreate | converge:Event | PASS |  |
+| drop-table-recreate | converge:Fact | PASS |  |
+| drop-table-recreate | converge:Person | PASS |  |
 | drop-table-recreate | converge:audit_log | PASS |  |
 | drop-table-recreate | converge:counters | PASS |  |
 | drop-table-recreate | converge:customers | PASS |  |
@@ -1477,7 +1692,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-table-recreate | converge:orders | PASS |  |
 | drop-table-recreate | converge:shipments | PASS |  |
 | drop-table-recreate | converge:staff | PASS |  |
-| drop-table-recreate | converge:information_schema.columns | PASS |  |
+| drop-table-recreate | converge:information_schema.columns | FAIL | row 0: |
+| drop-table-recreate | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| drop-table-recreate | query:conformance: mixed-collation double grouping | PASS |  |
+| drop-table-recreate | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| drop-table-recreate | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| drop-table-recreate | query:conformance: case-variant code grouping | PASS |  |
+| drop-table-recreate | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| drop-table-recreate | query:conformance: nullable join key NULL-extends | PASS |  |
+| drop-table-recreate | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| drop-table-recreate | query:conformance: date bucketing over the fact table | PASS |  |
+| drop-table-recreate | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | drop-table-recreate | query:point lookup by key | PASS |  |
 | drop-table-recreate | query:range scan with compound predicate | PASS |  |
 | drop-table-recreate | query:inner join with aggregation | PASS |  |
@@ -1566,8 +1791,12 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_49f38bf09761cce6b282c66de746889f","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T13:53:26.430163+00:00","updated_at":"2026-08-20T13:59:43.446018+00:00"},"tables":13,"rows":795} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_1b3f2943284e0b2be3bbeeaa8128f9ff","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T19:04:25.206906+00:00","updated_at":"2026-08-20T20:01:32.508872+00:00"},"tables":17,"rows":814} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
+| drop-table-polling | converge:Dim | PASS |  |
+| drop-table-polling | converge:Event | PASS |  |
+| drop-table-polling | converge:Fact | PASS |  |
+| drop-table-polling | converge:Person | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
 | drop-table-polling | converge:customers | PASS |  |
@@ -1576,7 +1805,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-table-polling | converge:orders | PASS |  |
 | drop-table-polling | converge:shipments | PASS |  |
 | drop-table-polling | converge:staff | PASS |  |
-| drop-table-polling | converge:information_schema.columns | PASS |  |
+| drop-table-polling | converge:information_schema.columns | FAIL | row 0: |
+| drop-table-polling | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| drop-table-polling | query:conformance: mixed-collation double grouping | PASS |  |
+| drop-table-polling | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| drop-table-polling | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| drop-table-polling | query:conformance: case-variant code grouping | PASS |  |
+| drop-table-polling | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| drop-table-polling | query:conformance: nullable join key NULL-extends | PASS |  |
+| drop-table-polling | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| drop-table-polling | query:conformance: date bucketing over the fact table | PASS |  |
+| drop-table-polling | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | drop-table-polling | query:point lookup by key | PASS |  |
 | drop-table-polling | query:range scan with compound predicate | PASS |  |
 | drop-table-polling | query:inner join with aggregation | PASS |  |
@@ -1670,6 +1909,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-database | drop-database:re-probing a deleted source fails loudly | PASS |  |
 | drop-database | drop-database:polling reports the deleted source as an error | PASS |  |
 | drop-database | drop-database:reads against a deleted source do not claim to be current | WARN | 3 rows are still served from the replica of a database MySQL no longer has, with nothing on the read path marking them stale |
+| drop-database | converge:Dim | PASS |  |
+| drop-database | converge:Event | PASS |  |
+| drop-database | converge:Fact | PASS |  |
+| drop-database | converge:Person | PASS |  |
 | drop-database | converge:audit_log | PASS |  |
 | drop-database | converge:counters | PASS |  |
 | drop-database | converge:customers | PASS |  |
@@ -1678,7 +1921,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-database | converge:orders | PASS |  |
 | drop-database | converge:shipments | PASS |  |
 | drop-database | converge:staff | PASS |  |
-| drop-database | converge:information_schema.columns | PASS |  |
+| drop-database | converge:information_schema.columns | FAIL | row 0: |
+| drop-database | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| drop-database | query:conformance: mixed-collation double grouping | PASS |  |
+| drop-database | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| drop-database | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| drop-database | query:conformance: case-variant code grouping | PASS |  |
+| drop-database | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| drop-database | query:conformance: nullable join key NULL-extends | PASS |  |
+| drop-database | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| drop-database | query:conformance: date bucketing over the fact table | PASS |  |
+| drop-database | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | drop-database | query:point lookup by key | PASS |  |
 | drop-database | query:range scan with compound predicate | PASS |  |
 | drop-database | query:inner join with aggregation | PASS |  |
@@ -1764,6 +2017,10 @@ Measured 2026-08-20T14:06:19.294Z.
 | drop-database | query:set: order by walks the member bitmask | PASS |  |
 | drop-database | query:set: grouping orders groups by bitmask | PASS |  |
 | drop-database | query:geometry: hex round-trips the internal format | PASS |  |
+| ddl-documented-gaps | converge:Dim | PASS |  |
+| ddl-documented-gaps | converge:Event | PASS |  |
+| ddl-documented-gaps | converge:Fact | PASS |  |
+| ddl-documented-gaps | converge:Person | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
@@ -1772,7 +2029,17 @@ Measured 2026-08-20T14:06:19.294Z.
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
-| ddl-documented-gaps | converge:information_schema.columns | WARN | row 0: |
+| ddl-documented-gaps | converge:information_schema.columns | FAIL | row 0: |
+| ddl-documented-gaps | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| ddl-documented-gaps | query:conformance: mixed-collation double grouping | PASS |  |
+| ddl-documented-gaps | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| ddl-documented-gaps | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| ddl-documented-gaps | query:conformance: case-variant code grouping | PASS |  |
+| ddl-documented-gaps | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| ddl-documented-gaps | query:conformance: nullable join key NULL-extends | PASS |  |
+| ddl-documented-gaps | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| ddl-documented-gaps | query:conformance: date bucketing over the fact table | PASS |  |
+| ddl-documented-gaps | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
 | ddl-documented-gaps | query:point lookup by key | PASS |  |
 | ddl-documented-gaps | query:range scan with compound predicate | PASS |  |
 | ddl-documented-gaps | query:inner join with aggregation | PASS |  |

@@ -394,11 +394,13 @@ stays readable as a list of things to fix.
 - A compaction pass is deferred, not queued, when free disk cannot cover the
   planned merge plus `compaction_disk_reserve_bytes` (64 MiB default). Nothing
   retries until the next flush makes the plan eligible again.
-- Compaction runs inline on the ingest path, so a merge at a large size tier
-  stalls replication for its duration. A 5,000,000-row append-only load
-  measured 583,000 rows/s with compaction inert and 343,000 rows/s once merges
-  engaged. There is no background compaction thread, and no way to bound or
-  defer a pass that has begun.
+- Size-tier merges run on a background thread by default
+  (`background_compaction`); the ingest path only spawns them and publishes
+  their results, so a large merge no longer stalls replication for its
+  duration. At most one merge is in flight per table, an explicit `compact()`
+  defers while one runs, and a failed background merge is recorded and
+  retried by the next eligible pass. A merge that has begun still cannot be
+  cancelled mid-flight; its orphan chunks are swept at the next open.
 - Segment consolidation of disjoint key ranges waits for the live segment count
   to reach `compaction_file_pressure` (16 by default), so below that threshold
   an append-only table accumulates one segment per memtable flush.
@@ -427,7 +429,7 @@ stays readable as a list of things to fix.
 
 Pintail v1 is a single-node, read-only analytical replica. It does not provide
 clustered query execution, synchronous high availability, source writes,
-multi-tenant isolation, spatial querying, or background compaction. Those
+multi-tenant isolation, or spatial querying. Those
 boundaries are explicit rather than emulated with results that look plausible
 but may be wrong.
 
