@@ -294,9 +294,28 @@ async function main() {
   // sakila: the real dataset, restored from the vendored dump. DEFINER
   // clauses assume the dumping user exists; root does here.
   log('loading sakila from the vendored dump')
-  const dump = gunzipSync(
+  // DELIMITER is a mysql CLI directive, not server SQL, so the trigger,
+  // procedure and function blocks it brackets cannot travel over a driver
+  // connection. Pintail mirrors base tables only; the routines add nothing
+  // this suite asserts on.
+  const raw = gunzipSync(
     readFileSync(join(repository, 'tests', 'corpus', 'real-data', 'sakila-db.sql.gz')),
   ).toString('utf8')
+  const kept: string[] = []
+  let skippingRoutine = false
+  for (const line of raw.split('\n')) {
+    const stripped = line.trim()
+    if (!skippingRoutine && stripped.startsWith('DELIMITER') && stripped !== 'DELIMITER ;') {
+      skippingRoutine = true
+      continue
+    }
+    if (skippingRoutine) {
+      if (stripped === 'DELIMITER ;') skippingRoutine = false
+      continue
+    }
+    kept.push(line)
+  }
+  const dump = kept.join('\n')
   await mysqlConnection.query(dump)
   await sql(`USE ${DATABASE}`)
 
