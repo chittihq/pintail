@@ -110,7 +110,9 @@ pub(crate) async fn reset(
             .map_err(ApiError::internal)?
             .ok_or_else(|| ApiError::not_found("database does not exist"))?;
         if database.mode == "paused" {
-            return Err(ApiError::conflict("resume the database before resetting it"));
+            return Err(ApiError::conflict(
+                "resume the database before resetting it",
+            ));
         }
         metadata
             .reset_database_replication(&database_id, &Utc::now().to_rfc3339())
@@ -620,15 +622,13 @@ pub(crate) fn open_tracked_store(
                         serde_json::from_str(&record.columns_json).map_err(display)?;
                     let mut previous = source.clone();
                     previous.columns = stored;
-                    let adopted =
-                        pintail_probe::stabilize_source_table(&previous, source.clone())?;
+                    let adopted = pintail_probe::stabilize_source_table(&previous, source.clone())?;
                     source.columns = adopted.columns;
                     let version = record
                         .version
                         .checked_add(1)
                         .ok_or_else(|| "table schema version exceeds UInt32".to_owned())?;
-                    let columns_json =
-                        serde_json::to_string(&source.columns).map_err(display)?;
+                    let columns_json = serde_json::to_string(&source.columns).map_err(display)?;
                     metadata
                         .record_schema_history(
                             database_id,
@@ -704,7 +704,11 @@ fn open_store_with_history(
     )
     .map_err(display)?;
     store
-        .evolve_schema(adopted.table_schema_with_version(version).map_err(display)?)
+        .evolve_schema(
+            adopted
+                .table_schema_with_version(version)
+                .map_err(display)?,
+        )
         .map_err(display)?;
     let columns_json = serde_json::to_string(&adopted.columns).map_err(display)?;
     metadata

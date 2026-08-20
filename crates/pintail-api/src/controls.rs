@@ -630,7 +630,6 @@ async fn refreshed_probe(
     Ok(refreshed)
 }
 
-
 fn effective_mode(database: &DatabaseRecord) -> &str {
     database
         .effective_mode

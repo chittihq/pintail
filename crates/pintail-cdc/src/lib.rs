@@ -976,21 +976,22 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 };
-                let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
-                    Ok(source) => source,
-                    Err(reason) => {
-                        quarantine_schema_change(
-                            metadata,
-                            database_id,
-                            &targets[index],
-                            index,
-                            blocked_targets,
-                            &format!("{statement}; {reason}"),
-                            None,
-                        )?;
-                        continue;
-                    }
-                };
+                let source =
+                    match pintail_probe::stabilize_source_table(&targets[index].source, source) {
+                        Ok(source) => source,
+                        Err(reason) => {
+                            quarantine_schema_change(
+                                metadata,
+                                database_id,
+                                &targets[index],
+                                index,
+                                blocked_targets,
+                                &format!("{statement}; {reason}"),
+                                None,
+                            )?;
+                            continue;
+                        }
+                    };
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
                 if let Err(error) = targets[index].store.evolve_schema(schema) {
@@ -1115,21 +1116,22 @@ async fn apply_ddl_actions(
                 // Storage-compatible type changes evolve in place; anything
                 // else fails stabilization (or the store's segment re-read)
                 // and quarantines for resync exactly like before.
-                let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
-                    Ok(source) => source,
-                    Err(reason) => {
-                        quarantine_schema_change(
-                            metadata,
-                            database_id,
-                            &targets[index],
-                            index,
-                            blocked_targets,
-                            &format!("{statement}; {reason}"),
-                            None,
-                        )?;
-                        continue;
-                    }
-                };
+                let source =
+                    match pintail_probe::stabilize_source_table(&targets[index].source, source) {
+                        Ok(source) => source,
+                        Err(reason) => {
+                            quarantine_schema_change(
+                                metadata,
+                                database_id,
+                                &targets[index],
+                                index,
+                                blocked_targets,
+                                &format!("{statement}; {reason}"),
+                                None,
+                            )?;
+                            continue;
+                        }
+                    };
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
                 if let Err(error) = targets[index].store.evolve_schema(schema) {

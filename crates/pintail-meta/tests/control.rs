@@ -932,7 +932,12 @@ fn a_reset_clears_replication_state_but_keeps_the_connection() {
     // Replication state is gone: tracked tables (with their cascading schema
     // history), the checkpoint slot, quarantined events.
     assert!(metadata.tables("db-1").unwrap().is_empty());
-    assert!(metadata.schema_history("db-1", "events").unwrap().is_empty());
+    assert!(
+        metadata
+            .schema_history("db-1", "events")
+            .unwrap()
+            .is_empty()
+    );
     assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
     assert!(metadata.snapshot_checkpoint("db-1").unwrap().is_none());
 
