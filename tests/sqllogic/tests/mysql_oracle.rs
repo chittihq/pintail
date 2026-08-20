@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1015;
+const EXPECTED_CASES: usize = 1027;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -837,6 +837,60 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered: false,
     };
     vec![
+        // JSON string results collate utf8mb4_bin in MySQL - case-SENSITIVE
+        // comparison and grouping, losing only to a real column's collation.
+        // The customer's repro plus the coercibility ladder, measured live.
+        ordered(
+            "json bin collation",
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"A\\\"}','$.k')) = JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"a\\\"}','$.k'))",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"A\\\"}','$.k')) = 'a'",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"A\\\"}','$.k')) = 'A'",
+        ),
+        unordered(
+            "json bin collation",
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k')), COUNT(*) \
+             FROM events WHERE note IS NOT NULL \
+             GROUP BY JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k'))",
+        ),
+        unordered(
+            "json bin collation",
+            "SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k')) \
+             FROM events WHERE note IS NOT NULL",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT COUNT(*) FROM orders WHERE meta->>'$.tags[0]' = 'premium'",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT COUNT(*) FROM orders WHERE meta->>'$.tags[0]' = 'PREMIUM'",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT id, meta->>'$.tags[0]' FROM orders ORDER BY meta->>'$.tags[0]', id",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT UPPER(JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"alpha\\\"}','$.k'))) = 'ALPHA'",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT id, JSON_TYPE(meta) = 'object' FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT COUNT(*) FROM events WHERE JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"alpha\\\"}','$.k')) = note",
+        ),
+        ordered(
+            "json bin collation",
+            "SELECT COUNT(*) FROM events WHERE JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"alpha\\\"}','$.k')) = tag",
+        ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(
             "hand-written distinct",

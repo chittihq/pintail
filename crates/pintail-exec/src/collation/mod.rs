@@ -27,6 +27,11 @@ pub enum Collation {
     /// `MySQL` 5.x's default: a flat per-character weight, no expansions or
     /// contractions.
     Utf8mb4GeneralCi,
+    /// Byte-wise comparison with PAD SPACE semantics: code points compare by
+    /// value and trailing spaces are insignificant. What `MySQL` gives the
+    /// results of `JSON_UNQUOTE` and friends - measured live: grouping and
+    /// comparing them is case-SENSITIVE even in an `ai_ci` session.
+    Utf8mb4Bin,
 }
 
 impl Collation {
@@ -40,6 +45,7 @@ impl Collation {
         match name.to_ascii_lowercase().as_str() {
             "utf8mb4_0900_ai_ci" => Some(Self::Utf8mb40900AiCi),
             "utf8mb4_general_ci" => Some(Self::Utf8mb4GeneralCi),
+            "utf8mb4_bin" => Some(Self::Utf8mb4Bin),
             _ => None,
         }
     }
@@ -49,6 +55,7 @@ impl Collation {
         match self {
             Self::Utf8mb40900AiCi => "utf8mb4_0900_ai_ci",
             Self::Utf8mb4GeneralCi => "utf8mb4_general_ci",
+            Self::Utf8mb4Bin => "utf8mb4_bin",
         }
     }
 }
@@ -105,6 +112,19 @@ pub fn compare_general_ci(left: &str, right: &str) -> std::cmp::Ordering {
             (Some(_), None) => return std::cmp::Ordering::Greater,
         }
     }
+}
+
+/// Compares two strings under `utf8mb4_bin`: code points by value, trailing
+/// spaces insignificant (PAD SPACE, like `general_ci` and unlike `0900_ai_ci`).
+#[must_use]
+pub fn compare_bin(left: &str, right: &str) -> std::cmp::Ordering {
+    without_pad(left).cmp(without_pad(right))
+}
+
+/// The `utf8mb4_bin` sort key: the bytes themselves, trailing spaces removed.
+#[must_use]
+pub fn bin_sort_key(text: &str) -> Vec<u8> {
+    without_pad(text).as_bytes().to_vec()
 }
 
 /// The `general_ci` sort key, for hashing, grouping, `DISTINCT` and set

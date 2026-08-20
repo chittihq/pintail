@@ -17,8 +17,14 @@ pub const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
 /// and no way to choose. `MySQL` resolves that by coercibility rules; until
 /// those are implemented, refusing is the honest option, because the failure
 /// mode of guessing is a wrong answer rather than an error.
-pub const SUPPORTED_TEXT_COLLATIONS: [&str; 2] =
-    [DEFAULT_TEXT_COLLATION, GENERAL_CI_TEXT_COLLATION];
+/// The collation `MySQL` gives every string produced by the JSON functions,
+/// regardless of session or argument collations - measured live.
+pub const BIN_TEXT_COLLATION: &str = "utf8mb4_bin";
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 3] = [
+    DEFAULT_TEXT_COLLATION,
+    GENERAL_CI_TEXT_COLLATION,
+    BIN_TEXT_COLLATION,
+];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
 
 /// A table made unambiguous against one catalog snapshot.
@@ -104,6 +110,18 @@ pub struct BoundExpr {
     pub nullable: bool,
 }
 
+/// Whether a scalar function produces JSON-derived text that `MySQL` collates
+/// as `utf8mb4_bin` regardless of inputs.
+fn json_text_producer(function: ScalarFunction) -> bool {
+    matches!(
+        function,
+        ScalarFunction::JsonUnquote
+            | ScalarFunction::JsonExtract { unquote: true }
+            | ScalarFunction::JsonValue
+            | ScalarFunction::JsonType
+    )
+}
+
 impl BoundExpr {
     /// Returns the result collation retained by a text expression.
     ///
@@ -121,9 +139,33 @@ impl BoundExpr {
         collations.sort_unstable();
         collations.dedup();
         match collations.as_slice() {
+            // MySQL's coercibility ladder, measured: a real column's
+            // collation beats the JSON functions' utf8mb4_bin, which in turn
+            // beats the session default that literals get. So the bin tier
+            // only decides when no column collation flows into the
+            // expression - exactly when MySQL groups and compares these
+            // results case-sensitively.
+            [] if self.reads_json_text() => Some(BIN_TEXT_COLLATION.to_owned()),
             [] => Some(DEFAULT_TEXT_COLLATION.to_owned()),
             [collation] => Some(collation.clone()),
             _ => Some(format!("{MIXED_COLLATION_PREFIX}{}", collations.join(","))),
+        }
+    }
+
+    /// Whether any JSON string producer (`JSON_UNQUOTE`, `->>`, `JSON_VALUE`,
+    /// `JSON_TYPE`) feeds this expression's text.
+    fn reads_json_text(&self) -> bool {
+        match &self.kind {
+            BoundExprKind::Scalar { function, args } => {
+                json_text_producer(*function) || args.iter().any(Self::reads_json_text)
+            }
+            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+                expr.reads_json_text()
+            }
+            BoundExprKind::Binary { left, right, .. } => {
+                left.reads_json_text() || right.reads_json_text()
+            }
+            _ => false,
         }
     }
 
@@ -146,7 +188,14 @@ impl BoundExpr {
                 left.collect_source_collations(collations);
                 right.collect_source_collations(collations);
             }
-            BoundExprKind::Scalar { args, .. } => {
+            BoundExprKind::Scalar { function, args } => {
+                // A JSON string producer's output is utf8mb4_bin no matter
+                // what flowed in (measured: JSON_UNQUOTE of an ai_ci column
+                // still compares case-sensitively), so its arguments'
+                // collations must not leak into the expression's tier.
+                if json_text_producer(*function) {
+                    return;
+                }
                 for argument in args {
                     argument.collect_source_collations(collations);
                 }
@@ -909,6 +958,10 @@ impl BoundExpr {
         collations.sort_unstable();
         collations.dedup();
         match collations.as_slice() {
+            // No column collation in play: JSON-derived text compares under
+            // utf8mb4_bin, everything else under the session default - the
+            // same ladder result_collation applies.
+            [] if self.reads_json_text() => Some(BIN_TEXT_COLLATION),
             [only] => SUPPORTED_TEXT_COLLATIONS
                 .into_iter()
                 .find(|supported| supported == only),
