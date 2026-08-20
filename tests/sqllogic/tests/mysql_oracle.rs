@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1069;
+const EXPECTED_CASES: usize = 1070;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1141,6 +1141,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hash and net scalars",
             "SELECT SHA1(note), CRC32(note) FROM events WHERE id = 1",
+        ),
+        // Composite EXTRACT units: concatenated decimal per MySQL.
+        ordered(
+            "extract composite units",
+            "SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(DAY_HOUR FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(DAY_MINUTE FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(DAY_SECOND FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(HOUR_MINUTE FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(HOUR_SECOND FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(MINUTE_SECOND FROM '2025-07-21 10:40:50'), \
+                    EXTRACT(YEAR_MONTH FROM '2025-01-05'), \
+                    EXTRACT(MINUTE_SECOND FROM '00:00:07')",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

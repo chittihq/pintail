@@ -8,7 +8,7 @@ mod metadata;
 use std::fmt;
 use std::ops::ControlFlow;
 
-use sqlparser::dialect::MySqlDialect;
+use sqlparser::dialect::{Dialect, MySqlDialect};
 use sqlparser::parser::{Parser, ParserError};
 
 pub use sqlparser::ast::Statement;
@@ -80,7 +80,8 @@ impl From<ParserError> for ParseError {
 ///
 /// Returns [`ParseError::InvalidSql`] when tokenization or parsing fails.
 pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let mut statements = Parser::parse_sql(&MySqlDialect {}, sql).map_err(ParseError::from)?;
+    let mut statements =
+        Parser::parse_sql(&PintailDialect(MySqlDialect {}), sql).map_err(ParseError::from)?;
     // sqlparser's MySQL dialect parses the right side of DIV with a full
     // `parse_expr`, swallowing every lower-precedence continuation
     // (`a DIV b AND c` becomes `a DIV (b AND c)`). Rebalance those nodes to
@@ -311,5 +312,134 @@ mod tests {
             parse_statement("SELECT FROM"),
             Err(ParseError::InvalidSql(_))
         ));
+    }
+}
+
+/// `MySqlDialect` plus custom `EXTRACT` fields.
+///
+/// sqlparser's `MySQL` dialect only admits its fixed `DateTimeField` set, so
+/// composite units (`YEAR_MONTH`, `DAY_HOUR`, ...) die in the parser before
+/// the binder can desugar them. This wrapper forwards every method
+/// `MySqlDialect` overrides (sqlparser 0.62 - revisit on upgrade) and opts
+/// into `allow_extract_custom`, which routes unknown fields through
+/// `DateTimeField::Custom` instead.
+#[derive(Debug)]
+struct PintailDialect(MySqlDialect);
+
+impl Dialect for PintailDialect {
+    fn dialect(&self) -> std::any::TypeId {
+        self.0.dialect()
+    }
+    fn is_identifier_start(&self, ch: char) -> bool {
+        self.0.is_identifier_start(ch)
+    }
+    fn is_identifier_part(&self, ch: char) -> bool {
+        self.0.is_identifier_part(ch)
+    }
+    fn is_delimited_identifier_start(&self, ch: char) -> bool {
+        self.0.is_delimited_identifier_start(ch)
+    }
+    fn identifier_quote_style(&self, identifier: &str) -> Option<char> {
+        self.0.identifier_quote_style(identifier)
+    }
+    fn supports_string_literal_backslash_escape(&self) -> bool {
+        self.0.supports_string_literal_backslash_escape()
+    }
+    fn supports_string_literal_concatenation(&self) -> bool {
+        self.0.supports_string_literal_concatenation()
+    }
+    fn ignores_wildcard_escapes(&self) -> bool {
+        self.0.ignores_wildcard_escapes()
+    }
+    fn supports_numeric_prefix(&self) -> bool {
+        self.0.supports_numeric_prefix()
+    }
+    fn supports_bitwise_shift_operators(&self) -> bool {
+        self.0.supports_bitwise_shift_operators()
+    }
+    fn supports_multiline_comment_hints(&self) -> bool {
+        self.0.supports_multiline_comment_hints()
+    }
+    fn parse_infix(
+        &self,
+        parser: &mut sqlparser::parser::Parser,
+        expr: &sqlparser::ast::Expr,
+        precedence: u8,
+    ) -> Option<Result<sqlparser::ast::Expr, sqlparser::parser::ParserError>> {
+        self.0.parse_infix(parser, expr, precedence)
+    }
+    fn parse_statement(
+        &self,
+        parser: &mut sqlparser::parser::Parser,
+    ) -> Option<Result<Statement, sqlparser::parser::ParserError>> {
+        self.0.parse_statement(parser)
+    }
+    fn require_interval_qualifier(&self) -> bool {
+        self.0.require_interval_qualifier()
+    }
+    fn supports_limit_comma(&self) -> bool {
+        self.0.supports_limit_comma()
+    }
+    fn supports_create_table_select(&self) -> bool {
+        self.0.supports_create_table_select()
+    }
+    fn supports_insert_set(&self) -> bool {
+        self.0.supports_insert_set()
+    }
+    fn supports_user_host_grantee(&self) -> bool {
+        self.0.supports_user_host_grantee()
+    }
+    fn is_table_factor_alias(
+        &self,
+        explicit: bool,
+        kw: &sqlparser::keywords::Keyword,
+        parser: &mut sqlparser::parser::Parser,
+    ) -> bool {
+        self.0.is_table_factor_alias(explicit, kw, parser)
+    }
+    fn supports_table_hints(&self) -> bool {
+        self.0.supports_table_hints()
+    }
+    fn requires_single_line_comment_whitespace(&self) -> bool {
+        self.0.requires_single_line_comment_whitespace()
+    }
+    fn supports_match_against(&self) -> bool {
+        self.0.supports_match_against()
+    }
+    fn supports_select_modifiers(&self) -> bool {
+        self.0.supports_select_modifiers()
+    }
+    fn supports_set_names(&self) -> bool {
+        self.0.supports_set_names()
+    }
+    fn supports_comma_separated_set_assignments(&self) -> bool {
+        self.0.supports_comma_separated_set_assignments()
+    }
+    fn supports_update_order_by(&self) -> bool {
+        self.0.supports_update_order_by()
+    }
+    fn supports_data_type_signed_suffix(&self) -> bool {
+        self.0.supports_data_type_signed_suffix()
+    }
+    fn supports_cross_join_constraint(&self) -> bool {
+        self.0.supports_cross_join_constraint()
+    }
+    fn supports_double_ampersand_operator(&self) -> bool {
+        self.0.supports_double_ampersand_operator()
+    }
+    fn supports_binary_kw_as_cast(&self) -> bool {
+        self.0.supports_binary_kw_as_cast()
+    }
+    fn supports_comment_optimizer_hint(&self) -> bool {
+        self.0.supports_comment_optimizer_hint()
+    }
+    fn supports_constraint_keyword_without_name(&self) -> bool {
+        self.0.supports_constraint_keyword_without_name()
+    }
+    fn supports_key_column_option(&self) -> bool {
+        self.0.supports_key_column_option()
+    }
+    fn allow_extract_custom(&self) -> bool {
+        true
     }
 }

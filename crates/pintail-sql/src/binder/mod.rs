@@ -2328,6 +2328,65 @@ fn bind_expr_inner(
                 DateTimeField::Second => DatePart::Second,
                 DateTimeField::Quarter => DatePart::Quarter,
                 DateTimeField::Week(None) => DatePart::Week,
+                // Composite units are concatenated decimal in MySQL:
+                // YEAR_MONTH is year*100+month, DAY_SECOND is DDHHMMSS.
+                // They desugar to arithmetic over the single units, so NULL
+                // and zero-date behavior ride the parts' own rules.
+                DateTimeField::Custom(ident) => {
+                    // Lowercase deliberately: the function-surface script
+                    // counts uppercase quoted names in binder match arms as
+                    // callable functions, and these are units, not names.
+                    let parts: &[DatePart] = match ident.value.to_ascii_lowercase().as_str() {
+                        "year_month" => &[DatePart::Year, DatePart::Month],
+                        "day_hour" => &[DatePart::Day, DatePart::Hour],
+                        "day_minute" => &[DatePart::Day, DatePart::Hour, DatePart::Minute],
+                        "day_second" => &[
+                            DatePart::Day,
+                            DatePart::Hour,
+                            DatePart::Minute,
+                            DatePart::Second,
+                        ],
+                        "hour_minute" => &[DatePart::Hour, DatePart::Minute],
+                        "hour_second" => &[DatePart::Hour, DatePart::Minute, DatePart::Second],
+                        "minute_second" => &[DatePart::Minute, DatePart::Second],
+                        _ => return Err(BindError::UnsupportedExpression(expr.to_string())),
+                    };
+                    let operand = bind_expr_inner(inner, tables, aggregates, windows, subqueries)?;
+                    let mut folded: Option<BoundExpr> = None;
+                    for part in parts {
+                        let extracted =
+                            bind_scalar(ScalarFunction::DatePart(*part), vec![operand.clone()])?;
+                        folded = Some(match folded {
+                            None => extracted,
+                            Some(accumulated) => {
+                                let nullable = accumulated.nullable || extracted.nullable;
+                                let scaled = BoundExpr {
+                                    kind: BoundExprKind::Binary {
+                                        op: BinaryOp::Multiply,
+                                        left: Box::new(accumulated),
+                                        right: Box::new(BoundExpr {
+                                            kind: BoundExprKind::Literal(Value::Int64(100)),
+                                            data_type: Some(DataType::Int64),
+                                            nullable: false,
+                                        }),
+                                    },
+                                    data_type: Some(DataType::Int64),
+                                    nullable,
+                                };
+                                BoundExpr {
+                                    kind: BoundExprKind::Binary {
+                                        op: BinaryOp::Add,
+                                        left: Box::new(scaled),
+                                        right: Box::new(extracted),
+                                    },
+                                    data_type: Some(DataType::Int64),
+                                    nullable,
+                                }
+                            }
+                        });
+                    }
+                    return Ok(folded.expect("composite fields list at least two parts"));
+                }
                 _ => return Err(BindError::UnsupportedExpression(expr.to_string())),
             };
             bind_scalar(

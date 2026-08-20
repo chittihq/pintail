@@ -190,10 +190,26 @@ fn probe_trim_both() {
     println!("GOT {:?}", run("SELECT TRIM(BOTH 'x' FROM 'xxaxx')"));
 }
 #[test]
-fn probe_extract_year_month() {
-    // sqlparser rejects composite EXTRACT fields at parse time; the
-    // composite-unit support (in progress) pre-rewrites the SQL text.
-    assert!(parse_statement("SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:00:00')").is_err());
+fn extract_composite_units() {
+    let rows = run("SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:40:50'), \
+                EXTRACT(DAY_HOUR FROM '2025-07-21 10:40:50'), \
+                EXTRACT(DAY_MINUTE FROM '2025-07-21 10:40:50'), \
+                EXTRACT(DAY_SECOND FROM '2025-07-21 10:40:50'), \
+                EXTRACT(HOUR_MINUTE FROM '2025-07-21 10:40:50'), \
+                EXTRACT(HOUR_SECOND FROM '2025-07-21 10:40:50'), \
+                EXTRACT(MINUTE_SECOND FROM '2025-07-21 10:40:50')");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "202507".to_owned(),
+            "2110".to_owned(),
+            "211040".to_owned(),
+            "21104050".to_owned(),
+            "1040".to_owned(),
+            "104050".to_owned(),
+            "4050".to_owned(),
+        ]]
+    );
 }
 #[test]
 fn probe_spaceship() {
