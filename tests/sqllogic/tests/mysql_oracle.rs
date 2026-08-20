@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1040;
+const EXPECTED_CASES: usize = 1054;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -949,6 +949,85 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k')) AS t, COUNT(*) \
              FROM events WHERE note IS NOT NULL \
              GROUP BY JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k')) ORDER BY t",
+        ),
+        // Coercion matrix: mixed types in comparison, the class where one
+        // BINARY operand silently numeric-coerced everything equal.
+        ordered(
+            "coercion matrix",
+            "SELECT '1' = 1, '1.0' = 1, ' 1' = 1, '1x' = 1, 'x' = 0, \
+                    1.0 = 1, '0.5' = 0.5, TRUE = 1, TRUE = '1', FALSE = ''",
+        ),
+        ordered(
+            "coercion matrix",
+            "SELECT 1 < '2', '10' < 9, 'abc' = 0, '' = 0, NULL = '', \
+                    '2025-01-01' = DATE('2025-01-01')",
+        ),
+        // Prefix operators against every comparison shape: the precedence
+        // class that broke BINARY and the JSON arrows.
+        ordered(
+            "prefix precedence",
+            "SELECT BINARY 'a' LIKE 'A', BINARY 'a' LIKE 'a', \
+                    BINARY 'a' IS NULL, BINARY NULL IS NULL, \
+                    NOT 'a' = 'a', NOT 1 > 2, -1 < 0",
+        ),
+        ordered(
+            "prefix precedence",
+            "SELECT COUNT(*) FROM events WHERE BINARY note LIKE 'Alpha'",
+        ),
+        ordered(
+            "prefix precedence",
+            "SELECT COUNT(*) FROM events WHERE BINARY note BETWEEN 'A' AND 'B'",
+        ),
+        // PAD SPACE across contexts: '=' folds trailing spaces per collation,
+        // LIKE never does, IN follows '='.
+        ordered(
+            "pad space matrix",
+            "SELECT 'a' = 'a ' COLLATE utf8mb4_general_ci, 'a' LIKE 'a ', \
+                    'a ' LIKE 'a', 'a' IN ('a ' COLLATE utf8mb4_general_ci), \
+                    'a' IN ('a ', 'b')",
+        ),
+        unordered(
+            "pad space matrix",
+            "SELECT tag, COUNT(*) FROM events GROUP BY tag",
+        ),
+        // LIKE escape corners: escaped escape, escape at pattern end,
+        // underscore, and a custom escape that frees the backslash.
+        ordered(
+            "like escape corners",
+            "SELECT '50%' LIKE '50\\%', '50x' LIKE '50\\%', 'a\\\\b' LIKE 'a\\\\\\\\b', \
+                    '_' LIKE '\\_', 'x' LIKE '\\_', 'a\\\\' LIKE 'a%', \
+                    'a%' LIKE 'a|%' ESCAPE '|', 'a\\\\b' LIKE 'a\\\\b' ESCAPE '|'",
+        ),
+        // Null-safe equality across type shapes and against columns.
+        ordered(
+            "null-safe matrix",
+            "SELECT 0 <=> 0, 0 <=> NULL, '' <=> '', 'a' <=> 'A', \
+                    NULL <=> '', 1.5 <=> 1.5, DATE('2025-01-01') <=> DATE('2025-01-01')",
+        ),
+        ordered(
+            "null-safe matrix",
+            "SELECT COUNT(*) FROM events WHERE NOT (note <=> NULL)",
+        ),
+        // COLLATE in every comparing position.
+        ordered(
+            "collate positions",
+            "SELECT COUNT(*) FROM events WHERE note = 'ALPHA' COLLATE utf8mb4_bin",
+        ),
+        ordered(
+            "collate positions",
+            "SELECT note FROM events WHERE note IS NOT NULL \
+             ORDER BY note COLLATE utf8mb4_bin, id",
+        ),
+        unordered(
+            "collate positions",
+            "SELECT DISTINCT note COLLATE utf8mb4_bin FROM events WHERE note IS NOT NULL",
+        ),
+        // Unsigned wrap family: strings, decimals, negatives, SIGNED back.
+        ordered(
+            "unsigned wrap",
+            "SELECT CAST(-2 AS UNSIGNED), CAST('-3' AS UNSIGNED) + 0, \
+                    CAST(18446744073709551615 AS UNSIGNED), \
+                    CAST(CAST(-1 AS UNSIGNED) AS SIGNED)",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(
