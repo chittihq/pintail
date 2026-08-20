@@ -175,6 +175,7 @@ export function useControlPlane() {
     stopEventStream()
     setToken(null)
     session.value = null
+    error.value = ''
     databases.value = []
     statuses.value = {}
     activity.value = []
@@ -325,6 +326,7 @@ export function useControlPlane() {
       activity.value = []
       deadLetters.value = []
       tableProgress.value = {}
+      error.value = ''
       await loadWorkspaces()
       await loadControlPlane()
     } finally {
@@ -390,13 +392,26 @@ export function useControlPlane() {
   /// watches.
   async function mutate(label: string, action: () => Promise<unknown>): Promise<boolean> {
     try {
+      let announced = false
       for (let attempt = 0; ; attempt += 1) {
         try {
           await action()
           return true
         } catch (failure) {
-          const busy = failure instanceof ApiFailure && failure.status === 409
-          if (!busy || attempt >= 14) throw failure
+          // Only the job-slot 409 is a transient worth waiting out, and on a
+          // production mirror a replication cycle can hold that slot for
+          // minutes - so the wait is LONG, and it is announced immediately:
+          // a silent retry loop reads as a dead button. Every other 409
+          // ("resume the database first") is a permanent answer and fails
+          // fast with the server's own words.
+          const busy = failure instanceof ApiFailure
+            && failure.status === 409
+            && failure.message.includes('job slot')
+          if (!busy || attempt >= 90) throw failure
+          if (!announced) {
+            announced = true
+            toast(`${label} queued - the replication job holding this database finishes first`)
+          }
           await new Promise((resolve) => setTimeout(resolve, 2000))
         }
       }

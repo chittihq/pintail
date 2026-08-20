@@ -722,6 +722,43 @@ async function main() {
     }
   })
 
+  await check('Reset mirror confirms, shows copy progress, and returns to streaming', async () => {
+    // The reported experience: on a busy production mirror the click landed
+    // on a silently retried 409 and the copy ran with no visible progress -
+    // "nothing is happening". The contract now: confirming the dialog gives
+    // immediate feedback (a queued or accepted toast), a page-level copy
+    // progress strip appears while tables are rewritten, and the mirror
+    // returns to streaming.
+    await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+    await page!.getByRole('link', { name: DATABASE }).first().click()
+    await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+    await page!.getByRole('tab', { name: 'settings' }).click()
+    await page!.getByTestId('reset-mirror').waitFor({ timeout: 15_000 })
+    await page!.getByTestId('reset-mirror').click()
+    await page!.getByRole('dialog').getByRole('button', { name: 'Reset mirror' }).click()
+    // Immediate feedback: either the accept toast, or the queued toast when
+    // a supervision cycle holds the job slot at this instant.
+    await page!
+      .getByText(/Mirror reset; a fresh snapshot is running|Reset queued/)
+      .first()
+      .waitFor({ timeout: 30_000 })
+    // The copy is visible while it runs. On the gate's small corpus the
+    // window is short, so the strip OR the already-settled streaming badge
+    // both count - what must never happen is a silent wedge.
+    const settled = Date.now() + 180_000
+    let sawProgress = false
+    for (;;) {
+      if (!sawProgress && (await page!.getByTestId('copy-progress').count()) > 0) sawProgress = true
+      const body = (await page!.textContent('body')) ?? ''
+      const streaming = /streaming/i.test(body) && !/snapshotting/i.test(body)
+      if (streaming && (await page!.getByTestId('copy-progress').count()) === 0) break
+      if (Date.now() > settled) {
+        throw new Error(`the reset never settled back to streaming (saw progress strip: ${sawProgress})`)
+      }
+      await Bun.sleep(2_000)
+    }
+  })
+
   await check('a per-table Resync shows a live progress bar and completes', async () => {
     // The exact flow a user reported as unresponsive: clicking the table
     // row's Resync gave no feedback while the copy ran, and busy (409)

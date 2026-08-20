@@ -37,7 +37,14 @@ async function loadDatabaseDetail(showLoading = true) {
     // A load that succeeds is the evidence the last failure is over.
     error.value = ''
   } catch (failure) {
-    error.value = messageOf(failure)
+    // During a workspace switch this poll can fire once with the NEW
+    // workspace's token and the OLD route's database id; the resulting
+    // "database does not exist" landed in the shared banner and outlived
+    // the navigation. A failure only belongs on the banner while this
+    // database is still part of the workspace being shown.
+    if (databases.value.some((item) => item.id === databaseId.value)) {
+      error.value = messageOf(failure)
+    }
   } finally {
     if (showLoading) loading.value = false
   }
@@ -93,6 +100,21 @@ async function resnapshot() {
   }
 }
 
+/// Overall copy progress while a full snapshot (or reset) is rewriting the
+/// mirror: chunk counts come from the snapshot status the page already polls.
+const copyProgress = computed(() => {
+  if (database.value?.state !== 'snapshotting' || !snapshot.value) return null
+  const tables = snapshot.value.tables
+  const total = tables.reduce((sum, table) => sum + table.total_chunks, 0)
+  const done = tables.reduce((sum, table) => sum + table.completed_chunks, 0)
+  const finished = tables.filter((table) => table.total_chunks > 0 && table.completed_chunks >= table.total_chunks).length
+  return {
+    percent: total > 0 ? Math.min(99, Math.round((done / total) * 100)) : null,
+    finished,
+    tables: tables.length,
+  }
+})
+
 const viewTable = ref<TableSummary | null>(null)
 const viewResult = ref<QueryResponse | null>(null)
 const viewError = ref('')
@@ -129,10 +151,13 @@ const resetting = ref(false)
 
 async function confirmReset() {
   if (!database.value || resetting.value) return
+  // The dialog closes at the moment of intent; from here the Reset button's
+  // working state and the queued/accepted toasts carry the progress. Holding
+  // the dialog open through a minutes-long job-slot wait read as a hang.
+  resetOpen.value = false
   resetting.value = true
   try {
     if (!(await resetDatabase(database.value.id))) return
-    resetOpen.value = false
     detailTab.value = 'snapshot'
     await loadDatabaseDetail()
   } finally {
@@ -209,6 +234,26 @@ function describeTable(table: TableSummary) {
         <Button :disabled="resnapshotting" @click="resnapshot"><LoaderCircle v-if="resnapshotting" class="animate-spin" /><RefreshCw v-else /> Resnapshot</Button>
       </div>
     </header>
+
+    <Card v-if="copyProgress" data-testid="copy-progress" class="mb-4 grid gap-2 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <span class="flex items-center gap-2 text-sm font-medium"><LoaderCircle class="animate-spin" :size="15" /> Copying the source into the mirror</span>
+        <span class="text-muted-foreground text-sm tabular-nums">
+          {{ copyProgress.finished }} of {{ copyProgress.tables }} tables complete<template v-if="copyProgress.percent != null"> · {{ copyProgress.percent }}%</template>
+        </span>
+      </div>
+      <div class="bg-muted h-2 w-full overflow-hidden rounded-full">
+        <div
+          class="bg-primary h-full rounded-full transition-all duration-700"
+          :class="copyProgress.percent == null ? 'w-1/3 animate-pulse' : ''"
+          :style="copyProgress.percent != null ? { width: `${copyProgress.percent}%` } : {}"
+        />
+      </div>
+      <p class="text-muted-foreground text-xs">
+        A resnapshot or reset rewrites every selected table before streaming resumes; large tables
+        take time. Progress updates as chunks become durable - leaving this page is safe.
+      </p>
+    </Card>
 
     <Alert v-if="modeOf(database) === 'polling'" variant="destructive" class="mb-4">
       <AlertTriangle />
