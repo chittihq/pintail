@@ -22,7 +22,7 @@ const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1027;
+const EXPECTED_CASES: usize = 1028;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -890,6 +890,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "json bin collation",
             "SELECT COUNT(*) FROM events WHERE JSON_UNQUOTE(JSON_EXTRACT('{\\\"k\\\":\\\"alpha\\\"}','$.k')) = tag",
+        ),
+        ordered(
+            "like default escape",
+            "SELECT 'a%b' LIKE 'a\\%b', 'axb' LIKE 'a\\%b', 'a_b' LIKE 'a\\_b', \
+                    'axb' LIKE 'a\\_b', 'a%b' LIKE 'a!%b' ESCAPE '!', 'C:\\\\dir' LIKE 'C:\\\\\\\\%'",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

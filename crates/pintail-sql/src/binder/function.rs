@@ -746,7 +746,12 @@ pub(super) fn bind_like(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let escape = match escape {
-        None => None,
+        // MySQL's default escape character is backslash even without an
+        // ESCAPE clause: 'a%b' LIKE 'a\\%b' matches a literal percent.
+        // Mapping the absent clause to None treated the backslash as an
+        // ordinary character and the pattern never matched (conformance
+        // suite, case 'escaped wildcard').
+        None => Some('\\'),
         Some(escape) => Some(
             match &escape.value {
                 SqlValue::SingleQuotedString(value) => {
