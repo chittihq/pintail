@@ -57,6 +57,7 @@ export interface AuditEvent {
   target_id: string | null
   detail_json: string | null
   created_at: string
+  client_ip: string | null
 }
 
 export interface DatabaseRecord {

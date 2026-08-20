@@ -63,6 +63,7 @@ pub(crate) struct AuditEventResponse {
     target_id: Option<String>,
     detail_json: Option<String>,
     created_at: String,
+    client_ip: Option<String>,
 }
 
 /// Lists every workspace the caller belongs to, for the sidebar switcher.
@@ -200,6 +201,7 @@ pub(crate) async fn audit_log(
             target_id: event.target_id,
             detail_json: event.detail_json,
             created_at: event.created_at,
+            client_ip: event.client_ip,
         })
         .collect();
     Ok(Json(events))

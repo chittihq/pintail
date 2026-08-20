@@ -127,12 +127,13 @@ function auditDetail(event: AuditEvent) {
       <div v-else-if="!auditEvents.length" class="text-muted-foreground grid min-h-48 place-content-center justify-items-center gap-2 p-6 text-center"><ShieldCheck :size="26" /><strong class="text-foreground">No audit events yet</strong><span class="max-w-sm text-sm">Queries, configuration changes, and workspace management appear here.</span></div>
       <Table v-else>
         <TableHeader>
-          <TableRow><TableHead>When</TableHead><TableHead>Actor</TableHead><TableHead>Action</TableHead><TableHead>Target</TableHead><TableHead>Detail</TableHead></TableRow>
+          <TableRow><TableHead>When</TableHead><TableHead>Actor</TableHead><TableHead>From</TableHead><TableHead>Action</TableHead><TableHead>Target</TableHead><TableHead>Detail</TableHead></TableRow>
         </TableHeader>
         <TableBody>
           <TableRow v-for="event in auditEvents" :key="event.id">
             <TableCell class="text-muted-foreground whitespace-nowrap">{{ formatDate(event.created_at) }}</TableCell>
             <TableCell><strong>{{ event.actor_label }}</strong><small class="text-muted-foreground block text-xs">{{ event.actor_type }}</small></TableCell>
+            <TableCell class="text-muted-foreground font-mono text-xs">{{ event.client_ip || '—' }}</TableCell>
             <TableCell><Badge variant="outline">{{ event.action }}</Badge></TableCell>
             <TableCell class="text-muted-foreground text-xs">{{ event.target_type ? `${event.target_type}:${event.target_id}` : '—' }}</TableCell>
             <TableCell class="text-muted-foreground max-w-96 truncate font-mono text-xs">{{ auditDetail(event) }}</TableCell>

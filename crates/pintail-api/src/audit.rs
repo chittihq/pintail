@@ -78,5 +78,6 @@ fn try_record(
         target_id: target.map(|(_, id)| id),
         detail_json: detail_json.as_deref(),
         created_at: &Utc::now().to_rfc3339(),
+        client_ip: principal.client_ip.as_deref(),
     })
 }

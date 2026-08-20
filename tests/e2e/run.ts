@@ -1423,6 +1423,25 @@ async function phaseControlPlane() {
       throw new Error(`wire types diverge: ${mismatches.join('; ')}`)
     }
   })
+  await check('the audit trail records the network peer of every action', async () => {
+    // Actions above (snapshot starts, mode changes, wire connections) have
+    // all been audited by now. Each row must say where it came from: user
+    // actions carry the HTTP peer, wire.connect rows carry the socket peer.
+    const events = await api<Array<{ action: string; actor_type: string; client_ip: string | null }>>(
+      '/api/workspaces/audit-log?limit=200',
+    )
+    if (events.length === 0) throw new Error('the audit trail is empty')
+    const userRows = events.filter((event) => event.actor_type === 'user')
+    const wireRows = events.filter((event) => event.action === 'wire.connect')
+    if (userRows.length === 0) throw new Error('no user actions were audited')
+    const unattributed = userRows.filter((event) => !event.client_ip)
+    if (unattributed.length > 0) {
+      throw new Error(`${unattributed.length} of ${userRows.length} user actions carry no client_ip`)
+    }
+    if (wireRows.length > 0 && wireRows.every((event) => !event.client_ip)) {
+      throw new Error('wire.connect rows carry no client_ip')
+    }
+  })
   await check('resync and reconcile are accepted', async () => {
     // A supervisor cycle may hold the job lock at this instant; the 409 is
     // correct API behavior, so retry briefly instead of failing the check.

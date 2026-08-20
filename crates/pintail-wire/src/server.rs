@@ -109,7 +109,8 @@ pub async fn serve(
     let metadata_path = metadata_path.into();
     loop {
         let (stream, ()) = accept_recovering(&listener).await;
-        let backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
+        let mut backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
+        backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
         tokio::spawn(async move {
             let _ = serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await;
         });
@@ -245,7 +246,8 @@ where
             biased;
             () = &mut shutdown => return Ok(()),
             (stream, ()) = accept_recovering(&listener) => {
-                let backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
+                let mut backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
+                backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
                 let tls = tls.clone();
                 tokio::spawn(async move {
                     if let Err(error) = serve_connection(stream, backend, tls, idle_timeout).await {
@@ -558,6 +560,8 @@ struct Prepared {
 
 struct Backend {
     metadata_path: PathBuf,
+    /// Network peer of this connection, for the wire.connect audit record.
+    client_ip: Option<String>,
     engine: ReplicaEngine,
     authentication: Mutex<Option<Authenticated>>,
     session: Mutex<Session>,
@@ -599,6 +603,7 @@ impl Backend {
     fn new(data_dir: &Path, metadata_path: &Path, query_memory_limit: usize) -> Self {
         Self {
             metadata_path: metadata_path.to_path_buf(),
+            client_ip: None,
             engine: ReplicaEngine::new(data_dir, metadata_path)
                 .with_memory_limit(query_memory_limit),
             authentication: Mutex::new(None),
@@ -693,6 +698,7 @@ impl Backend {
             target_id: Some(&database.id),
             detail_json: Some(&detail),
             created_at: &now,
+            client_ip: self.client_ip.as_deref(),
         }) {
             // A failure to record must not refuse a valid connection.
             pintail_log::log_error!("wire audit: could not record connection: {error}");

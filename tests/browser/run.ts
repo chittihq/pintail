@@ -1043,8 +1043,11 @@ async function main() {
     for (const action of ['database.create', 'api_key.create', 'backup.restore']) {
       await page!.getByText(action, { exact: true }).first().waitFor({ timeout: 20_000 })
     }
-    // Actions are attributed, not anonymous.
+    // Actions are attributed, not anonymous - and located: every row shows
+    // the network peer it arrived from (this gate drives the dashboard from
+    // localhost, so the operator's rows say 127.0.0.1).
     await page!.getByText(OPERATOR.email).first().waitFor()
+    await page!.getByText('127.0.0.1').first().waitFor({ timeout: 20_000 })
 
     // Refreshing must not empty the table.
     await page!.getByRole('button', { name: 'Refresh audit trail' }).click()

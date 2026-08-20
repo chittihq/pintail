@@ -96,11 +96,15 @@ async fn main() -> Result<()> {
     let mut http_shutdown = shutdown.subscribe();
     let mut wire_shutdown = shutdown.subscribe();
     let supervisor = spawn_supervisor(api_state.clone(), shutdown.subscribe());
-    let http = axum::serve(http_listener, router_with_state(api_state)).with_graceful_shutdown(
-        async move {
-            let _ = http_shutdown.recv().await;
-        },
-    );
+    // with_connect_info: the audit trail records the network peer of every
+    // action, and without this the socket address never reaches the router.
+    let http = axum::serve(
+        http_listener,
+        router_with_state(api_state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = http_shutdown.recv().await;
+    });
     let wire_tls = resolve_wire_tls(&config, &metadata)?;
     let wire = serve_until_with_options(
         wire_listener,

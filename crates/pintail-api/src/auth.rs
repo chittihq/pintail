@@ -35,6 +35,11 @@ pub(crate) struct AuthPrincipal {
     /// through [`AuthPrincipal::authorize_database`] instead.
     pub(crate) workspace_id: Option<String>,
     pub(crate) scopes: Vec<String>,
+    /// Network peer the request arrived from: the first X-Forwarded-For hop
+    /// when a proxy supplied one, otherwise the socket peer. Rides the
+    /// principal so every audit record gets it without threading a second
+    /// extension through every handler.
+    pub(crate) client_ip: Option<String>,
 }
 
 impl AuthPrincipal {
@@ -297,13 +302,35 @@ pub(crate) async fn require_auth(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .ok_or_else(|| ApiError::unauthorized("Bearer authentication is required"))?;
-    let principal = if authorization.starts_with("pk_") {
+    let mut principal = if authorization.starts_with("pk_") {
         authenticate_api_key(&state, authorization)?
     } else {
         authenticate_jwt(&state, authorization)?
     };
+    principal.client_ip = client_ip_of(&request);
     request.extensions_mut().insert(principal);
     Ok(next.run(request).await)
+}
+
+/// The network peer a request arrived from, for the audit trail. The first
+/// X-Forwarded-For hop wins when a reverse proxy supplied one - the socket
+/// peer is the proxy itself in that deployment shape - otherwise the socket
+/// peer from the listener's connect info.
+fn client_ip_of(request: &Request<Body>) -> Option<String> {
+    let forwarded = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(forwarded) = forwarded {
+        return Some(forwarded.to_owned());
+    }
+    request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip().to_string())
 }
 
 fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrincipal, ApiError> {
@@ -349,6 +376,7 @@ fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrincipal, ApiE
         database_id: None,
         workspace_id: Some(workspace_id),
         scopes: vec!["*".to_owned()],
+        client_ip: None,
     })
 }
 
@@ -372,6 +400,7 @@ fn authenticate_api_key(state: &ApiState, secret: &str) -> Result<AuthPrincipal,
         database_id: Some(key.database_id),
         workspace_id: None,
         scopes,
+        client_ip: None,
     })
 }
 

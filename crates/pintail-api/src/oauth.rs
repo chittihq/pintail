@@ -786,6 +786,7 @@ fn unambiguous_invite_for(
     }
 }
 
+#[allow(clippy::too_many_lines)] // linear admit-or-refuse decision ladder
 fn login_google_user(
     state: &ApiState,
     metadata: &pintail_meta::MetaStore,
@@ -837,6 +838,7 @@ fn login_google_user(
                 database_id: None,
                 workspace_id: Some(invite.workspace_id.clone()),
                 scopes: vec!["*".to_owned()],
+                client_ip: None,
             };
             audit::record(
                 state,
@@ -903,6 +905,7 @@ fn login_google_user(
         database_id: None,
         workspace_id: Some(invite.workspace_id.clone()),
         scopes: vec!["*".to_owned()],
+        client_ip: None,
     };
     audit::record(
         state,
@@ -968,6 +971,7 @@ fn link_existing_user(
         database_id: None,
         workspace_id: Some(workspace_id.clone()),
         scopes: vec!["*".to_owned()],
+        client_ip: None,
     };
     audit::record(
         state,

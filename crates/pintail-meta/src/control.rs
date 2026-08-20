@@ -73,6 +73,9 @@ pub struct AuditEventRecord {
     pub target_id: Option<String>,
     pub detail_json: Option<String>,
     pub created_at: String,
+    /// Network peer the action arrived from; absent for rows recorded
+    /// before the column existed and for actions with no network peer.
+    pub client_ip: Option<String>,
 }
 
 /// Values for one newly recorded audit event.
@@ -87,6 +90,7 @@ pub struct NewAuditEvent<'a> {
     pub target_id: Option<&'a str>,
     pub detail_json: Option<&'a str>,
     pub created_at: &'a str,
+    pub client_ip: Option<&'a str>,
 }
 
 /// Durable source-database configuration and status.
@@ -926,8 +930,8 @@ impl MetaStore {
             .execute(
                 "INSERT INTO audit_log (\
                    id, workspace_id, actor_type, actor_id, actor_label, action, \
-                   target_type, target_id, detail_json, created_at\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                   target_type, target_id, detail_json, created_at, client_ip\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     event.id,
                     event.workspace_id,
@@ -939,6 +943,7 @@ impl MetaStore {
                     event.target_id,
                     event.detail_json,
                     event.created_at,
+                    event.client_ip,
                 ],
             )
             .context("failed to record audit event")?;
@@ -960,7 +965,7 @@ impl MetaStore {
             .connection
             .prepare(
                 "SELECT id, workspace_id, actor_type, actor_id, actor_label, action, \
-                        target_type, target_id, detail_json, created_at \
+                        target_type, target_id, detail_json, created_at, client_ip \
                  FROM audit_log WHERE workspace_id = ?1 \
                  ORDER BY created_at DESC, id LIMIT ?2",
             )
@@ -1744,6 +1749,7 @@ fn decode_audit_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<AuditEventRec
         target_id: row.get(7)?,
         detail_json: row.get(8)?,
         created_at: row.get(9)?,
+        client_ip: row.get(10)?,
     })
 }
 
