@@ -209,3 +209,20 @@ fn collate_overrides_the_comparison() {
                 JSON_UNQUOTE(JSON_EXTRACT('{\"k\":\"A\"}','$.k')) = 'a' COLLATE utf8mb4_general_ci");
     assert_eq!(rows, vec![vec!["0".to_owned(), "1".to_owned()]]);
 }
+
+#[test]
+fn ordering_by_a_group_key_alias_is_byte_wise() {
+    // The GroupKey reference used to be opaque to collation resolution, so
+    // this ordered under the case-insensitive default and PREMIUM/premium
+    // came back in arbitrary order.
+    let rows = run("SELECT meta->>'$.tags[0]' AS t, COUNT(*) FROM orders \
+         WHERE meta IS NOT NULL AND meta->>'$.tags[0]' IS NOT NULL \
+         GROUP BY meta->>'$.tags[0]' ORDER BY t");
+    assert_eq!(
+        rows,
+        vec![
+            vec!["PREMIUM".to_owned(), "1".to_owned()],
+            vec!["premium".to_owned(), "2".to_owned()],
+        ]
+    );
+}

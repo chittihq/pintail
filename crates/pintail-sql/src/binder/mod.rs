@@ -4359,11 +4359,19 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                 index,
                 ascending,
                 // From the projection this key points at, so each key sorts by
-                // its own column's rules.
-                collation: bound
-                    .projection
-                    .get(index)
-                    .and_then(|projection| projection.expr.text_collation()),
+                // its own column's rules. A grouped projection is a GroupKey
+                // reference - opaque to the collation walk - so the key looks
+                // through to the grouping expression itself: ORDER BY an
+                // alias of a bin-collated JSON group key must order byte-wise
+                // exactly as ordering by the expression does.
+                collation: bound.projection.get(index).and_then(|projection| {
+                    match &projection.expr.kind {
+                        BoundExprKind::GroupKey(key) => {
+                            bound.group_by.get(*key).and_then(BoundExpr::text_collation)
+                        }
+                        _ => projection.expr.text_collation(),
+                    }
+                }),
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
                 decimal: matches!(
                     bound.projection.get(index).and_then(|p| p.expr.data_type),
