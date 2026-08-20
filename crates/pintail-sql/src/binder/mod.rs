@@ -5942,5 +5942,5 @@ fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindEr
                 .into_iter()
                 .find(|supported| supported == collation)
         })
-        .unwrap_or(DEFAULT_TEXT_COLLATION))
+        .unwrap_or_else(crate::bound::session_default_collation))
 }

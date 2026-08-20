@@ -20,6 +20,7 @@ pub use bound::{
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
     BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
     IntervalUnit, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp, WindowFunction,
+    set_session_default_collation,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{

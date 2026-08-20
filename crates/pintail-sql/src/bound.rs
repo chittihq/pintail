@@ -124,6 +124,32 @@ fn collect_comparison_collations(expr: &BoundExpr, collations: &mut Vec<String>)
     }
 }
 
+std::thread_local! {
+    /// The connection's collation, installed per statement by the wire
+    /// session. `MySQL` collates otherwise-unconstrained comparisons - two
+    /// literals - under the CONNECTION collation, and clients disagree about
+    /// it: the mysql CLI negotiates `utf8mb4_0900_ai_ci` (NO PAD) while
+    /// mysql2 negotiates a PAD SPACE collation, so `'x' = 'x   '` genuinely
+    /// answers differently per client. Absent, the server default applies.
+    static SESSION_DEFAULT_COLLATION: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Installs the connection's default collation for the current thread's
+/// statement, or clears it with `None`.
+pub fn set_session_default_collation(collation: Option<&'static str>) {
+    SESSION_DEFAULT_COLLATION.with(|cell| cell.set(collation));
+}
+
+/// The collation an unconstrained text comparison uses: the connection's,
+/// when a session installed one, otherwise the server default.
+#[must_use]
+pub fn session_default_collation() -> &'static str {
+    SESSION_DEFAULT_COLLATION
+        .with(std::cell::Cell::get)
+        .unwrap_or(DEFAULT_TEXT_COLLATION)
+}
+
 /// One of the executable text collations, by name.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NamedCollation {

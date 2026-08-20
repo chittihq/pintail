@@ -508,6 +508,11 @@ struct Session {
     charset_connection: String,
     charset_results: String,
     group_concat_max_len: usize,
+    /// The connection's default collation, from the handshake charset byte:
+    /// literal-only comparisons follow it, as they do in `MySQL`. `mysql2`
+    /// negotiates `utf8mb4_unicode_ci`, approximated by `general_ci` (both
+    /// are case-insensitive PAD SPACE; their UCA weights differ in corners).
+    collation_connection: &'static str,
     group_concat_warnings: u64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
@@ -524,6 +529,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             charset_connection: "utf8mb4".to_owned(),
             charset_results: "utf8mb4".to_owned(),
             group_concat_max_len: 1024,
+            collation_connection: "utf8mb4_0900_ai_ci",
             group_concat_warnings: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
@@ -792,6 +798,7 @@ impl Backend {
                 // optimization runs on this thread, so install-and-restore
                 // brackets exactly one statement.
                 let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                pintail_sql::set_session_default_collation(Some(session.collation_connection));
                 pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
                 pintail_exec::set_session_cte_max_recursion_depth(Some(
                     session.cte_max_recursion_depth,
@@ -801,6 +808,7 @@ impl Backend {
                 let warnings = pintail_exec::take_session_group_concat_warnings();
                 pintail_exec::set_session_group_concat_max_len(None);
                 pintail_exec::set_session_cte_max_recursion_depth(None);
+                pintail_sql::set_session_default_collation(None);
                 let _ = pintail_exec::set_session_time_zone(None);
                 (result, warnings)
             })
@@ -975,6 +983,21 @@ impl Handler for Backend {
     }
 
     async fn authenticate(&mut self, response: &HandshakeResponse, scramble: &[u8]) -> bool {
+        // The charset byte names the collation the client will assume for
+        // otherwise-unconstrained text; MySQL collates two-literal
+        // comparisons under it, so Pintail must too. Ids from MySQL's
+        // information_schema.collations: general_ci 45, bin 46, unicode_ci
+        // 224 (approximated by general_ci - both ci PAD SPACE), 0900_ai_ci
+        // 255. Anything unrecognized keeps the server default.
+        let collation = match response.character_set {
+            45 | 224 => Some("utf8mb4_general_ci"),
+            46 => Some("utf8mb4_bin"),
+            255 => Some("utf8mb4_0900_ai_ci"),
+            _ => None,
+        };
+        if let (Some(collation), Ok(mut session)) = (collation, self.session.lock()) {
+            session.collation_connection = collation;
+        }
         self.authenticate_wire_key(&response.username, scramble, &response.auth_response)
             .unwrap_or(false)
     }
