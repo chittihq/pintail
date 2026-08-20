@@ -4,6 +4,49 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc8] - 2026-08-20
+
+Temporal wire-type parity, reported from a customer's driver-level diff:
+values matched byte-for-byte while the advertised column types did not,
+so drivers decoded strings where MySQL hands back Date objects.
+
+### Fixed
+
+- DATE(x) - and the family - carry their temporal types to the wire.
+  The binder declared every temporal function result Utf8, so the wire
+  advertised MYSQL_TYPE_VAR_STRING; the same class GEOMETRY had in
+  0.0.3. DATE, CURDATE, LAST_DAY, FROM_DAYS and MAKEDATE are DATE; NOW
+  and FROM_UNIXTIME are DATETIME; CURTIME is TIME; DATE_ADD and
+  DATE_SUB type from their argument, mirroring the evaluator's
+  rendering rule and MySQL's own behaviour. Values were already
+  canonical carrier text, so nothing changes but the type byte.
+- Stored TIMESTAMP columns advertise MYSQL_TYPE_TIMESTAMP (7) instead
+  of DATETIME (12), so clients that key session-timezone semantics off
+  the type byte behave as they do against MySQL. The column flag rides
+  the geometry flag's route, stays outside the schema fingerprint, and
+  rebuilds from the durable source type on every open - existing
+  mirrors need no resync.
+- STR_TO_DATE types statically from a literal format the way MySQL
+  does: date-only specifiers are DATE, time-only TIME, both DATETIME.
+
+### Added
+
+- The e2e gate gained the systematic guard this class needs: a battery
+  of temporal expressions whose wire column-type BYTES must equal
+  MySQL's - value comparisons can never catch a type divergence that
+  decodes cleanly on both sides. The gate is now 1,829 checks.
+
+### Known limitations (docs/limitations.md)
+
+- SEC_TO_TIME, MAKETIME and CONVERT_TZ stay VAR_STRING: their
+  fractional-second width follows the input value, which the
+  fixed-width temporal carrier cannot represent - typing them truncated
+  the fraction, and the oracle caught all three. Values match MySQL
+  byte-for-byte as strings.
+- STR_TO_DATE with a non-literal format stays a string; with a
+  time-only format the declared type matches MySQL but the value is a
+  pre-existing NULL gap.
+
 ## [0.0.4-rc7] - 2026-08-20
 
 A production-shaped browser soak suite, and the transaction-size bug it
