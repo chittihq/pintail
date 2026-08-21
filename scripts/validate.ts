@@ -542,16 +542,18 @@ async function main() {
     const porcelain = await run(['git', 'status', '--porcelain'])
     // No global trim: it would eat the first line's leading status space
     // and shift the path slice by one.
-    const dirtyPaths = porcelain.output
+    const entries = porcelain.output
       .split('\n')
       .filter((line) => line.trim().length > 0)
-      .map((line) => line.slice(3))
-    if (dirtyPaths.length === 0) return true
-    if (!dirtyPaths.every((path) => ARTIFACT_PREFIXES.some((prefix) => path.startsWith(prefix)))) {
-      status(`dirty non-artifact paths: ${dirtyPaths.join(', ')}`)
+      .map((line) => ({ untracked: line.startsWith('??'), path: line.slice(3) }))
+    if (entries.length === 0) return true
+    if (
+      !entries.every((entry) => ARTIFACT_PREFIXES.some((prefix) => entry.path.startsWith(prefix)))
+    ) {
+      status(`dirty non-artifact paths: ${entries.map((entry) => entry.path).join(', ')}`)
       return false
     }
-    for (const path of dirtyPaths) {
+    for (const { path } of entries) {
       const shelfPath = join(shelfDir, path)
       mkdirSync(join(shelfPath, '..'), { recursive: true })
       if (existsSync(join(repository, path))) {
@@ -560,11 +562,18 @@ async function main() {
       if (!shelved.includes(path)) shelved.push(path)
     }
     // Restore the committed content so the remote stages see a clean tree.
-    const restored = await run(['git', 'checkout', '--', ...dirtyPaths])
-    if (restored.code === 0) {
-      status(`${context}: shelved ${dirtyPaths.length} harness ledger(s); tree clean`)
+    // A ledger with no committed ancestor (a new leg's first run) cannot be
+    // checked out - it is removed instead, and comes back from the shelf.
+    const tracked = entries.filter((entry) => !entry.untracked).map((entry) => entry.path)
+    for (const entry of entries) {
+      if (entry.untracked) rmSync(join(repository, entry.path), { force: true })
     }
-    return restored.code === 0
+    if (tracked.length > 0) {
+      const restored = await run(['git', 'checkout', '--', ...tracked])
+      if (restored.code !== 0) return false
+    }
+    status(`${context}: shelved ${entries.length} harness ledger(s); tree clean`)
+    return true
   }
 
   /// Returns the shelved ledgers to the working tree so the run's evidence is
