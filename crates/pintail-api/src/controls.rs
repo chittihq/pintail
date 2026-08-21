@@ -207,26 +207,50 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     pintail_log::log_info!(
         "auto resync db={database_id} table={table_name}: quarantined table is being recopied"
     );
-    // The supervisor drives this from inside the runtime, so the job runs
-    // as an ordinary task under its scheduling - not on a detached OS
-    // thread with a private runtime per repair.
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn(complete_table_resnapshot_job(
-                state.clone(),
-                database_id.to_owned(),
-                table_name.clone(),
-                run_id.clone(),
-            ));
-        }
-        Err(error) => finish_table_resnapshot(
+    // A dedicated thread with its own runtime, exactly like the operator
+    // reconcile path: the caller is supervise_database, which runs on a
+    // PER-CYCLE current-thread runtime that dies when the cycle returns.
+    // A task spawned onto that runtime is dropped mid-repair when the
+    // cycle ends - and because finish_table_resnapshot is what releases
+    // the job slot, the dropped task leaks the claim and freezes the
+    // database's replication permanently. Measured: the e2e gate's
+    // post-storm reads never converged with the spawn-on-caller shape.
+    let job_state = state.clone();
+    let job_database_id = database_id.to_owned();
+    let job_table_name = table_name.clone();
+    let job_run_id = run_id.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name(format!("pintail-auto-resync-{database_id}"))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => runtime.block_on(complete_table_resnapshot_job(
+                    job_state,
+                    job_database_id,
+                    job_table_name,
+                    job_run_id,
+                )),
+                Err(error) => finish_table_resnapshot(
+                    &job_state,
+                    &job_database_id,
+                    &job_table_name,
+                    &job_run_id,
+                    Err(error.to_string()),
+                    0,
+                ),
+            }
+        })
+    {
+        finish_table_resnapshot(
             state,
             database_id,
             &table_name,
             &run_id,
-            Err(format!("no runtime for the auto-resync worker: {error}")),
+            Err(format!("could not start auto-resync worker: {error}")),
             0,
-        ),
+        );
     }
 }
 
