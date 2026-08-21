@@ -1044,10 +1044,23 @@ impl MetaStore {
         // healthy database stopped its replication for good, with every table
         // still reporting streaming (found by the drop-table e2e phases, which
         // re-probe to surface a drop and wedged the whole fixture).
+        // The probe's recommendation applies only under mode 'auto', and it
+        // must be judged against the mode AT WRITE TIME, not the mode the
+        // handler read when the probe began: a multi-second probe that
+        // straddles an operator's explicit switch used to write the stale
+        // derivation back and silently revert the switch - mode said cdc,
+        // effective_mode said polling, every cycle kept polling, and the
+        // guarded cycle-writes could never heal it. Explicit modes pin
+        // their own effective mode; 'paused' keeps what it had.
         let changed = self
             .connection
             .execute(
-                "UPDATE databases SET probe_json = ?2, effective_mode = ?3, \
+                "UPDATE databases SET probe_json = ?2, \
+                   effective_mode = CASE mode \
+                     WHEN 'cdc' THEN 'cdc' \
+                     WHEN 'polling' THEN 'polling' \
+                     WHEN 'paused' THEN effective_mode \
+                     ELSE ?3 END, \
                    state = CASE WHEN state IN ('created', 'probed') THEN 'probed' \
                      ELSE state END, \
                    updated_at = ?4 WHERE id = ?1",
