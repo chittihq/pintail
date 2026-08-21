@@ -2354,13 +2354,20 @@ async function phaseDropTablePolling() {
       // supervisor cadence, so a quiet half minute proves none is coming).
       const rebuilt = Date.now() + 240_000
       let quietSince = Date.now()
-      let known = new Set(seen)
+      let lastTrace = 0
+      const known = new Set(seen)
       for (;;) {
         const current = await runs()
-        const fresh = current.filter((run) => !known.has(run.id) && run.kind === 'snapshot')
-        if (fresh.some((run) => run.status === 'completed') && (await replicaCount('customers')) > 0) {
+        // Completion is judged against the ORIGINAL pre-switch set: a run
+        // first sampled as 'running' must still count when it completes.
+        const done = current.some(
+          (run) => !seen.has(run.id) && run.kind === 'snapshot' && run.status === 'completed',
+        )
+        if (done && ((await replicaCount('customers')) ?? 0) > 0) {
           break
         }
+        // The quiet clock resets on any run id never sampled before.
+        const fresh = current.filter((run) => !known.has(run.id) && run.kind === 'snapshot')
         if (fresh.length > 0) {
           for (const run of fresh) known.add(run.id)
           quietSince = Date.now()
@@ -2373,6 +2380,13 @@ async function phaseDropTablePolling() {
           && Date.now() - quietSince > 30_000
         ) {
           break
+        }
+        if (Date.now() - lastTrace > 5_000) {
+          lastTrace = Date.now()
+          log(
+            `handoff wait: state=${status.state} rows=${rows} fresh=${fresh.length} ` +
+              `known=${known.size} quiet=${((Date.now() - quietSince) / 1000).toFixed(0)}s`,
+          )
         }
         if (Date.now() > rebuilt) {
           throw new Error('the CDC handoff rebuild never ran after the polling switch')
