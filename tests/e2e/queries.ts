@@ -803,4 +803,181 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: 'SELECT id, HEX(route) FROM shipments ORDER BY id',
     tables: ['shipments'],
   },
+
+  // -------------------------------------------------------------------------
+  // Corpus rebalancing (2026-08-21 audit): the shapes below widen the thin
+  // spots the diversity audit named - joins past three tables, JSON reads
+  // beyond one extract, temporal grains beyond DATE_FORMAT, and regex beyond
+  // a single query. The star schema (Fact/Dim/Person/Event) carries the
+  // high-arity joins; the row counts stay small so the sweep stays fast.
+
+  { // 4 aliases, 3 tables: the star's audit columns resolve through two
+    // Person aliases while the dimension inner-joins.
+    name: 'star: fact with dimension and two audit persons',
+    sql:
+      'SELECT f.factId, d.code, pc.name AS created_by, pu.name AS updated_by ' +
+      'FROM Fact f JOIN Dim d ON d.dimId = f.dimId ' +
+      'LEFT JOIN Person pc ON pc.personId = f.createdBy ' +
+      'LEFT JOIN Person pu ON pu.personId = f.updatedBy ORDER BY f.factId',
+    tables: ['Fact', 'Dim', 'Person'],
+  },
+  {
+    name: 'star: five-alias chain fans out through events',
+    sql:
+      'SELECT f.factId, d.code, e.eventId, p.name AS owner ' +
+      'FROM Fact f JOIN Dim d ON d.dimId = f.dimId ' +
+      'LEFT JOIN Event e ON e.dimId = d.dimId ' +
+      'LEFT JOIN Person p ON p.personId = f.ownedBy ' +
+      'ORDER BY f.factId, e.eventId, d.code',
+    tables: ['Fact', 'Dim', 'Event', 'Person'],
+  },
+  {
+    name: 'star: grouped rollup counts facts and events per dimension',
+    sql:
+      'SELECT d.dimId, UPPER(d.code) AS code_key, COUNT(DISTINCT f.factId) AS facts, ' +
+      'COUNT(DISTINCT e.eventId) AS events ' +
+      'FROM Dim d LEFT JOIN Fact f ON f.dimId = d.dimId ' +
+      'LEFT JOIN Event e ON e.dimId = d.dimId ' +
+      'GROUP BY d.dimId, code_key ORDER BY d.dimId',
+    tables: ['Dim', 'Fact', 'Event'],
+  },
+  {
+    name: 'star: five tables bridge the shop and the star',
+    sql:
+      'SELECT i.order_id, i.line_no, c.name AS customer, f.code AS fact_code, d.code AS dim_code ' +
+      'FROM order_items i JOIN orders o ON o.id = i.order_id ' +
+      'JOIN customers c ON c.id = o.customer_id ' +
+      'JOIN Fact f ON f.factId = i.line_no ' +
+      'LEFT JOIN Dim d ON d.dimId = f.dimId ' +
+      'ORDER BY i.order_id, i.line_no',
+    tables: ['order_items', 'orders', 'customers', 'Fact', 'Dim'],
+  },
+  {
+    name: 'star: null join keys stay unmatched through a four-table chain',
+    sql:
+      'SELECT f.factId, d2.code AS nullable_dim, p.name AS owner, e.eventId ' +
+      'FROM Fact f LEFT JOIN Dim d2 ON d2.dimId = f.nullableDimId ' +
+      'LEFT JOIN Person p ON p.personId = f.ownedBy ' +
+      'LEFT JOIN Event e ON e.dimId = f.nullableDimId ' +
+      'ORDER BY f.factId, e.eventId',
+    tables: ['Fact', 'Dim', 'Person', 'Event'],
+  },
+  {
+    name: 'star: date-windowed join keeps only overlapping activity',
+    sql:
+      'SELECT f.factId, e.eventId, e.at FROM Fact f JOIN Event e ON e.dimId = f.dimId ' +
+      "WHERE e.at >= '2025-01-01' AND f.createdAt < '2025-07-23' " +
+      'ORDER BY f.factId, e.eventId',
+    tables: ['Fact', 'Event'],
+  },
+  {
+    name: 'json: length and keys survive null documents',
+    sql: 'SELECT id, JSON_LENGTH(meta) AS len, JSON_KEYS(meta) AS ks FROM customers ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'json: contains_path filters the documented rows',
+    sql:
+      "SELECT id FROM customers WHERE JSON_CONTAINS_PATH(meta, 'one', '$.score') ORDER BY id",
+    tables: ['customers'],
+  },
+  {
+    name: 'json: json_value reads a scalar with sql semantics',
+    sql:
+      "SELECT id, JSON_VALUE(meta, '$.score') AS score FROM customers " +
+      'WHERE meta IS NOT NULL ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'json: object construction embeds an extracted scalar',
+    sql:
+      "SELECT id, JSON_OBJECT('tier', tier, 'score', meta -> '$.score') AS doc " +
+      'FROM customers ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'json: search locates a literal value',
+    sql: "SELECT id, JSON_SEARCH(meta, 'one', 'en') AS hit FROM customers ORDER BY id",
+    tables: ['customers'],
+  },
+  {
+    name: 'json: grouping by an extracted scalar',
+    sql:
+      "SELECT meta ->> '$.lang' AS lang, COUNT(*) AS n FROM customers GROUP BY lang ORDER BY lang",
+    tables: ['customers'],
+  },
+  {
+    name: 'json: merge_patch overlays and reads back',
+    sql:
+      'SELECT id, JSON_TYPE(JSON_MERGE_PATCH(meta, \'{"seen":true}\')) AS t, ' +
+      'JSON_MERGE_PATCH(meta, \'{"seen":true}\') ->> \'$.seen\' AS seen ' +
+      'FROM customers WHERE meta IS NOT NULL ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'temporal: quarter, weekday and name grains agree',
+    sql:
+      'SELECT id, QUARTER(placed_on) AS q, DAYOFWEEK(placed_on) AS dw, ' +
+      'DAYNAME(placed_on) AS dn, MONTHNAME(placed_on) AS mn FROM orders ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'temporal: month-end bucketing via last_day',
+    sql:
+      'SELECT LAST_DAY(placed_on) AS month_end, COUNT(*) AS n FROM orders ' +
+      'GROUP BY month_end ORDER BY month_end',
+    tables: ['orders'],
+  },
+  {
+    name: 'temporal: timestampdiff spans date and datetime operands',
+    sql:
+      'SELECT factId, TIMESTAMPDIFF(DAY, effectiveFrom, createdAt) AS age_days ' +
+      'FROM Fact ORDER BY factId',
+    tables: ['Fact'],
+  },
+  {
+    name: 'temporal: datetime range keeps the year window',
+    sql:
+      "SELECT eventId, at FROM Event WHERE at BETWEEN '2025-01-01' AND '2025-12-31 23:59:59' " +
+      'ORDER BY eventId',
+    tables: ['Event'],
+  },
+  {
+    name: 'temporal: date_sub bound in the predicate',
+    sql:
+      "SELECT id FROM orders WHERE placed_on >= DATE_SUB('2024-12-31', INTERVAL 6 MONTH) " +
+      'ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'temporal: year-month split grouping',
+    sql:
+      'SELECT YEAR(placed_on) AS y, MONTH(placed_on) AS m, COUNT(*) AS n FROM orders ' +
+      'GROUP BY y, m ORDER BY y, m',
+    tables: ['orders'],
+  },
+  {
+    name: 'temporal: sub-day grains on a microsecond timestamp',
+    sql:
+      'SELECT id, HOUR(updated_at) AS h, MINUTE(updated_at) AS mi FROM orders ' +
+      'WHERE updated_at IS NOT NULL ORDER BY id LIMIT 30',
+    tables: ['orders'],
+  },
+  {
+    name: 'regex: substr extracts the mail domain',
+    sql: "SELECT id, REGEXP_SUBSTR(email, '@[a-z.]+') AS domain FROM customers ORDER BY id",
+    tables: ['customers'],
+  },
+  {
+    name: 'regex: the REGEXP operator anchors a class',
+    sql: "SELECT id, name FROM customers WHERE name REGEXP '^[A-G]' ORDER BY id",
+    tables: ['customers'],
+  },
+  {
+    name: 'regex: replace folds suffix classes before grouping',
+    sql:
+      "SELECT REGEXP_REPLACE(status, '(ing|ed)$', '*') AS s, COUNT(*) AS n FROM orders " +
+      'GROUP BY status ORDER BY s, n',
+    tables: ['orders'],
+  },
 ]
