@@ -4,6 +4,56 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc10] - 2026-08-21
+
+The fast-gate release: the e2e differential gate drops from 16.4 to
+6.5 measured minutes, and the faster loop immediately caught one
+production race and three wire-metadata divergences that the slower
+cadence had been hiding. First rc gated under the new policy:
+correctness stages only (fmt, unit, oracle, e2e, browser); the bench
+family runs for stable releases.
+
+### Fixed
+
+- An operator's polling-to-cdc mode switch could be silently reverted
+  by any replication work in flight across it: the poll/CDC checkpoint
+  commits and the probe's effective-mode write all updated the record
+  unguarded, and once reverted, the correctly-guarded healing writes
+  could never repair it - the database polled forever under a record
+  claiming cdc. All three writers now judge the mode at write time
+  (the same compare-and-set the supervisor's completion write already
+  carried). The production 5s cadence narrows this window; a slow or
+  busy source widens it, so this was reachable in deployments.
+- JSON_UNQUOTE and ->> results decode as text again: rc9 advertised
+  the right LONG_BLOB type byte with the binary charset, so drivers
+  returned raw Buffers (a customer's conformance diff saw base64 where
+  MySQL answers text).
+- Text result metadata echoes the collation id the client NEGOTIATED
+  in its handshake - measured against MySQL, a mysql2 client sees 224
+  where the CLI sees 255 - instead of a fixed charset default.
+- Constant folding kept NULL = NULL's declared Boolean type; the wire
+  advertised VAR_STRING where MySQL says LONGLONG.
+
+### Changed
+
+- The e2e gate is instrumented (per-phase run/converge/corpus splits
+  in a ledger Timing table) and runs in 6.5 minutes: 250ms poll
+  cadence, a 2.5s supervisor test cadence, a parallel corpus sweep
+  over a source connection pool, DDL-invalidated metadata caching,
+  documented-gap short-circuits in both convergence loops, an
+  optional persistent source container (PINTAIL_E2E_KEEP_MYSQL), and
+  a per-stage Docker host override so e2e can run beside the release
+  chain. The wire-type battery now compares charset bytes beside type
+  bytes. The release binary builds once per validation run; fmt and
+  unit overlap the remote stages; the benchmark image build keeps
+  incremental state through BuildKit cache mounts.
+
+### Known limitations (docs/limitations.md)
+
+- ROUND/CEIL/FLOOR of an exact integer and SUM over exact integers
+  advertise narrower types than MySQL while values agree
+  byte-for-byte; JSON arithmetic remains rejected.
+
 ## [0.0.4-rc9] - 2026-08-21
 
 The conformance release: a customer's 106-case differential suite and
