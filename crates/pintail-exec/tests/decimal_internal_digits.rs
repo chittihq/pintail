@@ -154,6 +154,18 @@ fn truncate_reads_internal_digits_and_caps_at_declared_scale() {
 }
 
 #[test]
+fn exact_quotients_still_pad_to_the_result_scale() {
+    // The internal value being EXACT must not shrink the render: MySQL pads
+    // ROUND/TRUNCATE results to min(declared scale, digits) — the oracle
+    // caught 4.00 collapsing to 4 when the chain materialized minimally.
+    assert_eq!(one("SELECT ROUND(400/100, 2) FROM t"), ["4.00"]);
+    assert_eq!(one("SELECT TRUNCATE(70/7, 2) FROM t"), ["10.00"]);
+    assert_eq!(one("SELECT ROUND(10.50/3, 4) FROM t"), ["3.5000"]);
+    assert_eq!(one("SELECT TRUNCATE(10.50/3, 6) FROM t"), ["3.500000"]);
+    assert_eq!(one("SELECT ROUND(1/4, 6) FROM t"), ["0.2500"]);
+}
+
+#[test]
 fn floor_and_ceiling_read_internal_digits() {
     // 39999.6/10000 is internally 3.99996 (displayed 4.00000): FLOOR is 3.
     // 40000.4/10000 is internally 4.00004: CEILING is 5.

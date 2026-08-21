@@ -428,13 +428,18 @@ impl DecimalRational {
         )))
     }
 
-    /// Materializes at the smallest scale that loses nothing. Chain results
-    /// carry power-of-ten-compatible denominators — every division was
-    /// truncated onto one — so the loop terminates well before the decimal
-    /// scale cap, which bounds pathological nests.
-    fn exact_value(self) -> Result<Value, ExecError> {
-        let mut scale = 0_u8;
-        let mut factor = 1_i128;
+    /// Materializes at the smallest scale that loses nothing, but never
+    /// below `min_scale` — the consumer's render clamps assume the string
+    /// carries at least the declared scale's digits, and `MySQL` pads a
+    /// ROUND result to its scale (`ROUND(400/100, 2)` is `4.00`, not `4`).
+    /// Chain results carry power-of-ten-compatible denominators — every
+    /// division was truncated onto one — so the loop terminates well
+    /// before the decimal scale cap, which bounds pathological nests.
+    fn exact_value(self, min_scale: u8) -> Result<Value, ExecError> {
+        let mut scale = min_scale.min(30);
+        let mut factor = 10_i128
+            .checked_pow(u32::from(scale))
+            .ok_or(ExecError::NumericOverflow)?;
         while scale < 30 && factor % self.denominator != 0 {
             scale += 1;
             factor = factor.checked_mul(10).ok_or(ExecError::NumericOverflow)?;
@@ -998,13 +1003,23 @@ impl CompiledExpr {
         row: usize,
     ) -> Result<Option<Value>, ExecError> {
         // Columns and literals already hold their display value exactly;
-        // only computed subtrees retain hidden digits.
-        if !matches!(self, Self::Binary { .. } | Self::Unary { .. }) {
-            return Ok(None);
-        }
+        // only computed subtrees retain hidden digits. The declared scale
+        // floors the materialization so the consumer's render clamp still
+        // sees every declared digit when the exact value needs fewer.
+        let declared = match self {
+            Self::Binary {
+                data_type: Some(DataType::Decimal { scale, .. }),
+                ..
+            }
+            | Self::Unary {
+                data_type: Some(DataType::Decimal { scale, .. }),
+                ..
+            } => *scale,
+            _ => return Ok(None),
+        };
         match self.evaluate_decimal_chain(batch, row)? {
             Some(DecimalChainValue::Null) => Ok(Some(Value::Null)),
-            Some(DecimalChainValue::Exact(exact)) => exact.exact_value().map(Some),
+            Some(DecimalChainValue::Exact(exact)) => exact.exact_value(declared).map(Some),
             None => Ok(None),
         }
     }
