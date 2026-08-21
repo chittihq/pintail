@@ -32,6 +32,13 @@ const nonce = Date.now().toString(36)
 /// runs (database dropped and binlogs reset per run), trading a fresh boot
 /// and timezone-table load for a stable name the harness never removes.
 const KEEP_MYSQL = process.env.PINTAIL_E2E_KEEP_MYSQL === '1'
+/// Base binlog row metadata for the whole gate. MySQL's own default is
+/// MINIMAL, so that is the production shape the gate runs by default;
+/// PINTAIL_E2E_BINLOG_METADATA=FULL runs the other leg. The drift phase
+/// below always exercises the opposite setting in its window, so both
+/// configurations see CDC traffic in every run.
+const BINLOG_METADATA = process.env.PINTAIL_E2E_BINLOG_METADATA === 'FULL' ? 'FULL' : 'MINIMAL'
+const OTHER_METADATA = BINLOG_METADATA === 'FULL' ? 'MINIMAL' : 'FULL'
 const mysqlName = KEEP_MYSQL
   ? 'pintail-e2e-keep-mysql'
   : `pintail-e2e-mysql-${process.pid}-${nonce}`
@@ -886,18 +893,19 @@ async function phaseDdl() {
 }
 
 async function phaseSchemaDriftMinimal() {
-  // The same missed schema change, under the metadata setting production
-  // actually runs. `binlog_row_metadata=MINIMAL` omits the column names from
-  // every table map, so a row image can only be read positionally and the
-  // replica has nothing to align a mismatched width against. Re-probing is
-  // the only repair available, and it works precisely when the refreshed
-  // schema and the row in hand agree on width - which is the production
-  // shape: one ALTER, then the next INSERT.
+  // The same missed schema change, under whichever metadata setting the
+  // rest of the gate is NOT running (the base is MINIMAL - production's
+  // default - unless PINTAIL_E2E_BINLOG_METADATA=FULL flips the legs).
+  // Under MINIMAL the table map omits column names, so a row image can
+  // only be read positionally and the replica has nothing to align a
+  // mismatched width against; re-probing is the only repair, and it works
+  // precisely when the refreshed schema and the row in hand agree on
+  // width - one ALTER, then the next INSERT.
   //
   // Written events carry whatever metadata was in force when they were
-  // written, so this phase restores FULL before it ends and converges on its
-  // own. Everything it produced stays MINIMAL regardless.
-  await sql(`SET GLOBAL binlog_row_metadata = 'MINIMAL'`)
+  // written, so this phase restores the base before it ends and converges
+  // on its own.
+  await sql(`SET GLOBAL binlog_row_metadata = '${OTHER_METADATA}'`)
   try {
     await sql(`SET sql_log_bin = 0`)
     await sql(`ALTER TABLE orders ADD COLUMN minimal_note VARCHAR(32) NULL`)
@@ -909,7 +917,7 @@ async function phaseSchemaDriftMinimal() {
     await sql(`UPDATE orders SET minimal_note = 'seen' WHERE id % 6 = 0`)
     await sql(`DELETE FROM orders WHERE status = 'cancelled' AND total < 0`)
   } finally {
-    await sql(`SET GLOBAL binlog_row_metadata = 'FULL'`)
+    await sql(`SET GLOBAL binlog_row_metadata = '${BINLOG_METADATA}'`)
   }
 }
 
@@ -2718,7 +2726,7 @@ async function main() {
     '--log-bin=mysql-bin',
     '--binlog-format=ROW',
     '--binlog-row-image=FULL',
-    '--binlog-row-metadata=FULL',
+    `--binlog-row-metadata=${BINLOG_METADATA}`,
     '--gtid-mode=ON',
     '--enforce-gtid-consistency=ON',
     '--default-time-zone=+00:00',
@@ -2742,6 +2750,9 @@ async function main() {
     await sql('RESET BINARY LOGS AND GTIDS')
   }
   await sql(`USE ${DATABASE}`)
+  // The variable is dynamic, so a reused keep-container created under the
+  // other setting still runs this gate's configured base.
+  await sql(`SET GLOBAL binlog_row_metadata = '${BINLOG_METADATA}'`)
   await sql(`CREATE USER IF NOT EXISTS 'pintail'@'%' IDENTIFIED BY 'pintail'`)
   await sql(
     `GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'`,
