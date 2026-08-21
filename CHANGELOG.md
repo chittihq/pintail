@@ -4,6 +4,16 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- A JSON-extracted string's `utf8mb4_bin` collation now survives derived
+  table and CTE boundaries: `SELECT DISTINCT s FROM (SELECT meta->>'$.k'
+  AS s ...) d` kept case variants apart in MySQL but folded them in
+  Pintail, because the inner projection's output column recorded the
+  session default collation instead of the JSON producer's.
+
 ## [0.0.4-rc11] - 2026-08-21
 
 The test-diversity release: a differential grammar fuzzer and a

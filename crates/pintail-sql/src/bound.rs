@@ -1311,7 +1311,21 @@ impl BoundQuery {
                 self.collect_result_collations(left, collations);
                 self.collect_result_collations(right, collations);
             }
-            BoundExprKind::Scalar { args, .. } => {
+            BoundExprKind::Scalar { function, args } => {
+                // Mirror collect_source_collations' ladder: COLLATE pins the
+                // collation outright, and a JSON string producer's output is
+                // utf8mb4_bin no matter what flowed in. Without this a
+                // derived table or CTE column built from ->> recorded the
+                // session default, and DISTINCT above the boundary folded
+                // case variants MySQL keeps apart (Chitti's coll-10).
+                if let ScalarFunction::Collate { collation } = function {
+                    collations.push(collation.as_str().to_owned());
+                    return;
+                }
+                if json_text_producer(*function) {
+                    collations.push(BIN_TEXT_COLLATION.to_owned());
+                    return;
+                }
                 for argument in args {
                     self.collect_result_collations(argument, collations);
                 }

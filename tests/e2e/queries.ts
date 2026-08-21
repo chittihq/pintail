@@ -1299,4 +1299,14 @@ export const differentialQueries: DifferentialQuery[] = [
       'GROUP BY s.carrier ORDER BY s.carrier',
     tables: ['shipments', 'order_items'],
   },
+  {
+    // Chitti's coll-10: JSON-extracted strings compare utf8mb4_bin, and
+    // that collation must survive a derived-table boundary - DISTINCT
+    // above it keeps "Google" and "google" apart exactly as MySQL does.
+    name: 'json: distinct case variants survive a derived table',
+    sql:
+      "SELECT COUNT(DISTINCT s) AS variants FROM " +
+      "(SELECT meta->>'$.lang' AS s FROM customers WHERE meta IS NOT NULL) d",
+    tables: ['customers'],
+  },
 ]

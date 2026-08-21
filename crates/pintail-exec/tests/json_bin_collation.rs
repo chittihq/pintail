@@ -666,3 +666,49 @@ fn probe_round_typing() {
         run("SELECT ROUND(149, -2), ROUND(149), CEIL(1.5)")
     );
 }
+
+#[test]
+fn json_distinct_is_case_sensitive() {
+    // Chitti's coll-10: MySQL types JSON_UNQUOTE output utf8mb4_bin, so
+    // DISTINCT keeps "PREMIUM" and "premium" apart exactly as GROUP BY
+    // does. The dedup path must resolve the same collation the grouping
+    // path already resolves.
+    let rows = run("SELECT DISTINCT meta->>'$.tags[0]' AS t FROM orders \
+         WHERE meta IS NOT NULL AND meta->>'$.tags[0]' IS NOT NULL ORDER BY t");
+    assert_eq!(
+        rows,
+        vec![vec!["PREMIUM".to_owned()], vec!["premium".to_owned()]]
+    );
+}
+
+#[test]
+fn json_count_distinct_is_case_sensitive() {
+    let rows = run("SELECT COUNT(DISTINCT meta->>'$.tags[0]') FROM orders WHERE meta IS NOT NULL");
+    assert_eq!(rows, vec![vec!["2".to_owned()]]);
+}
+
+#[test]
+fn json_distinct_survives_a_derived_table_boundary() {
+    // Chitti's coll-10, the real shape: the ->> collation must ride the
+    // derived-table column, or DISTINCT above the boundary folds case
+    // variants MySQL keeps apart.
+    let rows = run(
+        "SELECT DISTINCT s FROM (SELECT meta->>'$.tags[0]' AS s FROM orders \
+         WHERE meta IS NOT NULL AND meta->>'$.tags[0]' IS NOT NULL) d ORDER BY s",
+    );
+    assert_eq!(
+        rows,
+        vec![vec!["PREMIUM".to_owned()], vec!["premium".to_owned()]]
+    );
+}
+
+#[test]
+fn json_distinct_survives_a_cte_boundary() {
+    let rows = run("WITH x AS (SELECT meta->>'$.tags[0]' AS s FROM orders \
+         WHERE meta IS NOT NULL AND meta->>'$.tags[0]' IS NOT NULL) \
+         SELECT DISTINCT s FROM x ORDER BY s");
+    assert_eq!(
+        rows,
+        vec![vec!["PREMIUM".to_owned()], vec!["premium".to_owned()]]
+    );
+}
