@@ -450,18 +450,31 @@ async function metadataDiff(): Promise<string | undefined> {
 async function verifyConvergence(phase: string) {
   const tables = await baseTables()
   const pending = new Map<string, string>()
+  const settledGaps = new Map<string, string>()
   const deadline = Date.now() + CONVERGE_TIMEOUT_MS
   for (const table of tables) pending.set(table, 'not yet checked')
   while (pending.size > 0 && Date.now() < deadline) {
     for (const table of [...pending.keys()]) {
       const diff = await tableDiff(table)
-      if (diff === undefined) pending.delete(table)
-      else pending.set(table, diff)
+      if (diff === undefined) {
+        pending.delete(table)
+        continue
+      }
+      pending.set(table, diff)
+      // A documented gap NEVER converges by design: a diff matching its
+      // signature is this table's final answer, and polling it to the
+      // timeout added six minutes to the run while proving nothing. Stop
+      // polling; the verdict loop below still grades it WARN or FAIL.
+      const signature = documentedGapTables.get(table)
+      if (signature?.test(diff)) {
+        settledGaps.set(table, diff)
+        pending.delete(table)
+      }
     }
     if (pending.size > 0) await Bun.sleep(CONVERGE_POLL_MS)
   }
   for (const table of tables) {
-    const diff = pending.get(table)
+    const diff = pending.get(table) ?? settledGaps.get(table)
     if (diff === undefined) {
       results.push({ phase, check: `converge:${table}`, status: 'PASS' })
     } else {
@@ -1510,18 +1523,27 @@ async function phaseControlPlane() {
       FROM orders LIMIT 1`
     const [, mysqlFields] = (await mysqlConnection!.query(battery)) as unknown as [
       unknown,
-      Array<{ name: string; columnType: number }>,
+      Array<{ name: string; columnType: number; characterSet: number }>,
     ]
     const [, pintailFields] = (await pintailWire!.query(battery)) as unknown as [
       unknown,
-      Array<{ name: string; columnType: number }>,
+      Array<{ name: string; columnType: number; characterSet: number }>,
     ]
     const mismatches: string[] = []
     for (const [index, expected] of mysqlFields.entries()) {
       const actual = pintailFields[index]
-      if (!actual || actual.name !== expected.name || actual.columnType !== expected.columnType) {
+      // The charset byte is half the decode contract: LONG_BLOB + binary is
+      // a Buffer, LONG_BLOB + utf8mb4_bin is text. Comparing only the type
+      // byte waved through exactly that divergence on JSON_UNQUOTE.
+      if (
+        !actual
+        || actual.name !== expected.name
+        || actual.columnType !== expected.columnType
+        || actual.characterSet !== expected.characterSet
+      ) {
         mismatches.push(
-          `${expected.name}: mysql type ${expected.columnType}, pintail ${actual?.columnType} (${actual?.name})`,
+          `${expected.name}: mysql type ${expected.columnType}/cs ${expected.characterSet}, ` +
+            `pintail ${actual?.columnType}/cs ${actual?.characterSet} (${actual?.name})`,
         )
       }
     }
@@ -2383,9 +2405,14 @@ async function phaseDropTablePolling() {
         }
         if (Date.now() - lastTrace > 5_000) {
           lastTrace = Date.now()
+          const active = current
+            .filter((run) => run.status === 'running' || run.status === 'pending')
+            .map((run) => `${run.kind}:${run.status}:${run.id.slice(0, 12)}`)
+            .join(' ')
           log(
             `handoff wait: state=${status.state} rows=${rows} fresh=${fresh.length} ` +
-              `known=${known.size} quiet=${((Date.now() - quietSince) / 1000).toFixed(0)}s`,
+              `known=${known.size} quiet=${((Date.now() - quietSince) / 1000).toFixed(0)}s` +
+              (active ? ` active=[${active}]` : ' active=[]'),
           )
         }
         if (Date.now() > rebuilt) {

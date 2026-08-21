@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-20T21:43:24.406Z.
+Measured 2026-08-21T06:42:00.802Z.
 
-**2096 passed, 0 failed, 6 documented-gap warnings.**
+**2097 passed, 0 failed, 5 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -1791,7 +1791,7 @@ Measured 2026-08-20T21:43:24.406Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_2c8cd8a93baf2eaa7587838882656dfa","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-20T21:27:46.461047+00:00","updated_at":"2026-08-20T21:36:19.839549+00:00"},"tables":17,"rows":815} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -2125,3 +2125,28 @@ Measured 2026-08-20T21:43:24.406Z.
 | ddl-documented-gaps | query:set: order by walks the member bitmask | PASS |  |
 | ddl-documented-gaps | query:set: grouping orders groups by bitmask | PASS |  |
 | ddl-documented-gaps | query:geometry: hex round-trips the internal format | PASS |  |
+
+## Timing
+
+| Phase | run s | converge s | corpus s |
+|---|---|---|---|
+| snapshot | 0.0 | 0.9 | 0.7 |
+| orm-compat | 19.5 | 0.3 | 0.6 |
+| crud | 0.2 | 1.1 | 0.4 |
+| type-edges | 0.2 | 2.6 | 0.7 |
+| ddl | 0.7 | 29.9 | 0.4 |
+| schema-drift-minimal | 0.1 | 5.1 | 0.6 |
+| schema-drift-unseen | 1.0 | 14.7 | 1.2 |
+| churn | 31.0 | 1.5 | 0.9 |
+| execution-budget | 0.0 | 0.6 | 1.8 |
+| spill | 2.8 | 0.7 | 1.2 |
+| pooling | 0.3 | 0.7 | 0.7 |
+| restart | 0.7 | 2.8 | 0.6 |
+| control-plane | 97.6 | 1.6 | 0.8 |
+| snapshot-ddl-window | 12.8 | 1.4 | 0.5 |
+| drop-table-cdc | 15.3 | 1.1 | 0.6 |
+| drop-table-recreate | 140.4 | 2.9 | 1.3 |
+| drop-table-polling | 34.1 | 1.2 | 0.7 |
+| drop-database | 15.3 | 1.3 | 0.5 |
+| ddl-documented-gaps | 0.1 | 360.5 | 0.6 |
+| total | 372.0 | 431.1 | 14.8 |

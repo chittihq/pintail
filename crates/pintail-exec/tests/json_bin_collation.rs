@@ -658,3 +658,11 @@ fn inet_aton_accepts_the_classful_shorthands() {
         ]]
     );
 }
+
+#[test]
+fn probe_round_typing() {
+    println!(
+        "GOT {:?}",
+        run("SELECT ROUND(149, -2), ROUND(149), CEIL(1.5)")
+    );
+}

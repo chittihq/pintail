@@ -761,10 +761,17 @@ impl MetaStore {
                 (database_id, table_name, reconcile_at),
             )
             .context("failed to mark table polling")?;
+        // A checkpoint commit is not entitled to overwrite a mode switch
+        // that landed while the cycle ran: an in-flight poll pass finishing
+        // after an operator's polling-to-cdc switch wrote 'polling' back
+        // and every later cycle read it and re-wrote it - the database
+        // polled forever under mode cdc. The supervisor's completion write
+        // carries this guard already; the checkpoint path is the one that
+        // actually fired (three fast-cadence e2e runs in four).
         transaction
             .execute(
                 "UPDATE databases SET state = 'polling', effective_mode = 'polling', \
-                   updated_at = ?2 WHERE id = ?1",
+                   updated_at = ?2 WHERE id = ?1 AND mode IN ('polling', 'auto')",
                 (database_id, now),
             )
             .context("failed to mark database polling")?;
@@ -828,10 +835,12 @@ impl MetaStore {
                 )
                 .with_context(|| format!("failed to mark {database_id}.{table_name} streaming"))?;
         }
+        // Mirror of the polling checkpoint's guard: a CDC checkpoint that
+        // lands after a cdc-to-polling switch must not flip the mode back.
         transaction
             .execute(
                 "UPDATE databases SET state = 'streaming', effective_mode = 'cdc', \
-                   updated_at = ?2 WHERE id = ?1",
+                   updated_at = ?2 WHERE id = ?1 AND mode IN ('cdc', 'auto')",
                 (database_id, now),
             )
             .context("failed to mark database streaming")?;

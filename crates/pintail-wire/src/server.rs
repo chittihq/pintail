@@ -1654,14 +1654,19 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) 
     };
     // Text results follow the connection's result charset; numeric, temporal,
     // binary and JSON results use MySQL's binary character set (63). The
-    // temporal and JSON-text hints are binary-charset results too, exactly
-    // as MySQL reports them.
-    let character_set =
-        if matches!(field.data_type, Some(DataType::Utf8)) && field.wire_hint.is_none() {
+    // temporal hints are binary-charset results too. JSON text is the
+    // exception MySQL carves out: LONG_BLOB with utf8mb4_bin (46), NOT the
+    // binary charset - 63 makes drivers hand back raw Buffers where MySQL's
+    // own answer decodes as text (found by a customer's conformance diff:
+    // JSON_UNQUOTE('v') arrived base64'd as 'dg==').
+    let character_set = match field.wire_hint {
+        Some(crate::engine::WireTypeHint::JsonText) => 46,
+        Some(_) => 63,
+        None if matches!(field.data_type, Some(DataType::Utf8)) => {
             mysql_text_character_set(charset)
-        } else {
-            63
-        };
+        }
+        None => 63,
+    };
     let mut column = Column::new(field.name.clone(), coltype);
     column.column_length = column_length;
     column.character_set = character_set;
@@ -2380,11 +2385,6 @@ mod tests {
                 ColumnType::MysqlTypeDatetime,
                 26,
             ),
-            (
-                crate::engine::WireTypeHint::JsonText,
-                ColumnType::MysqlTypeLongBlob,
-                u32::MAX,
-            ),
         ] {
             let column = mysql_column(
                 &QueryField {
@@ -2404,6 +2404,27 @@ mod tests {
             assert_eq!(column.column_length, length);
             assert_eq!(column.character_set, 63);
         }
+        // JSON text is LONG_BLOB with utf8mb4_bin (46): the type byte says
+        // blob, the charset says text, and drivers decode it as a string -
+        // exactly MySQL's shape. 63 here turned every JSON_UNQUOTE answer
+        // into a raw Buffer.
+        let column = mysql_column(
+            &QueryField {
+                name: "value".to_owned(),
+                data_type: Some(DataType::Utf8),
+                nullable: true,
+                collation: None,
+                group_concat: false,
+                geometry: false,
+                timestamp: false,
+                wire_hint: Some(crate::engine::WireTypeHint::JsonText),
+            },
+            1024,
+            "utf8mb4",
+        );
+        assert_eq!(column.coltype, ColumnType::MysqlTypeLongBlob);
+        assert_eq!(column.column_length, u32::MAX);
+        assert_eq!(column.character_set, 46);
     }
 
     #[test]

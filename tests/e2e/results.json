@@ -8929,8 +8929,7 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_2c8cd8a93baf2eaa7587838882656dfa\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-20T21:27:46.461047+00:00\",\"updated_at\":\"2026-08-20T21:36:19.839549+00:00\"},\"tables\":17,\"rows\":815}"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",

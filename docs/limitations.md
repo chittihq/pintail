@@ -382,6 +382,12 @@ stays readable as a list of things to fix.
   not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
+- A handful of result-metadata types are narrower than MySQL's while the
+  values agree byte-for-byte: `ROUND`/`CEIL`/`FLOOR` of an exact integer
+  advertise DOUBLE where MySQL says LONGLONG, and `SUM` over exact integers
+  advertises the integer carrier where MySQL widens to DECIMAL(N,0).
+  Correcting either means reconciling two result-shaping layers that
+  currently compensate for each other; JSON arithmetic remains rejected.
 - `KILL QUERY <id>` interrupts the target connection's running statement;
   the interrupted side reports MySQL's query-interrupted error. Bare `KILL`
   and `KILL CONNECTION` reject explicitly - terminating another session is
