@@ -1058,14 +1058,17 @@ async function phaseContention() {
       },
     },
     {
-      // The DML only writes customer_id 1..40, all of which exist, so the
-      // join can never drop a row relative to the same statement's total.
+      // Two derivations of the joinable-row count in one statement: an
+      // EXISTS filter and the join itself. Data-independent - a row whose
+      // customer genuinely does not exist (the type-edges phase plants
+      // one) is excluded by BOTH sides - so any split is a torn snapshot.
       sql:
-        'SELECT (SELECT COUNT(*) FROM orders) - COUNT(*) AS dangling ' +
+        'SELECT (SELECT COUNT(*) FROM orders o2 WHERE EXISTS ' +
+        '(SELECT 1 FROM customers c2 WHERE c2.id = o2.customer_id)) - COUNT(*) AS torn ' +
         'FROM orders o JOIN customers c ON c.id = o.customer_id',
       verify: (rows) => {
-        const dangling = asNumber(rows[0]?.[0])
-        return dangling === 0 ? null : `join dropped ${dangling} rows within one statement`
+        const torn = asNumber(rows[0]?.[0])
+        return torn === 0 ? null : `join count split by ${torn} within one statement`
       },
     },
     {
