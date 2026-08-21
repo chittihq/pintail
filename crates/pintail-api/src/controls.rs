@@ -161,13 +161,15 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         return;
     }
     {
-        let cooldown = auto_resync_cooldown()
+        let mut cooldown = auto_resync_cooldown()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Expired entries leave on every pass, including entries for
+        // dropped tables and deleted databases - the map is
+        // process-lifetime and must not grow monotonically.
+        cooldown.retain(|_, stamped| stamped.elapsed() < Duration::from_secs(300));
         let key = (database_id.to_owned(), table_name.clone());
-        if let Some(last) = cooldown.get(&key)
-            && last.elapsed() < Duration::from_secs(300)
-        {
+        if cooldown.contains_key(&key) {
             return;
         }
     }
@@ -181,10 +183,6 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         // silence retries for the whole window.
         return;
     }
-    auto_resync_cooldown()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert((database_id.to_owned(), table_name.clone()), Instant::now());
     let run_id = crate::state::random_identifier("run_", 16);
     let started = metadata
         .start_sync_run(
@@ -197,48 +195,38 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         .and_then(|()| metadata.begin_table_resnapshot(database_id, &table_name));
     drop(metadata);
     if started.is_err() {
+        // Bookkeeping never started, so no attempt did: leave the cooldown
+        // unstamped and let the next cycle retry.
         state.release_job(database_id);
         return;
     }
+    auto_resync_cooldown()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((database_id.to_owned(), table_name.clone()), Instant::now());
     pintail_log::log_info!(
         "auto resync db={database_id} table={table_name}: quarantined table is being recopied"
     );
-    let job_state = state.clone();
-    let job_database_id = database_id.to_owned();
-    let job_table_name = table_name.clone();
-    let job_run_id = run_id.clone();
-    if let Err(error) = std::thread::Builder::new()
-        .name(format!("pintail-auto-resync-{database_id}"))
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            match runtime {
-                Ok(runtime) => runtime.block_on(complete_table_resnapshot_job(
-                    job_state,
-                    job_database_id,
-                    job_table_name,
-                    job_run_id,
-                )),
-                Err(error) => finish_table_resnapshot(
-                    &job_state,
-                    &job_database_id,
-                    &job_table_name,
-                    &job_run_id,
-                    Err(error.to_string()),
-                    0,
-                ),
-            }
-        })
-    {
-        finish_table_resnapshot(
-            &state.clone(),
+    // The supervisor drives this from inside the runtime, so the job runs
+    // as an ordinary task under its scheduling - not on a detached OS
+    // thread with a private runtime per repair.
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(complete_table_resnapshot_job(
+                state.clone(),
+                database_id.to_owned(),
+                table_name.clone(),
+                run_id.clone(),
+            ));
+        }
+        Err(error) => finish_table_resnapshot(
+            state,
             database_id,
             &table_name,
             &run_id,
-            Err(format!("could not start auto-resync worker: {error}")),
+            Err(format!("no runtime for the auto-resync worker: {error}")),
             0,
-        );
+        ),
     }
 }
 
