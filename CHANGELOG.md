@@ -4,6 +4,97 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4-rc9] - 2026-08-21
+
+The conformance release: a customer's 106-case differential suite and
+the questions it raised drove two campaigns - first collation and
+coercion parity (PAD SPACE, BINARY, COLLATE, the JSON utf8mb4_bin
+model), then the twelve next limitations on the ledger, worked front
+to back. The oracle grew from 874 to 1,081 byte-exact cases and the
+e2e gate from 1,829 to 2,096 checks; six additional defects those new
+cases exposed are fixed below.
+
+### Added
+
+- JSON reaches MySQL parity for querying. JSON-to-JSON comparison,
+  ordering, grouping, DISTINCT and set duplicate handling follow the
+  JSON type-precedence ladder (numbers equal across integer/double
+  spellings, objects equal whatever the member order). Paths accept
+  wildcards (`.*`, `[*]`), recursive descent (`**`), ranges
+  (`[M to N]`) and `last`-relative indexes with MySQL's autowrap
+  rules. The modification family lands - JSON_SET, JSON_INSERT,
+  JSON_REPLACE, JSON_REMOVE, JSON_MERGE_PATCH - beside MEMBER OF,
+  JSON_OVERLAPS, JSON_DEPTH, JSON_QUOTE and JSON_PRETTY (MySQL's
+  exact two-space layout).
+- Session-collation semantics: the wire handshake's charset byte sets
+  the connection collation, literal comparisons follow it (PAD SPACE
+  under general_ci clients, NO PAD under 0900_ai_ci), an explicit
+  COLLATE dictates its comparison as coercibility 0, and utf8mb4_bin
+  joins the supported profiles.
+- New scalar functions: SHA1, SHA2, CRC32, UUID, BIN, OCT, INET_ATON
+  (including the classful 1-3 part shorthands) and INET_NTOA; TRIM
+  with a pattern (`TRIM(BOTH 'x' FROM ...)`); the null-safe `<=>`
+  operator; CAST AS UNSIGNED/SIGNED wrap through two's complement as
+  MySQL's explicit casts do; EXTRACT composite units (YEAR_MONTH
+  through MINUTE_SECOND).
+- Joins widen: RIGHT JOIN anywhere in a chain (rewritten to a
+  left-preserving nested group), range/inequality ON conditions with
+  no equality key run on the nested loop behind the cross-join
+  cardinality guard, and correlated EXISTS/IN subqueries decorrelate
+  with range predicates, not just equalities.
+- Size-tier compaction merges run on a background thread: the ingest
+  path only spawns a merge and publishes its result, so a large merge
+  no longer stalls replication (previously 583k to 343k rows/s once
+  merges engaged). The inline pass remains behind
+  `background_compaction=false`.
+- The wire endpoint serves caching_sha2_password FULL authentication
+  (RSA key exchange toward a per-process keypair, or cleartext from a
+  client that trusts its transport) and KILL QUERY, which interrupts
+  the target connection's running statement through the same
+  cancellation a disconnect uses.
+- Audit rows record the network peer they arrived from, and the
+  dashboard tables view filters by state.
+
+### Fixed
+
+- JSON function results collate utf8mb4_bin, as MySQL's do: grouping,
+  DISTINCT and comparisons over JSON_UNQUOTE/`->>` text are
+  case-sensitive even in a case-insensitive session, each DISTINCT
+  key deduping under its own coercibility-ladder collation.
+- Three parser-precedence bugs of one class: the JSON `->`/`->>`
+  arrows, prefix BINARY, and BINARY before LIKE/BETWEEN all swallowed
+  the comparison that followed; each now reassociates to MySQL's
+  grammar. One BINARY operand also forces the whole comparison to
+  byte semantics instead of falling into numeric coercion.
+- information_schema ORDER BY answers byte order, as measured against
+  MySQL - the interpreter's case fold broke metadata convergence and
+  ORM introspection snapshots the moment the corpus held capitalized
+  table names beside lowercase ones.
+- The probe retains non-unique secondary indexes, so
+  information_schema.statistics, SHOW INDEX and SHOW CREATE TABLE
+  stop pretending tables have none; Drizzle and Prisma introspection
+  now reproduce MySQL's output byte-for-byte.
+- Arithmetic with either BIGINT UNSIGNED operand stays unsigned, a
+  negative signed operand subtracting in the unsigned domain exactly
+  as MySQL evaluates it.
+- SEC_TO_TIME, MAKETIME, CONVERT_TZ and JSON_UNQUOTE advertise
+  MySQL's own wire types (TIME, DATETIME, LONG_BLOB) as direct
+  projections, in both text and binary protocols.
+- LIKE defaults its escape character to backslash without an ESCAPE
+  clause; ordering by a group-key alias resolves the grouping
+  expression's collation; an untyped NULL projection satisfies any
+  derived column type; a dependent EXISTS in a self-join no longer
+  sinks below its filter into the scan; a resync rebuilds through a
+  physical column-type change.
+
+### Verification
+
+- The oracle holds 1,081 byte-exact differential cases (from 874),
+  the e2e gate 2,096 checks (from 1,829) including Chitti's vendored
+  conformance seed, an extended wire-type battery, and the ORM
+  introspection paths. Full suite: oracle PASS, e2e PASS (0 failed,
+  6 documented-gap warnings), browser PASS.
+
 ## [0.0.4-rc8] - 2026-08-20
 
 Temporal wire-type parity, reported from a customer's driver-level diff:
