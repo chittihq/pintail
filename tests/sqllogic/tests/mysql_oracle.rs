@@ -78,7 +78,7 @@ struct OracleCase {
     ordered: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum OracleValue {
     Exact(String),
     Float(String),
@@ -3637,6 +3637,11 @@ fn num_expr(rng: &mut Xorshift, table: char, depth: usize) -> String {
 fn str_expr(rng: &mut Xorshift, table: char, depth: usize) -> String {
     let column = |rng: &mut Xorshift| match table {
         'e' => (*rng.pick(&AI_CI_TEXT_E)).to_owned(),
+        // Each shape's grammar must stay closed over the tables actually
+        // in its FROM: u.name here made single-table orders queries
+        // reference a missing table (MySQL skipped them differentially;
+        // the metamorphic pack surfaced the bind error).
+        'o' => "o.status".to_owned(),
         _ => "u.name".to_owned(),
     };
     if depth == 0 {
@@ -3726,12 +3731,305 @@ fn predicate(rng: &mut Xorshift, table: char, depth: usize) -> String {
     }
 }
 
+/// Every rewrite here is an identity under `MySQL` semantics (three-valued
+/// logic included), so Pintail must answer each variant with byte-identical
+/// rows. No `MySQL` container is involved - the pack checks Pintail against
+/// itself, which lets it run on every plain `cargo test`.
+fn metamorphic_variants(parts: &QueryParts) -> Vec<(&'static str, String)> {
+    let mut variants = Vec::new();
+    if parts.from.is_some() {
+        // WHERE p == WHERE (p) AND (1 = 1); a missing WHERE is WHERE TRUE.
+        let strengthened = match &parts.where_clause {
+            Some(predicate) => format!("({predicate}) AND (1 = 1)"),
+            None => "(1 = 1)".to_owned(),
+        };
+        variants.push((
+            "tautology-and",
+            parts.render_with(
+                parts.from.as_deref(),
+                Some(&strengthened),
+                parts.having.as_deref(),
+            ),
+        ));
+    }
+    if let Some(predicate) = &parts.where_clause {
+        // Filters keep only TRUE, and NOT(NOT p) preserves TRUE exactly
+        // (NULL stays NULL, FALSE stays FALSE - both filtered out).
+        variants.push((
+            "double-negation",
+            parts.render_with(
+                parts.from.as_deref(),
+                Some(&format!("NOT (NOT ({predicate}))")),
+                parts.having.as_deref(),
+            ),
+        ));
+    }
+    if let Some(having) = &parts.having {
+        variants.push((
+            "having-tautology",
+            parts.render_with(
+                parts.from.as_deref(),
+                parts.where_clause.as_deref(),
+                Some(&format!("({having}) AND (1 = 1)")),
+            ),
+        ));
+    }
+    if let Some(commuted) = &parts.from_commuted {
+        variants.push((
+            "join-commuted",
+            parts.render_with(
+                Some(commuted),
+                parts.where_clause.as_deref(),
+                parts.having.as_deref(),
+            ),
+        ));
+    }
+    // The query as a derived table, ordering and limit owned by the outer
+    // SELECT * - positional ORDER BY still lands on the same columns.
+    variants.push((
+        "derived-wrap",
+        format!(
+            "SELECT * FROM ({}) derived{}",
+            parts.render_inner(parts.where_clause.as_deref()),
+            parts.render_tail()
+        ),
+    ));
+    if parts.from.is_some() {
+        // q UNION ALL (q WHERE FALSE) == q: the second arm contributes
+        // nothing, whatever grouping or having the arms carry.
+        variants.push((
+            "union-empty-arm",
+            format!(
+                "SELECT * FROM ({} UNION ALL {}) unioned{}",
+                parts.render_inner(parts.where_clause.as_deref()),
+                parts.render_inner(Some("(1 = 0)")),
+                parts.render_tail()
+            ),
+        ));
+    }
+    if let Some(limit) = parts.limit {
+        let mut with_offset = parts.render();
+        let plain = format!(" LIMIT {limit}");
+        let offset = format!(" LIMIT {limit} OFFSET 0");
+        with_offset = with_offset.replace(&plain, &offset);
+        variants.push(("limit-offset-zero", with_offset));
+    }
+    variants
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_metamorphic() -> Result<(), String> {
+    let cases: usize = std::env::var("PINTAIL_META_CASES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(250);
+    let seed: u64 = std::env::var("PINTAIL_META_SEED")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0x00C0_FFEE);
+
+    let events_directory =
+        tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
+    let users_directory = tempfile::tempdir().map_err(|error| format!("users tempdir: {error}"))?;
+    let orders_directory =
+        tempfile::tempdir().map_err(|error| format!("orders tempdir: {error}"))?;
+    let events_schema = events_schema()?;
+    let users_schema = users_schema()?;
+    let orders_schema = orders_schema()?;
+    let mut events = TableStore::open(
+        events_directory.path(),
+        events_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open events: {error}"))?;
+    let mut users = TableStore::open(
+        users_directory.path(),
+        users_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open users: {error}"))?;
+    let mut orders = TableStore::open(
+        orders_directory.path(),
+        orders_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open orders: {error}"))?;
+    events
+        .ingest((1..=10).map(event_row).collect())
+        .map_err(|error| format!("ingest events: {error}"))?;
+    users
+        .ingest((1..=8).map(user_row).collect())
+        .map_err(|error| format!("ingest users: {error}"))?;
+    orders
+        .ingest(order_rows())
+        .map_err(|error| format!("ingest orders: {error}"))?;
+    let events_snapshot = events.snapshot();
+    let users_snapshot = users.snapshot();
+    let orders_snapshot = orders.snapshot();
+    let catalog = catalog(events_schema, users_schema, orders_schema)?;
+    let provider = SnapshotScanProvider::new([
+        (DATABASE_ID, EVENTS_ID, &events_snapshot),
+        (DATABASE_ID, USERS_ID, &users_snapshot),
+        (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+    ])
+    .map_err(|error| format!("create snapshot provider: {error}"))?;
+
+    let mut rng = Xorshift(seed | 1);
+    let mut compared = 0usize;
+    let mut skipped = 0usize;
+    let mut failures = Vec::new();
+    for index in 0..cases {
+        let parts = generate_parts(&mut rng);
+        let base_sql = parts.render();
+        // A base the engine itself rejects (a row-wise unsigned overflow
+        // the grammar could not see, say) has no answer to hold variants
+        // to - skip it, but bound the rate so grammar drift fails loudly.
+        let Ok(base) = execute_pintail(&base_sql, &catalog, &provider) else {
+            skipped += 1;
+            continue;
+        };
+        for (label, variant_sql) in metamorphic_variants(&parts) {
+            compared += 1;
+            let variant = execute_pintail(&variant_sql, &catalog, &provider)
+                .map_err(|error| format!("case {index} {label} `{variant_sql}`: {error}"))?;
+            if variant != base {
+                failures.push(format!(
+                    "case {index} (seed {seed}) {label}\nbase SQL: {base_sql}\nvariant SQL: {variant_sql}\nbase: {base:?}\nvariant: {variant:?}"
+                ));
+            }
+        }
+        if failures.len() >= 10 {
+            break;
+        }
+    }
+    if skipped * 5 > cases {
+        return Err(format!(
+            "metamorphic grammar drift: {skipped} of {cases} bases errored (bound: 20%)"
+        ));
+    }
+    if failures.is_empty() {
+        println!(
+            "metamorphic: {compared} equivalence checks over {} generated queries agreed \
+             ({skipped} bases skipped as erroring)",
+            cases - skipped
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "{} metamorphic divergence(s), showing at most 10:\n{}",
+            failures.len(),
+            failures.join("\n")
+        ))
+    }
+}
+
+/// Self-consistency needs no oracle, so unlike the differential packs this
+/// one is not `#[ignore]`d - it runs on every plain `cargo test`.
+#[test]
+fn metamorphic_equivalences_hold() {
+    run_metamorphic().unwrap_or_else(|error| panic!("{error}"));
+}
+
 fn order_all(columns: usize) -> String {
     let keys = (1..=columns).map(|n| n.to_string()).collect::<Vec<_>>();
     format!(" ORDER BY {}", keys.join(", "))
 }
 
+/// A generated query held as clauses, so the metamorphic pack can rewrite
+/// individual clauses into provably-equivalent forms and re-render. The
+/// fuzzer renders the same parts straight to SQL - one grammar, two packs.
+struct QueryParts {
+    select: Vec<String>,
+    /// None for scalar-only queries (no FROM at all).
+    from: Option<String>,
+    /// The same FROM with the inner-join sides swapped, when that is an
+    /// equivalence (never for LEFT JOIN).
+    from_commuted: Option<String>,
+    where_clause: Option<String>,
+    group_by: Option<String>,
+    having: Option<String>,
+    /// How many leading select positions the total order covers (0 = none).
+    order_columns: usize,
+    limit: Option<u32>,
+}
+
+impl QueryParts {
+    fn render(&self) -> String {
+        self.render_with(
+            self.from.as_deref(),
+            self.where_clause.as_deref(),
+            self.having.as_deref(),
+        )
+    }
+
+    fn render_with(
+        &self,
+        from: Option<&str>,
+        where_clause: Option<&str>,
+        having: Option<&str>,
+    ) -> String {
+        let mut sql = format!("SELECT {}", self.select.join(", "));
+        if let Some(from) = from {
+            sql.push_str(" FROM ");
+            sql.push_str(from);
+        }
+        if let Some(predicate) = where_clause {
+            sql.push_str(" WHERE ");
+            sql.push_str(predicate);
+        }
+        if let Some(group) = &self.group_by {
+            sql.push_str(" GROUP BY ");
+            sql.push_str(group);
+        }
+        if let Some(having) = having {
+            sql.push_str(" HAVING ");
+            sql.push_str(having);
+        }
+        if self.order_columns > 0 {
+            sql.push_str(&order_all(self.order_columns));
+        }
+        if let Some(limit) = self.limit {
+            use std::fmt::Write as _;
+            let _ = write!(sql, " LIMIT {limit}");
+        }
+        sql
+    }
+
+    /// The clause body without ORDER BY / LIMIT, for wrapping in a derived
+    /// table or a UNION ALL arm where the outer query owns the ordering.
+    fn render_inner(&self, where_clause: Option<&str>) -> String {
+        let ordered = QueryParts {
+            select: self.select.clone(),
+            from: self.from.clone(),
+            from_commuted: None,
+            where_clause: where_clause.map(ToOwned::to_owned),
+            group_by: self.group_by.clone(),
+            having: self.having.clone(),
+            order_columns: 0,
+            limit: None,
+        };
+        ordered.render()
+    }
+
+    fn render_tail(&self) -> String {
+        let mut tail = String::new();
+        if self.order_columns > 0 {
+            tail.push_str(&order_all(self.order_columns));
+        }
+        if let Some(limit) = self.limit {
+            use std::fmt::Write as _;
+            let _ = write!(tail, " LIMIT {limit}");
+        }
+        tail
+    }
+}
+
 fn generate_query(rng: &mut Xorshift) -> String {
+    generate_parts(rng).render()
+}
+
+#[allow(clippy::too_many_lines)]
+fn generate_parts(rng: &mut Xorshift) -> QueryParts {
     match rng.below(5) {
         // Scalar-only: expressions with no FROM.
         0 => {
@@ -3749,7 +4047,16 @@ fn generate_query(rng: &mut Xorshift) -> String {
                     }
                 })
                 .collect::<Vec<_>>();
-            format!("SELECT {}", exprs.join(", "))
+            QueryParts {
+                select: exprs,
+                from: None,
+                from_commuted: None,
+                where_clause: None,
+                group_by: None,
+                having: None,
+                order_columns: 0,
+                limit: None,
+            }
         }
         // Single-table filter + projection.
         1 => {
@@ -3764,12 +4071,17 @@ fn generate_query(rng: &mut Xorshift) -> String {
                     }
                 })
                 .collect::<Vec<_>>();
-            format!(
-                "SELECT {} FROM {table} {alias} WHERE {}{} LIMIT 50",
-                exprs.join(", "),
-                predicate(rng, alias, 1),
-                order_all(picks)
-            )
+            let order_columns = exprs.len();
+            QueryParts {
+                select: exprs,
+                from: Some(format!("{table} {alias}")),
+                from_commuted: None,
+                where_clause: Some(predicate(rng, alias, 1)),
+                group_by: None,
+                having: None,
+                order_columns,
+                limit: Some(50),
+            }
         }
         // Grouped aggregates with HAVING.
         2 => {
@@ -3780,12 +4092,16 @@ fn generate_query(rng: &mut Xorshift) -> String {
             ]);
             let agg = *rng.pick(&["COUNT(*)", "SUM(1)", "MIN(2)", "COUNT(2)"]);
             let numeric = num_expr(rng, alias, 1);
-            format!(
-                "SELECT {group}, {agg}, SUM({numeric}) FROM {table} {alias} WHERE {} GROUP BY {group} HAVING COUNT(*) >= {}{}",
-                predicate(rng, alias, 0),
-                rng.below(3),
-                order_all(3)
-            )
+            QueryParts {
+                select: vec![group.to_owned(), agg.to_owned(), format!("SUM({numeric})")],
+                from: Some(format!("{table} {alias}")),
+                from_commuted: None,
+                where_clause: Some(predicate(rng, alias, 0)),
+                group_by: Some(group.to_owned()),
+                having: Some(format!("COUNT(*) >= {}", rng.below(3))),
+                order_columns: 3,
+                limit: None,
+            }
         }
         // Two-table equijoin.
         3 => {
@@ -3795,23 +4111,38 @@ fn generate_query(rng: &mut Xorshift) -> String {
                 .collect::<Vec<_>>();
             exprs.push(str_expr(rng, 'u', 1));
             let join = *rng.pick(&["JOIN", "LEFT JOIN"]);
-            format!(
-                "SELECT {} FROM orders o {join} users u ON o.user_id = u.id WHERE {}{} LIMIT 50",
-                exprs.join(", "),
-                predicate(rng, 'o', 1),
-                order_all(exprs.len())
-            )
+            let order_columns = exprs.len();
+            let from_commuted =
+                (join == "JOIN").then(|| "users u JOIN orders o ON o.user_id = u.id".to_owned());
+            QueryParts {
+                select: exprs,
+                from: Some(format!("orders o {join} users u ON o.user_id = u.id")),
+                from_commuted,
+                where_clause: Some(predicate(rng, 'o', 1)),
+                group_by: None,
+                having: None,
+                order_columns,
+                limit: Some(50),
+            }
         }
         // Three-table chain across all fixtures.
         _ => {
             let expr_e = num_expr(rng, 'e', 1);
             let expr_o = num_expr(rng, 'o', 1);
-            format!(
-                "SELECT e.id, {expr_e}, {expr_o} FROM events e JOIN orders o ON o.id = e.id \
-                 LEFT JOIN users u ON u.id = o.user_id WHERE {}{} LIMIT 50",
-                predicate(rng, 'e', 1),
-                order_all(3)
-            )
+            QueryParts {
+                select: vec!["e.id".to_owned(), expr_e, expr_o],
+                from: Some(
+                    "events e JOIN orders o ON o.id = e.id \
+                     LEFT JOIN users u ON u.id = o.user_id"
+                        .to_owned(),
+                ),
+                from_commuted: None,
+                where_clause: Some(predicate(rng, 'e', 1)),
+                group_by: None,
+                having: None,
+                order_columns: 3,
+                limit: Some(50),
+            }
         }
     }
 }
