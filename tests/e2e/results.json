@@ -14487,7 +14487,8 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:window share of total over grouped output",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   pending | 281.0000 | 55.3100 | 1.0000\n  pintail pending | 281.0000 | 55.3200 | 1.0000"
   },
   {
     "phase": "drop-table-recreate",
@@ -15024,7 +15025,8 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_3507eb888572879d3c2960dc6b209d7e\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-21T18:04:19.400753+00:00\",\"updated_at\":\"2026-08-21T18:12:59.057608+00:00\"},\"tables\":17,\"rows\":1004}"
   },
   {
     "phase": "drop-table-polling",

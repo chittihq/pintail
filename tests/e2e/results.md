@@ -1,10 +1,10 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T17:49:49.255Z.
+Measured 2026-08-21T18:13:35.799Z.
 
 Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-container.
 
-**3448 passed, 0 failed, 42 documented-gap warnings, 37 skipped.**
+**3446 passed, 1 failed, 43 documented-gap warnings, 37 skipped.**
 
 160 unique corpus queries produced 3200 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
@@ -2901,7 +2901,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-recreate | query:derived table | PASS |  |
 | drop-table-recreate | query:group_concat single expression | PASS |  |
 | drop-table-recreate | query:window ranking per group | PASS |  |
-| drop-table-recreate | query:window share of total over grouped output | PASS |  |
+| drop-table-recreate | query:window share of total over grouped output | FAIL | row 0: |
 | drop-table-recreate | query:window running total | PASS |  |
 | drop-table-recreate | query:decimal column average beyond simple sum | PASS |  |
 | drop-table-recreate | query:json extract filter on customer meta | PASS |  |
@@ -3008,7 +3008,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_3507eb888572879d3c2960dc6b209d7e","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-21T18:04:19.400753+00:00","updated_at":"2026-08-21T18:12:59.057608+00:00"},"tables":17,"rows":1004} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -3542,24 +3542,24 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 1.9 | 2.3 |
-| orm-compat | 15.8 | 1.2 | 1.6 |
-| crud | 0.4 | 2.7 | 2.1 |
-| type-edges | 0.1 | 1.4 | 1.6 |
-| ddl | 3.0 | 40.9 | 1.6 |
-| schema-drift-minimal | 0.7 | 6.6 | 1.5 |
-| schema-drift-unseen | 1.6 | 7.7 | 1.9 |
-| churn | 24.3 | 0.7 | 1.5 |
-| contention | 28.5 | 1.0 | 3.1 |
-| execution-budget | 0.0 | 1.6 | 3.0 |
-| spill | 2.9 | 1.0 | 1.4 |
-| pooling | 0.2 | 4.7 | 4.1 |
-| restart | 0.9 | 3.9 | 1.8 |
-| control-plane | 153.6 | 2.1 | 1.9 |
-| snapshot-ddl-window | 13.3 | 2.5 | 1.6 |
-| drop-table-cdc | 28.9 | 2.6 | 1.8 |
-| drop-table-recreate | 145.6 | 3.3 | 1.6 |
-| drop-table-polling | 57.9 | 2.5 | 1.8 |
-| drop-database | 27.0 | 3.0 | 1.7 |
-| ddl-documented-gaps | 0.5 | 3.9 | 1.6 |
-| total | 505.2 | 95.2 | 39.5 |
+| snapshot | 0.0 | 1.3 | 1.1 |
+| orm-compat | 7.7 | 0.5 | 0.9 |
+| crud | 0.4 | 1.0 | 1.1 |
+| type-edges | 0.1 | 1.0 | 1.1 |
+| ddl | 1.1 | 28.1 | 1.2 |
+| schema-drift-minimal | 0.4 | 3.5 | 1.2 |
+| schema-drift-unseen | 1.6 | 5.5 | 1.3 |
+| churn | 20.0 | 2.3 | 1.5 |
+| contention | 13.8 | 0.7 | 1.5 |
+| execution-budget | 0.0 | 0.7 | 1.3 |
+| spill | 3.0 | 0.7 | 1.3 |
+| pooling | 0.1 | 0.7 | 1.4 |
+| restart | 0.6 | 2.6 | 1.2 |
+| control-plane | 58.7 | 1.5 | 1.2 |
+| snapshot-ddl-window | 7.6 | 1.7 | 1.1 |
+| drop-table-cdc | 16.8 | 1.5 | 1.0 |
+| drop-table-recreate | 200.4 | 2.1 | 1.3 |
+| drop-table-polling | 120.8 | 1.6 | 1.1 |
+| drop-database | 15.1 | 1.5 | 1.1 |
+| ddl-documented-gaps | 0.1 | 1.5 | 1.0 |
+| total | 468.4 | 60.0 | 24.0 |

@@ -28,6 +28,13 @@ below.
   AS s ...) d` kept case variants apart in MySQL but folded them in
   Pintail, because the inner projection's output column recorded the
   session default collation instead of the JSON producer's.
+- `ROUND`, `TRUNCATE`, `CEILING`, and `FLOOR` over a computed decimal
+  operand now read the operand's internal digits the way MySQL does (a
+  scale-4 division carries 9 truncated fractional digits for its parent)
+  instead of its display value, and cap their result scale at the
+  operand's declared scale: `ROUND(28100/508, 2)` is `55.31` from the
+  internal `55.314960629`, where rounding the displayed `55.3150` had
+  double-rounded to `55.32`.
 
 ## [0.0.4-rc11] - 2026-08-21
 

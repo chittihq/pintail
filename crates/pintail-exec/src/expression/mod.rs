@@ -427,6 +427,20 @@ impl DecimalRational {
             units, scale,
         )))
     }
+
+    /// Materializes at the smallest scale that loses nothing. Chain results
+    /// carry power-of-ten-compatible denominators — every division was
+    /// truncated onto one — so the loop terminates well before the decimal
+    /// scale cap, which bounds pathological nests.
+    fn exact_value(self) -> Result<Value, ExecError> {
+        let mut scale = 0_u8;
+        let mut factor = 1_i128;
+        while scale < 30 && factor % self.denominator != 0 {
+            scale += 1;
+            factor = factor.checked_mul(10).ok_or(ExecError::NumericOverflow)?;
+        }
+        self.rounded(scale)
+    }
 }
 
 fn decimal_gcd(left: i128, right: i128) -> Result<i128, ExecError> {
@@ -969,6 +983,29 @@ impl CompiledExpr {
                 ))
             }
             _ => Ok(None),
+        }
+    }
+
+    /// Materializes an exact-numeric arithmetic subtree at its full internal
+    /// precision instead of its declared display scale. `MySQL`'s
+    /// ROUND/TRUNCATE/CEILING/FLOOR consume a division's bounded internal
+    /// digits — a scale-4 division carries 9 truncated fractional digits — so
+    /// rounding the display value double-rounds: ROUND(28100/508, 2) is 55.31
+    /// from 55.314960629, not 55.32 from the displayed 55.3150.
+    fn internal_decimal_value(
+        &self,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<Option<Value>, ExecError> {
+        // Columns and literals already hold their display value exactly;
+        // only computed subtrees retain hidden digits.
+        if !matches!(self, Self::Binary { .. } | Self::Unary { .. }) {
+            return Ok(None);
+        }
+        match self.evaluate_decimal_chain(batch, row)? {
+            Some(DecimalChainValue::Null) => Ok(Some(Value::Null)),
+            Some(DecimalChainValue::Exact(exact)) => exact.exact_value().map(Some),
+            None => Ok(None),
         }
     }
 
@@ -1584,6 +1621,29 @@ fn evaluate_scalar(
                 cast_scalar(&left, data_type)
             }
         }
+        ScalarFunction::Round { decimal: true }
+        | ScalarFunction::Truncate { decimal: true }
+        | ScalarFunction::Ceil { decimal: true }
+        | ScalarFunction::Floor { decimal: true } => {
+            // The rounding family reads a computed operand's internal digits,
+            // not its declared display scale (see internal_decimal_value);
+            // the declared scale still caps the RESULT via argument_types.
+            let mut values = args
+                .iter()
+                .map(|argument| argument.evaluate(batch, row))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(internal) = args[0].internal_decimal_value(batch, row)? {
+                values[0] = internal;
+            }
+            evaluate_eager_scalar_typed(
+                function,
+                &values,
+                argument_types,
+                literal_regex,
+                data_type,
+                collation,
+            )
+        }
         _ => {
             let values = args
                 .iter()
@@ -1951,7 +2011,15 @@ fn evaluate_eager_scalar_typed(
                         .map_or(0, |(_, fraction)| fraction.len()),
                 )
                 .map_err(|_| ExecError::NumericOverflow)?;
-                let render_scale = u8::try_from(digits.clamp(0, input_scale))
+                // Same declared-scale cap as ROUND: TRUNCATE(1/3, 6) is
+                // 0.3333, the argument's scale-4 type bounding the render.
+                let declared_cap = match argument_types.first() {
+                    Some(Some(DataType::Decimal { scale, .. })) => {
+                        i64::from(*scale).min(input_scale)
+                    }
+                    _ => input_scale,
+                };
+                let render_scale = u8::try_from(digits.clamp(0, declared_cap))
                     .map_err(|_| ExecError::NumericOverflow)?;
                 let units = pintail_types::parse_decimal_rounded(
                     text,
@@ -2268,9 +2336,17 @@ fn evaluate_eager_scalar_typed(
                         .map_or(0, |(_, fraction)| fraction.len()),
                 )
                 .map_err(|_| ExecError::NumericOverflow)?;
-                // MySQL keeps min(input scale, digit count) fraction digits;
+                // MySQL keeps min(declared scale, digit count) fraction
+                // digits — an operand materialized at its wider internal
+                // precision still renders at its declared type's scale;
                 // negative digit counts zero whole-number positions.
-                let render_scale = u8::try_from(digits.clamp(0, input_scale))
+                let declared_cap = match argument_types.first() {
+                    Some(Some(DataType::Decimal { scale, .. })) => {
+                        i64::from(*scale).min(input_scale)
+                    }
+                    _ => input_scale,
+                };
+                let render_scale = u8::try_from(digits.clamp(0, declared_cap))
                     .map_err(|_| ExecError::NumericOverflow)?;
                 let units = pintail_types::parse_decimal_rounded(text, render_scale)
                     .ok_or(ExecError::NumericOverflow)?;
