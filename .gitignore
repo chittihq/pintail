@@ -12,6 +12,9 @@ secrets.toml
 GOAL.md
 /tests/browser/artifacts/
 /tests/browser/node_modules/
+/tests/e2e/node_modules/
+/tests/e2e/orm-compat/generated/
+/node_modules/
 /tests/load/node_modules/
 /benchmark/workloads/commerce-production-v1/results/diffs/
 /tests/e2e/results-partial.json
