@@ -968,10 +968,12 @@ impl MetaStore {
     }
 
     /// The quarantined tables the supervisor may repair on its own: keyed
-    /// tables only. A KEYLESS table's quarantine belongs to the database's
-    /// `keyless_policy` - under `quarantine` the operator explicitly chose
-    /// manual remediation, and an automatic recopy would erase exactly the
-    /// signal that policy exists to preserve.
+    /// tables only. KEYLESS tables are excluded UNCONDITIONALLY - the
+    /// `keyless_policy` column is deliberately not consulted here. Under
+    /// `quarantine` the operator explicitly chose manual remediation, and
+    /// an automatic recopy would erase exactly the signal that policy
+    /// exists to preserve; under every other policy the keyless machinery
+    /// owns the table's lifecycle, and this query stays out of it.
     ///
     /// # Errors
     ///
@@ -997,6 +999,12 @@ impl MetaStore {
     /// supersedes them: the recopy carries the effects of the very events
     /// that could not be decoded, and keeping their tombstones reads as an
     /// outstanding problem after the repair already happened.
+    ///
+    /// The unbounded DELETE is safe because the caller still holds the
+    /// database's job slot: the only DLQ writer is the CDC decode path,
+    /// every `run_cdc` call site claims that same slot first, and the
+    /// resnapshot flow purges before releasing it - so no dead letter can
+    /// be recorded for the table between the copy's fence and this delete.
     ///
     /// # Errors
     ///
