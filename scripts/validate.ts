@@ -27,6 +27,10 @@ const cargoBinary = process.env.CARGO ?? join(homedir(), '.cargo', 'bin', 'cargo
 /// Container name prefixes this repository's harnesses create. Cleanup
 /// touches ONLY these — never a deployed compose stack or anything else on
 /// the shared Docker host.
+/// Containers the harnesses deliberately keep across runs (persistent
+/// sources reused by PINTAIL_E2E_KEEP_MYSQL); never removed as leftovers.
+const KEPT_CONTAINER_MARKER = '-keep-'
+
 const OWNED_CONTAINER_PREFIXES = [
   'pintail-e2e-',
   'pintail-browser-',
@@ -121,6 +125,13 @@ const STAGES: Stage[] = [
   {
     name: 'e2e',
     remote: true,
+    // PINTAIL_E2E_DOCKER_HOST points this stage's source container at a
+    // different daemon (a second host, or a local one) without moving the
+    // rest of the suite; the release chain's DOCKER_HOST stays authoritative
+    // when the override is absent.
+    env: process.env.PINTAIL_E2E_DOCKER_HOST
+      ? { DOCKER_HOST: process.env.PINTAIL_E2E_DOCKER_HOST }
+      : undefined,
     // The drift and reset checks each force a full-corpus recopy and the
     // harness re-diffs every query after each phase; the grown gate runs
     // ~65 minutes on the shared host.
@@ -320,8 +331,16 @@ async function run(
   })
 }
 
+async function dockerWith(
+  args: string[],
+  timeoutMinutes = 2,
+  env?: Record<string, string>,
+) {
+  return run(['docker', ...args], { timeoutMinutes, env })
+}
+
 async function docker(args: string[], timeoutMinutes = 2) {
-  return run(['docker', ...args], { timeoutMinutes })
+  return dockerWith(args, timeoutMinutes)
 }
 
 /// Preflight for stages that use the shared Docker host: daemon reachable
@@ -351,7 +370,11 @@ async function remoteLoadAverage(): Promise<number | null> {
 /// Below this, a machine that is supposedly compiling is doing nothing.
 const IDLE_LOAD = 0.5
 
-async function dockerHostPreflight(): Promise<string | null> {
+async function dockerHostPreflight(
+  stageEnv?: Record<string, string>,
+): Promise<string | null> {
+  const docker = (args: string[], timeoutMinutes = 2) =>
+    dockerWith(args, timeoutMinutes, stageEnv)
   const ping = await docker(['version', '--format', '{{.Server.Version}}'])
   if (ping.timedOut || ping.code !== 0) {
     return 'docker daemon unreachable or wedged (a stalled bulk transfer blocks every call; kill it and retry)'
@@ -367,7 +390,8 @@ async function dockerHostPreflight(): Promise<string | null> {
   // DOCKER_HOST overrides Docker's selected context. Use that same effective
   // endpoint for the SSH disk check or the preflight can probe one machine
   // while every Docker command targets another.
-  const endpoint = process.env.DOCKER_HOST?.trim() || inspected.output.trim()
+  const endpoint =
+    stageEnv?.DOCKER_HOST?.trim() || process.env.DOCKER_HOST?.trim() || inspected.output.trim()
   const remote = endpoint.startsWith('ssh://')
   if (remote) {
     const sshTarget = endpoint.slice('ssh://'.length).replace(/\/.*$/, '').replace(/:\d+$/, '')
@@ -417,6 +441,7 @@ async function dockerHostPreflight(): Promise<string | null> {
   const owned = leftovers.output
     .split('\n')
     .filter((name) => OWNED_CONTAINER_PREFIXES.some((prefix) => name.startsWith(prefix)))
+    .filter((name) => !name.includes(KEPT_CONTAINER_MARKER))
   for (const name of owned) {
     status(`preflight: removing leftover harness container ${name}`)
     await docker(['rm', '-f', name])
@@ -561,6 +586,30 @@ async function main() {
       status(`ABORT: unknown stage(s) requested: ${unknown.join(', ')}`)
       process.exit(2)
     }
+    // e2e, browser, and accept each build the same release binary; build it
+    // once here and hand every stage the path through the overrides they
+    // already honor. Skipped when the caller exported a binary of its own.
+    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak']
+    if (
+      !process.env.PINTAIL_E2E_BINARY
+      && requested.some((name) => binaryConsumers.includes(name))
+    ) {
+      status('prebuild: cargo build --release --package pintail')
+      const prebuild = await run(
+        [cargoBinary, 'build', '--release', '--package', 'pintail'],
+        { timeoutMinutes: 30, label: 'prebuild' },
+      )
+      if (prebuild.code !== 0) {
+        status('ABORT: release prebuild failed')
+        writeFileSync(join(reportDir, 'prebuild.log'), prebuild.output)
+        process.exit(2)
+      }
+      const binary = join(repository, 'target', 'release', 'pintail')
+      process.env.PINTAIL_E2E_BINARY = binary
+      process.env.PINTAIL_BENCHMARK_BINARY = binary
+      status(`prebuild: exported ${binary}`)
+    }
+
     const groups: (typeof STAGES)[] = []
     for (const stage of STAGES) {
       if (!requested.includes(stage.name)) continue
@@ -583,7 +632,7 @@ async function main() {
           return undefined
         }
         if (stage.remote) {
-          const problem = await dockerHostPreflight()
+          const problem = await dockerHostPreflight(stage.env)
           if (problem) {
             status(`ABORT before ${stage.name}: ${problem}`)
             results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: problem })
@@ -642,7 +691,34 @@ async function main() {
         return { name: stage.name, verdict, minutes, note }
     }
 
-    for (const group of groups) {
+    // The local stages (fmt, unit) touch no container and no ledger; they
+    // run as one serial chain concurrent with the remote sequence, which
+    // takes them off the critical path. PINTAIL_VALIDATE_OVERLAP=0 restores
+    // the strictly sequential order.
+    const overlap = process.env.PINTAIL_VALIDATE_OVERLAP !== '0'
+    const localNames = ['fmt', 'unit']
+    const localStages = overlap
+      ? groups.flat().filter((stage) => localNames.includes(stage.name))
+      : []
+    const remoteGroups = overlap
+      ? groups
+          .map((group) => group.filter((stage) => !localNames.includes(stage.name)))
+          .filter((group) => group.length > 0)
+      : groups
+    const localResults: Array<{ name: string; verdict: string; minutes: number; note: string }> = []
+    const localRun = (async () => {
+      for (const stage of localStages) {
+        const outcome = await runStage(stage)
+        if (!outcome) return
+        localResults.push(outcome)
+        if (outcome.verdict !== 'PASS') return
+      }
+    })()
+    if (localStages.length > 0) {
+      status(`lane local: ${localStages.map((one) => one.name).join(' → ')} overlapping the remote sequence`)
+    }
+
+    for (const group of remoteGroups) {
       if (group.length > 1) {
         status(`lane ${group[0].lane}: ${group.map((one) => one.name).join(' + ')} together`)
       }
@@ -653,6 +729,23 @@ async function main() {
       // already recorded its own ABORTED row; either way the run stops.
       if (outcomes.length !== group.length) break
       if (outcomes.some((outcome) => outcome.verdict !== 'PASS')) break
+    }
+    await localRun
+    // Report rows keep the declared stage order whatever finished first.
+    const ordered = [...localResults, ...results].sort(
+      (left, right) =>
+        STAGES.findIndex((stage) => stage.name === left.name)
+        - STAGES.findIndex((stage) => stage.name === right.name),
+    )
+    results.length = 0
+    results.push(...ordered)
+    if (localStages.length > 0 && localResults.length !== localStages.length) {
+      // A local stage aborted without a row; make the miss visible.
+      for (const stage of localStages) {
+        if (!results.some((result) => result.name === stage.name)) {
+          results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'did not run' })
+        }
+      }
     }
   } finally {
     // Always give the ledgers back, including on abort — the evidence is the

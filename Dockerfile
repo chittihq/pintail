@@ -26,14 +26,23 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /source/recipe.json recipe.json
 # Rebuilds only when Cargo.lock changes.
-RUN cargo chef cook --locked --release --package pintail --recipe-path recipe.json
+RUN --mount=type=cache,target=/source/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo chef cook --locked --release --package pintail --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY tests/sqllogic ./tests/sqllogic
 COPY --from=dashboard /source/packages/dashboard/.output/public \
     ./packages/dashboard/.output/public
 ENV PINTAIL_DASHBOARD_PREBUILT=1
-RUN cargo build --locked --release --package pintail
+# The chef layer caches the 472 dependencies, but the workspace's own 17
+# crates recompiled from scratch on every source change. A BuildKit cache
+# mount keeps the incremental state between builds; the binary is copied out
+# inside the same RUN because cache mounts do not persist into the layer.
+RUN --mount=type=cache,target=/source/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo build --locked --release --package pintail \
+    && cp /source/target/release/pintail /usr/local/bin/pintail-built
 
 FROM debian:bookworm-slim
 
@@ -49,7 +58,7 @@ RUN apt-get update \
     && install --directory --owner pintail --group pintail /var/lib/pintail \
     && install --directory --owner pintail --group pintail /var/lib/pintail/spill
 
-COPY --from=builder /source/target/release/pintail /usr/local/bin/pintail
+COPY --from=builder /usr/local/bin/pintail-built /usr/local/bin/pintail
 
 USER pintail
 VOLUME ["/var/lib/pintail"]

@@ -14,6 +14,17 @@ use crate::{
 
 const SUPERVISOR_INTERVAL: Duration = Duration::from_secs(5);
 
+/// The supervision cadence: five seconds in production, overridable through
+/// `PINTAIL_SUPERVISOR_INTERVAL_MS` so test harnesses stop paying multiples
+/// of five seconds for every adoption, auto-include, and re-probe wait.
+/// Clamped to 100ms so a typo cannot turn supervision into a busy loop.
+fn supervisor_interval() -> Duration {
+    std::env::var("PINTAIL_SUPERVISOR_INTERVAL_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .map_or(SUPERVISOR_INTERVAL, |ms| Duration::from_millis(ms.max(100)))
+}
+
 /// Starts Pintail's per-database finite replication supervisor.
 ///
 /// Every eligible database receives an independent task on each cadence. A
@@ -56,7 +67,7 @@ pub fn spawn(
                 }
             }
         }
-        let mut interval = tokio::time::interval(SUPERVISOR_INTERVAL);
+        let mut interval = tokio::time::interval(supervisor_interval());
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {

@@ -602,7 +602,18 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
         }
     };
 
-    evaluate_constant(&folded).map_or(folded, literal_expr)
+    match evaluate_constant(&folded) {
+        // The fold keeps the expression's DECLARED type: NULL = NULL is a
+        // Boolean expression whose value happens to be NULL, and retyping
+        // it from the value made the wire advertise VAR_STRING where MySQL
+        // says LONGLONG.
+        Some(value) => BoundExpr {
+            nullable: matches!(value, Value::Null),
+            data_type: folded.data_type.or_else(|| value.data_type()),
+            kind: BoundExprKind::Literal(value),
+        },
+        None => folded,
+    }
 }
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {

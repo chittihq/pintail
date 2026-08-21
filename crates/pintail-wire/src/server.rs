@@ -563,6 +563,10 @@ struct Session {
     charset_client: String,
     charset_connection: String,
     charset_results: String,
+    /// The collation id the client negotiated in its handshake. `MySQL`
+    /// stamps text results with THIS id - the connection's collation, not
+    /// the charset's default - so column metadata must echo it.
+    charset_byte: u16,
     group_concat_max_len: usize,
     /// The connection's default collation, from the handshake charset byte:
     /// literal-only comparisons follow it, as they do in `MySQL`. `mysql2`
@@ -584,6 +588,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             charset_client: "utf8mb4".to_owned(),
             charset_connection: "utf8mb4".to_owned(),
             charset_results: "utf8mb4".to_owned(),
+            charset_byte: 255,
             group_concat_max_len: 1024,
             collation_connection: "utf8mb4_0900_ai_ci",
             group_concat_warnings: 0,
@@ -925,11 +930,12 @@ impl Backend {
     /// `Column`. `None` only on a poisoned lock, meaning a prior panic while
     /// holding it — vanishingly rare, and safer surfaced as an explicit
     /// error to the client than propagated as a connection-ending one.
-    fn session_snapshot(&self) -> Option<(usize, String)> {
+    fn session_snapshot(&self) -> Option<(usize, String, u16)> {
         let session = self.session.lock().ok()?;
         Some((
             session.group_concat_max_len,
             session.charset_results.clone(),
+            session.charset_byte,
         ))
     }
 
@@ -948,6 +954,13 @@ impl Backend {
                 charset.clone_into(&mut session.charset_client);
                 charset.clone_into(&mut session.charset_connection);
                 charset.clone_into(&mut session.charset_results);
+                // SET NAMES adopts the charset's DEFAULT collation, as
+                // MySQL does, replacing the handshake-negotiated one.
+                session.charset_byte = match charset {
+                    "utf8" | "utf8mb3" => 33,
+                    "binary" => 63,
+                    _ => 255,
+                };
                 return Ok(());
             }
             return Err(format!("Unknown character set: '{charset}'"));
@@ -1091,8 +1104,13 @@ impl Handler for Backend {
             255 => Some("utf8mb4_0900_ai_ci"),
             _ => None,
         };
-        if let (Some(collation), Ok(mut session)) = (collation, self.session.lock()) {
-            session.collation_connection = collation;
+        if let Ok(mut session) = self.session.lock() {
+            if let Some(collation) = collation {
+                session.collation_connection = collation;
+            }
+            if matches!(response.character_set, 33 | 45 | 46 | 63 | 224 | 255) {
+                session.charset_byte = u16::from(response.character_set);
+            }
         }
         self.authenticate_wire_key(&response.username, scramble, &response.auth_response)
             .unwrap_or(false)
@@ -1125,7 +1143,7 @@ impl Handler for Backend {
                 Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
             };
         }
-        let Some((group_concat_max_len, charset)) = self.session_snapshot() else {
+        let Some((group_concat_max_len, charset, negotiated)) = self.session_snapshot() else {
             return Response::Error(
                 ErrorKind::ErUnknownError,
                 "session state is unavailable".to_owned(),
@@ -1135,6 +1153,7 @@ impl Handler for Backend {
             Backend::execute(self, sql).await,
             group_concat_max_len,
             &charset,
+            negotiated,
             false,
         )
     }
@@ -1163,12 +1182,13 @@ impl Handler for Backend {
                 used_long_data: false,
             },
         );
-        let (group_concat_max_len, charset) = self.session_snapshot().ok_or_else(|| {
-            (
-                ErrorKind::ErUnknownError,
-                "session state is unavailable".to_owned(),
-            )
-        })?;
+        let (group_concat_max_len, charset, negotiated) =
+            self.session_snapshot().ok_or_else(|| {
+                (
+                    ErrorKind::ErUnknownError,
+                    "session state is unavailable".to_owned(),
+                )
+            })?;
         let params = (0..parameters)
             .map(|index| {
                 let mut column = Column::new(
@@ -1176,14 +1196,14 @@ impl Handler for Backend {
                     ColumnType::MysqlTypeVarString,
                 );
                 column.column_length = 1024;
-                column.character_set = mysql_text_character_set(&charset);
+                column.character_set = mysql_text_character_set(&charset, negotiated);
                 column
             })
             .collect::<Vec<_>>();
         let columns = output
             .fields
             .iter()
-            .map(|field| mysql_column(field, group_concat_max_len, &charset))
+            .map(|field| mysql_column(field, group_concat_max_len, &charset, negotiated))
             .collect::<Vec<_>>();
         Ok(PreparedStatement {
             id: statement_id,
@@ -1230,7 +1250,7 @@ impl Handler for Backend {
             Ok(query) => query,
             Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
-        let Some((group_concat_max_len, charset)) = self.session_snapshot() else {
+        let Some((group_concat_max_len, charset, negotiated)) = self.session_snapshot() else {
             return Response::Error(
                 ErrorKind::ErUnknownError,
                 "session state is unavailable".to_owned(),
@@ -1240,6 +1260,7 @@ impl Handler for Backend {
             Backend::execute(self, &query).await,
             group_concat_max_len,
             &charset,
+            negotiated,
             true,
         )
     }
@@ -1321,6 +1342,7 @@ fn query_output_to_response(
     result: Result<QueryOutput, QueryError>,
     group_concat_max_len: usize,
     charset: &str,
+    negotiated: u16,
     binary: bool,
 ) -> Response {
     let output = match result {
@@ -1330,7 +1352,7 @@ fn query_output_to_response(
     let columns = output
         .fields
         .iter()
-        .map(|field| mysql_column(field, group_concat_max_len, charset))
+        .map(|field| mysql_column(field, group_concat_max_len, charset, negotiated))
         .collect::<Vec<_>>();
     let mut rows = Vec::with_capacity(output.rows.len());
     for row in &output.rows {
@@ -1555,15 +1577,22 @@ impl MysqlTimeValue {
     }
 }
 
-fn mysql_text_character_set(charset: &str) -> u16 {
+fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     match charset {
         "utf8" | "utf8mb3" => 33,
         "binary" => 63,
-        _ => 255,
+        // The connection's negotiated collation id: measured, MySQL stamps
+        // text results with it (a mysql2 client sees 224, the CLI 255).
+        _ => negotiated,
     }
 }
 
-fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) -> Column {
+fn mysql_column(
+    field: &QueryField,
+    group_concat_max_len: usize,
+    charset: &str,
+    negotiated: u16,
+) -> Column {
     let (coltype, unsigned) = match (field.wire_hint, field.data_type) {
         // Values stay variable-width text (SEC_TO_TIME's fraction follows
         // its input), but the column TYPE matches what MySQL advertises.
@@ -1654,14 +1683,22 @@ fn mysql_column(field: &QueryField, group_concat_max_len: usize, charset: &str) 
     };
     // Text results follow the connection's result charset; numeric, temporal,
     // binary and JSON results use MySQL's binary character set (63). The
-    // temporal and JSON-text hints are binary-charset results too, exactly
-    // as MySQL reports them.
-    let character_set =
-        if matches!(field.data_type, Some(DataType::Utf8)) && field.wire_hint.is_none() {
-            mysql_text_character_set(charset)
-        } else {
-            63
-        };
+    // temporal hints are binary-charset results too. JSON text is the
+    // exception MySQL carves out: LONG_BLOB with utf8mb4_bin (46), NOT the
+    // binary charset - 63 makes drivers hand back raw Buffers where MySQL's
+    // own answer decodes as text (found by a customer's conformance diff:
+    // JSON_UNQUOTE('v') arrived base64'd as 'dg==').
+    // JSON text is stamped like any text result: the CONNECTION's collation
+    // id (measured 224 under mysql2). A fixed 46 was as wrong as the binary
+    // 63 before it - the type byte says blob, the charset says decode as
+    // text. The temporal hints and non-text results use the binary set.
+    let character_set = if matches!(field.wire_hint, Some(crate::engine::WireTypeHint::JsonText))
+        || (field.wire_hint.is_none() && matches!(field.data_type, Some(DataType::Utf8)))
+    {
+        mysql_text_character_set(charset, negotiated)
+    } else {
+        63
+    };
     let mut column = Column::new(field.name.clone(), coltype);
     column.column_length = column_length;
     column.character_set = character_set;
@@ -2225,6 +2262,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(column.coltype, ColumnType::MysqlTypeJson);
     }
@@ -2247,6 +2285,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(stamped.coltype, ColumnType::MysqlTypeTimestamp);
         let plain = mysql_column(
@@ -2262,6 +2301,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(plain.coltype, ColumnType::MysqlTypeDatetime);
     }
@@ -2281,6 +2321,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(unsigned.coltype, ColumnType::MysqlTypeLonglong);
         assert!(unsigned.colflags.contains(ColumnFlags::UNSIGNED_FLAG));
@@ -2299,6 +2340,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(nullable_text.coltype, ColumnType::MysqlTypeVarString);
         assert!(!nullable_text.colflags.contains(ColumnFlags::NOT_NULL_FLAG));
@@ -2316,6 +2358,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(binary.coltype, ColumnType::MysqlTypeBlob);
         assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
@@ -2341,6 +2384,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(decimal.decimals, 4);
         assert_eq!(decimal.column_length, 20);
@@ -2359,6 +2403,7 @@ mod tests {
             },
             1024,
             "utf8mb4",
+            255,
         );
         assert_eq!(datetime.decimals, 6);
         assert_eq!(datetime.column_length, 26);
@@ -2380,11 +2425,6 @@ mod tests {
                 ColumnType::MysqlTypeDatetime,
                 26,
             ),
-            (
-                crate::engine::WireTypeHint::JsonText,
-                ColumnType::MysqlTypeLongBlob,
-                u32::MAX,
-            ),
         ] {
             let column = mysql_column(
                 &QueryField {
@@ -2399,11 +2439,35 @@ mod tests {
                 },
                 1024,
                 "utf8mb4",
+                255,
             );
             assert_eq!(column.coltype, coltype);
             assert_eq!(column.column_length, length);
             assert_eq!(column.character_set, 63);
         }
+        // JSON text is LONG_BLOB stamped with the CONNECTION's collation id,
+        // like any text result (measured: a mysql2 client that negotiated
+        // 224 sees 224). The binary charset here turned every JSON_UNQUOTE
+        // answer into a raw Buffer; a fixed 46 diverged the same way for
+        // any client that negotiated something else.
+        let column = mysql_column(
+            &QueryField {
+                name: "value".to_owned(),
+                data_type: Some(DataType::Utf8),
+                nullable: true,
+                collation: None,
+                group_concat: false,
+                geometry: false,
+                timestamp: false,
+                wire_hint: Some(crate::engine::WireTypeHint::JsonText),
+            },
+            1024,
+            "utf8mb4",
+            224,
+        );
+        assert_eq!(column.coltype, ColumnType::MysqlTypeLongBlob);
+        assert_eq!(column.column_length, u32::MAX);
+        assert_eq!(column.character_set, 224);
     }
 
     #[test]
@@ -2419,11 +2483,11 @@ mod tests {
             wire_hint: None,
         };
         assert_eq!(
-            mysql_column(&field, 512, "utf8mb4").coltype,
+            mysql_column(&field, 512, "utf8mb4", 255).coltype,
             ColumnType::MysqlTypeVarString
         );
         assert_eq!(
-            mysql_column(&field, 513, "utf8mb4").coltype,
+            mysql_column(&field, 513, "utf8mb4", 255).coltype,
             ColumnType::MysqlTypeBlob
         );
     }
@@ -2440,11 +2504,20 @@ mod tests {
             timestamp: false,
             wire_hint: None,
         };
-        assert_eq!(mysql_column(&field, 1024, "utf8mb3").character_set, 33);
-        let binary = mysql_column(&field, 1024, "binary");
+        assert_eq!(mysql_column(&field, 1024, "utf8mb3", 255).character_set, 33);
+        let binary = mysql_column(&field, 1024, "binary", 255);
         assert_eq!(binary.character_set, 63);
         assert!(binary.colflags.contains(ColumnFlags::BINARY_FLAG));
-        assert_eq!(mysql_column(&field, 1024, "utf8mb4").character_set, 255);
+        assert_eq!(
+            mysql_column(&field, 1024, "utf8mb4", 255).character_set,
+            255
+        );
+        // The handshake-negotiated collation id travels into text metadata:
+        // a mysql2 client that negotiated 224 sees 224, as MySQL answers.
+        assert_eq!(
+            mysql_column(&field, 1024, "utf8mb4", 224).character_set,
+            224
+        );
     }
 
     #[test]
