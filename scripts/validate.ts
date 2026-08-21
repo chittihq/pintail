@@ -578,15 +578,30 @@ async function main() {
 
   /// Returns the shelved ledgers to the working tree so the run's evidence is
   /// on disk, uncommitted, for whoever decides to keep it.
-  function unshelveHarnessArtifacts(): void {
+  async function unshelveHarnessArtifacts(): Promise<void> {
+    // A stage that ran after shelving may have written FRESH evidence to a
+    // shelved path; restoring the pre-run copy over it would replace the
+    // run's ledger with a stale one (this clobbered a green mysql80 ledger
+    // with the prior failing run's). Only paths the stages left at their
+    // committed state are restored.
+    const porcelain = await run(['git', 'status', '--porcelain'])
+    const rewritten = new Set(
+      porcelain.output
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.slice(3)),
+    )
+    let restored = 0
     for (const path of shelved) {
+      if (rewritten.has(path)) continue
       const shelfPath = join(shelfDir, path)
       if (!existsSync(shelfPath)) continue
       mkdirSync(join(repository, path, '..'), { recursive: true })
       writeFileSync(join(repository, path), readFileSync(shelfPath))
+      restored += 1
     }
-    if (shelved.length > 0) {
-      status(`restored ${shelved.length} harness ledger(s) to the working tree, uncommitted`)
+    if (restored > 0) {
+      status(`restored ${restored} harness ledger(s) to the working tree, uncommitted`)
     }
     shelved = []
   }
@@ -779,7 +794,7 @@ async function main() {
   } finally {
     // Always give the ledgers back, including on abort — the evidence is the
     // point of the run, and it must not be lost just because a stage failed.
-    unshelveHarnessArtifacts()
+    await unshelveHarnessArtifacts()
     rmSync(lockPath, { force: true })
   }
 
