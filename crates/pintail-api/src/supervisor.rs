@@ -277,6 +277,11 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
         }
     }
     state.release_job(&database.id);
+    // A table CDC quarantined (needs_resync) stays frozen until recopied;
+    // under binlog_row_metadata=MINIMAL that legitimately happens when the
+    // stream falls more than one hidden ALTER behind, so the repair cannot
+    // wait for an operator.
+    crate::controls::auto_resync_quarantined(&state, &database.id);
     if let Err(error) = start_scheduled_if_due(&state, &database.id) {
         state.publish(ApiEvent::database(
             "backup.schedule.error",

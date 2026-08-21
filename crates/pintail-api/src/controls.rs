@@ -1,4 +1,6 @@
-use std::time::Instant;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::{
     Extension, Json,
@@ -125,6 +127,113 @@ pub(crate) async fn resync(
             table: table_name,
         }),
     ))
+}
+
+/// One auto-resync attempt per table per five minutes: a source that keeps
+/// re-quarantining the same table (invisible DDL arriving continuously)
+/// must not turn the repair into a resnapshot storm.
+fn auto_resync_cooldown() -> &'static Mutex<HashMap<(String, String), Instant>> {
+    static COOLDOWN: OnceLock<Mutex<HashMap<(String, String), Instant>>> = OnceLock::new();
+    COOLDOWN.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Recopies the first quarantined table of `database_id`, exactly as the
+/// operator resync endpoint would - same job claim, same fence, same
+/// completion bookkeeping - but driven by the supervisor, so a table that
+/// CDC honestly could not place (a MINIMAL-metadata stream more than one
+/// hidden ALTER behind) heals without waiting for a human. One table per
+/// call: the next supervisor cycle picks up the next one, which keeps the
+/// copy work bounded per cycle.
+pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
+    let Ok(metadata) = state.metadata() else {
+        return;
+    };
+    let Ok(quarantined) = metadata.tables_needing_resync(database_id) else {
+        return;
+    };
+    let Some(table_name) = quarantined.into_iter().next() else {
+        return;
+    };
+    let Ok(Some(database)) = metadata.database(database_id) else {
+        return;
+    };
+    if database.mode == "paused" {
+        return;
+    }
+    {
+        let mut cooldown = auto_resync_cooldown()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (database_id.to_owned(), table_name.clone());
+        if let Some(last) = cooldown.get(&key)
+            && last.elapsed() < Duration::from_secs(300)
+        {
+            return;
+        }
+        cooldown.insert(key, Instant::now());
+    }
+    if state
+        .acquire_job_as(database_id, "an automatic table resnapshot")
+        .is_err()
+    {
+        // Another job holds the database; the next cycle tries again.
+        return;
+    }
+    let run_id = crate::state::random_identifier("run_", 16);
+    let started = metadata
+        .start_sync_run(
+            &run_id,
+            database_id,
+            Some(&table_name),
+            "resnapshot",
+            &Utc::now().to_rfc3339(),
+        )
+        .and_then(|()| metadata.begin_table_resnapshot(database_id, &table_name));
+    drop(metadata);
+    if started.is_err() {
+        state.release_job(database_id);
+        return;
+    }
+    pintail_log::log_info!(
+        "auto resync db={database_id} table={table_name}: quarantined table is being recopied"
+    );
+    let job_state = state.clone();
+    let job_database_id = database_id.to_owned();
+    let job_table_name = table_name.clone();
+    let job_run_id = run_id.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name(format!("pintail-auto-resync-{database_id}"))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => runtime.block_on(complete_table_resnapshot_job(
+                    job_state,
+                    job_database_id,
+                    job_table_name,
+                    job_run_id,
+                )),
+                Err(error) => finish_table_resnapshot(
+                    &job_state,
+                    &job_database_id,
+                    &job_table_name,
+                    &job_run_id,
+                    Err(error.to_string()),
+                    0,
+                ),
+            }
+        })
+    {
+        finish_table_resnapshot(
+            &state.clone(),
+            database_id,
+            &table_name,
+            &run_id,
+            Err(format!("could not start auto-resync worker: {error}")),
+            0,
+        );
+    }
 }
 
 async fn complete_table_resnapshot_job(
