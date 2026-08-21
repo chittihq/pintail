@@ -539,7 +539,7 @@ async function main() {
   let shelved: string[] = []
 
   async function shelveHarnessArtifacts(context: string): Promise<boolean> {
-    const porcelain = await run(['git', 'status', '--porcelain'])
+    const porcelain = await run(['git', '--no-optional-locks', 'status', '--porcelain'])
     // No global trim: it would eat the first line's leading status space
     // and shift the path slice by one.
     const entries = porcelain.output
@@ -584,7 +584,7 @@ async function main() {
     // run's ledger with a stale one (this clobbered a green mysql80 ledger
     // with the prior failing run's). Only paths the stages left at their
     // committed state are restored.
-    const porcelain = await run(['git', 'status', '--porcelain'])
+    const porcelain = await run(['git', '--no-optional-locks', 'status', '--porcelain'])
     const rewritten = new Set(
       porcelain.output
         .split('\n')

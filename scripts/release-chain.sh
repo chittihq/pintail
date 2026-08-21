@@ -26,15 +26,40 @@ bun run scripts/validate.ts --stages=unit,oracle,e2e,e2e-mysql80,browser,bench,a
 bun run benchmark/run-tpch.ts
 bun run benchmark/render-readme-table.ts
 
-bank() {
-  git add $2
-  git diff --cached --quiet || git commit -m "$1$label"
+# Both v0.0.4 chain runs died on a fatal index.lock collision from a
+# concurrent git process this script never identified (an IDE's background
+# `git status` takes the lock briefly; a killed git leaves it stale).
+# Retrying the write is race-free against any holder — waiting for a quiet
+# moment is not — and a lock that never clears still fails loudly. Our own
+# reads stop being writers too: with optional locks off, `git status`
+# no longer writes back refreshed stat data.
+GIT_OPTIONAL_LOCKS=0
+export GIT_OPTIONAL_LOCKS
+
+git_retry() {
+  i=0
+  until "$@"; do
+    i=$((i + 1))
+    if [ "$i" -ge 30 ]; then
+      echo "git kept failing after $i attempts: $*"
+      ls -l .git/index.lock 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+  done
 }
-bank "test(e2e): bank the differential gate" "tests/e2e/results.json tests/e2e/results.md"
-bank "test(e2e): bank the mysql80 leg" "tests/e2e/results-mysql80.json tests/e2e/results-mysql80.md"
-bank "perf(bench): bank the analytical benchmark and README table" "benchmark/results.json benchmark/results.md benchmark/mysql-baseline.json README.md"
-bank "perf(bench): bank the TPC-H workload" "benchmark/workloads/tpch-v1/results"
-bank "perf(bench): bank the production workload" "benchmark/workloads/commerce-production-v1/results"
+
+bank() {
+  message=$1
+  shift
+  git_retry git add "$@"
+  git diff --cached --quiet || git_retry git commit -m "$message$label"
+}
+bank "test(e2e): bank the differential gate" tests/e2e/results.json tests/e2e/results.md
+bank "test(e2e): bank the mysql80 leg" tests/e2e/results-mysql80.json tests/e2e/results-mysql80.md
+bank "perf(bench): bank the analytical benchmark and README table" benchmark/results.json benchmark/results.md benchmark/mysql-baseline.json README.md
+bank "perf(bench): bank the TPC-H workload" benchmark/workloads/tpch-v1/results
+bank "perf(bench): bank the production workload" benchmark/workloads/commerce-production-v1/results
 if [ -n "$(git status --porcelain)" ]; then
   echo "unexpected changes left after banking:"
   git status --porcelain
@@ -44,6 +69,11 @@ fi
 bun run scripts/validate.ts --stages=fmt,accept
 # the confirming accept rewrites its ledgers once more; the banked copies
 # from the same chain are the evidence of record
-git checkout -- .
+git_retry git checkout -- .
+if [ -n "$(git status --porcelain)" ]; then
+  echo "tree still dirty after the closing restore:"
+  git status --porcelain
+  exit 1
+fi
 ok=1
 echo "RELEASE-CHAIN-DONE"
