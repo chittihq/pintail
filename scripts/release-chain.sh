@@ -22,7 +22,7 @@ trap '[ "$ok" = 1 ] || echo "RELEASE-CHAIN-FAIL"' EXIT
 cd "$(dirname "$0")/.."
 label="${RELEASE_LABEL:+ for $RELEASE_LABEL}"
 
-bun run scripts/validate.ts --stages=unit,oracle,e2e,browser,bench,accept
+bun run scripts/validate.ts --stages=unit,oracle,e2e,e2e-mysql80,browser,bench,accept
 bun run benchmark/run-tpch.ts
 bun run benchmark/render-readme-table.ts
 
@@ -31,6 +31,7 @@ bank() {
   git diff --cached --quiet || git commit -m "$1$label"
 }
 bank "test(e2e): bank the differential gate" "tests/e2e/results.json tests/e2e/results.md"
+bank "test(e2e): bank the mysql80 leg" "tests/e2e/results-mysql80.json tests/e2e/results-mysql80.md"
 bank "perf(bench): bank the analytical benchmark and README table" "benchmark/results.json benchmark/results.md benchmark/mysql-baseline.json README.md"
 bank "perf(bench): bank the TPC-H workload" "benchmark/workloads/tpch-v1/results"
 bank "perf(bench): bank the production workload" "benchmark/workloads/commerce-production-v1/results"

@@ -4,7 +4,15 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.4] - 2026-08-21
+
+First stable cut of the 0.0.4 line, gated by the full release chain:
+unit, oracle (874 differential cases, 400-case fuzzer, metamorphic
+pack), e2e on MySQL 8.4 and 8.0 under binlog_row_metadata=MINIMAL,
+browser, the 20M-row analytical benchmark, TPC-H, and acceptance on the
+banked tree. Carries everything in the rc1-rc11 series plus the fixes
+below.
+
 
 ### Added
 
