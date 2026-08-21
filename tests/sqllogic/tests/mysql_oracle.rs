@@ -27,6 +27,51 @@ const EXPECTED_CASES: usize = 1081;
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
 
+/// One fixture, two consumers: the corpus oracle and the grammar fuzzer
+/// must interrogate identical data on both sides.
+const FIXTURE_SQL: &str = "CREATE TABLE events (\
+           id BIGINT UNSIGNED PRIMARY KEY,\
+           name VARCHAR(32) NOT NULL,\
+           score BIGINT NOT NULL,\
+           active BOOLEAN NOT NULL,\
+           note VARCHAR(32) NULL,\
+           tag VARCHAR(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL\
+         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
+         CREATE TABLE users (\
+           id BIGINT PRIMARY KEY,\
+           name VARCHAR(32) NOT NULL\
+         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
+         CREATE TABLE orders (\
+           id BIGINT UNSIGNED PRIMARY KEY,\
+           user_id BIGINT NOT NULL,\
+           total DECIMAL(12,2) NOT NULL,\
+           placed_at DATETIME NOT NULL,\
+           status ENUM('pending','processing','shipped','delivered','cancelled') NOT NULL,\
+           meta JSON NULL\
+         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
+         INSERT INTO events VALUES\
+           (1,'event-01',10,0,'Alpha','red'),(2,'event-02',20,1,'alpha','RED'),\
+           (3,'event-03',30,0,NULL,'red '),(4,'event-04',40,1,'Beta','blue'),\
+           (5,'event-05',50,0,'beta','BLUE'),(6,'event-06',60,1,NULL,'blue'),\
+           (7,'event-07',70,0,'Alpha','Green'),(8,'event-08',80,1,'alpha','green'),\
+           (9,'event-09',90,0,NULL,'RED'),(10,'event-10',100,1,'Beta','Blue');\
+         INSERT INTO users VALUES\
+           (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
+           (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');\
+         INSERT INTO orders VALUES\
+           (1,1,10.50,'2024-01-15 10:00:00','shipped','{\"tags\":[\"premium\"],\"score\":1.5,\"items\":[1,2,3,4]}'),\
+           (2,1,198.82,'2024-02-29 12:34:56','shipped','{\"tags\":[\"bulk\"],\"score\":2.0,\"items\":[1]}'),\
+           (3,2,0.01,'2024-03-01 00:00:00','pending',NULL),\
+           (4,2,99999999.99,'2024-03-08 06:30:00','cancelled','{\"tags\":[],\"score\":0,\"items\":[]}'),\
+           (5,3,12.35,'2024-06-15 18:00:00','shipped','{\"tags\":[\"premium\",\"rush\"],\"score\":9.9,\"items\":[1,2,3,4,5]}'),\
+           (6,3,50.00,'2024-07-04 09:15:00','pending','{\"tags\":[\"gift\"],\"score\":3,\"items\":[7,8]}'),\
+           (7,4,7.00,'2024-11-01 01:30:00','shipped',NULL),\
+           (8,5,100.00,'2025-01-01 00:00:00','delivered','{\"tags\":[\"premium\"],\"score\":1,\"items\":[1,2]}'),\
+           (9,9,25.25,'2025-02-01 12:00:00','pending','{\"tags\":[\"orphan\"],\"score\":0.5,\"items\":[9]}'),\
+           (10,1,0.00,'2025-02-28 23:59:59','cancelled',NULL),\
+           (11,6,33.33,'2025-03-01 08:00:00','shipped','{\"tags\":[\"a\"],\"score\":4.25,\"items\":[1,2,3]}'),\
+           (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}');";
+
 struct OracleCase {
     family: &'static str,
     sql: String,
@@ -189,50 +234,7 @@ fn oracle_case_inventory_matches_the_declared_gate() {
 #[allow(clippy::too_many_lines)]
 fn run_oracle() -> Result<(), String> {
     let mysql = MysqlContainer::start()?;
-    mysql.query_batch(
-        "CREATE TABLE events (\
-           id BIGINT UNSIGNED PRIMARY KEY,\
-           name VARCHAR(32) NOT NULL,\
-           score BIGINT NOT NULL,\
-           active BOOLEAN NOT NULL,\
-           note VARCHAR(32) NULL,\
-           tag VARCHAR(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL\
-         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
-         CREATE TABLE users (\
-           id BIGINT PRIMARY KEY,\
-           name VARCHAR(32) NOT NULL\
-         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
-         CREATE TABLE orders (\
-           id BIGINT UNSIGNED PRIMARY KEY,\
-           user_id BIGINT NOT NULL,\
-           total DECIMAL(12,2) NOT NULL,\
-           placed_at DATETIME NOT NULL,\
-           status ENUM('pending','processing','shipped','delivered','cancelled') NOT NULL,\
-           meta JSON NULL\
-         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
-         INSERT INTO events VALUES\
-           (1,'event-01',10,0,'Alpha','red'),(2,'event-02',20,1,'alpha','RED'),\
-           (3,'event-03',30,0,NULL,'red '),(4,'event-04',40,1,'Beta','blue'),\
-           (5,'event-05',50,0,'beta','BLUE'),(6,'event-06',60,1,NULL,'blue'),\
-           (7,'event-07',70,0,'Alpha','Green'),(8,'event-08',80,1,'alpha','green'),\
-           (9,'event-09',90,0,NULL,'RED'),(10,'event-10',100,1,'Beta','Blue');\
-         INSERT INTO users VALUES\
-           (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
-           (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');\
-         INSERT INTO orders VALUES\
-           (1,1,10.50,'2024-01-15 10:00:00','shipped','{\"tags\":[\"premium\"],\"score\":1.5,\"items\":[1,2,3,4]}'),\
-           (2,1,198.82,'2024-02-29 12:34:56','shipped','{\"tags\":[\"bulk\"],\"score\":2.0,\"items\":[1]}'),\
-           (3,2,0.01,'2024-03-01 00:00:00','pending',NULL),\
-           (4,2,99999999.99,'2024-03-08 06:30:00','cancelled','{\"tags\":[],\"score\":0,\"items\":[]}'),\
-           (5,3,12.35,'2024-06-15 18:00:00','shipped','{\"tags\":[\"premium\",\"rush\"],\"score\":9.9,\"items\":[1,2,3,4,5]}'),\
-           (6,3,50.00,'2024-07-04 09:15:00','pending','{\"tags\":[\"gift\"],\"score\":3,\"items\":[7,8]}'),\
-           (7,4,7.00,'2024-11-01 01:30:00','shipped',NULL),\
-           (8,5,100.00,'2025-01-01 00:00:00','delivered','{\"tags\":[\"premium\"],\"score\":1,\"items\":[1,2]}'),\
-           (9,9,25.25,'2025-02-01 12:00:00','pending','{\"tags\":[\"orphan\"],\"score\":0.5,\"items\":[9]}'),\
-           (10,1,0.00,'2025-02-28 23:59:59','cancelled',NULL),\
-           (11,6,33.33,'2025-03-01 08:00:00','shipped','{\"tags\":[\"a\"],\"score\":4.25,\"items\":[1,2,3]}'),\
-           (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}');",
-    )?;
+    mysql.query_batch(FIXTURE_SQL)?;
 
     let events_directory =
         tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
@@ -3389,4 +3391,427 @@ fn user_row(id: u64) -> StoredRow {
         u64::try_from(id).expect("positive oracle event ID"),
         false,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Differential grammar fuzzing.
+//
+// The fixed corpus above encodes bugs someone already imagined; this
+// generator asks questions nobody wrote down. It stays strictly inside the
+// SUPPORTED surface (so a Pintail rejection is a finding, not noise),
+// avoids the surfaces where MySQL itself is nondeterministic or
+// approximate (floats, temporal rendering, mixed collations), and orders
+// every projection totally so byte comparison is meaningful. The seed is
+// fixed by default - every gate run fuzzes the same cases, reproducibly -
+// and PINTAIL_FUZZ_SEED / PINTAIL_FUZZ_CASES widen the sweep for longer
+// runs.
+
+#[test]
+#[ignore = "requires Docker and the mysql:8.4 image; run explicitly as documented"]
+fn fuzzes_against_mysql_8_4() {
+    run_fuzz().unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_fuzz() -> Result<(), String> {
+    let cases: usize = std::env::var("PINTAIL_FUZZ_CASES")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(400);
+    let seed: u64 = std::env::var("PINTAIL_FUZZ_SEED")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(0xDEAD_BEEF);
+
+    let mysql = MysqlContainer::start()?;
+    mysql.query_batch(FIXTURE_SQL)?;
+
+    let events_directory =
+        tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
+    let users_directory = tempfile::tempdir().map_err(|error| format!("users tempdir: {error}"))?;
+    let orders_directory =
+        tempfile::tempdir().map_err(|error| format!("orders tempdir: {error}"))?;
+    let events_schema = events_schema()?;
+    let users_schema = users_schema()?;
+    let orders_schema = orders_schema()?;
+    let mut events = TableStore::open(
+        events_directory.path(),
+        events_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open events: {error}"))?;
+    let mut users = TableStore::open(
+        users_directory.path(),
+        users_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open users: {error}"))?;
+    let mut orders = TableStore::open(
+        orders_directory.path(),
+        orders_schema.clone(),
+        StoreOptions::default(),
+    )
+    .map_err(|error| format!("open orders: {error}"))?;
+    events
+        .ingest((1..=10).map(event_row).collect())
+        .map_err(|error| format!("ingest events: {error}"))?;
+    users
+        .ingest((1..=8).map(user_row).collect())
+        .map_err(|error| format!("ingest users: {error}"))?;
+    orders
+        .ingest(order_rows())
+        .map_err(|error| format!("ingest orders: {error}"))?;
+    let events_snapshot = events.snapshot();
+    let users_snapshot = users.snapshot();
+    let orders_snapshot = orders.snapshot();
+    let catalog = catalog(events_schema, users_schema, orders_schema)?;
+    let provider = SnapshotScanProvider::new([
+        (DATABASE_ID, EVENTS_ID, &events_snapshot),
+        (DATABASE_ID, USERS_ID, &users_snapshot),
+        (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+    ])
+    .map_err(|error| format!("create snapshot provider: {error}"))?;
+
+    let mut rng = Xorshift(seed | 1);
+    let mut skipped = 0_usize;
+    let mut compared = 0_usize;
+    let mut failures = Vec::new();
+    for index in 0..cases {
+        let sql = generate_query(&mut rng);
+        // MySQL is the arbiter of validity as well as of answers: a query
+        // it rejects (an overflow the grammar could not see, a warning
+        // upgraded to an error) is skipped, not failed - but a high skip
+        // rate means the grammar has drifted and the sweep is thinner than
+        // it claims, so it is bounded below.
+        let Ok(output) = mysql.query_batch(&sql) else {
+            skipped += 1;
+            continue;
+        };
+        let expected = parse_mysql_rows(&output);
+        compared += 1;
+        match execute_pintail(&sql, &catalog, &provider) {
+            Ok(actual) => {
+                if !oracle_rows_equal(&actual, &expected, true) {
+                    failures.push(format!(
+                        "fuzz case {index} (seed {seed})\nSQL: {sql}\nMySQL: {expected:?}\nPintail: {actual:?}"
+                    ));
+                }
+            }
+            Err(error) => {
+                // The grammar stays inside the supported surface, so a
+                // rejection here is a real divergence: MySQL answered it.
+                failures.push(format!(
+                    "fuzz case {index} (seed {seed})\nSQL: {sql}\nMySQL answered; Pintail: {error}"
+                ));
+            }
+        }
+        if failures.len() >= 10 {
+            break;
+        }
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "{} fuzz divergence(s), showing at most 10:\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        ));
+    }
+    if compared > 0 && skipped * 100 / (compared + skipped) > 40 {
+        return Err(format!(
+            "fuzz grammar drift: {skipped} of {} generated queries were rejected by MySQL",
+            compared + skipped
+        ));
+    }
+    println!(
+        "fuzz: {compared} generated queries matched MySQL 8.4 byte-for-byte ({skipped} skipped as MySQL-rejected)"
+    );
+    Ok(())
+}
+
+/// The mysql client's --batch --raw lines, one string per row - the same
+/// shape `execute_mysql_cases` hands to the comparator.
+fn parse_mysql_rows(output: &str) -> Vec<String> {
+    output.lines().map(str::to_owned).collect()
+}
+
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    fn below(&mut self, bound: usize) -> usize {
+        usize::try_from(self.next() % bound as u64).expect("bound fits usize")
+    }
+
+    fn pick<'a, T>(&mut self, options: &'a [T]) -> &'a T {
+        &options[self.below(options.len())]
+    }
+}
+
+/// Column pools, grouped so generated comparisons never mix collations
+/// (Pintail refuses what `MySQL` coerces there, by documented design).
+const NUM_COLS_E: [&str; 2] = ["e.id", "e.score"];
+const NUM_COLS_O: [&str; 3] = ["o.id", "o.user_id", "o.total"];
+const AI_CI_TEXT_E: [&str; 2] = ["e.name", "e.note"];
+const STR_LITERALS: [&str; 6] = ["'Alpha'", "'beta'", "'event-05'", "''", "'zz'", "'user-03'"];
+
+fn num_literal(rng: &mut Xorshift) -> String {
+    let magnitude = [0, 1, 2, 5, 7, 10, 42, 99][rng.below(8)];
+    if rng.below(4) == 0 {
+        format!("-{magnitude}")
+    } else {
+        magnitude.to_string()
+    }
+}
+
+/// An integer-typed leaf: every numeric column except the DECIMAL one.
+fn int_expr(rng: &mut Xorshift, table: char) -> String {
+    match table {
+        'e' => (*rng.pick(&NUM_COLS_E)).to_owned(),
+        'o' => (*rng.pick(&["o.id", "o.user_id"])).to_owned(),
+        _ => "u.id".to_owned(),
+    }
+}
+
+fn num_expr(rng: &mut Xorshift, table: char, depth: usize) -> String {
+    let column = |rng: &mut Xorshift| match table {
+        'e' => (*rng.pick(&NUM_COLS_E)).to_owned(),
+        'o' => (*rng.pick(&NUM_COLS_O)).to_owned(),
+        _ => "u.id".to_owned(),
+    };
+    if depth == 0 {
+        return if rng.below(3) == 0 {
+            num_literal(rng)
+        } else {
+            column(rng)
+        };
+    }
+    match rng.below(8) {
+        0 => format!(
+            "({} + {})",
+            num_expr(rng, table, depth - 1),
+            num_expr(rng, table, depth - 1)
+        ),
+        1 => format!(
+            "({} - {})",
+            num_expr(rng, table, depth - 1),
+            num_expr(rng, table, depth - 1)
+        ),
+        2 => format!(
+            "({} * {})",
+            num_expr(rng, table, depth - 1),
+            num_literal(rng)
+        ),
+        3 => format!("ABS({})", num_expr(rng, table, depth - 1)),
+        4 => format!(
+            "LEAST({}, {})",
+            num_expr(rng, table, depth - 1),
+            num_expr(rng, table, depth - 1)
+        ),
+        5 => format!(
+            "GREATEST({}, {})",
+            num_expr(rng, table, depth - 1),
+            num_expr(rng, table, depth - 1)
+        ),
+        // CASE branches stay integer-only: a branch value with a smaller
+        // scale than the unified DECIMAL type renders at the unified scale
+        // in Pintail (documented release boundary), so mixing o.total with
+        // integer branches would rediscover the ledger, not a bug.
+        6 => format!(
+            "CASE WHEN {} THEN {} ELSE {} END",
+            predicate(rng, table, 0),
+            int_expr(rng, table),
+            int_expr(rng, table)
+        ),
+        _ => column(rng),
+    }
+}
+
+fn str_expr(rng: &mut Xorshift, table: char, depth: usize) -> String {
+    let column = |rng: &mut Xorshift| match table {
+        'e' => (*rng.pick(&AI_CI_TEXT_E)).to_owned(),
+        _ => "u.name".to_owned(),
+    };
+    if depth == 0 {
+        return if rng.below(3) == 0 {
+            (*rng.pick(&STR_LITERALS)).to_owned()
+        } else {
+            column(rng)
+        };
+    }
+    match rng.below(6) {
+        0 => format!("UPPER({})", str_expr(rng, table, depth - 1)),
+        1 => format!("LOWER({})", str_expr(rng, table, depth - 1)),
+        2 => format!(
+            "CONCAT({}, {})",
+            str_expr(rng, table, depth - 1),
+            str_expr(rng, table, depth - 1)
+        ),
+        3 => format!(
+            "SUBSTRING({}, {}, {})",
+            str_expr(rng, table, depth - 1),
+            1 + rng.below(3),
+            1 + rng.below(5)
+        ),
+        4 => format!("IFNULL({}, 'x')", str_expr(rng, table, depth - 1)),
+        _ => column(rng),
+    }
+}
+
+fn predicate(rng: &mut Xorshift, table: char, depth: usize) -> String {
+    if depth > 0 {
+        match rng.below(4) {
+            0 => {
+                return format!(
+                    "({} AND {})",
+                    predicate(rng, table, depth - 1),
+                    predicate(rng, table, depth - 1)
+                );
+            }
+            1 => {
+                return format!(
+                    "({} OR {})",
+                    predicate(rng, table, depth - 1),
+                    predicate(rng, table, depth - 1)
+                );
+            }
+            2 => return format!("NOT {}", predicate(rng, table, depth - 1)),
+            _ => {}
+        }
+    }
+    let comparators = ["=", "<>", "<", "<=", ">", ">=", "<=>"];
+    match rng.below(6) {
+        0 => format!(
+            "{} {} {}",
+            num_expr(rng, table, 1),
+            rng.pick(&comparators),
+            num_expr(rng, table, 1)
+        ),
+        1 => format!(
+            "{} {} {}",
+            str_expr(rng, table, 1),
+            rng.pick(&comparators),
+            str_expr(rng, table, 1)
+        ),
+        2 => format!(
+            "{} BETWEEN {} AND {}",
+            num_expr(rng, table, 0),
+            num_literal(rng),
+            num_literal(rng)
+        ),
+        3 => format!(
+            "{} IN ({}, {}, {})",
+            num_expr(rng, table, 0),
+            num_literal(rng),
+            num_literal(rng),
+            num_literal(rng)
+        ),
+        4 => format!(
+            "{} IS {}NULL",
+            str_expr(rng, table, 0),
+            if rng.below(2) == 0 { "" } else { "NOT " }
+        ),
+        _ => format!(
+            "{} LIKE {}",
+            str_expr(rng, table, 0),
+            rng.pick(&["'A%'", "'%a%'", "'event-__'", "'%5'"])
+        ),
+    }
+}
+
+fn order_all(columns: usize) -> String {
+    let keys = (1..=columns).map(|n| n.to_string()).collect::<Vec<_>>();
+    format!(" ORDER BY {}", keys.join(", "))
+}
+
+fn generate_query(rng: &mut Xorshift) -> String {
+    match rng.below(5) {
+        // Scalar-only: expressions with no FROM.
+        0 => {
+            let picks = 1 + rng.below(3);
+            let exprs = (0..picks)
+                .map(|_| {
+                    if rng.below(2) == 0 {
+                        num_expr(rng, 'e', 2)
+                            .replace("e.id", "5")
+                            .replace("e.score", "30")
+                    } else {
+                        str_expr(rng, 'e', 2)
+                            .replace("e.name", "'event-03'")
+                            .replace("e.note", "NULL")
+                    }
+                })
+                .collect::<Vec<_>>();
+            format!("SELECT {}", exprs.join(", "))
+        }
+        // Single-table filter + projection.
+        1 => {
+            let (alias, table) = *rng.pick(&[('e', "events"), ('u', "users"), ('o', "orders")]);
+            let picks = 1 + rng.below(3);
+            let exprs = (0..picks)
+                .map(|_| {
+                    if rng.below(2) == 0 || alias == 'o' {
+                        num_expr(rng, alias, 2)
+                    } else {
+                        str_expr(rng, alias, 2)
+                    }
+                })
+                .collect::<Vec<_>>();
+            format!(
+                "SELECT {} FROM {table} {alias} WHERE {}{} LIMIT 50",
+                exprs.join(", "),
+                predicate(rng, alias, 1),
+                order_all(picks)
+            )
+        }
+        // Grouped aggregates with HAVING.
+        2 => {
+            let (alias, table, group) = *rng.pick(&[
+                ('e', "events", "e.active"),
+                ('o', "orders", "o.status"),
+                ('o', "orders", "o.user_id"),
+            ]);
+            let agg = *rng.pick(&["COUNT(*)", "SUM(1)", "MIN(2)", "COUNT(2)"]);
+            let numeric = num_expr(rng, alias, 1);
+            format!(
+                "SELECT {group}, {agg}, SUM({numeric}) FROM {table} {alias} WHERE {} GROUP BY {group} HAVING COUNT(*) >= {}{}",
+                predicate(rng, alias, 0),
+                rng.below(3),
+                order_all(3)
+            )
+        }
+        // Two-table equijoin.
+        3 => {
+            let picks = 1 + rng.below(2);
+            let mut exprs = (0..picks)
+                .map(|_| num_expr(rng, 'o', 1))
+                .collect::<Vec<_>>();
+            exprs.push(str_expr(rng, 'u', 1));
+            let join = *rng.pick(&["JOIN", "LEFT JOIN"]);
+            format!(
+                "SELECT {} FROM orders o {join} users u ON o.user_id = u.id WHERE {}{} LIMIT 50",
+                exprs.join(", "),
+                predicate(rng, 'o', 1),
+                order_all(exprs.len())
+            )
+        }
+        // Three-table chain across all fixtures.
+        _ => {
+            let expr_e = num_expr(rng, 'e', 1);
+            let expr_o = num_expr(rng, 'o', 1);
+            format!(
+                "SELECT e.id, {expr_e}, {expr_o} FROM events e JOIN orders o ON o.id = e.id \
+                 LEFT JOIN users u ON u.id = o.user_id WHERE {}{} LIMIT 50",
+                predicate(rng, 'e', 1),
+                order_all(3)
+            )
+        }
+    }
 }
