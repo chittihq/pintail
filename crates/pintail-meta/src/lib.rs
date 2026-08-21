@@ -967,6 +967,50 @@ impl MetaStore {
             .context("failed to decode resnapshot tables")
     }
 
+    /// The quarantined tables the supervisor may repair on its own: keyed
+    /// tables only. A KEYLESS table's quarantine belongs to the database's
+    /// `keyless_policy` - under `quarantine` the operator explicitly chose
+    /// manual remediation, and an automatic recopy would erase exactly the
+    /// signal that policy exists to preserve.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be read.
+    pub fn tables_needing_auto_resync(&self, database_id: &str) -> Result<BTreeSet<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT name FROM tables \
+                 WHERE db_id = ?1 AND state = 'needs_resync' \
+                   AND pk_json IS NOT NULL AND pk_json != '[]' \
+                 ORDER BY name",
+            )
+            .context("failed to prepare auto-resync table query")?;
+        statement
+            .query_map([database_id], |row| row.get(0))
+            .context("failed to query auto-resync tables")?
+            .collect::<rusqlite::Result<BTreeSet<_>>>()
+            .context("failed to decode auto-resync tables")
+    }
+
+    /// Drops every dead-letter row for one table. A completed resnapshot
+    /// supersedes them: the recopy carries the effects of the very events
+    /// that could not be decoded, and keeping their tombstones reads as an
+    /// outstanding problem after the repair already happened.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be deleted.
+    pub fn clear_dlq_for_table(&self, database_id: &str, table_name: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM dlq WHERE db_id = ?1 AND table_name = ?2",
+                (database_id, table_name),
+            )
+            .with_context(|| format!("failed to clear {database_id}.{table_name} dead letters"))?;
+        Ok(())
+    }
+
     /// Persists a table schema generation and advances the table catalog
     /// version in one transaction.
     ///

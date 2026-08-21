@@ -148,7 +148,7 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     let Ok(metadata) = state.metadata() else {
         return;
     };
-    let Ok(quarantined) = metadata.tables_needing_resync(database_id) else {
+    let Ok(quarantined) = metadata.tables_needing_auto_resync(database_id) else {
         return;
     };
     let Some(table_name) = quarantined.into_iter().next() else {
@@ -416,6 +416,9 @@ fn finish_table_resnapshot(
                 // operator watching the row is entitled to know the
                 // difference between a resnapshot that failed and one that
                 // succeeded without clearing the flag.
+                // The recopy carries the effects of every event this
+                // table dead-lettered; their tombstones are superseded.
+                let _ = metadata.clear_dlq_for_table(database_id, table_name);
                 if let Err(failure) =
                     metadata.finish_table_resnapshot(database_id, table_name, state_name)
                 {
