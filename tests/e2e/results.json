@@ -530,6 +530,267 @@
     "status": "SKIP"
   },
   {
+    "phase": "snapshot",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "SKIP"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:geometry: null routes filter and count",
+    "status": "SKIP"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "SKIP"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "orm-compat",
     "check": "sequelize:metadata:result",
     "status": "PASS"
@@ -1180,6 +1441,267 @@
     "status": "SKIP"
   },
   {
+    "phase": "orm-compat",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "SKIP"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:geometry: null routes filter and count",
+    "status": "SKIP"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "SKIP"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "crud",
     "check": "converge:Dim",
     "status": "PASS"
@@ -1710,6 +2232,267 @@
     "status": "SKIP"
   },
   {
+    "phase": "crud",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "SKIP"
+  },
+  {
+    "phase": "crud",
+    "check": "query:geometry: null routes filter and count",
+    "status": "SKIP"
+  },
+  {
+    "phase": "crud",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "SKIP"
+  },
+  {
+    "phase": "crud",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "type-edges",
     "check": "converge:Dim",
     "status": "PASS"
@@ -2238,6 +3021,267 @@
     "phase": "type-edges",
     "check": "query:geometry: hex round-trips the internal format",
     "status": "SKIP"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "SKIP"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:geometry: null routes filter and count",
+    "status": "SKIP"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "SKIP"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -2775,6 +3819,268 @@
     "status": "PASS"
   },
   {
+    "phase": "ddl",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "schema-drift-minimal",
     "check": "converge:Dim",
     "status": "PASS"
@@ -3310,6 +4616,268 @@
     "status": "PASS"
   },
   {
+    "phase": "schema-drift-minimal",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "schema-drift-unseen",
     "check": "converge:Dim",
     "status": "PASS"
@@ -3842,6 +5410,268 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
     "status": "PASS"
   },
   {
@@ -4410,6 +6240,1065 @@
     "status": "PASS"
   },
   {
+    "phase": "churn",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "churn",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "execution-budget",
     "check": "hint:interrupts a runaway join",
     "status": "PASS"
@@ -4970,6 +7859,268 @@
     "status": "PASS"
   },
   {
+    "phase": "execution-budget",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "spill",
     "check": "forced-spill:sort",
     "status": "PASS"
@@ -5525,6 +8676,268 @@
     "status": "PASS"
   },
   {
+    "phase": "spill",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "spill",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "pooling",
     "check": "pool:concurrent-borrows(40 over 4)",
     "status": "PASS"
@@ -6075,6 +9488,268 @@
     "status": "PASS"
   },
   {
+    "phase": "pooling",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "restart",
     "check": "converge:Dim",
     "status": "PASS"
@@ -6610,6 +10285,268 @@
     "status": "PASS"
   },
   {
+    "phase": "restart",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "restart",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "control-plane",
     "check": "api:auth login issues a fresh token",
     "status": "PASS"
@@ -6662,6 +10599,11 @@
   {
     "phase": "control-plane",
     "check": "api:wire column types: temporal expressions advertise what MySQL advertises",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:erroring queries carry MySQL errno and SQLSTATE",
     "status": "PASS"
   },
   {
@@ -7245,6 +11187,268 @@
     "status": "PASS"
   },
   {
+    "phase": "control-plane",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "snapshot-ddl-window",
     "check": "a table created just before a forced snapshot is still adopted",
     "status": "PASS"
@@ -7787,6 +11991,268 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
     "status": "PASS"
   },
   {
@@ -8356,6 +12822,268 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-table-cdc",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "drop-table-recreate",
     "check": "recreate:first generation replicates",
     "status": "PASS"
@@ -8909,6 +13637,268 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
     "status": "PASS"
   },
   {
@@ -9474,6 +14464,268 @@
   {
     "phase": "drop-table-polling",
     "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
     "status": "PASS"
   },
   {
@@ -10058,6 +15310,268 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-database",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
     "phase": "ddl-documented-gaps",
     "check": "converge:Dim",
     "status": "PASS"
@@ -10598,6 +16112,268 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "SKIP"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "SKIP"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
     "status": "PASS"
   }
 ]

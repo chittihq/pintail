@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T08:27:41.622Z.
+Measured 2026-08-21T15:16:12.030Z.
 
-**2096 passed, 0 failed, 6 documented-gap warnings.**
+**3194 passed, 0 failed, 42 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -112,6 +112,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | snapshot | query:set: order by walks the member bitmask | SKIP |  |
 | snapshot | query:set: grouping orders groups by bitmask | SKIP |  |
 | snapshot | query:geometry: hex round-trips the internal format | SKIP |  |
+| snapshot | query:geometry: byte length includes the srid prefix | SKIP |  |
+| snapshot | query:geometry: null routes filter and count | SKIP |  |
+| snapshot | query:geometry: spatial functions are a documented gap | SKIP |  |
+| snapshot | query:set: find_in_set filters by membership | PASS |  |
+| snapshot | query:set: equality is literal, not member-normalized | PASS |  |
+| snapshot | query:set: distinct values walk the bitmask including empty | PASS |  |
+| snapshot | query:set: grouped counts order by bitmask not text | PASS |  |
+| snapshot | query:set: a range predicate compares the bitmask | PASS |  |
+| snapshot | query:star: fact with dimension and two audit persons | PASS |  |
+| snapshot | query:star: five-alias chain fans out through events | PASS |  |
+| snapshot | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| snapshot | query:star: five tables bridge the shop and the star | PASS |  |
+| snapshot | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| snapshot | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| snapshot | query:json: length and keys survive null documents | PASS |  |
+| snapshot | query:json: contains_path filters the documented rows | PASS |  |
+| snapshot | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| snapshot | query:json: object construction embeds an extracted scalar | PASS |  |
+| snapshot | query:json: search locates a literal value | PASS |  |
+| snapshot | query:json: grouping by an extracted scalar | PASS |  |
+| snapshot | query:json: merge_patch overlays and reads back | PASS |  |
+| snapshot | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| snapshot | query:temporal: month-end bucketing via last_day | PASS |  |
+| snapshot | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| snapshot | query:temporal: datetime range keeps the year window | PASS |  |
+| snapshot | query:temporal: date_sub bound in the predicate | PASS |  |
+| snapshot | query:temporal: year-month split grouping | PASS |  |
+| snapshot | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| snapshot | query:regex: substr extracts the mail domain | PASS |  |
+| snapshot | query:regex: the REGEXP operator anchors a class | PASS |  |
+| snapshot | query:regex: replace folds suffix classes before grouping | PASS |  |
+| snapshot | query:bi metabase: month grain through convert_tz | PASS |  |
+| snapshot | query:bi metabase: iso week bucketing | PASS |  |
+| snapshot | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| snapshot | query:bi metabase: previous-period revenue window | PASS |  |
+| snapshot | query:bi superset: week-start grain with a rolling average | PASS |  |
+| snapshot | query:bi superset: running total over grouped revenue | PASS |  |
+| snapshot | query:bi superset: lag and lead against a named window | PASS |  |
+| snapshot | query:bi superset: quartile counts from ntile | PASS |  |
+| snapshot | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| snapshot | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| snapshot | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| snapshot | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| snapshot | query:bi tableau: explicit cast ladder | PASS |  |
+| snapshot | query:bi tableau: the stddev and variance family | PASS |  |
+| snapshot | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| snapshot | query:bi shared: substring_index dimension cleanup | PASS |  |
+| snapshot | query:bi shared: json validity and typed path filter | PASS |  |
+| snapshot | query:bi shared: contains_path over several paths at once | PASS |  |
+| snapshot | query:bi shared: maketime from extracted parts | PASS |  |
+| snapshot | query:bi shared: extract year_month grouping | PASS |  |
+| snapshot | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -242,6 +294,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | orm-compat | query:set: order by walks the member bitmask | SKIP |  |
 | orm-compat | query:set: grouping orders groups by bitmask | SKIP |  |
 | orm-compat | query:geometry: hex round-trips the internal format | SKIP |  |
+| orm-compat | query:geometry: byte length includes the srid prefix | SKIP |  |
+| orm-compat | query:geometry: null routes filter and count | SKIP |  |
+| orm-compat | query:geometry: spatial functions are a documented gap | SKIP |  |
+| orm-compat | query:set: find_in_set filters by membership | PASS |  |
+| orm-compat | query:set: equality is literal, not member-normalized | PASS |  |
+| orm-compat | query:set: distinct values walk the bitmask including empty | PASS |  |
+| orm-compat | query:set: grouped counts order by bitmask not text | PASS |  |
+| orm-compat | query:set: a range predicate compares the bitmask | PASS |  |
+| orm-compat | query:star: fact with dimension and two audit persons | PASS |  |
+| orm-compat | query:star: five-alias chain fans out through events | PASS |  |
+| orm-compat | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| orm-compat | query:star: five tables bridge the shop and the star | PASS |  |
+| orm-compat | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| orm-compat | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| orm-compat | query:json: length and keys survive null documents | PASS |  |
+| orm-compat | query:json: contains_path filters the documented rows | PASS |  |
+| orm-compat | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| orm-compat | query:json: object construction embeds an extracted scalar | PASS |  |
+| orm-compat | query:json: search locates a literal value | PASS |  |
+| orm-compat | query:json: grouping by an extracted scalar | PASS |  |
+| orm-compat | query:json: merge_patch overlays and reads back | PASS |  |
+| orm-compat | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| orm-compat | query:temporal: month-end bucketing via last_day | PASS |  |
+| orm-compat | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| orm-compat | query:temporal: datetime range keeps the year window | PASS |  |
+| orm-compat | query:temporal: date_sub bound in the predicate | PASS |  |
+| orm-compat | query:temporal: year-month split grouping | PASS |  |
+| orm-compat | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| orm-compat | query:regex: substr extracts the mail domain | PASS |  |
+| orm-compat | query:regex: the REGEXP operator anchors a class | PASS |  |
+| orm-compat | query:regex: replace folds suffix classes before grouping | PASS |  |
+| orm-compat | query:bi metabase: month grain through convert_tz | PASS |  |
+| orm-compat | query:bi metabase: iso week bucketing | PASS |  |
+| orm-compat | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| orm-compat | query:bi metabase: previous-period revenue window | PASS |  |
+| orm-compat | query:bi superset: week-start grain with a rolling average | PASS |  |
+| orm-compat | query:bi superset: running total over grouped revenue | PASS |  |
+| orm-compat | query:bi superset: lag and lead against a named window | PASS |  |
+| orm-compat | query:bi superset: quartile counts from ntile | PASS |  |
+| orm-compat | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| orm-compat | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| orm-compat | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| orm-compat | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| orm-compat | query:bi tableau: explicit cast ladder | PASS |  |
+| orm-compat | query:bi tableau: the stddev and variance family | PASS |  |
+| orm-compat | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| orm-compat | query:bi shared: substring_index dimension cleanup | PASS |  |
+| orm-compat | query:bi shared: json validity and typed path filter | PASS |  |
+| orm-compat | query:bi shared: contains_path over several paths at once | PASS |  |
+| orm-compat | query:bi shared: maketime from extracted parts | PASS |  |
+| orm-compat | query:bi shared: extract year_month grouping | PASS |  |
+| orm-compat | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | crud | converge:Dim | PASS |  |
 | crud | converge:Event | PASS |  |
 | crud | converge:Fact | PASS |  |
@@ -348,6 +452,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | crud | query:set: order by walks the member bitmask | SKIP |  |
 | crud | query:set: grouping orders groups by bitmask | SKIP |  |
 | crud | query:geometry: hex round-trips the internal format | SKIP |  |
+| crud | query:geometry: byte length includes the srid prefix | SKIP |  |
+| crud | query:geometry: null routes filter and count | SKIP |  |
+| crud | query:geometry: spatial functions are a documented gap | SKIP |  |
+| crud | query:set: find_in_set filters by membership | PASS |  |
+| crud | query:set: equality is literal, not member-normalized | PASS |  |
+| crud | query:set: distinct values walk the bitmask including empty | PASS |  |
+| crud | query:set: grouped counts order by bitmask not text | PASS |  |
+| crud | query:set: a range predicate compares the bitmask | PASS |  |
+| crud | query:star: fact with dimension and two audit persons | PASS |  |
+| crud | query:star: five-alias chain fans out through events | PASS |  |
+| crud | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| crud | query:star: five tables bridge the shop and the star | PASS |  |
+| crud | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| crud | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| crud | query:json: length and keys survive null documents | PASS |  |
+| crud | query:json: contains_path filters the documented rows | PASS |  |
+| crud | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| crud | query:json: object construction embeds an extracted scalar | PASS |  |
+| crud | query:json: search locates a literal value | PASS |  |
+| crud | query:json: grouping by an extracted scalar | PASS |  |
+| crud | query:json: merge_patch overlays and reads back | PASS |  |
+| crud | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| crud | query:temporal: month-end bucketing via last_day | PASS |  |
+| crud | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| crud | query:temporal: datetime range keeps the year window | PASS |  |
+| crud | query:temporal: date_sub bound in the predicate | PASS |  |
+| crud | query:temporal: year-month split grouping | PASS |  |
+| crud | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| crud | query:regex: substr extracts the mail domain | PASS |  |
+| crud | query:regex: the REGEXP operator anchors a class | PASS |  |
+| crud | query:regex: replace folds suffix classes before grouping | PASS |  |
+| crud | query:bi metabase: month grain through convert_tz | PASS |  |
+| crud | query:bi metabase: iso week bucketing | PASS |  |
+| crud | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| crud | query:bi metabase: previous-period revenue window | PASS |  |
+| crud | query:bi superset: week-start grain with a rolling average | PASS |  |
+| crud | query:bi superset: running total over grouped revenue | PASS |  |
+| crud | query:bi superset: lag and lead against a named window | PASS |  |
+| crud | query:bi superset: quartile counts from ntile | PASS |  |
+| crud | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| crud | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| crud | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| crud | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| crud | query:bi tableau: explicit cast ladder | PASS |  |
+| crud | query:bi tableau: the stddev and variance family | PASS |  |
+| crud | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| crud | query:bi shared: substring_index dimension cleanup | PASS |  |
+| crud | query:bi shared: json validity and typed path filter | PASS |  |
+| crud | query:bi shared: contains_path over several paths at once | PASS |  |
+| crud | query:bi shared: maketime from extracted parts | PASS |  |
+| crud | query:bi shared: extract year_month grouping | PASS |  |
+| crud | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | type-edges | converge:Dim | PASS |  |
 | type-edges | converge:Event | PASS |  |
 | type-edges | converge:Fact | PASS |  |
@@ -454,6 +610,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | type-edges | query:set: order by walks the member bitmask | SKIP |  |
 | type-edges | query:set: grouping orders groups by bitmask | SKIP |  |
 | type-edges | query:geometry: hex round-trips the internal format | SKIP |  |
+| type-edges | query:geometry: byte length includes the srid prefix | SKIP |  |
+| type-edges | query:geometry: null routes filter and count | SKIP |  |
+| type-edges | query:geometry: spatial functions are a documented gap | SKIP |  |
+| type-edges | query:set: find_in_set filters by membership | PASS |  |
+| type-edges | query:set: equality is literal, not member-normalized | PASS |  |
+| type-edges | query:set: distinct values walk the bitmask including empty | PASS |  |
+| type-edges | query:set: grouped counts order by bitmask not text | PASS |  |
+| type-edges | query:set: a range predicate compares the bitmask | PASS |  |
+| type-edges | query:star: fact with dimension and two audit persons | PASS |  |
+| type-edges | query:star: five-alias chain fans out through events | PASS |  |
+| type-edges | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| type-edges | query:star: five tables bridge the shop and the star | PASS |  |
+| type-edges | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| type-edges | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| type-edges | query:json: length and keys survive null documents | PASS |  |
+| type-edges | query:json: contains_path filters the documented rows | PASS |  |
+| type-edges | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| type-edges | query:json: object construction embeds an extracted scalar | PASS |  |
+| type-edges | query:json: search locates a literal value | PASS |  |
+| type-edges | query:json: grouping by an extracted scalar | PASS |  |
+| type-edges | query:json: merge_patch overlays and reads back | PASS |  |
+| type-edges | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| type-edges | query:temporal: month-end bucketing via last_day | PASS |  |
+| type-edges | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| type-edges | query:temporal: datetime range keeps the year window | PASS |  |
+| type-edges | query:temporal: date_sub bound in the predicate | PASS |  |
+| type-edges | query:temporal: year-month split grouping | PASS |  |
+| type-edges | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| type-edges | query:regex: substr extracts the mail domain | PASS |  |
+| type-edges | query:regex: the REGEXP operator anchors a class | PASS |  |
+| type-edges | query:regex: replace folds suffix classes before grouping | PASS |  |
+| type-edges | query:bi metabase: month grain through convert_tz | PASS |  |
+| type-edges | query:bi metabase: iso week bucketing | PASS |  |
+| type-edges | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| type-edges | query:bi metabase: previous-period revenue window | PASS |  |
+| type-edges | query:bi superset: week-start grain with a rolling average | PASS |  |
+| type-edges | query:bi superset: running total over grouped revenue | PASS |  |
+| type-edges | query:bi superset: lag and lead against a named window | PASS |  |
+| type-edges | query:bi superset: quartile counts from ntile | PASS |  |
+| type-edges | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| type-edges | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| type-edges | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| type-edges | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| type-edges | query:bi tableau: explicit cast ladder | PASS |  |
+| type-edges | query:bi tableau: the stddev and variance family | PASS |  |
+| type-edges | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| type-edges | query:bi shared: substring_index dimension cleanup | PASS |  |
+| type-edges | query:bi shared: json validity and typed path filter | PASS |  |
+| type-edges | query:bi shared: contains_path over several paths at once | PASS |  |
+| type-edges | query:bi shared: maketime from extracted parts | PASS |  |
+| type-edges | query:bi shared: extract year_month grouping | PASS |  |
+| type-edges | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | ddl | converge:Dim | PASS |  |
 | ddl | converge:Event | PASS |  |
 | ddl | converge:Fact | PASS |  |
@@ -561,6 +769,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | ddl | query:set: order by walks the member bitmask | PASS |  |
 | ddl | query:set: grouping orders groups by bitmask | PASS |  |
 | ddl | query:geometry: hex round-trips the internal format | PASS |  |
+| ddl | query:geometry: byte length includes the srid prefix | PASS |  |
+| ddl | query:geometry: null routes filter and count | PASS |  |
+| ddl | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| ddl | query:set: find_in_set filters by membership | PASS |  |
+| ddl | query:set: equality is literal, not member-normalized | PASS |  |
+| ddl | query:set: distinct values walk the bitmask including empty | PASS |  |
+| ddl | query:set: grouped counts order by bitmask not text | PASS |  |
+| ddl | query:set: a range predicate compares the bitmask | PASS |  |
+| ddl | query:star: fact with dimension and two audit persons | PASS |  |
+| ddl | query:star: five-alias chain fans out through events | PASS |  |
+| ddl | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| ddl | query:star: five tables bridge the shop and the star | PASS |  |
+| ddl | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| ddl | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| ddl | query:json: length and keys survive null documents | PASS |  |
+| ddl | query:json: contains_path filters the documented rows | PASS |  |
+| ddl | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| ddl | query:json: object construction embeds an extracted scalar | PASS |  |
+| ddl | query:json: search locates a literal value | PASS |  |
+| ddl | query:json: grouping by an extracted scalar | PASS |  |
+| ddl | query:json: merge_patch overlays and reads back | PASS |  |
+| ddl | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| ddl | query:temporal: month-end bucketing via last_day | PASS |  |
+| ddl | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| ddl | query:temporal: datetime range keeps the year window | PASS |  |
+| ddl | query:temporal: date_sub bound in the predicate | PASS |  |
+| ddl | query:temporal: year-month split grouping | PASS |  |
+| ddl | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| ddl | query:regex: substr extracts the mail domain | PASS |  |
+| ddl | query:regex: the REGEXP operator anchors a class | PASS |  |
+| ddl | query:regex: replace folds suffix classes before grouping | PASS |  |
+| ddl | query:bi metabase: month grain through convert_tz | PASS |  |
+| ddl | query:bi metabase: iso week bucketing | PASS |  |
+| ddl | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| ddl | query:bi metabase: previous-period revenue window | PASS |  |
+| ddl | query:bi superset: week-start grain with a rolling average | PASS |  |
+| ddl | query:bi superset: running total over grouped revenue | PASS |  |
+| ddl | query:bi superset: lag and lead against a named window | PASS |  |
+| ddl | query:bi superset: quartile counts from ntile | PASS |  |
+| ddl | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| ddl | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| ddl | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| ddl | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| ddl | query:bi tableau: explicit cast ladder | PASS |  |
+| ddl | query:bi tableau: the stddev and variance family | PASS |  |
+| ddl | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| ddl | query:bi shared: substring_index dimension cleanup | PASS |  |
+| ddl | query:bi shared: json validity and typed path filter | PASS |  |
+| ddl | query:bi shared: contains_path over several paths at once | PASS |  |
+| ddl | query:bi shared: maketime from extracted parts | PASS |  |
+| ddl | query:bi shared: extract year_month grouping | PASS |  |
+| ddl | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | schema-drift-minimal | converge:Dim | PASS |  |
 | schema-drift-minimal | converge:Event | PASS |  |
 | schema-drift-minimal | converge:Fact | PASS |  |
@@ -668,6 +928,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | schema-drift-minimal | query:set: order by walks the member bitmask | PASS |  |
 | schema-drift-minimal | query:set: grouping orders groups by bitmask | PASS |  |
 | schema-drift-minimal | query:geometry: hex round-trips the internal format | PASS |  |
+| schema-drift-minimal | query:geometry: byte length includes the srid prefix | PASS |  |
+| schema-drift-minimal | query:geometry: null routes filter and count | PASS |  |
+| schema-drift-minimal | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| schema-drift-minimal | query:set: find_in_set filters by membership | PASS |  |
+| schema-drift-minimal | query:set: equality is literal, not member-normalized | PASS |  |
+| schema-drift-minimal | query:set: distinct values walk the bitmask including empty | PASS |  |
+| schema-drift-minimal | query:set: grouped counts order by bitmask not text | PASS |  |
+| schema-drift-minimal | query:set: a range predicate compares the bitmask | PASS |  |
+| schema-drift-minimal | query:star: fact with dimension and two audit persons | PASS |  |
+| schema-drift-minimal | query:star: five-alias chain fans out through events | PASS |  |
+| schema-drift-minimal | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| schema-drift-minimal | query:star: five tables bridge the shop and the star | PASS |  |
+| schema-drift-minimal | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| schema-drift-minimal | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| schema-drift-minimal | query:json: length and keys survive null documents | PASS |  |
+| schema-drift-minimal | query:json: contains_path filters the documented rows | PASS |  |
+| schema-drift-minimal | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| schema-drift-minimal | query:json: object construction embeds an extracted scalar | PASS |  |
+| schema-drift-minimal | query:json: search locates a literal value | PASS |  |
+| schema-drift-minimal | query:json: grouping by an extracted scalar | PASS |  |
+| schema-drift-minimal | query:json: merge_patch overlays and reads back | PASS |  |
+| schema-drift-minimal | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| schema-drift-minimal | query:temporal: month-end bucketing via last_day | PASS |  |
+| schema-drift-minimal | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| schema-drift-minimal | query:temporal: datetime range keeps the year window | PASS |  |
+| schema-drift-minimal | query:temporal: date_sub bound in the predicate | PASS |  |
+| schema-drift-minimal | query:temporal: year-month split grouping | PASS |  |
+| schema-drift-minimal | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| schema-drift-minimal | query:regex: substr extracts the mail domain | PASS |  |
+| schema-drift-minimal | query:regex: the REGEXP operator anchors a class | PASS |  |
+| schema-drift-minimal | query:regex: replace folds suffix classes before grouping | PASS |  |
+| schema-drift-minimal | query:bi metabase: month grain through convert_tz | PASS |  |
+| schema-drift-minimal | query:bi metabase: iso week bucketing | PASS |  |
+| schema-drift-minimal | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| schema-drift-minimal | query:bi metabase: previous-period revenue window | PASS |  |
+| schema-drift-minimal | query:bi superset: week-start grain with a rolling average | PASS |  |
+| schema-drift-minimal | query:bi superset: running total over grouped revenue | PASS |  |
+| schema-drift-minimal | query:bi superset: lag and lead against a named window | PASS |  |
+| schema-drift-minimal | query:bi superset: quartile counts from ntile | PASS |  |
+| schema-drift-minimal | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| schema-drift-minimal | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| schema-drift-minimal | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| schema-drift-minimal | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| schema-drift-minimal | query:bi tableau: explicit cast ladder | PASS |  |
+| schema-drift-minimal | query:bi tableau: the stddev and variance family | PASS |  |
+| schema-drift-minimal | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| schema-drift-minimal | query:bi shared: substring_index dimension cleanup | PASS |  |
+| schema-drift-minimal | query:bi shared: json validity and typed path filter | PASS |  |
+| schema-drift-minimal | query:bi shared: contains_path over several paths at once | PASS |  |
+| schema-drift-minimal | query:bi shared: maketime from extracted parts | PASS |  |
+| schema-drift-minimal | query:bi shared: extract year_month grouping | PASS |  |
+| schema-drift-minimal | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | schema-drift-unseen | converge:Dim | PASS |  |
 | schema-drift-unseen | converge:Event | PASS |  |
 | schema-drift-unseen | converge:Fact | PASS |  |
@@ -775,6 +1087,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | schema-drift-unseen | query:set: order by walks the member bitmask | PASS |  |
 | schema-drift-unseen | query:set: grouping orders groups by bitmask | PASS |  |
 | schema-drift-unseen | query:geometry: hex round-trips the internal format | PASS |  |
+| schema-drift-unseen | query:geometry: byte length includes the srid prefix | PASS |  |
+| schema-drift-unseen | query:geometry: null routes filter and count | PASS |  |
+| schema-drift-unseen | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| schema-drift-unseen | query:set: find_in_set filters by membership | PASS |  |
+| schema-drift-unseen | query:set: equality is literal, not member-normalized | PASS |  |
+| schema-drift-unseen | query:set: distinct values walk the bitmask including empty | PASS |  |
+| schema-drift-unseen | query:set: grouped counts order by bitmask not text | PASS |  |
+| schema-drift-unseen | query:set: a range predicate compares the bitmask | PASS |  |
+| schema-drift-unseen | query:star: fact with dimension and two audit persons | PASS |  |
+| schema-drift-unseen | query:star: five-alias chain fans out through events | PASS |  |
+| schema-drift-unseen | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| schema-drift-unseen | query:star: five tables bridge the shop and the star | PASS |  |
+| schema-drift-unseen | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| schema-drift-unseen | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| schema-drift-unseen | query:json: length and keys survive null documents | PASS |  |
+| schema-drift-unseen | query:json: contains_path filters the documented rows | PASS |  |
+| schema-drift-unseen | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| schema-drift-unseen | query:json: object construction embeds an extracted scalar | PASS |  |
+| schema-drift-unseen | query:json: search locates a literal value | PASS |  |
+| schema-drift-unseen | query:json: grouping by an extracted scalar | PASS |  |
+| schema-drift-unseen | query:json: merge_patch overlays and reads back | PASS |  |
+| schema-drift-unseen | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| schema-drift-unseen | query:temporal: month-end bucketing via last_day | PASS |  |
+| schema-drift-unseen | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| schema-drift-unseen | query:temporal: datetime range keeps the year window | PASS |  |
+| schema-drift-unseen | query:temporal: date_sub bound in the predicate | PASS |  |
+| schema-drift-unseen | query:temporal: year-month split grouping | PASS |  |
+| schema-drift-unseen | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| schema-drift-unseen | query:regex: substr extracts the mail domain | PASS |  |
+| schema-drift-unseen | query:regex: the REGEXP operator anchors a class | PASS |  |
+| schema-drift-unseen | query:regex: replace folds suffix classes before grouping | PASS |  |
+| schema-drift-unseen | query:bi metabase: month grain through convert_tz | PASS |  |
+| schema-drift-unseen | query:bi metabase: iso week bucketing | PASS |  |
+| schema-drift-unseen | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| schema-drift-unseen | query:bi metabase: previous-period revenue window | PASS |  |
+| schema-drift-unseen | query:bi superset: week-start grain with a rolling average | PASS |  |
+| schema-drift-unseen | query:bi superset: running total over grouped revenue | PASS |  |
+| schema-drift-unseen | query:bi superset: lag and lead against a named window | PASS |  |
+| schema-drift-unseen | query:bi superset: quartile counts from ntile | PASS |  |
+| schema-drift-unseen | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| schema-drift-unseen | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| schema-drift-unseen | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| schema-drift-unseen | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| schema-drift-unseen | query:bi tableau: explicit cast ladder | PASS |  |
+| schema-drift-unseen | query:bi tableau: the stddev and variance family | PASS |  |
+| schema-drift-unseen | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| schema-drift-unseen | query:bi shared: substring_index dimension cleanup | PASS |  |
+| schema-drift-unseen | query:bi shared: json validity and typed path filter | PASS |  |
+| schema-drift-unseen | query:bi shared: contains_path over several paths at once | PASS |  |
+| schema-drift-unseen | query:bi shared: maketime from extracted parts | PASS |  |
+| schema-drift-unseen | query:bi shared: extract year_month grouping | PASS |  |
+| schema-drift-unseen | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | churn-live | live:conformance: triple-alias person join with a dangling FK | PASS |  |
 | churn-live | live:conformance: mixed-collation double grouping | PASS |  |
 | churn-live | live:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -888,6 +1252,217 @@ Measured 2026-08-21T08:27:41.622Z.
 | churn | query:set: order by walks the member bitmask | PASS |  |
 | churn | query:set: grouping orders groups by bitmask | PASS |  |
 | churn | query:geometry: hex round-trips the internal format | PASS |  |
+| churn | query:geometry: byte length includes the srid prefix | PASS |  |
+| churn | query:geometry: null routes filter and count | PASS |  |
+| churn | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| churn | query:set: find_in_set filters by membership | PASS |  |
+| churn | query:set: equality is literal, not member-normalized | PASS |  |
+| churn | query:set: distinct values walk the bitmask including empty | PASS |  |
+| churn | query:set: grouped counts order by bitmask not text | PASS |  |
+| churn | query:set: a range predicate compares the bitmask | PASS |  |
+| churn | query:star: fact with dimension and two audit persons | PASS |  |
+| churn | query:star: five-alias chain fans out through events | PASS |  |
+| churn | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| churn | query:star: five tables bridge the shop and the star | PASS |  |
+| churn | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| churn | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| churn | query:json: length and keys survive null documents | PASS |  |
+| churn | query:json: contains_path filters the documented rows | PASS |  |
+| churn | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| churn | query:json: object construction embeds an extracted scalar | PASS |  |
+| churn | query:json: search locates a literal value | PASS |  |
+| churn | query:json: grouping by an extracted scalar | PASS |  |
+| churn | query:json: merge_patch overlays and reads back | PASS |  |
+| churn | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| churn | query:temporal: month-end bucketing via last_day | PASS |  |
+| churn | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| churn | query:temporal: datetime range keeps the year window | PASS |  |
+| churn | query:temporal: date_sub bound in the predicate | PASS |  |
+| churn | query:temporal: year-month split grouping | PASS |  |
+| churn | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| churn | query:regex: substr extracts the mail domain | PASS |  |
+| churn | query:regex: the REGEXP operator anchors a class | PASS |  |
+| churn | query:regex: replace folds suffix classes before grouping | PASS |  |
+| churn | query:bi metabase: month grain through convert_tz | PASS |  |
+| churn | query:bi metabase: iso week bucketing | PASS |  |
+| churn | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| churn | query:bi metabase: previous-period revenue window | PASS |  |
+| churn | query:bi superset: week-start grain with a rolling average | PASS |  |
+| churn | query:bi superset: running total over grouped revenue | PASS |  |
+| churn | query:bi superset: lag and lead against a named window | PASS |  |
+| churn | query:bi superset: quartile counts from ntile | PASS |  |
+| churn | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| churn | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| churn | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| churn | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| churn | query:bi tableau: explicit cast ladder | PASS |  |
+| churn | query:bi tableau: the stddev and variance family | PASS |  |
+| churn | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| churn | query:bi shared: substring_index dimension cleanup | PASS |  |
+| churn | query:bi shared: json validity and typed path filter | PASS |  |
+| churn | query:bi shared: contains_path over several paths at once | PASS |  |
+| churn | query:bi shared: maketime from extracted parts | PASS |  |
+| churn | query:bi shared: extract year_month grouping | PASS |  |
+| churn | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| contention | converge:Dim | PASS |  |
+| contention | converge:Event | PASS |  |
+| contention | converge:Fact | PASS |  |
+| contention | converge:Person | PASS |  |
+| contention | converge:audit_log | PASS |  |
+| contention | converge:counters | PASS |  |
+| contention | converge:customers | PASS |  |
+| contention | converge:order_items | PASS |  |
+| contention | converge:orders | PASS |  |
+| contention | converge:shipments | PASS |  |
+| contention | converge:staff | PASS |  |
+| contention | converge:information_schema.columns | PASS |  |
+| contention | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| contention | query:conformance: mixed-collation double grouping | PASS |  |
+| contention | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| contention | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| contention | query:conformance: case-variant code grouping | PASS |  |
+| contention | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| contention | query:conformance: nullable join key NULL-extends | PASS |  |
+| contention | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| contention | query:conformance: date bucketing over the fact table | PASS |  |
+| contention | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| contention | query:point lookup by key | PASS |  |
+| contention | query:range scan with compound predicate | PASS |  |
+| contention | query:inner join with aggregation | PASS |  |
+| contention | query:join with a residual comparison between both inputs | PASS |  |
+| contention | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| contention | query:residual comparison through coalesce on a nullable column | PASS |  |
+| contention | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| contention | query:alias pair with the join order reversed | PASS |  |
+| contention | query:four aliases of one table joined in a chain | PASS |  |
+| contention | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| contention | query:self-join manager chain preserves the roots | PASS |  |
+| contention | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| contention | query:aliases stay distinct when the empty side joins first | PASS |  |
+| contention | query:left join preserves unmatched rows | PASS |  |
+| contention | query:right join preserves unmatched rows | PASS |  |
+| contention | query:three-way join through items | PASS |  |
+| contention | query:union all across sources | PASS |  |
+| contention | query:intersect customer identifiers | PASS |  |
+| contention | query:except customer identifiers | PASS |  |
+| contention | query:order by an expression over an aggregate | PASS |  |
+| contention | query:order by a tree over several aggregates | PASS |  |
+| contention | query:order by an aggregate absent from the select list | PASS |  |
+| contention | query:group by with having | PASS |  |
+| contention | query:conditional decimal sum keeps the fraction | PASS |  |
+| contention | query:distinct count and min max | PASS |  |
+| contention | query:uncorrelated in-subquery | PASS |  |
+| contention | query:correlated exists with inner predicate | PASS |  |
+| contention | query:correlated scalar aggregate | PASS |  |
+| contention | query:correlated scalar unique lookup | PASS |  |
+| contention | query:scalar subquery threshold | PASS |  |
+| contention | query:non-recursive cte | PASS |  |
+| contention | query:bounded recursive cte | PASS |  |
+| contention | query:date bucketing | PASS |  |
+| contention | query:string functions and like | PASS |  |
+| contention | query:looker symmetric key helpers | PASS |  |
+| contention | query:json constructor preserves json versus text | PASS |  |
+| contention | query:json aggregate embeds documents | PASS |  |
+| contention | query:regular expression read transforms | PASS |  |
+| contention | query:case expression buckets | PASS |  |
+| contention | query:null handling | PASS |  |
+| contention | query:coalesce and ifnull | PASS |  |
+| contention | query:enum and set filters | PASS |  |
+| contention | query:unsigned boundary readback | PASS |  |
+| contention | query:derived table | PASS |  |
+| contention | query:group_concat single expression | PASS |  |
+| contention | query:window ranking per group | PASS |  |
+| contention | query:window share of total over grouped output | PASS |  |
+| contention | query:window running total | PASS |  |
+| contention | query:decimal column average beyond simple sum | PASS |  |
+| contention | query:json extract filter on customer meta | PASS |  |
+| contention | query:fan-out join group concat line products | PASS |  |
+| contention | query:outer join customers without recent orders | PASS |  |
+| contention | query:set op union distinct tiers and statuses | PASS |  |
+| contention | query:temporal convert and date_format grain | PASS |  |
+| contention | query:correlated not exists open orders | PASS |  |
+| contention | query:window lag payment-shaped totals | PASS |  |
+| contention | query:multi-key join items to orders | PASS |  |
+| contention | query:between and null-safe coalesce on balance | PASS |  |
+| contention | query:intersect all-style customer buyers | PASS |  |
+| contention | query:derived table status revenue share | PASS |  |
+| contention | query:general_ci: equality folds ASCII case | PASS |  |
+| contention | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| contention | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| contention | query:general_ci: every supplementary character compares equal | PASS |  |
+| contention | query:general_ci: grouping partitions by collated equality | PASS |  |
+| contention | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| contention | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| contention | query:general_ci: joining on a collated column | PASS |  |
+| contention | query:general_ci: representative spelling of a collated group | PASS |  |
+| contention | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| contention | query:enum: order by ascends by declared ordinal | PASS |  |
+| contention | query:enum: order by descends by declared ordinal | PASS |  |
+| contention | query:enum: min and max compare as strings | PASS |  |
+| contention | query:enum: a greater-than range compares as strings | PASS |  |
+| contention | query:enum: a less-than range compares as strings | PASS |  |
+| contention | query:enum: between compares as strings | PASS |  |
+| contention | query:enum: distinct orders by ordinal | PASS |  |
+| contention | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| contention | query:enum: a window order walks the ordinal | PASS |  |
+| contention | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| contention | query:collation: distinct counts fold per column collation | PASS |  |
+| contention | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| contention | query:set: order by walks the member bitmask | PASS |  |
+| contention | query:set: grouping orders groups by bitmask | PASS |  |
+| contention | query:geometry: hex round-trips the internal format | PASS |  |
+| contention | query:geometry: byte length includes the srid prefix | PASS |  |
+| contention | query:geometry: null routes filter and count | PASS |  |
+| contention | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| contention | query:set: find_in_set filters by membership | PASS |  |
+| contention | query:set: equality is literal, not member-normalized | PASS |  |
+| contention | query:set: distinct values walk the bitmask including empty | PASS |  |
+| contention | query:set: grouped counts order by bitmask not text | PASS |  |
+| contention | query:set: a range predicate compares the bitmask | PASS |  |
+| contention | query:star: fact with dimension and two audit persons | PASS |  |
+| contention | query:star: five-alias chain fans out through events | PASS |  |
+| contention | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| contention | query:star: five tables bridge the shop and the star | PASS |  |
+| contention | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| contention | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| contention | query:json: length and keys survive null documents | PASS |  |
+| contention | query:json: contains_path filters the documented rows | PASS |  |
+| contention | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| contention | query:json: object construction embeds an extracted scalar | PASS |  |
+| contention | query:json: search locates a literal value | PASS |  |
+| contention | query:json: grouping by an extracted scalar | PASS |  |
+| contention | query:json: merge_patch overlays and reads back | PASS |  |
+| contention | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| contention | query:temporal: month-end bucketing via last_day | PASS |  |
+| contention | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| contention | query:temporal: datetime range keeps the year window | PASS |  |
+| contention | query:temporal: date_sub bound in the predicate | PASS |  |
+| contention | query:temporal: year-month split grouping | PASS |  |
+| contention | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| contention | query:regex: substr extracts the mail domain | PASS |  |
+| contention | query:regex: the REGEXP operator anchors a class | PASS |  |
+| contention | query:regex: replace folds suffix classes before grouping | PASS |  |
+| contention | query:bi metabase: month grain through convert_tz | PASS |  |
+| contention | query:bi metabase: iso week bucketing | PASS |  |
+| contention | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| contention | query:bi metabase: previous-period revenue window | PASS |  |
+| contention | query:bi superset: week-start grain with a rolling average | PASS |  |
+| contention | query:bi superset: running total over grouped revenue | PASS |  |
+| contention | query:bi superset: lag and lead against a named window | PASS |  |
+| contention | query:bi superset: quartile counts from ntile | PASS |  |
+| contention | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| contention | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| contention | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| contention | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| contention | query:bi tableau: explicit cast ladder | PASS |  |
+| contention | query:bi tableau: the stddev and variance family | PASS |  |
+| contention | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| contention | query:bi shared: substring_index dimension cleanup | PASS |  |
+| contention | query:bi shared: json validity and typed path filter | PASS |  |
+| contention | query:bi shared: contains_path over several paths at once | PASS |  |
+| contention | query:bi shared: maketime from extracted parts | PASS |  |
+| contention | query:bi shared: extract year_month grouping | PASS |  |
+| contention | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
@@ -1000,6 +1575,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | execution-budget | query:set: order by walks the member bitmask | PASS |  |
 | execution-budget | query:set: grouping orders groups by bitmask | PASS |  |
 | execution-budget | query:geometry: hex round-trips the internal format | PASS |  |
+| execution-budget | query:geometry: byte length includes the srid prefix | PASS |  |
+| execution-budget | query:geometry: null routes filter and count | PASS |  |
+| execution-budget | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| execution-budget | query:set: find_in_set filters by membership | PASS |  |
+| execution-budget | query:set: equality is literal, not member-normalized | PASS |  |
+| execution-budget | query:set: distinct values walk the bitmask including empty | PASS |  |
+| execution-budget | query:set: grouped counts order by bitmask not text | PASS |  |
+| execution-budget | query:set: a range predicate compares the bitmask | PASS |  |
+| execution-budget | query:star: fact with dimension and two audit persons | PASS |  |
+| execution-budget | query:star: five-alias chain fans out through events | PASS |  |
+| execution-budget | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| execution-budget | query:star: five tables bridge the shop and the star | PASS |  |
+| execution-budget | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| execution-budget | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| execution-budget | query:json: length and keys survive null documents | PASS |  |
+| execution-budget | query:json: contains_path filters the documented rows | PASS |  |
+| execution-budget | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| execution-budget | query:json: object construction embeds an extracted scalar | PASS |  |
+| execution-budget | query:json: search locates a literal value | PASS |  |
+| execution-budget | query:json: grouping by an extracted scalar | PASS |  |
+| execution-budget | query:json: merge_patch overlays and reads back | PASS |  |
+| execution-budget | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| execution-budget | query:temporal: month-end bucketing via last_day | PASS |  |
+| execution-budget | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| execution-budget | query:temporal: datetime range keeps the year window | PASS |  |
+| execution-budget | query:temporal: date_sub bound in the predicate | PASS |  |
+| execution-budget | query:temporal: year-month split grouping | PASS |  |
+| execution-budget | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| execution-budget | query:regex: substr extracts the mail domain | PASS |  |
+| execution-budget | query:regex: the REGEXP operator anchors a class | PASS |  |
+| execution-budget | query:regex: replace folds suffix classes before grouping | PASS |  |
+| execution-budget | query:bi metabase: month grain through convert_tz | PASS |  |
+| execution-budget | query:bi metabase: iso week bucketing | PASS |  |
+| execution-budget | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| execution-budget | query:bi metabase: previous-period revenue window | PASS |  |
+| execution-budget | query:bi superset: week-start grain with a rolling average | PASS |  |
+| execution-budget | query:bi superset: running total over grouped revenue | PASS |  |
+| execution-budget | query:bi superset: lag and lead against a named window | PASS |  |
+| execution-budget | query:bi superset: quartile counts from ntile | PASS |  |
+| execution-budget | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| execution-budget | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| execution-budget | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| execution-budget | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| execution-budget | query:bi tableau: explicit cast ladder | PASS |  |
+| execution-budget | query:bi tableau: the stddev and variance family | PASS |  |
+| execution-budget | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| execution-budget | query:bi shared: substring_index dimension cleanup | PASS |  |
+| execution-budget | query:bi shared: json validity and typed path filter | PASS |  |
+| execution-budget | query:bi shared: contains_path over several paths at once | PASS |  |
+| execution-budget | query:bi shared: maketime from extracted parts | PASS |  |
+| execution-budget | query:bi shared: extract year_month grouping | PASS |  |
+| execution-budget | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -1111,6 +1738,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | spill | query:set: order by walks the member bitmask | PASS |  |
 | spill | query:set: grouping orders groups by bitmask | PASS |  |
 | spill | query:geometry: hex round-trips the internal format | PASS |  |
+| spill | query:geometry: byte length includes the srid prefix | PASS |  |
+| spill | query:geometry: null routes filter and count | PASS |  |
+| spill | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| spill | query:set: find_in_set filters by membership | PASS |  |
+| spill | query:set: equality is literal, not member-normalized | PASS |  |
+| spill | query:set: distinct values walk the bitmask including empty | PASS |  |
+| spill | query:set: grouped counts order by bitmask not text | PASS |  |
+| spill | query:set: a range predicate compares the bitmask | PASS |  |
+| spill | query:star: fact with dimension and two audit persons | PASS |  |
+| spill | query:star: five-alias chain fans out through events | PASS |  |
+| spill | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| spill | query:star: five tables bridge the shop and the star | PASS |  |
+| spill | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| spill | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| spill | query:json: length and keys survive null documents | PASS |  |
+| spill | query:json: contains_path filters the documented rows | PASS |  |
+| spill | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| spill | query:json: object construction embeds an extracted scalar | PASS |  |
+| spill | query:json: search locates a literal value | PASS |  |
+| spill | query:json: grouping by an extracted scalar | PASS |  |
+| spill | query:json: merge_patch overlays and reads back | PASS |  |
+| spill | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| spill | query:temporal: month-end bucketing via last_day | PASS |  |
+| spill | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| spill | query:temporal: datetime range keeps the year window | PASS |  |
+| spill | query:temporal: date_sub bound in the predicate | PASS |  |
+| spill | query:temporal: year-month split grouping | PASS |  |
+| spill | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| spill | query:regex: substr extracts the mail domain | PASS |  |
+| spill | query:regex: the REGEXP operator anchors a class | PASS |  |
+| spill | query:regex: replace folds suffix classes before grouping | PASS |  |
+| spill | query:bi metabase: month grain through convert_tz | PASS |  |
+| spill | query:bi metabase: iso week bucketing | PASS |  |
+| spill | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| spill | query:bi metabase: previous-period revenue window | PASS |  |
+| spill | query:bi superset: week-start grain with a rolling average | PASS |  |
+| spill | query:bi superset: running total over grouped revenue | PASS |  |
+| spill | query:bi superset: lag and lead against a named window | PASS |  |
+| spill | query:bi superset: quartile counts from ntile | PASS |  |
+| spill | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| spill | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| spill | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| spill | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| spill | query:bi tableau: explicit cast ladder | PASS |  |
+| spill | query:bi tableau: the stddev and variance family | PASS |  |
+| spill | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| spill | query:bi shared: substring_index dimension cleanup | PASS |  |
+| spill | query:bi shared: json validity and typed path filter | PASS |  |
+| spill | query:bi shared: contains_path over several paths at once | PASS |  |
+| spill | query:bi shared: maketime from extracted parts | PASS |  |
+| spill | query:bi shared: extract year_month grouping | PASS |  |
+| spill | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -1221,6 +1900,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | pooling | query:set: order by walks the member bitmask | PASS |  |
 | pooling | query:set: grouping orders groups by bitmask | PASS |  |
 | pooling | query:geometry: hex round-trips the internal format | PASS |  |
+| pooling | query:geometry: byte length includes the srid prefix | PASS |  |
+| pooling | query:geometry: null routes filter and count | PASS |  |
+| pooling | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| pooling | query:set: find_in_set filters by membership | PASS |  |
+| pooling | query:set: equality is literal, not member-normalized | PASS |  |
+| pooling | query:set: distinct values walk the bitmask including empty | PASS |  |
+| pooling | query:set: grouped counts order by bitmask not text | PASS |  |
+| pooling | query:set: a range predicate compares the bitmask | PASS |  |
+| pooling | query:star: fact with dimension and two audit persons | PASS |  |
+| pooling | query:star: five-alias chain fans out through events | PASS |  |
+| pooling | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| pooling | query:star: five tables bridge the shop and the star | PASS |  |
+| pooling | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| pooling | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| pooling | query:json: length and keys survive null documents | PASS |  |
+| pooling | query:json: contains_path filters the documented rows | PASS |  |
+| pooling | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| pooling | query:json: object construction embeds an extracted scalar | PASS |  |
+| pooling | query:json: search locates a literal value | PASS |  |
+| pooling | query:json: grouping by an extracted scalar | PASS |  |
+| pooling | query:json: merge_patch overlays and reads back | PASS |  |
+| pooling | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| pooling | query:temporal: month-end bucketing via last_day | PASS |  |
+| pooling | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| pooling | query:temporal: datetime range keeps the year window | PASS |  |
+| pooling | query:temporal: date_sub bound in the predicate | PASS |  |
+| pooling | query:temporal: year-month split grouping | PASS |  |
+| pooling | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| pooling | query:regex: substr extracts the mail domain | PASS |  |
+| pooling | query:regex: the REGEXP operator anchors a class | PASS |  |
+| pooling | query:regex: replace folds suffix classes before grouping | PASS |  |
+| pooling | query:bi metabase: month grain through convert_tz | PASS |  |
+| pooling | query:bi metabase: iso week bucketing | PASS |  |
+| pooling | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| pooling | query:bi metabase: previous-period revenue window | PASS |  |
+| pooling | query:bi superset: week-start grain with a rolling average | PASS |  |
+| pooling | query:bi superset: running total over grouped revenue | PASS |  |
+| pooling | query:bi superset: lag and lead against a named window | PASS |  |
+| pooling | query:bi superset: quartile counts from ntile | PASS |  |
+| pooling | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| pooling | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| pooling | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| pooling | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| pooling | query:bi tableau: explicit cast ladder | PASS |  |
+| pooling | query:bi tableau: the stddev and variance family | PASS |  |
+| pooling | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| pooling | query:bi shared: substring_index dimension cleanup | PASS |  |
+| pooling | query:bi shared: json validity and typed path filter | PASS |  |
+| pooling | query:bi shared: contains_path over several paths at once | PASS |  |
+| pooling | query:bi shared: maketime from extracted parts | PASS |  |
+| pooling | query:bi shared: extract year_month grouping | PASS |  |
+| pooling | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | restart | converge:Dim | PASS |  |
 | restart | converge:Event | PASS |  |
 | restart | converge:Fact | PASS |  |
@@ -1328,6 +2059,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | restart | query:set: order by walks the member bitmask | PASS |  |
 | restart | query:set: grouping orders groups by bitmask | PASS |  |
 | restart | query:geometry: hex round-trips the internal format | PASS |  |
+| restart | query:geometry: byte length includes the srid prefix | PASS |  |
+| restart | query:geometry: null routes filter and count | PASS |  |
+| restart | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| restart | query:set: find_in_set filters by membership | PASS |  |
+| restart | query:set: equality is literal, not member-normalized | PASS |  |
+| restart | query:set: distinct values walk the bitmask including empty | PASS |  |
+| restart | query:set: grouped counts order by bitmask not text | PASS |  |
+| restart | query:set: a range predicate compares the bitmask | PASS |  |
+| restart | query:star: fact with dimension and two audit persons | PASS |  |
+| restart | query:star: five-alias chain fans out through events | PASS |  |
+| restart | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| restart | query:star: five tables bridge the shop and the star | PASS |  |
+| restart | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| restart | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| restart | query:json: length and keys survive null documents | PASS |  |
+| restart | query:json: contains_path filters the documented rows | PASS |  |
+| restart | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| restart | query:json: object construction embeds an extracted scalar | PASS |  |
+| restart | query:json: search locates a literal value | PASS |  |
+| restart | query:json: grouping by an extracted scalar | PASS |  |
+| restart | query:json: merge_patch overlays and reads back | PASS |  |
+| restart | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| restart | query:temporal: month-end bucketing via last_day | PASS |  |
+| restart | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| restart | query:temporal: datetime range keeps the year window | PASS |  |
+| restart | query:temporal: date_sub bound in the predicate | PASS |  |
+| restart | query:temporal: year-month split grouping | PASS |  |
+| restart | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| restart | query:regex: substr extracts the mail domain | PASS |  |
+| restart | query:regex: the REGEXP operator anchors a class | PASS |  |
+| restart | query:regex: replace folds suffix classes before grouping | PASS |  |
+| restart | query:bi metabase: month grain through convert_tz | PASS |  |
+| restart | query:bi metabase: iso week bucketing | PASS |  |
+| restart | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| restart | query:bi metabase: previous-period revenue window | PASS |  |
+| restart | query:bi superset: week-start grain with a rolling average | PASS |  |
+| restart | query:bi superset: running total over grouped revenue | PASS |  |
+| restart | query:bi superset: lag and lead against a named window | PASS |  |
+| restart | query:bi superset: quartile counts from ntile | PASS |  |
+| restart | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| restart | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| restart | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| restart | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| restart | query:bi tableau: explicit cast ladder | PASS |  |
+| restart | query:bi tableau: the stddev and variance family | PASS |  |
+| restart | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| restart | query:bi shared: substring_index dimension cleanup | PASS |  |
+| restart | query:bi shared: json validity and typed path filter | PASS |  |
+| restart | query:bi shared: contains_path over several paths at once | PASS |  |
+| restart | query:bi shared: maketime from extracted parts | PASS |  |
+| restart | query:bi shared: extract year_month grouping | PASS |  |
+| restart | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -1339,6 +2122,7 @@ Measured 2026-08-21T08:27:41.622Z.
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
 | control-plane | api:wire column types: temporal expressions advertise what MySQL advertises | PASS |  |
+| control-plane | api:erroring queries carry MySQL errno and SQLSTATE | PASS |  |
 | control-plane | api:the audit trail records the network peer of every action | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
@@ -1455,6 +2239,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | control-plane | query:set: order by walks the member bitmask | PASS |  |
 | control-plane | query:set: grouping orders groups by bitmask | PASS |  |
 | control-plane | query:geometry: hex round-trips the internal format | PASS |  |
+| control-plane | query:geometry: byte length includes the srid prefix | PASS |  |
+| control-plane | query:geometry: null routes filter and count | PASS |  |
+| control-plane | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| control-plane | query:set: find_in_set filters by membership | PASS |  |
+| control-plane | query:set: equality is literal, not member-normalized | PASS |  |
+| control-plane | query:set: distinct values walk the bitmask including empty | PASS |  |
+| control-plane | query:set: grouped counts order by bitmask not text | PASS |  |
+| control-plane | query:set: a range predicate compares the bitmask | PASS |  |
+| control-plane | query:star: fact with dimension and two audit persons | PASS |  |
+| control-plane | query:star: five-alias chain fans out through events | PASS |  |
+| control-plane | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| control-plane | query:star: five tables bridge the shop and the star | PASS |  |
+| control-plane | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| control-plane | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| control-plane | query:json: length and keys survive null documents | PASS |  |
+| control-plane | query:json: contains_path filters the documented rows | PASS |  |
+| control-plane | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| control-plane | query:json: object construction embeds an extracted scalar | PASS |  |
+| control-plane | query:json: search locates a literal value | PASS |  |
+| control-plane | query:json: grouping by an extracted scalar | PASS |  |
+| control-plane | query:json: merge_patch overlays and reads back | PASS |  |
+| control-plane | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| control-plane | query:temporal: month-end bucketing via last_day | PASS |  |
+| control-plane | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| control-plane | query:temporal: datetime range keeps the year window | PASS |  |
+| control-plane | query:temporal: date_sub bound in the predicate | PASS |  |
+| control-plane | query:temporal: year-month split grouping | PASS |  |
+| control-plane | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| control-plane | query:regex: substr extracts the mail domain | PASS |  |
+| control-plane | query:regex: the REGEXP operator anchors a class | PASS |  |
+| control-plane | query:regex: replace folds suffix classes before grouping | PASS |  |
+| control-plane | query:bi metabase: month grain through convert_tz | PASS |  |
+| control-plane | query:bi metabase: iso week bucketing | PASS |  |
+| control-plane | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| control-plane | query:bi metabase: previous-period revenue window | PASS |  |
+| control-plane | query:bi superset: week-start grain with a rolling average | PASS |  |
+| control-plane | query:bi superset: running total over grouped revenue | PASS |  |
+| control-plane | query:bi superset: lag and lead against a named window | PASS |  |
+| control-plane | query:bi superset: quartile counts from ntile | PASS |  |
+| control-plane | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| control-plane | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| control-plane | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| control-plane | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| control-plane | query:bi tableau: explicit cast ladder | PASS |  |
+| control-plane | query:bi tableau: the stddev and variance family | PASS |  |
+| control-plane | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| control-plane | query:bi shared: substring_index dimension cleanup | PASS |  |
+| control-plane | query:bi shared: json validity and typed path filter | PASS |  |
+| control-plane | query:bi shared: contains_path over several paths at once | PASS |  |
+| control-plane | query:bi shared: maketime from extracted parts | PASS |  |
+| control-plane | query:bi shared: extract year_month grouping | PASS |  |
+| control-plane | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
 | snapshot-ddl-window | converge:Dim | PASS |  |
 | snapshot-ddl-window | converge:Event | PASS |  |
@@ -1564,6 +2400,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | snapshot-ddl-window | query:set: order by walks the member bitmask | PASS |  |
 | snapshot-ddl-window | query:set: grouping orders groups by bitmask | PASS |  |
 | snapshot-ddl-window | query:geometry: hex round-trips the internal format | PASS |  |
+| snapshot-ddl-window | query:geometry: byte length includes the srid prefix | PASS |  |
+| snapshot-ddl-window | query:geometry: null routes filter and count | PASS |  |
+| snapshot-ddl-window | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| snapshot-ddl-window | query:set: find_in_set filters by membership | PASS |  |
+| snapshot-ddl-window | query:set: equality is literal, not member-normalized | PASS |  |
+| snapshot-ddl-window | query:set: distinct values walk the bitmask including empty | PASS |  |
+| snapshot-ddl-window | query:set: grouped counts order by bitmask not text | PASS |  |
+| snapshot-ddl-window | query:set: a range predicate compares the bitmask | PASS |  |
+| snapshot-ddl-window | query:star: fact with dimension and two audit persons | PASS |  |
+| snapshot-ddl-window | query:star: five-alias chain fans out through events | PASS |  |
+| snapshot-ddl-window | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| snapshot-ddl-window | query:star: five tables bridge the shop and the star | PASS |  |
+| snapshot-ddl-window | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| snapshot-ddl-window | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| snapshot-ddl-window | query:json: length and keys survive null documents | PASS |  |
+| snapshot-ddl-window | query:json: contains_path filters the documented rows | PASS |  |
+| snapshot-ddl-window | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| snapshot-ddl-window | query:json: object construction embeds an extracted scalar | PASS |  |
+| snapshot-ddl-window | query:json: search locates a literal value | PASS |  |
+| snapshot-ddl-window | query:json: grouping by an extracted scalar | PASS |  |
+| snapshot-ddl-window | query:json: merge_patch overlays and reads back | PASS |  |
+| snapshot-ddl-window | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| snapshot-ddl-window | query:temporal: month-end bucketing via last_day | PASS |  |
+| snapshot-ddl-window | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| snapshot-ddl-window | query:temporal: datetime range keeps the year window | PASS |  |
+| snapshot-ddl-window | query:temporal: date_sub bound in the predicate | PASS |  |
+| snapshot-ddl-window | query:temporal: year-month split grouping | PASS |  |
+| snapshot-ddl-window | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| snapshot-ddl-window | query:regex: substr extracts the mail domain | PASS |  |
+| snapshot-ddl-window | query:regex: the REGEXP operator anchors a class | PASS |  |
+| snapshot-ddl-window | query:regex: replace folds suffix classes before grouping | PASS |  |
+| snapshot-ddl-window | query:bi metabase: month grain through convert_tz | PASS |  |
+| snapshot-ddl-window | query:bi metabase: iso week bucketing | PASS |  |
+| snapshot-ddl-window | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| snapshot-ddl-window | query:bi metabase: previous-period revenue window | PASS |  |
+| snapshot-ddl-window | query:bi superset: week-start grain with a rolling average | PASS |  |
+| snapshot-ddl-window | query:bi superset: running total over grouped revenue | PASS |  |
+| snapshot-ddl-window | query:bi superset: lag and lead against a named window | PASS |  |
+| snapshot-ddl-window | query:bi superset: quartile counts from ntile | PASS |  |
+| snapshot-ddl-window | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| snapshot-ddl-window | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| snapshot-ddl-window | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| snapshot-ddl-window | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| snapshot-ddl-window | query:bi tableau: explicit cast ladder | PASS |  |
+| snapshot-ddl-window | query:bi tableau: the stddev and variance family | PASS |  |
+| snapshot-ddl-window | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| snapshot-ddl-window | query:bi shared: substring_index dimension cleanup | PASS |  |
+| snapshot-ddl-window | query:bi shared: json validity and typed path filter | PASS |  |
+| snapshot-ddl-window | query:bi shared: contains_path over several paths at once | PASS |  |
+| snapshot-ddl-window | query:bi shared: maketime from extracted parts | PASS |  |
+| snapshot-ddl-window | query:bi shared: extract year_month grouping | PASS |  |
+| snapshot-ddl-window | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -1677,6 +2565,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | drop-table-cdc | query:set: order by walks the member bitmask | PASS |  |
 | drop-table-cdc | query:set: grouping orders groups by bitmask | PASS |  |
 | drop-table-cdc | query:geometry: hex round-trips the internal format | PASS |  |
+| drop-table-cdc | query:geometry: byte length includes the srid prefix | PASS |  |
+| drop-table-cdc | query:geometry: null routes filter and count | PASS |  |
+| drop-table-cdc | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| drop-table-cdc | query:set: find_in_set filters by membership | PASS |  |
+| drop-table-cdc | query:set: equality is literal, not member-normalized | PASS |  |
+| drop-table-cdc | query:set: distinct values walk the bitmask including empty | PASS |  |
+| drop-table-cdc | query:set: grouped counts order by bitmask not text | PASS |  |
+| drop-table-cdc | query:set: a range predicate compares the bitmask | PASS |  |
+| drop-table-cdc | query:star: fact with dimension and two audit persons | PASS |  |
+| drop-table-cdc | query:star: five-alias chain fans out through events | PASS |  |
+| drop-table-cdc | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| drop-table-cdc | query:star: five tables bridge the shop and the star | PASS |  |
+| drop-table-cdc | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| drop-table-cdc | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| drop-table-cdc | query:json: length and keys survive null documents | PASS |  |
+| drop-table-cdc | query:json: contains_path filters the documented rows | PASS |  |
+| drop-table-cdc | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| drop-table-cdc | query:json: object construction embeds an extracted scalar | PASS |  |
+| drop-table-cdc | query:json: search locates a literal value | PASS |  |
+| drop-table-cdc | query:json: grouping by an extracted scalar | PASS |  |
+| drop-table-cdc | query:json: merge_patch overlays and reads back | PASS |  |
+| drop-table-cdc | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| drop-table-cdc | query:temporal: month-end bucketing via last_day | PASS |  |
+| drop-table-cdc | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| drop-table-cdc | query:temporal: datetime range keeps the year window | PASS |  |
+| drop-table-cdc | query:temporal: date_sub bound in the predicate | PASS |  |
+| drop-table-cdc | query:temporal: year-month split grouping | PASS |  |
+| drop-table-cdc | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| drop-table-cdc | query:regex: substr extracts the mail domain | PASS |  |
+| drop-table-cdc | query:regex: the REGEXP operator anchors a class | PASS |  |
+| drop-table-cdc | query:regex: replace folds suffix classes before grouping | PASS |  |
+| drop-table-cdc | query:bi metabase: month grain through convert_tz | PASS |  |
+| drop-table-cdc | query:bi metabase: iso week bucketing | PASS |  |
+| drop-table-cdc | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| drop-table-cdc | query:bi metabase: previous-period revenue window | PASS |  |
+| drop-table-cdc | query:bi superset: week-start grain with a rolling average | PASS |  |
+| drop-table-cdc | query:bi superset: running total over grouped revenue | PASS |  |
+| drop-table-cdc | query:bi superset: lag and lead against a named window | PASS |  |
+| drop-table-cdc | query:bi superset: quartile counts from ntile | PASS |  |
+| drop-table-cdc | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| drop-table-cdc | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-table-cdc | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| drop-table-cdc | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| drop-table-cdc | query:bi tableau: explicit cast ladder | PASS |  |
+| drop-table-cdc | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-table-cdc | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| drop-table-cdc | query:bi shared: substring_index dimension cleanup | PASS |  |
+| drop-table-cdc | query:bi shared: json validity and typed path filter | PASS |  |
+| drop-table-cdc | query:bi shared: contains_path over several paths at once | PASS |  |
+| drop-table-cdc | query:bi shared: maketime from extracted parts | PASS |  |
+| drop-table-cdc | query:bi shared: extract year_month grouping | PASS |  |
+| drop-table-cdc | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
@@ -1788,6 +2728,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | drop-table-recreate | query:set: order by walks the member bitmask | PASS |  |
 | drop-table-recreate | query:set: grouping orders groups by bitmask | PASS |  |
 | drop-table-recreate | query:geometry: hex round-trips the internal format | PASS |  |
+| drop-table-recreate | query:geometry: byte length includes the srid prefix | PASS |  |
+| drop-table-recreate | query:geometry: null routes filter and count | PASS |  |
+| drop-table-recreate | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| drop-table-recreate | query:set: find_in_set filters by membership | PASS |  |
+| drop-table-recreate | query:set: equality is literal, not member-normalized | PASS |  |
+| drop-table-recreate | query:set: distinct values walk the bitmask including empty | PASS |  |
+| drop-table-recreate | query:set: grouped counts order by bitmask not text | PASS |  |
+| drop-table-recreate | query:set: a range predicate compares the bitmask | PASS |  |
+| drop-table-recreate | query:star: fact with dimension and two audit persons | PASS |  |
+| drop-table-recreate | query:star: five-alias chain fans out through events | PASS |  |
+| drop-table-recreate | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| drop-table-recreate | query:star: five tables bridge the shop and the star | PASS |  |
+| drop-table-recreate | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| drop-table-recreate | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| drop-table-recreate | query:json: length and keys survive null documents | PASS |  |
+| drop-table-recreate | query:json: contains_path filters the documented rows | PASS |  |
+| drop-table-recreate | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| drop-table-recreate | query:json: object construction embeds an extracted scalar | PASS |  |
+| drop-table-recreate | query:json: search locates a literal value | PASS |  |
+| drop-table-recreate | query:json: grouping by an extracted scalar | PASS |  |
+| drop-table-recreate | query:json: merge_patch overlays and reads back | PASS |  |
+| drop-table-recreate | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| drop-table-recreate | query:temporal: month-end bucketing via last_day | PASS |  |
+| drop-table-recreate | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| drop-table-recreate | query:temporal: datetime range keeps the year window | PASS |  |
+| drop-table-recreate | query:temporal: date_sub bound in the predicate | PASS |  |
+| drop-table-recreate | query:temporal: year-month split grouping | PASS |  |
+| drop-table-recreate | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| drop-table-recreate | query:regex: substr extracts the mail domain | PASS |  |
+| drop-table-recreate | query:regex: the REGEXP operator anchors a class | PASS |  |
+| drop-table-recreate | query:regex: replace folds suffix classes before grouping | PASS |  |
+| drop-table-recreate | query:bi metabase: month grain through convert_tz | PASS |  |
+| drop-table-recreate | query:bi metabase: iso week bucketing | PASS |  |
+| drop-table-recreate | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| drop-table-recreate | query:bi metabase: previous-period revenue window | PASS |  |
+| drop-table-recreate | query:bi superset: week-start grain with a rolling average | PASS |  |
+| drop-table-recreate | query:bi superset: running total over grouped revenue | PASS |  |
+| drop-table-recreate | query:bi superset: lag and lead against a named window | PASS |  |
+| drop-table-recreate | query:bi superset: quartile counts from ntile | PASS |  |
+| drop-table-recreate | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| drop-table-recreate | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-table-recreate | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| drop-table-recreate | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| drop-table-recreate | query:bi tableau: explicit cast ladder | PASS |  |
+| drop-table-recreate | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-table-recreate | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| drop-table-recreate | query:bi shared: substring_index dimension cleanup | PASS |  |
+| drop-table-recreate | query:bi shared: json validity and typed path filter | PASS |  |
+| drop-table-recreate | query:bi shared: contains_path over several paths at once | PASS |  |
+| drop-table-recreate | query:bi shared: maketime from extracted parts | PASS |  |
+| drop-table-recreate | query:bi shared: extract year_month grouping | PASS |  |
+| drop-table-recreate | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
@@ -1901,6 +2893,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | drop-table-polling | query:set: order by walks the member bitmask | PASS |  |
 | drop-table-polling | query:set: grouping orders groups by bitmask | PASS |  |
 | drop-table-polling | query:geometry: hex round-trips the internal format | PASS |  |
+| drop-table-polling | query:geometry: byte length includes the srid prefix | PASS |  |
+| drop-table-polling | query:geometry: null routes filter and count | PASS |  |
+| drop-table-polling | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| drop-table-polling | query:set: find_in_set filters by membership | PASS |  |
+| drop-table-polling | query:set: equality is literal, not member-normalized | PASS |  |
+| drop-table-polling | query:set: distinct values walk the bitmask including empty | PASS |  |
+| drop-table-polling | query:set: grouped counts order by bitmask not text | PASS |  |
+| drop-table-polling | query:set: a range predicate compares the bitmask | PASS |  |
+| drop-table-polling | query:star: fact with dimension and two audit persons | PASS |  |
+| drop-table-polling | query:star: five-alias chain fans out through events | PASS |  |
+| drop-table-polling | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| drop-table-polling | query:star: five tables bridge the shop and the star | PASS |  |
+| drop-table-polling | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| drop-table-polling | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| drop-table-polling | query:json: length and keys survive null documents | PASS |  |
+| drop-table-polling | query:json: contains_path filters the documented rows | PASS |  |
+| drop-table-polling | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| drop-table-polling | query:json: object construction embeds an extracted scalar | PASS |  |
+| drop-table-polling | query:json: search locates a literal value | PASS |  |
+| drop-table-polling | query:json: grouping by an extracted scalar | PASS |  |
+| drop-table-polling | query:json: merge_patch overlays and reads back | PASS |  |
+| drop-table-polling | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| drop-table-polling | query:temporal: month-end bucketing via last_day | PASS |  |
+| drop-table-polling | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| drop-table-polling | query:temporal: datetime range keeps the year window | PASS |  |
+| drop-table-polling | query:temporal: date_sub bound in the predicate | PASS |  |
+| drop-table-polling | query:temporal: year-month split grouping | PASS |  |
+| drop-table-polling | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| drop-table-polling | query:regex: substr extracts the mail domain | PASS |  |
+| drop-table-polling | query:regex: the REGEXP operator anchors a class | PASS |  |
+| drop-table-polling | query:regex: replace folds suffix classes before grouping | PASS |  |
+| drop-table-polling | query:bi metabase: month grain through convert_tz | PASS |  |
+| drop-table-polling | query:bi metabase: iso week bucketing | PASS |  |
+| drop-table-polling | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| drop-table-polling | query:bi metabase: previous-period revenue window | PASS |  |
+| drop-table-polling | query:bi superset: week-start grain with a rolling average | PASS |  |
+| drop-table-polling | query:bi superset: running total over grouped revenue | PASS |  |
+| drop-table-polling | query:bi superset: lag and lead against a named window | PASS |  |
+| drop-table-polling | query:bi superset: quartile counts from ntile | PASS |  |
+| drop-table-polling | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| drop-table-polling | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-table-polling | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| drop-table-polling | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| drop-table-polling | query:bi tableau: explicit cast ladder | PASS |  |
+| drop-table-polling | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-table-polling | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| drop-table-polling | query:bi shared: substring_index dimension cleanup | PASS |  |
+| drop-table-polling | query:bi shared: json validity and typed path filter | PASS |  |
+| drop-table-polling | query:bi shared: contains_path over several paths at once | PASS |  |
+| drop-table-polling | query:bi shared: maketime from extracted parts | PASS |  |
+| drop-table-polling | query:bi shared: extract year_month grouping | PASS |  |
+| drop-table-polling | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -2017,6 +3061,58 @@ Measured 2026-08-21T08:27:41.622Z.
 | drop-database | query:set: order by walks the member bitmask | PASS |  |
 | drop-database | query:set: grouping orders groups by bitmask | PASS |  |
 | drop-database | query:geometry: hex round-trips the internal format | PASS |  |
+| drop-database | query:geometry: byte length includes the srid prefix | PASS |  |
+| drop-database | query:geometry: null routes filter and count | PASS |  |
+| drop-database | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| drop-database | query:set: find_in_set filters by membership | PASS |  |
+| drop-database | query:set: equality is literal, not member-normalized | PASS |  |
+| drop-database | query:set: distinct values walk the bitmask including empty | PASS |  |
+| drop-database | query:set: grouped counts order by bitmask not text | PASS |  |
+| drop-database | query:set: a range predicate compares the bitmask | PASS |  |
+| drop-database | query:star: fact with dimension and two audit persons | PASS |  |
+| drop-database | query:star: five-alias chain fans out through events | PASS |  |
+| drop-database | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| drop-database | query:star: five tables bridge the shop and the star | PASS |  |
+| drop-database | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| drop-database | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| drop-database | query:json: length and keys survive null documents | PASS |  |
+| drop-database | query:json: contains_path filters the documented rows | PASS |  |
+| drop-database | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| drop-database | query:json: object construction embeds an extracted scalar | PASS |  |
+| drop-database | query:json: search locates a literal value | PASS |  |
+| drop-database | query:json: grouping by an extracted scalar | PASS |  |
+| drop-database | query:json: merge_patch overlays and reads back | PASS |  |
+| drop-database | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| drop-database | query:temporal: month-end bucketing via last_day | PASS |  |
+| drop-database | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| drop-database | query:temporal: datetime range keeps the year window | PASS |  |
+| drop-database | query:temporal: date_sub bound in the predicate | PASS |  |
+| drop-database | query:temporal: year-month split grouping | PASS |  |
+| drop-database | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| drop-database | query:regex: substr extracts the mail domain | PASS |  |
+| drop-database | query:regex: the REGEXP operator anchors a class | PASS |  |
+| drop-database | query:regex: replace folds suffix classes before grouping | PASS |  |
+| drop-database | query:bi metabase: month grain through convert_tz | PASS |  |
+| drop-database | query:bi metabase: iso week bucketing | PASS |  |
+| drop-database | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| drop-database | query:bi metabase: previous-period revenue window | PASS |  |
+| drop-database | query:bi superset: week-start grain with a rolling average | PASS |  |
+| drop-database | query:bi superset: running total over grouped revenue | PASS |  |
+| drop-database | query:bi superset: lag and lead against a named window | PASS |  |
+| drop-database | query:bi superset: quartile counts from ntile | PASS |  |
+| drop-database | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| drop-database | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-database | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| drop-database | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| drop-database | query:bi tableau: explicit cast ladder | PASS |  |
+| drop-database | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-database | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| drop-database | query:bi shared: substring_index dimension cleanup | PASS |  |
+| drop-database | query:bi shared: json validity and typed path filter | PASS |  |
+| drop-database | query:bi shared: contains_path over several paths at once | PASS |  |
+| drop-database | query:bi shared: maketime from extracted parts | PASS |  |
+| drop-database | query:bi shared: extract year_month grouping | PASS |  |
+| drop-database | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 | ddl-documented-gaps | converge:Dim | PASS |  |
 | ddl-documented-gaps | converge:Event | PASS |  |
 | ddl-documented-gaps | converge:Fact | PASS |  |
@@ -2125,28 +3221,81 @@ Measured 2026-08-21T08:27:41.622Z.
 | ddl-documented-gaps | query:set: order by walks the member bitmask | PASS |  |
 | ddl-documented-gaps | query:set: grouping orders groups by bitmask | PASS |  |
 | ddl-documented-gaps | query:geometry: hex round-trips the internal format | PASS |  |
+| ddl-documented-gaps | query:geometry: byte length includes the srid prefix | PASS |  |
+| ddl-documented-gaps | query:geometry: null routes filter and count | PASS |  |
+| ddl-documented-gaps | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| ddl-documented-gaps | query:set: find_in_set filters by membership | PASS |  |
+| ddl-documented-gaps | query:set: equality is literal, not member-normalized | PASS |  |
+| ddl-documented-gaps | query:set: distinct values walk the bitmask including empty | PASS |  |
+| ddl-documented-gaps | query:set: grouped counts order by bitmask not text | PASS |  |
+| ddl-documented-gaps | query:set: a range predicate compares the bitmask | PASS |  |
+| ddl-documented-gaps | query:star: fact with dimension and two audit persons | PASS |  |
+| ddl-documented-gaps | query:star: five-alias chain fans out through events | PASS |  |
+| ddl-documented-gaps | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| ddl-documented-gaps | query:star: five tables bridge the shop and the star | SKIP |  |
+| ddl-documented-gaps | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| ddl-documented-gaps | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| ddl-documented-gaps | query:json: length and keys survive null documents | PASS |  |
+| ddl-documented-gaps | query:json: contains_path filters the documented rows | PASS |  |
+| ddl-documented-gaps | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| ddl-documented-gaps | query:json: object construction embeds an extracted scalar | PASS |  |
+| ddl-documented-gaps | query:json: search locates a literal value | PASS |  |
+| ddl-documented-gaps | query:json: grouping by an extracted scalar | PASS |  |
+| ddl-documented-gaps | query:json: merge_patch overlays and reads back | PASS |  |
+| ddl-documented-gaps | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| ddl-documented-gaps | query:temporal: month-end bucketing via last_day | PASS |  |
+| ddl-documented-gaps | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| ddl-documented-gaps | query:temporal: datetime range keeps the year window | PASS |  |
+| ddl-documented-gaps | query:temporal: date_sub bound in the predicate | PASS |  |
+| ddl-documented-gaps | query:temporal: year-month split grouping | PASS |  |
+| ddl-documented-gaps | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| ddl-documented-gaps | query:regex: substr extracts the mail domain | PASS |  |
+| ddl-documented-gaps | query:regex: the REGEXP operator anchors a class | PASS |  |
+| ddl-documented-gaps | query:regex: replace folds suffix classes before grouping | PASS |  |
+| ddl-documented-gaps | query:bi metabase: month grain through convert_tz | PASS |  |
+| ddl-documented-gaps | query:bi metabase: iso week bucketing | PASS |  |
+| ddl-documented-gaps | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| ddl-documented-gaps | query:bi metabase: previous-period revenue window | PASS |  |
+| ddl-documented-gaps | query:bi superset: week-start grain with a rolling average | PASS |  |
+| ddl-documented-gaps | query:bi superset: running total over grouped revenue | PASS |  |
+| ddl-documented-gaps | query:bi superset: lag and lead against a named window | PASS |  |
+| ddl-documented-gaps | query:bi superset: quartile counts from ntile | PASS |  |
+| ddl-documented-gaps | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| ddl-documented-gaps | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| ddl-documented-gaps | query:bi looker: symmetric aggregate across a fanned-out join | SKIP |  |
+| ddl-documented-gaps | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| ddl-documented-gaps | query:bi tableau: explicit cast ladder | PASS |  |
+| ddl-documented-gaps | query:bi tableau: the stddev and variance family | PASS |  |
+| ddl-documented-gaps | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| ddl-documented-gaps | query:bi shared: substring_index dimension cleanup | PASS |  |
+| ddl-documented-gaps | query:bi shared: json validity and typed path filter | PASS |  |
+| ddl-documented-gaps | query:bi shared: contains_path over several paths at once | PASS |  |
+| ddl-documented-gaps | query:bi shared: maketime from extracted parts | PASS |  |
+| ddl-documented-gaps | query:bi shared: extract year_month grouping | PASS |  |
+| ddl-documented-gaps | query:bi shared: keyset-free pagination with limit offset | PASS |  |
 
 ## Timing
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 2.9 | 1.3 |
-| orm-compat | 10.3 | 0.7 | 0.6 |
-| crud | 0.5 | 2.0 | 0.6 |
-| type-edges | 0.1 | 2.0 | 1.0 |
-| ddl | 1.2 | 28.8 | 0.6 |
-| schema-drift-minimal | 0.5 | 2.5 | 0.6 |
-| schema-drift-unseen | 1.0 | 11.9 | 0.7 |
-| churn | 20.1 | 1.1 | 0.7 |
-| execution-budget | 0.0 | 0.7 | 0.7 |
-| spill | 2.9 | 0.9 | 0.7 |
-| pooling | 0.1 | 0.7 | 0.6 |
-| restart | 0.7 | 2.5 | 0.8 |
-| control-plane | 82.9 | 2.0 | 1.2 |
-| snapshot-ddl-window | 14.4 | 1.9 | 0.6 |
-| drop-table-cdc | 21.4 | 1.7 | 0.6 |
-| drop-table-recreate | 141.3 | 1.3 | 0.6 |
-| drop-table-polling | 37.2 | 2.3 | 0.8 |
-| drop-database | 18.9 | 1.4 | 0.6 |
-| ddl-documented-gaps | 0.1 | 2.5 | 0.6 |
-| total | 353.6 | 70.0 | 14.0 |
+| snapshot | 0.0 | 1.4 | 0.7 |
+| orm-compat | 11.7 | 0.4 | 0.7 |
+| crud | 0.6 | 1.1 | 0.7 |
+| type-edges | 0.2 | 1.8 | 0.9 |
+| ddl | 0.8 | 18.7 | 0.7 |
+| schema-drift-minimal | 0.3 | 2.5 | 0.7 |
+| schema-drift-unseen | 1.3 | 8.9 | 1.6 |
+| churn | 17.0 | 1.3 | 0.9 |
+| contention | 12.0 | 2.5 | 0.7 |
+| execution-budget | 0.0 | 0.3 | 0.9 |
+| spill | 3.0 | 1.8 | 3.4 |
+| pooling | 0.2 | 0.7 | 0.9 |
+| restart | 0.7 | 2.5 | 1.2 |
+| control-plane | 60.9 | 1.6 | 0.8 |
+| snapshot-ddl-window | 7.3 | 1.6 | 1.0 |
+| drop-table-cdc | 11.1 | 1.0 | 0.7 |
+| drop-table-recreate | 136.6 | 1.3 | 0.8 |
+| drop-table-polling | 27.8 | 0.8 | 0.9 |
+| drop-database | 14.7 | 0.9 | 0.6 |
+| ddl-documented-gaps | 0.1 | 0.9 | 0.5 |
+| total | 306.3 | 51.8 | 19.5 |
