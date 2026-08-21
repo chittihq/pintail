@@ -28,10 +28,24 @@ import { differentialQueries } from './queries'
 
 const repository = resolve(import.meta.dir, '..', '..')
 const nonce = Date.now().toString(36)
-const mysqlName = `pintail-e2e-mysql-${process.pid}-${nonce}`
+/// PINTAIL_E2E_KEEP_MYSQL=1 reuses one long-lived source container across
+/// runs (database dropped and binlogs reset per run), trading a fresh boot
+/// and timezone-table load for a stable name the harness never removes.
+const KEEP_MYSQL = process.env.PINTAIL_E2E_KEEP_MYSQL === '1'
+const mysqlName = KEEP_MYSQL
+  ? 'pintail-e2e-keep-mysql'
+  : `pintail-e2e-mysql-${process.pid}-${nonce}`
 const DATABASE = 'e2e_db'
 const CONVERGE_TIMEOUT_MS = 180_000
-const CONVERGE_POLL_MS = 2_000
+/// One cadence for every poll loop. 250ms recovers the rounding waste the
+/// old 2s granularity added to each of the ~20 convergence checks without
+/// changing what any check accepts.
+const POLL_MS = Number(process.env.PINTAIL_E2E_POLL_MS ?? 250)
+const CONVERGE_POLL_MS = POLL_MS
+/// The supervisor cadence the spawned pintail runs with. 750ms keeps every
+/// adoption and re-probe wait proportional without turning supervision into
+/// a busy loop; production stays at its 5s default.
+const SUPERVISOR_MS = process.env.PINTAIL_E2E_SUPERVISOR_MS ?? '750'
 
 interface CheckResult {
   phase: string
@@ -41,6 +55,15 @@ interface CheckResult {
 }
 
 const results: CheckResult[] = []
+/// Wall-clock per phase, split into the phase's own work, the convergence
+/// sweep, and the corpus sweep — the split that says whether a slow gate is
+/// waiting, polling, or round-tripping.
+const phaseTimings: Array<{
+  phase: string
+  runSeconds: number
+  convergeSeconds: number
+  corpusSeconds: number
+}> = []
 /// Tables currently under a documented-gap operation, each with the exact
 /// divergence signature the documentation predicts. A divergence matching
 /// its signature reports WARN; anything else on the same table stays FAIL,
@@ -63,8 +86,11 @@ let databaseId = ''
 let mysqlStarted = false
 let mysqlEndpoint: MysqlEndpoint | undefined
 
+const runStarted = Date.now()
+
 function log(message: string) {
-  console.log(`[e2e] ${message}`)
+  const elapsed = ((Date.now() - runStarted) / 1000).toFixed(1)
+  console.log(`[e2e +${elapsed}s] ${message}`)
 }
 
 async function command(args: string[], options: { cwd?: string; quiet?: boolean } = {}) {
@@ -231,6 +257,34 @@ async function mysqlRows(sql: string): Promise<unknown[][]> {
   return rows as unknown as unknown[][]
 }
 
+/// A small source-side pool for the corpus sweep: ~96 queries per phase were
+/// serial round trips on one shared connection, which at a ~29ms link is
+/// minutes of pure packet flight per run. The pintail side stays on its one
+/// local connection (mysql2 pipelines it; the RTT there is loopback).
+let mysqlPool: mysql.Pool | undefined
+
+function corpusPool(): mysql.Pool {
+  if (!mysqlPool) {
+    mysqlPool = mysql.createPool({
+      host: mysqlEndpoint!.host,
+      port: mysqlEndpoint!.port,
+      user: 'root',
+      password: 'pintail-root',
+      database: DATABASE,
+      connectionLimit: 6,
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+      dateStrings: true,
+    })
+  }
+  return mysqlPool
+}
+
+async function poolRows(sql: string): Promise<unknown[][]> {
+  const [rows] = await corpusPool().query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+  return rows as unknown as unknown[][]
+}
+
 // ---------------------------------------------------------------------------
 // Canonicalization: MySQL wire values (via mysql2) and pintail JSON values
 // must map to one comparable form.
@@ -329,6 +383,20 @@ async function baseTables(): Promise<string[]> {
   return rows.map((row) => String(row[0]))
 }
 
+/// information_schema answers for immutable-per-phase metadata. Two of the
+/// three round trips every convergence poll made were re-fetching this;
+/// sql() invalidates it on any DDL so a stale shape can never hide a
+/// divergence behind a projection that omits the new column.
+const tableMetadataCache = new Map<string, { columns: string[]; key: string[] }>()
+
+async function tableMetadata(table: string): Promise<{ columns: string[]; key: string[] }> {
+  const cached = tableMetadataCache.get(table)
+  if (cached) return cached
+  const fresh = { columns: await tableColumns(table), key: await tableKey(table) }
+  tableMetadataCache.set(table, fresh)
+  return fresh
+}
+
 async function tableColumns(table: string): Promise<string[]> {
   const rows = await mysqlRows(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS ` +
@@ -348,8 +416,7 @@ async function tableKey(table: string): Promise<string[]> {
 }
 
 async function tableDiff(table: string): Promise<string | undefined> {
-  const columns = await tableColumns(table)
-  const key = await tableKey(table)
+  const { columns, key } = await tableMetadata(table)
   const projection = columns.map((column) => `\`${column}\``).join(', ')
   const order = (key.length > 0 ? key : columns).map((column) => `\`${column}\``).join(', ')
   const sql = `SELECT ${projection} FROM \`${table}\` ORDER BY ${order}`
@@ -437,37 +504,43 @@ async function verifyCorpus(phase: string) {
       )
     ).map((row) => String(row[0]).toLowerCase()),
   )
-  for (const query of differentialQueries) {
+  // Each case runs source and replica sides concurrently, and cases fan out
+  // over the source pool; results land in declaration order regardless.
+  const settled = new Array<CheckResult>(differentialQueries.length)
+  const CONCURRENCY = 6
+  let next = 0
+  async function runOne(index: number) {
+    const query = differentialQueries[index]
     if (query.tables.some((table) => documentedGapTables.has(table))) {
-      results.push({ phase, check: `query:${query.name}`, status: 'SKIP' })
-      continue
+      settled[index] = { phase, check: `query:${query.name}`, status: 'SKIP' }
+      return
     }
     if (query.tables.some((table) => !existing.has(table.toLowerCase()))) {
-      results.push({ phase, check: `query:${query.name}`, status: 'SKIP' })
-      continue
+      settled[index] = { phase, check: `query:${query.name}`, status: 'SKIP' }
+      return
     }
     let expected: unknown[][]
     try {
-      expected = await mysqlRows(query.sql)
+      expected = await poolRows(query.sql)
     } catch (error) {
-      results.push({
+      settled[index] = {
         phase,
         check: `query:${query.name}`,
         status: 'FAIL',
         detail: `mysql rejected the corpus query: ${error}`,
-      })
-      continue
+      }
+      return
     }
     try {
       const actual = await pintailQuery(query.sql)
       const diff = diffRows(expected, actual, { csvColumns: query.csvColumns })
       const failure = query.documentedGap ? ('WARN' as const) : ('FAIL' as const)
-      results.push({
+      settled[index] = {
         phase,
         check: `query:${query.name}`,
         status: diff === undefined ? 'PASS' : failure,
         detail: diff && query.documentedGap ? `${query.documentedGap}\n${diff}` : diff,
-      })
+      }
       if (diff) for (const line of diff.split('\n')) log(`${failure} query:${query.name} — ${line}`)
     } catch (error) {
       // A documented gap warns when the engine REFUSES the query, not only
@@ -477,15 +550,26 @@ async function verifyCorpus(phase: string) {
       // a gap could never be recorded before it was fixed, which is backwards:
       // the case exists to prove the fix.
       const failure = query.documentedGap ? ('WARN' as const) : ('FAIL' as const)
-      results.push({
+      settled[index] = {
         phase,
         check: `query:${query.name}`,
         status: failure,
         detail: query.documentedGap ? `${query.documentedGap}\n${error}` : String(error),
-      })
+      }
       log(`${failure} query:${query.name} — ${error}`)
     }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, differentialQueries.length) }, async () => {
+      for (;;) {
+        const index = next
+        next += 1
+        if (index >= differentialQueries.length) return
+        await runOne(index)
+      }
+    }),
+  )
+  results.push(...settled)
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +587,9 @@ function mulberry32(seed: number) {
 }
 
 async function sql(statement: string) {
+  if (/^\s*(ALTER|CREATE|DROP|RENAME|TRUNCATE)\b/i.test(statement)) {
+    tableMetadataCache.clear()
+  }
   await mysqlConnection!.query(statement)
 }
 
@@ -521,7 +608,7 @@ async function retry409<T>(operation: () => Promise<T>): Promise<T> {
       return await operation()
     } catch (error) {
       if (!String(error).includes('409') || attempt >= 30) throw error
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
   }
 }
@@ -540,7 +627,7 @@ async function waitForState(database: string, wanted: string, timeoutMs: number)
         .join('; ')
       throw new Error(`state never reached ${wanted}: ${status.state}; ${errors}`)
     }
-    await Bun.sleep(2_000)
+    await Bun.sleep(POLL_MS)
   }
 }
 
@@ -1381,7 +1468,7 @@ async function phaseControlPlane() {
               `status: ${JSON.stringify(status)}; activity: ${JSON.stringify(activity)}`,
           )
         }
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
     } finally {
       // Restore CDC even when convergence fails: leaving the database in
@@ -1469,7 +1556,7 @@ async function phaseControlPlane() {
         break
       } catch (error) {
         if (!String(error).includes('409') || attempt >= 20) throw error
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
     }
     // The resync schedules a snapshot job; reconcile is correctly refused
@@ -1491,7 +1578,7 @@ async function phaseControlPlane() {
           `resync did not settle: ${status.state}; ${errors}; recent activity: ${JSON.stringify(activity)}`,
         )
       }
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
     const retries = Date.now() + 60_000
     for (;;) {
@@ -1545,7 +1632,7 @@ async function phaseControlPlane() {
         // budget is generous rather than marginal - a tight one turns host
         // load into a product failure.
         if (!String(error).includes('409') || attempt >= 60) throw error
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
     }
     if (accepted.table !== 'orders' || accepted.state !== 'snapshotting') {
@@ -1560,7 +1647,7 @@ async function phaseControlPlane() {
       if (status.state === 'error' || Date.now() > deadline) {
         throw new Error(`per-table resync did not settle: ${JSON.stringify(status)}`)
       }
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
     // The recopied table reappears asynchronously, so give the counts a
     // window to settle rather than reading them the instant the job reports
@@ -1581,7 +1668,7 @@ async function phaseControlPlane() {
               .join('; '),
         )
       }
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
   })
   await check('schema drift during downtime: purged DDL recovers by re-probe', async () => {
@@ -1615,7 +1702,7 @@ async function phaseControlPlane() {
         if (Date.now() > adopted) {
           throw new Error(`drift_messages was never adopted: ${JSON.stringify(table)}`)
         }
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
 
       // Downtime: pause, migrate, and lose the binlog history of it.
@@ -1647,7 +1734,7 @@ async function phaseControlPlane() {
         if (Date.now() > deadline) {
           throw new Error(`drift resync never settled: ${JSON.stringify(table)}`)
         }
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
       const rows = await pintailQuery(`SELECT id, body FROM drift_messages ORDER BY id`)
       const expected = [['1', 'one'], ['2', 'two'], ['3', 'three']]
@@ -1665,7 +1752,7 @@ async function phaseControlPlane() {
         if (Date.now() > streamed) {
           throw new Error('the stream never recovered after the purged checkpoint')
         }
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
     } finally {
       await sql(`DROP TABLE IF EXISTS drift_messages`)
@@ -1689,7 +1776,7 @@ async function phaseControlPlane() {
       if (Date.now() > settled) {
         throw new Error(`orders never converged after reset: ${rows[0][0]} vs ${countBefore}`)
       }
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
     // And the stream is live again: a new source row arrives without help.
     await sql(
@@ -1700,7 +1787,7 @@ async function phaseControlPlane() {
       const rows = await pintailQuery(`SELECT COUNT(*) FROM orders`)
       if (Number(rows[0][0]) === Number(countBefore) + 1) break
       if (Date.now() > streamed) throw new Error('the reset mirror is not streaming new rows')
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
   })
   await check('keyless policy: ambiguity quarantines and exact multiplicity repairs', async () => {
@@ -1729,7 +1816,7 @@ async function phaseControlPlane() {
         // table not yet replicated
       }
       if (Date.now() > insertDeadline) throw new Error('keyless inserts never replicated')
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
     await sql("UPDATE keyless_log SET amount = amount + 10 WHERE label = 'b'")
     const flagDeadline = Date.now() + 120_000
@@ -1748,7 +1835,7 @@ async function phaseControlPlane() {
           `keyless UPDATE never flagged needs_resync: ${JSON.stringify(table)}`,
         )
       }
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
     let rejected = false
     try {
@@ -1806,7 +1893,7 @@ async function phaseControlPlane() {
       if (Date.now() > deleteFlagDeadline) {
         throw new Error(`ambiguous keyless DELETE was not quarantined: ${JSON.stringify(table)}`)
       }
-      await Bun.sleep(2_000)
+      await Bun.sleep(POLL_MS)
     }
     await api(`/api/databases/${databaseId}`, {
       method: 'PUT',
@@ -1911,7 +1998,7 @@ async function phaseControlPlane() {
 async function waitUntil(
   predicate: () => Promise<boolean>,
   timeoutMs: number,
-  pollMs = 2_000,
+  pollMs = POLL_MS,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
@@ -2044,7 +2131,7 @@ async function phaseSnapshotDdlWindow() {
         // The job slot is held by a supervisor cycle; that is correct server
         // behaviour, so retry rather than fail.
         if (!String(error).includes('409') || attempt >= 20) throw error
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
     }
     const adopted = await waitForAdoption(table, 1)
@@ -2263,7 +2350,7 @@ async function phaseDropTablePolling() {
         if (Date.now() > rebuilt) {
           throw new Error('the CDC handoff rebuild never ran after the polling switch')
         }
-        await Bun.sleep(2_000)
+        await Bun.sleep(POLL_MS)
       }
     }
   } finally {
@@ -2453,6 +2540,9 @@ async function startPintail(queryMemoryLimit?: number) {
       stderr: 'inherit',
       env: {
         ...process.env,
+        // Test cadence: every adoption/auto-include/re-probe wait in the
+        // lifecycle phases is a multiple of the supervisor interval.
+        PINTAIL_SUPERVISOR_INTERVAL_MS: SUPERVISOR_MS,
         ...(queryMemoryLimit === undefined
           ? {}
           : { PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(queryMemoryLimit) }),
@@ -2471,8 +2561,20 @@ async function startPintail(queryMemoryLimit?: number) {
 
 async function main() {
   const host = await dockerHost()
-  log(`starting MySQL source ${mysqlName}`)
-  await docker(
+  let reused = false
+  if (KEEP_MYSQL) {
+    const state = await docker('inspect', '--format', '{{.State.Running}}', mysqlName)
+      .then((result) => result.stdout.trim())
+      .catch(() => 'absent')
+    if (state === 'true') {
+      log(`reusing MySQL source ${mysqlName}`)
+      reused = true
+    } else if (state !== 'absent') {
+      await docker('rm', '-f', mysqlName)
+    }
+  }
+  if (!reused) log(`starting MySQL source ${mysqlName}`)
+  if (!reused) await docker(
     'run',
     '--detach',
     '--name',
@@ -2506,8 +2608,15 @@ async function main() {
     password: 'pintail',
     database: DATABASE,
   }
+  if (reused) {
+    // A fresh logical source on the standing server: same guarantees a new
+    // container gives, minus its boot and timezone load.
+    await sql(`DROP DATABASE IF EXISTS ${DATABASE}`)
+    await sql(`CREATE DATABASE ${DATABASE}`)
+    await sql('RESET BINARY LOGS AND GTIDS')
+  }
   await sql(`USE ${DATABASE}`)
-  await sql(`CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'`)
+  await sql(`CREATE USER IF NOT EXISTS 'pintail'@'%' IDENTIFIED BY 'pintail'`)
   await sql(
     `GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'`,
   )
@@ -2587,9 +2696,24 @@ async function main() {
   for (const [name, run] of phases) {
     if (selected && name !== 'snapshot' && !selected.includes(name)) continue
     log(`phase: ${name}`)
+    const phaseStart = Date.now()
     await run()
+    const ranAt = Date.now()
     await verifyConvergence(name)
+    const convergedAt = Date.now()
     await verifyCorpus(name)
+    const done = Date.now()
+    phaseTimings.push({
+      phase: name,
+      runSeconds: (ranAt - phaseStart) / 1000,
+      convergeSeconds: (convergedAt - ranAt) / 1000,
+      corpusSeconds: (done - convergedAt) / 1000,
+    })
+    log(
+      `phase ${name}: run ${((ranAt - phaseStart) / 1000).toFixed(1)}s, ` +
+        `converge ${((convergedAt - ranAt) / 1000).toFixed(1)}s, ` +
+        `corpus ${((done - convergedAt) / 1000).toFixed(1)}s`,
+    )
   }
 
   publish()
@@ -2612,6 +2736,16 @@ function publish() {
       (result) =>
         `| ${result.phase} | ${result.check} | ${result.status} | ${(result.detail ?? '').split('\n')[0].replaceAll('|', '\\|')} |`,
     ),
+    '',
+    '## Timing',
+    '',
+    '| Phase | run s | converge s | corpus s |',
+    '|---|---|---|---|',
+    ...phaseTimings.map(
+      (timing) =>
+        `| ${timing.phase} | ${timing.runSeconds.toFixed(1)} | ${timing.convergeSeconds.toFixed(1)} | ${timing.corpusSeconds.toFixed(1)} |`,
+    ),
+    `| total | ${phaseTimings.reduce((sum, timing) => sum + timing.runSeconds, 0).toFixed(1)} | ${phaseTimings.reduce((sum, timing) => sum + timing.convergeSeconds, 0).toFixed(1)} | ${phaseTimings.reduce((sum, timing) => sum + timing.corpusSeconds, 0).toFixed(1)} |`,
     '',
   ]
   // Phase-subset runs write a separate artifact so an iteration loop never
@@ -2636,7 +2770,10 @@ async function cleanup() {
   try {
     await mysqlConnection?.end()
   } catch {}
-  if (mysqlStarted) {
+  try {
+    await mysqlPool?.end()
+  } catch {}
+  if (mysqlStarted && !KEEP_MYSQL) {
     try {
       await docker('rm', '--force', '--volumes', mysqlName)
     } catch (error) {
