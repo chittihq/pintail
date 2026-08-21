@@ -241,6 +241,15 @@ pub enum ErrorKind {
     ErConCountError = 1040,
     /// 1105: anything without a more specific code.
     ErUnknownError = 1105,
+    /// 1052: an unqualified column name matches more than one input table.
+    ErNonUniqError = 1052,
+    /// 1054: the column does not exist in any visible relation.
+    ErBadFieldError = 1054,
+    /// 1055: a selected column is neither grouped nor aggregated
+    /// (`ONLY_FULL_GROUP_BY`).
+    ErWrongFieldWithGroup = 1055,
+    /// 1690: numeric evaluation left the declared result type's range.
+    ErDataOutOfRange = 1690,
 }
 
 impl ErrorKind {
@@ -259,8 +268,12 @@ impl ErrorKind {
             Self::ErBadDbError
             | Self::ErParseError
             | Self::ErSyntaxError
-            | Self::ErOptionPreventsStatement => b"42000",
+            | Self::ErOptionPreventsStatement
+            | Self::ErWrongFieldWithGroup => b"42000",
             Self::ErNoSuchTable => b"42S02",
+            Self::ErBadFieldError => b"42S22",
+            Self::ErNonUniqError => b"23000",
+            Self::ErDataOutOfRange => b"22003",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErConCountError => b"08004",
             Self::ErQueryInterrupted => b"70100",
@@ -310,6 +323,13 @@ mod tests {
         assert_eq!(ErrorKind::ErQueryInterrupted.sql_state(), b"70100");
         assert_eq!(ErrorKind::ErAccessDeniedError.sql_state(), b"28000");
         assert_eq!(ErrorKind::ErNoSuchTable.sql_state(), b"42S02");
+        assert_eq!(ErrorKind::ErBadFieldError.sql_state(), b"42S22");
+        assert_eq!(ErrorKind::ErNonUniqError.sql_state(), b"23000");
+        assert_eq!(ErrorKind::ErWrongFieldWithGroup.sql_state(), b"42000");
+        assert_eq!(ErrorKind::ErDataOutOfRange.sql_state(), b"22003");
+        assert_eq!(ErrorKind::ErBadFieldError.code(), 1054);
+        assert_eq!(ErrorKind::ErNonUniqError.code(), 1052);
+        assert_eq!(ErrorKind::ErDataOutOfRange.code(), 1690);
         assert_eq!(ErrorKind::ErDbaccessDeniedError.code(), 1044);
         assert_eq!(ErrorKind::ErWrongArguments.code(), 1210);
         assert_eq!(ErrorKind::ErUnknownStmtHandler.code(), 1243);

@@ -100,12 +100,41 @@ pub enum QueryError {
     NotReady(String),
     #[error("{0}")]
     Invalid(String),
+    /// A statement the engine understood and rejected for a reason `MySQL`
+    /// names with a specific error code - kept apart from
+    /// [`QueryError::Invalid`] so the wire server can answer with `MySQL`'s
+    /// errno/SQLSTATE instead of a blanket parse error.
+    #[error("{message}")]
+    Rejected {
+        /// Which `MySQL` error class the rejection belongs to.
+        rejection: SqlRejection,
+        /// Human-readable detail.
+        message: String,
+    },
     #[error("query engine failed: {0}")]
     Internal(String),
     #[error("query execution was interrupted after max_execution_time elapsed")]
     Interrupted,
     #[error("too many concurrent queries; the server is at its execution limit, retry shortly")]
     Overloaded,
+}
+
+/// The `MySQL` error classes Pintail distinguishes on the wire. Each maps
+/// to one errno/SQLSTATE pair; everything else stays a 1064 parse error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SqlRejection {
+    /// 1049: the qualified database does not exist.
+    UnknownDatabase,
+    /// 1146: the table does not exist.
+    UnknownTable,
+    /// 1054: the column (or relation qualifier) does not exist.
+    UnknownColumn,
+    /// 1052: an unqualified name matches more than one input.
+    AmbiguousColumn,
+    /// 1055: a selected column is neither grouped nor aggregated.
+    UngroupedColumn,
+    /// 1690: numeric evaluation left the result type's range.
+    OutOfRange,
 }
 
 /// Opens reader-pinned table snapshots and runs Pintail's native SQL engine.
@@ -375,7 +404,7 @@ impl ReplicaEngine {
     ) -> Result<QueryOutput, QueryError> {
         let bound = Binder::new(catalog, Some(database_name))
             .bind(statement)
-            .map_err(|error| QueryError::Invalid(error.to_string()))?;
+            .map_err(|error| query_bind_error(&error))?;
         let result_nullability = source_result_nullability(&bound, catalog, facts);
         let result_collations = bound
             .projection
@@ -591,7 +620,38 @@ fn collect_rows(
 fn query_execution_error(error: ExecError) -> QueryError {
     match error {
         ExecError::QueryTimedOut | ExecError::QueryCancelled => QueryError::Interrupted,
+        // MySQL answers a row-wise numeric overflow with 1690/22003, not
+        // an internal error - clients branch on the code.
+        ExecError::NumericOverflow => QueryError::Rejected {
+            rejection: SqlRejection::OutOfRange,
+            message: error.to_string(),
+        },
         error => QueryError::Internal(error.to_string()),
+    }
+}
+
+/// Classifies binder rejections into the `MySQL` error classes the wire
+/// protocol distinguishes. Anything unclassified keeps today's behaviour
+/// (1064 via [`QueryError::Invalid`]).
+fn query_bind_error(error: &pintail_sql::BindError) -> QueryError {
+    use pintail_sql::BindError;
+    let rejection = match &error {
+        BindError::UnknownDatabase(_) => SqlRejection::UnknownDatabase,
+        BindError::UnknownTable { .. } => SqlRejection::UnknownTable,
+        // An unknown relation qualifier surfaces in MySQL as an unknown
+        // column ("Unknown column 'u.x' in 'field list'").
+        BindError::UnknownColumn(_) | BindError::UnknownRelation(_) => SqlRejection::UnknownColumn,
+        BindError::AmbiguousColumn(_)
+        | BindError::AmbiguousRelation(_)
+        | BindError::AmbiguousOrderBy(_) => SqlRejection::AmbiguousColumn,
+        BindError::UngroupedColumn(_) | BindError::UngroupedSubquery => {
+            SqlRejection::UngroupedColumn
+        }
+        _ => return QueryError::Invalid(error.to_string()),
+    };
+    QueryError::Rejected {
+        rejection,
+        message: error.to_string(),
     }
 }
 

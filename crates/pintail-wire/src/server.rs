@@ -28,7 +28,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
-    ReplicaEngine,
+    ReplicaEngine, SqlRejection,
 };
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
@@ -1829,6 +1829,14 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             ErrorKind::ErOptionPreventsStatement
         }
         QueryError::Invalid(_) => ErrorKind::ErParseError,
+        QueryError::Rejected { rejection, .. } => match rejection {
+            SqlRejection::UnknownDatabase => ErrorKind::ErBadDbError,
+            SqlRejection::UnknownTable => ErrorKind::ErNoSuchTable,
+            SqlRejection::UnknownColumn => ErrorKind::ErBadFieldError,
+            SqlRejection::AmbiguousColumn => ErrorKind::ErNonUniqError,
+            SqlRejection::UngroupedColumn => ErrorKind::ErWrongFieldWithGroup,
+            SqlRejection::OutOfRange => ErrorKind::ErDataOutOfRange,
+        },
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
         QueryError::Overloaded => ErrorKind::ErConCountError,
         QueryError::NotReady(_) | QueryError::Internal(_) => ErrorKind::ErUnknownError,
@@ -2233,6 +2241,27 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    use super::{QueryError, SqlRejection, error_kind};
+
+    #[test]
+    fn rejections_map_to_mysql_errno_and_sqlstate() {
+        let expectations = [
+            (SqlRejection::UnknownDatabase, 1049, *b"42000"),
+            (SqlRejection::UnknownTable, 1146, *b"42S02"),
+            (SqlRejection::UnknownColumn, 1054, *b"42S22"),
+            (SqlRejection::AmbiguousColumn, 1052, *b"23000"),
+            (SqlRejection::UngroupedColumn, 1055, *b"42000"),
+            (SqlRejection::OutOfRange, 1690, *b"22003"),
+        ];
+        for (rejection, errno, sqlstate) in expectations {
+            let kind = error_kind(&QueryError::Rejected {
+                rejection,
+                message: String::new(),
+            });
+            assert_eq!(kind.code(), errno, "{rejection:?}");
+            assert_eq!(kind.sql_state(), &sqlstate, "{rejection:?}");
+        }
+    }
     use pintail_protocol::value::decode_binary_value;
     use pintail_protocol::{ColumnFlags, ColumnType, ParameterType};
     use pintail_sql::DEFAULT_TEXT_COLLATION;

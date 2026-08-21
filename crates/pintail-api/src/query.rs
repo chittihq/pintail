@@ -382,6 +382,7 @@ fn query_error(error: QueryError) -> ApiError {
             };
             ApiError::bad_request(message)
         }
+        QueryError::Rejected { .. } => ApiError::bad_request(error.to_string()),
         QueryError::Interrupted => ApiError::request_timeout(error.to_string()),
         QueryError::Internal(_) => ApiError::internal(error),
     }

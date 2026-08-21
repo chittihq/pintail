@@ -1555,6 +1555,60 @@ async function phaseControlPlane() {
       throw new Error(`wire types diverge: ${mismatches.join('; ')}`)
     }
   })
+  await check('erroring queries carry MySQL errno and SQLSTATE', async () => {
+    // Clients branch on error codes, not messages: an ORM that maps 1146
+    // to "run migrations" and 1054 to "schema drift" misbehaves if every
+    // rejection arrives as a 1064 parse error. Each case must error on
+    // BOTH engines with the same errno/SQLSTATE pair; message text is the
+    // engine's own.
+    const cases = [
+      { label: 'unknown column', sql: 'SELECT nope_col FROM orders' },
+      { label: 'unknown column via alias', sql: 'SELECT o.nope_col FROM orders o' },
+      { label: 'unknown relation qualifier', sql: 'SELECT missing.id FROM orders' },
+      { label: 'unknown table', sql: 'SELECT * FROM no_such_table' },
+      { label: 'unknown database', sql: 'SELECT * FROM no_such_db.orders' },
+      { label: 'parse error', sql: 'SELECTT 1' },
+      {
+        label: 'ambiguous column',
+        sql: 'SELECT id FROM orders JOIN customers ON customers.id = orders.customer_id',
+      },
+      { label: 'unsigned out of range', sql: 'SELECT id - 99999999999999999 FROM orders LIMIT 1' },
+    ]
+    const capture = async (
+      client: { query: (sql: string) => Promise<unknown> },
+      sql: string,
+    ): Promise<{ errno: number; sqlState: string } | null> => {
+      try {
+        await client.query(sql)
+        return null
+      } catch (error) {
+        const raised = error as { errno?: number; sqlState?: string }
+        return { errno: raised.errno ?? 0, sqlState: raised.sqlState ?? '' }
+      }
+    }
+    const divergences: string[] = []
+    for (const testCase of cases) {
+      const expected = await capture(mysqlConnection!, testCase.sql)
+      const actual = await capture(pintailWire!, testCase.sql)
+      if (!expected) {
+        divergences.push(`${testCase.label}: MySQL did not error - bad matrix case`)
+        continue
+      }
+      if (!actual) {
+        divergences.push(`${testCase.label}: pintail answered where MySQL raised ${expected.errno}`)
+        continue
+      }
+      if (actual.errno !== expected.errno || actual.sqlState !== expected.sqlState) {
+        divergences.push(
+          `${testCase.label}: mysql ${expected.errno}/${expected.sqlState}, ` +
+            `pintail ${actual.errno}/${actual.sqlState}`,
+        )
+      }
+    }
+    if (divergences.length) {
+      throw new Error(`error semantics diverge: ${divergences.join('; ')}`)
+    }
+  })
   await check('the audit trail records the network peer of every action', async () => {
     // Actions above (snapshot starts, mode changes, wire connections) have
     // all been audited by now. Each row must say where it came from: user
