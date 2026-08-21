@@ -48,7 +48,14 @@ pub struct SnapshotOptions {
 impl Default for SnapshotOptions {
     fn default() -> Self {
         Self {
-            workers: 4,
+            // PINTAIL_SNAPSHOT_WORKERS caps copy parallelism for hosts
+            // where four workers saturate CPU or disk and starve the query
+            // and dashboard paths sharing the process. Clamped to [1, 16];
+            // unset or unparsable keeps the tuned default of 4.
+            workers: std::env::var("PINTAIL_SNAPSHOT_WORKERS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .map_or(4, |workers| workers.clamp(1, 16)),
             chunk_rows: 100_000,
             allow_degraded_lock: true,
             max_new_chunks: None,

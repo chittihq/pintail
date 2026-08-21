@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `PINTAIL_SNAPSHOT_WORKERS` caps snapshot/resnapshot copy parallelism
+  (default 4, clamped 1-16) for hosts where the copy workers would
+  otherwise saturate CPU or disk and slow the dashboard and query paths
+  sharing the process.
+
 ### Fixed
 
 - A JSON-extracted string's `utf8mb4_bin` collation now survives derived
