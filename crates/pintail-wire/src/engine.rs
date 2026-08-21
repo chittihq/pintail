@@ -133,6 +133,8 @@ pub enum SqlRejection {
     AmbiguousColumn,
     /// 1055: a selected column is neither grouped nor aggregated.
     UngroupedColumn,
+    /// 1111: a group function appeared where no aggregation scope exists.
+    GroupFunctionMisplaced,
     /// 1690: numeric evaluation left the result type's range.
     OutOfRange,
 }
@@ -647,6 +649,7 @@ fn query_bind_error(error: &pintail_sql::BindError) -> QueryError {
         BindError::UngroupedColumn(_) | BindError::UngroupedSubquery => {
             SqlRejection::UngroupedColumn
         }
+        BindError::GroupFunctionMisplaced(_) => SqlRejection::GroupFunctionMisplaced,
         _ => return QueryError::Invalid(error.to_string()),
     };
     QueryError::Rejected {

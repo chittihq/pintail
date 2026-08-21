@@ -2472,6 +2472,14 @@ fn bind_expr_inner(
         {
             bind_aggregate(function, tables, aggregates, windows, subqueries)
         }
+        // An aggregate in a scope with no aggregate list (WHERE, JOIN ON,
+        // another aggregate's arguments) is MySQL's 1111 "Invalid use of
+        // group function", not a parse error.
+        Expr::Function(function)
+            if aggregates.is_none() && aggregate_function_name(function).is_some() =>
+        {
+            Err(BindError::GroupFunctionMisplaced(expr.to_string()))
+        }
         Expr::Function(function) => {
             bind_scalar_function(function, tables, aggregates, windows, subqueries)
         }
@@ -4707,6 +4715,9 @@ pub enum BindError {
     UngroupedSubquery,
     /// A selected column is neither grouped nor aggregated.
     UngroupedColumn(String),
+    /// A group function appeared where no aggregation scope exists
+    /// (WHERE, JOIN ON, or inside another aggregate's arguments).
+    GroupFunctionMisplaced(String),
     /// GROUP BY and HAVING have an invalid combination.
     InvalidGrouping(String),
     /// A row filter does not have `MySQL` truth-value semantics.
@@ -4802,6 +4813,9 @@ impl fmt::Display for BindError {
             Self::UngroupedSubquery => formatter.write_str(
                 "a correlated subquery in the select list is neither grouped nor aggregated",
             ),
+            Self::GroupFunctionMisplaced(expression) => {
+                write!(formatter, "invalid use of group function: {expression}")
+            }
             Self::UngroupedColumn(column) => {
                 write!(
                     formatter,
@@ -5593,6 +5607,22 @@ mod tests {
             &query.projection[0].expr.kind,
             BoundExprKind::Column(_)
         ));
+    }
+
+    #[test]
+    fn a_group_function_outside_an_aggregate_scope_is_misplaced() {
+        // WHERE has no aggregate list; MySQL answers 1111, not a parse error.
+        let error = bind("SELECT id FROM Events WHERE SUM(id) > 1").unwrap_err();
+        assert!(
+            matches!(error, BindError::GroupFunctionMisplaced(_)),
+            "{error:?}"
+        );
+        // Inside another aggregate's arguments is the same misuse.
+        let error = bind("SELECT SUM(SUM(id)) FROM Events").unwrap_err();
+        assert!(
+            matches!(error, BindError::GroupFunctionMisplaced(_)),
+            "{error:?}"
+        );
     }
 
     #[test]

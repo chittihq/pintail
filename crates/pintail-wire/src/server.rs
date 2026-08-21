@@ -1835,6 +1835,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::UnknownColumn => ErrorKind::ErBadFieldError,
             SqlRejection::AmbiguousColumn => ErrorKind::ErNonUniqError,
             SqlRejection::UngroupedColumn => ErrorKind::ErWrongFieldWithGroup,
+            SqlRejection::GroupFunctionMisplaced => ErrorKind::ErInvalidGroupFuncUse,
             SqlRejection::OutOfRange => ErrorKind::ErDataOutOfRange,
         },
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
@@ -2251,6 +2252,7 @@ mod tests {
             (SqlRejection::UnknownColumn, 1054, *b"42S22"),
             (SqlRejection::AmbiguousColumn, 1052, *b"23000"),
             (SqlRejection::UngroupedColumn, 1055, *b"42000"),
+            (SqlRejection::GroupFunctionMisplaced, 1111, *b"HY000"),
             (SqlRejection::OutOfRange, 1690, *b"22003"),
         ];
         for (rejection, errno, sqlstate) in expectations {

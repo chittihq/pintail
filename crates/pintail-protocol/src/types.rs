@@ -250,6 +250,8 @@ pub enum ErrorKind {
     ErWrongFieldWithGroup = 1055,
     /// 1690: numeric evaluation left the declared result type's range.
     ErDataOutOfRange = 1690,
+    /// 1111: a group function was used where no aggregation scope exists.
+    ErInvalidGroupFuncUse = 1111,
 }
 
 impl ErrorKind {
@@ -277,7 +279,10 @@ impl ErrorKind {
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErConCountError => b"08004",
             Self::ErQueryInterrupted => b"70100",
-            Self::ErWrongArguments | Self::ErUnknownStmtHandler | Self::ErUnknownError => b"HY000",
+            Self::ErWrongArguments
+            | Self::ErUnknownStmtHandler
+            | Self::ErUnknownError
+            | Self::ErInvalidGroupFuncUse => b"HY000",
         }
     }
 }
