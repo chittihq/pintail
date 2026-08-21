@@ -1,6 +1,6 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T04:23:35.289Z.
+Measured 2026-08-21T08:27:41.622Z.
 
 **2096 passed, 0 failed, 6 documented-gap warnings.**
 
@@ -1791,7 +1791,7 @@ Measured 2026-08-21T04:23:35.289Z.
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_0d55f2c050f9bf57ba5164452eb62523","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-21T04:08:08.673927+00:00","updated_at":"2026-08-21T04:16:32.817521+00:00"},"tables":17,"rows":815} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -2025,7 +2025,7 @@ Measured 2026-08-21T04:23:35.289Z.
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
-| ddl-documented-gaps | converge:order_items | PASS |  |
+| ddl-documented-gaps | converge:order_items | WARN | row 0: |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
@@ -2125,3 +2125,28 @@ Measured 2026-08-21T04:23:35.289Z.
 | ddl-documented-gaps | query:set: order by walks the member bitmask | PASS |  |
 | ddl-documented-gaps | query:set: grouping orders groups by bitmask | PASS |  |
 | ddl-documented-gaps | query:geometry: hex round-trips the internal format | PASS |  |
+
+## Timing
+
+| Phase | run s | converge s | corpus s |
+|---|---|---|---|
+| snapshot | 0.0 | 2.9 | 1.3 |
+| orm-compat | 10.3 | 0.7 | 0.6 |
+| crud | 0.5 | 2.0 | 0.6 |
+| type-edges | 0.1 | 2.0 | 1.0 |
+| ddl | 1.2 | 28.8 | 0.6 |
+| schema-drift-minimal | 0.5 | 2.5 | 0.6 |
+| schema-drift-unseen | 1.0 | 11.9 | 0.7 |
+| churn | 20.1 | 1.1 | 0.7 |
+| execution-budget | 0.0 | 0.7 | 0.7 |
+| spill | 2.9 | 0.9 | 0.7 |
+| pooling | 0.1 | 0.7 | 0.6 |
+| restart | 0.7 | 2.5 | 0.8 |
+| control-plane | 82.9 | 2.0 | 1.2 |
+| snapshot-ddl-window | 14.4 | 1.9 | 0.6 |
+| drop-table-cdc | 21.4 | 1.7 | 0.6 |
+| drop-table-recreate | 141.3 | 1.3 | 0.6 |
+| drop-table-polling | 37.2 | 2.3 | 0.8 |
+| drop-database | 18.9 | 1.4 | 0.6 |
+| ddl-documented-gaps | 0.1 | 2.5 | 0.6 |
+| total | 353.6 | 70.0 | 14.0 |
