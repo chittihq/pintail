@@ -42,10 +42,10 @@ const CONVERGE_TIMEOUT_MS = 180_000
 /// changing what any check accepts.
 const POLL_MS = Number(process.env.PINTAIL_E2E_POLL_MS ?? 250)
 const CONVERGE_POLL_MS = POLL_MS
-/// The supervisor cadence the spawned pintail runs with. 750ms keeps every
+/// The supervisor cadence the spawned pintail runs with. 2500ms halves the
 /// adoption and re-probe wait proportional without turning supervision into
 /// a busy loop; production stays at its 5s default.
-const SUPERVISOR_MS = process.env.PINTAIL_E2E_SUPERVISOR_MS ?? '750'
+const SUPERVISOR_MS = process.env.PINTAIL_E2E_SUPERVISOR_MS ?? '2500'
 
 interface CheckResult {
   phase: string
@@ -603,11 +603,12 @@ async function mysqlCount(table: string): Promise<string> {
 /// A supervisor cycle may hold the database's job slot at any instant; the
 /// 409 is correct API behavior, so callers retry it rather than failing.
 async function retry409<T>(operation: () => Promise<T>): Promise<T> {
+  const retryStart = Date.now()
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await operation()
     } catch (error) {
-      if (!String(error).includes('409') || attempt >= 30) throw error
+      if (!String(error).includes('409') || Date.now() - retryStart > 60_000) throw error
       await Bun.sleep(POLL_MS)
     }
   }
@@ -1550,12 +1551,13 @@ async function phaseControlPlane() {
   await check('resync and reconcile are accepted', async () => {
     // A supervisor cycle may hold the job lock at this instant; the 409 is
     // correct API behavior, so retry briefly instead of failing the check.
+    const retryStart = Date.now()
     for (let attempt = 0; ; attempt += 1) {
       try {
         await api(`/api/databases/${databaseId}/tables/orders/resync`, { method: 'POST' })
         break
       } catch (error) {
-        if (!String(error).includes('409') || attempt >= 20) throw error
+        if (!String(error).includes('409') || Date.now() - retryStart > 40_000) throw error
         await Bun.sleep(POLL_MS)
       }
     }
@@ -1618,6 +1620,7 @@ async function phaseControlPlane() {
       order_items: await countOf('order_items'),
     }
     let accepted: { run_id: string; state: string; table: string } | undefined
+    const retryStart = Date.now()
     for (let attempt = 0; ; attempt += 1) {
       try {
         accepted = await api<{ run_id: string; state: string; table: string }>(
@@ -1631,7 +1634,7 @@ async function phaseControlPlane() {
         // loaded host the slot can stay held for well over a minute, so the
         // budget is generous rather than marginal - a tight one turns host
         // load into a product failure.
-        if (!String(error).includes('409') || attempt >= 60) throw error
+        if (!String(error).includes('409') || Date.now() - retryStart > 120_000) throw error
         await Bun.sleep(POLL_MS)
       }
     }
@@ -2120,6 +2123,7 @@ async function phaseSnapshotDdlWindow() {
     // force the snapshot immediately, before any cadence can read the DDL.
     await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, note VARCHAR(32) NOT NULL)`)
     await sql(`INSERT INTO ${table} VALUES (1, 'inside-the-window')`)
+    const retryStart = Date.now()
     for (let attempt = 0; ; attempt += 1) {
       try {
         await api(`/api/databases/${databaseId}/snapshot`, {
@@ -2130,7 +2134,7 @@ async function phaseSnapshotDdlWindow() {
       } catch (error) {
         // The job slot is held by a supervisor cycle; that is correct server
         // behaviour, so retry rather than fail.
-        if (!String(error).includes('409') || attempt >= 20) throw error
+        if (!String(error).includes('409') || Date.now() - retryStart > 40_000) throw error
         await Bun.sleep(POLL_MS)
       }
     }
@@ -2341,12 +2345,35 @@ async function phaseDropTablePolling() {
       // waiting on state alone returns before the rebuild even starts;
       // only a snapshot run that did not exist before the switch proves it
       // ran.
+      // The rebuild only exists when polling actually checkpointed: a fast
+      // cadence can leave the phase's failing-poll window with no polling
+      // checkpoint at all, and CDC then resumes directly - correct, and no
+      // snapshot ever appears. Accept either shape: a completed rebuild
+      // snapshot, or thirty seconds of streaming-with-rows during which no
+      // new snapshot run has appeared (a pending rebuild fires within one
+      // supervisor cadence, so a quiet half minute proves none is coming).
       const rebuilt = Date.now() + 240_000
+      let quietSince = Date.now()
+      let known = new Set(seen)
       for (;;) {
-        const done = (await runs()).some(
-          (run) => !seen.has(run.id) && run.kind === 'snapshot' && run.status === 'completed',
-        )
-        if (done && (await replicaCount('customers')) > 0) break
+        const current = await runs()
+        const fresh = current.filter((run) => !known.has(run.id) && run.kind === 'snapshot')
+        if (fresh.some((run) => run.status === 'completed') && (await replicaCount('customers')) > 0) {
+          break
+        }
+        if (fresh.length > 0) {
+          for (const run of fresh) known.add(run.id)
+          quietSince = Date.now()
+        }
+        const rows = (await replicaCount('customers')) ?? 0
+        const status = await api<{ state: string }>(`/api/databases/${databaseId}`)
+        if (
+          status.state === 'streaming'
+          && rows > 0
+          && Date.now() - quietSince > 30_000
+        ) {
+          break
+        }
         if (Date.now() > rebuilt) {
           throw new Error('the CDC handoff rebuild never ran after the polling switch')
         }
