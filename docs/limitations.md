@@ -219,6 +219,12 @@ stays readable as a list of things to fix.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB.
 
+- MySQL's compound interval units (`INTERVAL '1-2' YEAR_MONTH`,
+  `INTERVAL '3 4:00:00' DAY_SECOND` and the other two-part qualifiers) are
+  rejected at parse: sqlparser-rs 0.62 has no token for the compound
+  keywords. Single-unit intervals, including expressions like
+  `INTERVAL -WEEKDAY(x) DAY`, are unaffected.
+
 ## CDC engine
 
 - The supervisor runs finite catch-up cycles on a five-second cadence, so a

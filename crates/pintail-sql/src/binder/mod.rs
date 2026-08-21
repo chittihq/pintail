@@ -5617,7 +5617,7 @@ mod tests {
             query
                 .projection
                 .iter()
-                .all(|item| item.expr.data_type == Some(DataType::UInt64))
+                .all(|item| item.expr.data_type == Some(DataType::Int64))
         );
         // WEEK parses but is outside the supported unit set.
         assert!(matches!(

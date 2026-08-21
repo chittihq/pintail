@@ -1125,6 +1125,8 @@ export const differentialQueries: DifferentialQuery[] = [
       "DATE_SUB(updated_at, INTERVAL '3 4:00:00' DAY_SECOND) AS backdated " +
       'FROM orders WHERE updated_at IS NOT NULL ORDER BY id LIMIT 40',
     tables: ['orders'],
+    documentedGap:
+      "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them",
   },
   {
     // Looker's symmetric aggregate: MD5 the key, CONV a 15-hex-digit

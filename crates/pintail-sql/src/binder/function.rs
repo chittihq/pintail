@@ -1469,7 +1469,14 @@ pub(super) fn bind_scalar(
             }),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::DatePart(_) | ScalarFunction::UnixTimestamp => (
+        // MySQL types every date-part extraction as SIGNED - `-WEEKDAY(x)`
+        // is a legal expression there, so an unsigned carrier here turned
+        // the negation into a spurious overflow (found by the BI corpus).
+        ScalarFunction::DatePart(_) => (
+            Some(DataType::Int64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::UnixTimestamp => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),
         ),

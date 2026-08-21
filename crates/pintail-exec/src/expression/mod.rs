@@ -1442,7 +1442,7 @@ pub(crate) fn evaluate_units_date_part(
         | DatePart::IsoWeek
         | DatePart::WeekMode(_) => return None,
     };
-    Some(Ok(Value::UInt64(value)))
+    Some(Ok(Value::Int64(i64::try_from(value).unwrap_or(i64::MAX))))
 }
 
 fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Value, ExecError>> {
@@ -1498,7 +1498,9 @@ fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Val
             }
         }
     };
-    Some(Ok(Value::UInt64(date_value)))
+    Some(Ok(Value::Int64(
+        i64::try_from(date_value).unwrap_or(i64::MAX),
+    )))
 }
 
 fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
@@ -1784,14 +1786,21 @@ fn evaluate_eager_scalar_typed(
             // where MySQL answers '09'.
             scalar_string(&values[0])?.trim_matches(' ').to_owned(),
         )),
-        ScalarFunction::Length => Ok(Value::UInt64(
-            u64::try_from(scalar_string(&values[0])?.len())
+        // Binary values are counted as raw bytes: LENGTH(geometry) is the
+        // stored WKB size (SRID prefix included), and the binary charset
+        // makes CHAR_LENGTH the same count. Routing them through the text
+        // coercion demanded valid UTF-8 of arbitrary bytes (found by the
+        // geometry byte-contract corpus query).
+        ScalarFunction::Length => Ok(Value::UInt64(match &values[0] {
+            Value::Binary(bytes) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            other => u64::try_from(scalar_string(other)?.len())
                 .map_err(|_| ExecError::NumericOverflow)?,
-        )),
-        ScalarFunction::CharLength => Ok(Value::UInt64(
-            u64::try_from(scalar_string(&values[0])?.chars().count())
+        })),
+        ScalarFunction::CharLength => Ok(Value::UInt64(match &values[0] {
+            Value::Binary(bytes) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            other => u64::try_from(scalar_string(other)?.chars().count())
                 .map_err(|_| ExecError::NumericOverflow)?,
-        )),
+        })),
         ScalarFunction::Replace => Ok(Value::Utf8(
             scalar_string(&values[0])?
                 .replace(&scalar_string(&values[1])?, &scalar_string(&values[2])?),
