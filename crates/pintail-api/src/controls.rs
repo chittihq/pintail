@@ -161,7 +161,7 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         return;
     }
     {
-        let mut cooldown = auto_resync_cooldown()
+        let cooldown = auto_resync_cooldown()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = (database_id.to_owned(), table_name.clone());
@@ -170,15 +170,21 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         {
             return;
         }
-        cooldown.insert(key, Instant::now());
     }
     if state
         .acquire_job_as(database_id, "an automatic table resnapshot")
         .is_err()
     {
-        // Another job holds the database; the next cycle tries again.
+        // Another job holds the database; the next cycle tries again. The
+        // cooldown is deliberately NOT stamped on this path - it records
+        // attempts actually started, and stamping a suppressed one would
+        // silence retries for the whole window.
         return;
     }
+    auto_resync_cooldown()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((database_id.to_owned(), table_name.clone()), Instant::now());
     let run_id = crate::state::random_identifier("run_", 16);
     let started = metadata
         .start_sync_run(
@@ -416,22 +422,43 @@ fn finish_table_resnapshot(
                 // operator watching the row is entitled to know the
                 // difference between a resnapshot that failed and one that
                 // succeeded without clearing the flag.
-                // The recopy carries the effects of every event this
-                // table dead-lettered; their tombstones are superseded.
-                let _ = metadata.clear_dlq_for_table(database_id, table_name);
-                if let Err(failure) =
-                    metadata.finish_table_resnapshot(database_id, table_name, state_name)
-                {
-                    state.publish(ApiEvent {
-                        kind: "resnapshot.error".to_owned(),
-                        database_id: Some(database_id.to_owned()),
-                        table: Some(table_name.to_owned()),
-                        message: format!("{table_name} recopied but stayed flagged: {failure}"),
-                        rows: Some(rows),
-                        bytes: Some(0),
-                        eta_seconds: None,
-                        at: Utc::now().to_rfc3339(),
-                    });
+                match metadata.finish_table_resnapshot(database_id, table_name, state_name) {
+                    Ok(()) => {
+                        // Only a table that actually left 'needs_resync' has
+                        // its dead letters superseded by the recopy. Clearing
+                        // before (or despite) a failed transition would lose
+                        // the diagnostic evidence while the problem stands -
+                        // the DLQ contract is that nothing drops silently, so
+                        // a failed purge is surfaced too.
+                        if let Err(failure) = metadata.clear_dlq_for_table(database_id, table_name)
+                        {
+                            state.publish(ApiEvent {
+                                kind: "resnapshot.error".to_owned(),
+                                database_id: Some(database_id.to_owned()),
+                                table: Some(table_name.to_owned()),
+                                message: format!(
+                                    "{table_name} recopied but its dead letters were not \
+                                     cleared: {failure}"
+                                ),
+                                rows: Some(rows),
+                                bytes: Some(0),
+                                eta_seconds: None,
+                                at: Utc::now().to_rfc3339(),
+                            });
+                        }
+                    }
+                    Err(failure) => {
+                        state.publish(ApiEvent {
+                            kind: "resnapshot.error".to_owned(),
+                            database_id: Some(database_id.to_owned()),
+                            table: Some(table_name.to_owned()),
+                            message: format!("{table_name} recopied but stayed flagged: {failure}"),
+                            rows: Some(rows),
+                            bytes: Some(0),
+                            eta_seconds: None,
+                            at: Utc::now().to_rfc3339(),
+                        });
+                    }
                 }
             }
             state.publish(ApiEvent {

@@ -946,3 +946,76 @@ fn a_reset_clears_replication_state_but_keeps_the_connection() {
     assert_eq!(database.state, "created");
     assert_eq!(database.encrypted_dsn, b"encrypted");
 }
+
+#[test]
+fn auto_resync_repairs_keyed_tables_and_leaves_keyless_to_policy() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-08-21T00:00:00Z")
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "orders", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "keyless_log", Some("[]"), Some("[]"))
+        .unwrap();
+    metadata
+        .mark_table_needs_resync("db-1", "orders", "drift")
+        .unwrap();
+    metadata
+        .mark_table_needs_resync("db-1", "keyless_log", "keyless update")
+        .unwrap();
+
+    // Both are quarantined; only the KEYED table is the supervisor's to
+    // repair. The keyless one belongs to keyless_policy, where the
+    // operator may have deliberately chosen manual remediation.
+    let all = metadata.tables_needing_resync("db-1").unwrap();
+    assert!(all.contains("orders") && all.contains("keyless_log"));
+    let auto = metadata.tables_needing_auto_resync("db-1").unwrap();
+    assert!(auto.contains("orders"));
+    assert!(!auto.contains("keyless_log"));
+}
+
+#[test]
+fn clearing_one_tables_dead_letters_leaves_the_neighbors() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    metadata
+        .upsert_database("db-1", "app", b"encrypted", "2026-08-21T00:00:00Z")
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "orders", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .upsert_snapshot_table("db-1", "items", Some("[\"id\"]"), Some("[\"id\"]"))
+        .unwrap();
+    metadata
+        .record_dlq(
+            "dlq-a",
+            "db-1",
+            Some("orders"),
+            "{}",
+            "x",
+            "2026-08-21T00:00:01Z",
+        )
+        .unwrap();
+    metadata
+        .record_dlq(
+            "dlq-b",
+            "db-1",
+            Some("items"),
+            "{}",
+            "y",
+            "2026-08-21T00:00:02Z",
+        )
+        .unwrap();
+
+    metadata.clear_dlq_for_table("db-1", "orders").unwrap();
+
+    let remaining = metadata.dlq_records(Some("db-1"), 10).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].table_name.as_deref(), Some("items"));
+}

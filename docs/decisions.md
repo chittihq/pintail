@@ -903,3 +903,23 @@ full core count can put thirty-two runnable threads on sixteen cores whenever
 aggregation runs while scans are in flight, which is the ordinary case. Whether
 that costs anything is unmeasured; it is the next thing to test, and it needs a
 sweep that varies BOTH pools rather than one.
+
+### Quarantined keyed tables auto-resync; keyless quarantine stays manual
+
+Under `binlog_row_metadata=MINIMAL` — MySQL's own default — a CDC stream
+that falls more than one hidden ALTER behind receives row images that
+genuinely cannot be placed against the freshly probed schema: intermediate
+widths are ambiguous by type alone, and guessing would corrupt column
+identity. The decoder quarantines the table (`needs_resync`), which used to
+wait for an operator, freezing that table's replication indefinitely.
+
+The supervisor now recopies the first quarantined KEYED table after each
+cycle, through the same flow as the operator resync endpoint (same job
+claim, same snapshot fence, same completion bookkeeping), behind a
+five-minute per-table cooldown recorded only for attempts actually started.
+Two deliberate boundaries: keyless tables are excluded, because their
+quarantine belongs to the database's `keyless_policy`, where an operator may
+have explicitly chosen manual remediation; and a table's dead-letter rows
+are purged only after the recopy's state transition succeeds, because a
+failed transition means the problem still stands and the DLQ contract is
+that nothing drops silently.
