@@ -803,6 +803,63 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: 'SELECT id, HEX(route) FROM shipments ORDER BY id',
     tables: ['shipments'],
   },
+  {
+    // MySQL's LENGTH of a geometry is the WKB byte count plus the 4-byte
+    // SRID prefix; both engines must agree on the exact byte size.
+    name: 'geometry: byte length includes the srid prefix',
+    sql: 'SELECT id, LENGTH(route) AS bytes FROM shipments ORDER BY id',
+    tables: ['shipments'],
+  },
+  {
+    name: 'geometry: null routes filter and count',
+    sql:
+      'SELECT COUNT(*) AS total, COUNT(route) AS routed FROM shipments',
+    tables: ['shipments'],
+  },
+  {
+    // Spatial functions do not exist in the mirror (docs/limitations.md:
+    // WKB is retained but there is no spatial logical type or function).
+    // The refusal stays visible as a WARN rather than written out.
+    name: 'geometry: spatial functions are a documented gap',
+    sql: 'SELECT id, ST_AsText(route) AS wkt FROM shipments ORDER BY id',
+    tables: ['shipments'],
+    documentedGap:
+      'spatial query functions are not implemented; geometry is carried as bytes only',
+  },
+  {
+    name: 'set: find_in_set filters by membership',
+    sql:
+      "SELECT id, tags FROM customers WHERE FIND_IN_SET('vip', tags) > 0 ORDER BY id",
+    tables: ['customers'],
+  },
+  {
+    // Confirmed against live 8.4: comparing a SET to a string does NOT
+    // reorder members - 'vip,alpha' matches nothing, only the stored
+    // declaration-order spelling 'alpha,vip' matches. Both directions
+    // are pinned so neither engine starts normalizing.
+    name: 'set: equality is literal, not member-normalized',
+    sql:
+      "SELECT SUM(tags = 'vip,alpha') AS reversed_hits, SUM(tags = 'alpha,vip') AS declared_hits " +
+      'FROM customers',
+    tables: ['customers'],
+  },
+  {
+    name: 'set: distinct values walk the bitmask including empty',
+    sql: 'SELECT DISTINCT tags FROM customers ORDER BY tags',
+    tables: ['customers'],
+  },
+  {
+    name: 'set: grouped counts order by bitmask not text',
+    sql: 'SELECT tags, COUNT(*) AS n FROM customers GROUP BY tags ORDER BY tags',
+    tables: ['customers'],
+  },
+  {
+    // MySQL compares SET values numerically (by member bitmask), so a
+    // range predicate over tags is a bitmask range, not a string range.
+    name: 'set: a range predicate compares the bitmask',
+    sql: "SELECT id, tags FROM customers WHERE tags > 'alpha' ORDER BY tags, id",
+    tables: ['customers'],
+  },
 
   // -------------------------------------------------------------------------
   // Corpus rebalancing (2026-08-21 audit): the shapes below widen the thin
