@@ -1211,4 +1211,92 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: 'SELECT id, total FROM orders ORDER BY total DESC, id LIMIT 10 OFFSET 10',
     tables: ['orders'],
   },
+
+  // -------------------------------------------------------------------------
+  // Concentration rebalancing (review 2026-08-21): 112 of 147 queries were
+  // single-table and orders/customers carried most of the load. These
+  // twelve spread reads across staff, counters, audit_log, Person, Event,
+  // Dim, order_items and shipments, seven of them through joins.
+
+  {
+    name: 'staff: three-level management chain with an inactive tail',
+    sql:
+      'SELECT s.id, s.name, s.active, m.name AS manager, gm.name AS grand_manager ' +
+      'FROM staff s LEFT JOIN staff m ON m.id = s.manager_id ' +
+      'LEFT JOIN staff gm ON gm.id = m.manager_id ORDER BY s.id',
+    tables: ['staff'],
+  },
+  {
+    name: 'staff: active split with id extremes',
+    sql:
+      'SELECT active, COUNT(*) AS n, MIN(id) AS lo, MAX(id) AS hi FROM staff ' +
+      'GROUP BY active ORDER BY active',
+    tables: ['staff'],
+  },
+  {
+    name: 'counters: full unsigned ladder readback',
+    sql: 'SELECT id, u8, u16, u32, u64, s64 FROM counters ORDER BY id',
+    tables: ['counters'],
+  },
+  {
+    name: 'counters: greatest and least across widths',
+    sql: 'SELECT id, GREATEST(u8, u16) AS g, LEAST(u32, u64) AS l FROM counters ORDER BY id',
+    tables: ['counters'],
+  },
+  {
+    name: 'dim: enum status split',
+    sql: 'SELECT status, COUNT(*) AS n FROM Dim GROUP BY status ORDER BY status',
+    tables: ['Dim'],
+  },
+  {
+    name: 'dim: pattern filter across collated columns',
+    sql: "SELECT dimId, code, label FROM Dim WHERE code LIKE '%a%' ORDER BY dimId",
+    tables: ['Dim'],
+  },
+  {
+    name: 'person: anti-join finds owners without facts',
+    sql:
+      'SELECT p.personId, p.name FROM Person p ' +
+      'LEFT JOIN Fact f ON f.ownedBy = p.personId ' +
+      'WHERE f.factId IS NULL ORDER BY p.personId',
+    tables: ['Person', 'Fact'],
+  },
+  {
+    name: 'person: created-fact counts through a scalar subquery',
+    sql:
+      'SELECT p.personId, p.name, ' +
+      '(SELECT COUNT(*) FROM Fact f WHERE f.createdBy = p.personId) AS created ' +
+      'FROM Person p ORDER BY p.personId',
+    tables: ['Person', 'Fact'],
+  },
+  {
+    name: 'event: lag over per-dimension timelines',
+    sql:
+      'SELECT eventId, dimId, LAG(at) OVER (PARTITION BY dimId ORDER BY at, eventId) AS prev_at ' +
+      'FROM Event ORDER BY eventId',
+    tables: ['Event'],
+  },
+  {
+    name: 'event: daily grain per dimension code',
+    sql:
+      'SELECT d.code, DATE(e.at) AS day, COUNT(*) AS n FROM Event e ' +
+      'JOIN Dim d ON d.dimId = e.dimId GROUP BY d.code, day ORDER BY d.code, day',
+    tables: ['Event', 'Dim'],
+  },
+  {
+    name: 'order_items: product rollup without the orders table',
+    sql:
+      'SELECT product, SUM(qty) AS units, ROUND(SUM(qty * price), 2) AS revenue ' +
+      'FROM order_items GROUP BY product ORDER BY product',
+    tables: ['order_items'],
+  },
+  {
+    name: 'shipments: carrier value through the items bridge',
+    sql:
+      'SELECT s.carrier, COUNT(DISTINCT s.order_id) AS shipped_orders, ' +
+      'ROUND(SUM(i.qty * i.price), 2) AS shipped_value ' +
+      'FROM shipments s JOIN order_items i ON i.order_id = s.order_id ' +
+      'GROUP BY s.carrier ORDER BY s.carrier',
+    tables: ['shipments', 'order_items'],
+  },
 ]

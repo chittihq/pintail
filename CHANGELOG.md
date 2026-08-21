@@ -4,6 +4,43 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Erroring queries answer with MySQL's errno and SQLSTATE instead of a
+  blanket 1064 parse error: unknown database (1049), unknown table
+  (1146/42S02), unknown column or relation qualifier (1054/42S22),
+  ambiguous column (1052/23000), ungrouped column (1055/42000), a group
+  function outside an aggregation scope (1111/HY000), and a row-wise
+  numeric overflow (1690/22003).
+- The supervisor automatically recopies a keyed table that CDC quarantined
+  as unplaceable (a MINIMAL-metadata stream more than one hidden ALTER
+  behind), through the operator resync flow with a per-table cooldown.
+  Keyless tables stay with `keyless_policy`; a successful recopy purges the
+  table's superseded dead-letter rows only after its state transition lands.
+- The e2e gate runs under `binlog_row_metadata=MINIMAL` (MySQL's default)
+  by default, records the source image, server version, and metadata mode
+  in its banked ledger, and gains a second-major leg: the `e2e-mysql80`
+  validate stage runs the full gate against mysql:8.0 on a fresh container
+  and banks its own ledger.
+
+### Fixed
+
+- Constant predicates fold the way MySQL folds them: a constant-false WHERE
+  returns the empty set instead of "physical input is missing <column>",
+  and a constant-true disjunct absorbs the whole OR before row evaluation,
+  so a doomed sibling expression (an unsigned subtraction underflow) is
+  never evaluated.
+- Date-part extractions (YEAR/WEEKDAY/QUARTER/...) type and evaluate as
+  SIGNED integers like MySQL's own metadata, so `INTERVAL -WEEKDAY(x) DAY`
+  no longer raises a spurious overflow.
+- `LENGTH`/`CHAR_LENGTH` of a binary value count raw bytes (geometry WKB
+  including the SRID prefix) instead of demanding the bytes be UTF-8 text.
+- The empty SET value no longer inherits a reconstructed ENUM label slot's
+  ordinal: `GROUP BY` over a SET column sorted the empty group wrongly once
+  memtable rows entered the scan.
+
 ## [0.0.4-rc10] - 2026-08-21
 
 The fast-gate release: the e2e differential gate drops from 16.4 to

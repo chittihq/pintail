@@ -142,6 +142,26 @@ const STAGES: Stage[] = [
     cwd: join(repository, 'tests', 'e2e'),
   },
   {
+    // The second-major MySQL leg: the same full gate against mysql:8.0 on
+    // a fresh container (never the keep-container, whose state belongs to
+    // the primary leg). Banks its own ledger (results-mysql80.md). Part of
+    // the rc stage list - a version we claim is covered has to gate.
+    name: 'e2e-mysql80',
+    remote: true,
+    env: {
+      ...(process.env.PINTAIL_E2E_DOCKER_HOST
+        ? { DOCKER_HOST: process.env.PINTAIL_E2E_DOCKER_HOST }
+        : {}),
+      PINTAIL_E2E_MYSQL_IMAGE: 'mysql:8.0',
+      PINTAIL_E2E_KEEP_MYSQL: '',
+      PINTAIL_E2E_RESULTS_SUFFIX: '-mysql80',
+    },
+    timeoutMinutes: 90,
+    stallMinutes: 25,
+    command: ['bun', 'run', 'run.ts'],
+    cwd: join(repository, 'tests', 'e2e'),
+  },
+  {
     // Production-shaped browser soak: 2M-row initial sync, dashboard actions
     // under live ingest, an 18M-row CDC backfill, Reset at 20M, and the
     // sakila dataset - tens of minutes BY DESIGN. Opt-in only; never in the

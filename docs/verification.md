@@ -83,21 +83,26 @@ when judging diversity. Optional production BI capture and dual-engine
 replay is documented under `tests/corpus/bi-captured/README.md` (not a
 release requirement).
 
-The end-to-end differential gate (`tests/e2e`) boots a real MySQL 8.4
-source and the release binary, registers the database through the HTTP API,
-and drives eight workload phases (transactional CRUD with rollbacks, type
-edges, live DDL including a mid-stream CREATE TABLE, 400 seeded churn
-operations with live queries every 100 operations, a SIGKILL restart with
-writes while the process is down, a control-plane pass that exercises the
-operator API routes — status, metrics, activity, mode switching, resync,
-API-key lifecycle, and database create/update/delete — and documented-gap
-DDL). After every phase it re-verifies each base table over the wire protocol
-plus 47 differential query shapes covering joins, windows, aggregates,
-subqueries, CTEs, set operations, JSON extract, and decimal averages. A pinned Sequelize, Prisma, and Drizzle
-matrix additionally compares generated read queries, decoded results, and
-schema-introspection artifacts against MySQL. The complete gate records 637
-passing checks; that headline is checks across phases, not independent
-behaviors. Documented gaps report WARN. `E2E_PHASES` selects a subset while
+The end-to-end differential gate (`tests/e2e`) boots a real MySQL source
+(image selectable via `PINTAIL_E2E_MYSQL_IMAGE`; 8.4 primary, 8.0 as a
+second leg) under `binlog_row_metadata=MINIMAL` — MySQL's default — and the
+release binary, registers the database through the HTTP API, and drives 21
+workload phases (transactional CRUD with rollbacks, type edges, live DDL
+including a mid-stream CREATE TABLE, schema drift under both metadata modes,
+seeded churn with live queries, a contention storm racing reads against
+DML, a SIGKILL restart with writes while the process is down, a
+control-plane pass over the operator API routes, table/database drop
+lifecycles, and documented-gap DDL). After every phase it re-verifies each
+base table over the wire protocol plus the differential corpus in
+`queries.ts` — 147 unique query shapes covering joins up to five tables,
+windows, aggregates, subqueries, CTEs, set operations, JSON, temporal
+grains, regex, SET/geometry contracts, and 21 BI-tool compilation shapes —
+and an errno/SQLSTATE rejection matrix. A pinned Sequelize, Prisma, and
+Drizzle matrix additionally compares generated read queries, decoded
+results, and schema-introspection artifacts against MySQL. The headline
+count in the banked ledger is checks across phases, not independent
+behaviors: the same corpus replays after every settled phase. Documented
+gaps report WARN. `E2E_PHASES` selects a subset while
 iterating, and `PINTAIL_E2E_BINARY` skips the release build. The M3 and M4 gates
 additionally run MySQL 8.4, MySQL 5.7, MariaDB 11,
 and a binlog-disabled source. They snapshot one million rows, SIGKILL real

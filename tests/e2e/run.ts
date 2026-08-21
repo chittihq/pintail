@@ -216,6 +216,7 @@ async function api<T>(
 /// (u64/decimal as exact strings, temporal as strings, binary as Buffers).
 let pintailWire: mysql.Connection | undefined
 let wireSecret = ''
+let mysqlServerVersion = ''
 
 async function pintailQuery(sql: string): Promise<unknown[][]> {
   for (let attempt = 0; ; attempt += 1) {
@@ -1020,20 +1021,91 @@ async function liveQueryConverges(
 }
 
 /// ~12 seconds of source DML racing a six-connection read storm on the
-/// wire. The replica is allowed exactly two answers under contention:
-/// a correct result set or admission backpressure (1040) - never an
-/// internal error, a protocol desync, or a dropped connection. The
-/// differential verdict on the data itself comes from the converge +
-/// corpus sweep that follows every phase.
+/// wire. Three things are actually verified, stated exactly:
+///
+/// 1. Availability: a read answers or backpressures (1040) - never an
+///    internal error, a protocol desync, or a dropped connection.
+/// 2. Snapshot consistency DURING the storm: every read carries its own
+///    redundancy inside ONE statement (a total recomputed two ways, a
+///    join that can never dangle, an ordering the result must obey), so a
+///    torn snapshot is detected at read time. Mid-storm values cannot be
+///    compared across statements or engines - each statement legitimately
+///    sees a different instant.
+/// 3. Value correctness AFTER the storm: once the writes stop, the same
+///    reads run differentially against MySQL and must match exactly; the
+///    converge + corpus sweep that follows every phase then re-proves the
+///    full corpus.
 async function phaseContention() {
-  const reads = [
-    'SELECT COUNT(*), COALESCE(ROUND(SUM(total), 2), 0) FROM orders',
-    'SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY status',
-    'SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id ' +
-      'ORDER BY o.id DESC LIMIT 20',
-    'SELECT i.order_id, SUM(i.qty * i.price) FROM order_items i ' +
-      'GROUP BY i.order_id ORDER BY i.order_id LIMIT 25',
-    "SELECT id, tags FROM customers WHERE FIND_IN_SET('vip', tags) > 0 ORDER BY id",
+  interface ContentionRead {
+    sql: string
+    verify: (rows: unknown[][]) => string | null
+  }
+  const asNumber = (value: unknown) => Number(String(value))
+  const reads: ContentionRead[] = [
+    {
+      // One statement, two derivations of the same total: a scalar
+      // subquery and a grouped rollup. Any torn snapshot splits them.
+      sql:
+        'SELECT (SELECT COUNT(*) FROM orders) AS total, COALESCE(SUM(n), 0) AS regrouped ' +
+        'FROM (SELECT COUNT(*) AS n FROM orders GROUP BY status) g',
+      verify: (rows) => {
+        if (rows.length !== 1) return `expected 1 row, got ${rows.length}`
+        const [total, regrouped] = rows[0]!
+        if (asNumber(total) !== asNumber(regrouped)) {
+          return `torn snapshot: COUNT(*) ${total} != regrouped ${regrouped}`
+        }
+        return null
+      },
+    },
+    {
+      // The DML only writes customer_id 1..40, all of which exist, so the
+      // join can never drop a row relative to the same statement's total.
+      sql:
+        'SELECT (SELECT COUNT(*) FROM orders) - COUNT(*) AS dangling ' +
+        'FROM orders o JOIN customers c ON c.id = o.customer_id',
+      verify: (rows) => {
+        const dangling = asNumber(rows[0]?.[0])
+        return dangling === 0 ? null : `join dropped ${dangling} rows within one statement`
+      },
+    },
+    {
+      // Aggregate sanity within one statement over NOT NULL columns.
+      sql: 'SELECT COUNT(*) AS n, COUNT(id) AS nid, MIN(id) AS lo, MAX(id) AS hi FROM orders',
+      verify: (rows) => {
+        const [n, nid, lo, hi] = rows[0]!.map(asNumber)
+        if (n !== nid) return `COUNT(*) ${n} != COUNT(id) ${nid}`
+        if (n > 0 && (lo === undefined || hi === undefined || lo > hi)) {
+          return `MIN ${lo} exceeds MAX ${hi}`
+        }
+        return null
+      },
+    },
+    {
+      // The result must obey its own ORDER BY and LIMIT.
+      sql: 'SELECT id FROM orders ORDER BY id DESC LIMIT 20',
+      verify: (rows) => {
+        if (rows.length > 20) return `LIMIT 20 returned ${rows.length} rows`
+        for (let index = 1; index < rows.length; index += 1) {
+          if (asNumber(rows[index]![0]) >= asNumber(rows[index - 1]![0])) {
+            return `ORDER BY id DESC violated at row ${index}`
+          }
+        }
+        return null
+      },
+    },
+    {
+      // Every returned row must satisfy the predicate it was filtered by.
+      sql: "SELECT id, tags FROM customers WHERE FIND_IN_SET('vip', tags) > 0 ORDER BY id",
+      verify: (rows) => {
+        for (const row of rows) {
+          const tags = String(row[1] ?? '')
+          if (!tags.split(',').includes('vip')) {
+            return `row ${row[0]} tags ${tags} fails its own predicate`
+          }
+        }
+        return null
+      },
+    },
   ]
   const deadline = Date.now() + 12_000
   let dmlOps = 0
@@ -1054,6 +1126,7 @@ async function phaseContention() {
   })()
   let completed = 0
   let backpressured = 0
+  const violations: string[] = []
   const workers = Array.from({ length: 6 }, async (_, worker) => {
     const connection = await mysql.createConnection({
       host: '127.0.0.1',
@@ -1064,10 +1137,17 @@ async function phaseContention() {
     })
     try {
       for (let turn = worker; Date.now() < deadline; turn += 1) {
-        const query = reads[turn % reads.length]!
+        const read = reads[turn % reads.length]!
         try {
-          await connection.query(query)
+          const [rows] = (await connection.query({
+            sql: read.sql,
+            rowsAsArray: true,
+          })) as unknown as [unknown[][]]
           completed += 1
+          const violation = read.verify(rows)
+          if (violation && violations.length < 5) {
+            violations.push(`${violation} (${read.sql})`)
+          }
         } catch (error) {
           const raised = error as { errno?: number }
           if (raised.errno === 1040) {
@@ -1075,7 +1155,7 @@ async function phaseContention() {
             await Bun.sleep(50)
             continue
           }
-          throw new Error(`contention read failed beyond backpressure: ${error} (${query})`)
+          throw new Error(`contention read failed beyond backpressure: ${error} (${read.sql})`)
         }
       }
     } finally {
@@ -1083,14 +1163,38 @@ async function phaseContention() {
     }
   })
   await Promise.all([dml, ...workers])
+  if (violations.length) {
+    throw new Error(`contention consistency violations: ${violations.join('; ')}`)
+  }
   // Floors, not exact counts: the point is that both sides genuinely ran
   // concurrently, not that a particular interleaving happened.
   if (completed < 100) {
     throw new Error(`contention storm completed only ${completed} reads (floor 100)`)
   }
   if (dmlOps < 30) throw new Error(`contention storm ran only ${dmlOps} DML ops (floor 30)`)
+  // Writes have stopped: the same reads must now answer identically on
+  // both engines once the replica converges on the final source state.
+  const settleDeadline = Date.now() + 120_000
+  for (;;) {
+    const divergences: string[] = []
+    for (const read of reads) {
+      const expected = await mysqlRows(read.sql)
+      const actual = await pintailQuery(read.sql)
+      const canon = (rows: unknown[][]) =>
+        JSON.stringify(rows.map((row) => row.map(canonicalValue)))
+      if (canon(expected) !== canon(actual)) {
+        divergences.push(read.sql)
+      }
+    }
+    if (divergences.length === 0) break
+    if (Date.now() > settleDeadline) {
+      throw new Error(`post-storm reads never matched MySQL: ${divergences.join('; ')}`)
+    }
+    await Bun.sleep(POLL_MS)
+  }
   log(
-    `contention: ${completed} reads (${backpressured} backpressured) raced ${dmlOps} DML ops`,
+    `contention: ${completed} reads (${backpressured} backpressured) raced ${dmlOps} DML ops; ` +
+      `all in-storm invariants held and post-storm reads match MySQL`,
   )
 }
 
@@ -1660,7 +1764,15 @@ async function phaseControlPlane() {
         sql: 'SELECT id FROM orders JOIN customers ON customers.id = orders.customer_id',
       },
       { label: 'unsigned out of range', sql: 'SELECT id - 99999999999999999 FROM orders LIMIT 1' },
+      { label: 'group function in WHERE', sql: 'SELECT id FROM orders WHERE SUM(total) > 1' },
     ]
+    // Families not yet classified (both engines reject, but Pintail answers
+    // 1064 where MySQL is specific): wrong native-function arity (1582),
+    // duplicate derived-table column names (1060), ungrouped columns under
+    // ONLY_FULL_GROUP_BY (1055 - this gate's MySQL disables that mode, so
+    // the wire unit test pins the mapping instead), and permission errors
+    // (structurally different auth models). The matrix covers what parity
+    // exists; it is not a claim of complete error-code coverage.
     const capture = async (
       client: { query: (sql: string) => Promise<unknown> },
       sql: string,
@@ -2820,6 +2932,12 @@ async function main() {
   mysqlStarted = true
   const mysqlPort = await publishedPort(mysqlName, 3306)
   mysqlConnection = await waitForMysql(host, mysqlPort)
+  {
+    const [versionRows] = (await mysqlConnection.query('SELECT VERSION() AS v')) as unknown as [
+      Array<{ v: string }>,
+    ]
+    mysqlServerVersion = versionRows[0]?.v ?? ''
+  }
   mysqlEndpoint = {
     host,
     port: mysqlPort,
@@ -2953,12 +3071,27 @@ function publish() {
   const failed = results.filter((result) => result.status === 'FAIL')
   const warned = results.filter((result) => result.status === 'WARN')
   const passed = results.filter((result) => result.status === 'PASS')
+  const skipped = results.filter((result) => result.status === 'SKIP')
+  const corpusChecks = results.filter((result) => result.check.startsWith('query:'))
   const lines = [
     '# Pintail end-to-end differential gate',
     '',
     `Measured ${new Date().toISOString()}.`,
     '',
-    `**${passed.length} passed, ${failed.length} failed, ${warned.length} documented-gap warnings.**`,
+    // The environment is evidence: a ledger that does not say which
+    // source version and metadata mode it ran against proves nothing
+    // about either.
+    `Source: \`${MYSQL_IMAGE}\` (server ${mysqlServerVersion || 'unknown'}), ` +
+      `\`binlog_row_metadata=${BINLOG_METADATA}\`, ` +
+      `${KEEP_MYSQL ? 'reused keep-container' : 'fresh container'}.`,
+    '',
+    `**${passed.length} passed, ${failed.length} failed, ${warned.length} documented-gap warnings, ${skipped.length} skipped.**`,
+    '',
+    // Honest denominators: the corpus replays after every settled phase,
+    // so the headline counts checks, not independent behaviors.
+    `${differentialQueries.length} unique corpus queries produced ` +
+      `${corpusChecks.length} corpus checks across phases; the remaining ` +
+      `checks are convergence, battery, and control-plane assertions.`,
     '',
     '| Phase | Check | Status | Detail |',
     '|---|---|---|---|',
@@ -2981,7 +3114,10 @@ function publish() {
   // Phase-subset runs write a separate artifact so an iteration loop never
   // overwrites the committed full-gate record.
   const partial = Boolean(process.env.E2E_PHASES)
-  const suffix = partial ? '-partial' : ''
+  // A named leg (the 8.0 matrix run) banks its own ledger next to the
+  // primary one instead of overwriting it.
+  const leg = process.env.PINTAIL_E2E_RESULTS_SUFFIX ?? ''
+  const suffix = partial ? '-partial' : leg
   writeFileSync(join(import.meta.dir, `results${suffix}.md`), lines.join('\n'))
   writeFileSync(join(import.meta.dir, `results${suffix}.json`), JSON.stringify(results, null, 2))
   log(`gate: ${failed.length === 0 ? 'PASS' : 'FAIL'} (${passed.length} passed, ${failed.length} failed, ${warned.length} warned)`)
