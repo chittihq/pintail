@@ -607,8 +607,11 @@ pub(super) fn build_streaming_two_pass_aggregate(
                                 Value::Null
                             } else {
                                 // Date parts are signed (Int64), like the
-                                // scalar and units paths that feed them.
-                                Value::Int64(i64::try_from(id - 1).unwrap_or(i64::MAX))
+                                // scalar and units paths that feed them; a
+                                // 20-bit id always fits.
+                                Value::Int64(
+                                    i64::try_from(id - 1).expect("20-bit date-part id fits i64"),
+                                )
                             });
                         }
                     }
@@ -897,7 +900,17 @@ fn two_pass_scatter_date_parts(
         let mut key_bits = 0_u64;
         for (part, column) in parts.iter().flatten() {
             let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
-                Some(Ok(Value::Int64(value))) => u64::try_from(value).unwrap_or(0) + 1,
+                // Ids are 20-bit lane slots (value + 1, 0 = NULL); a value
+                // the lane cannot carry - negative, or past the mask - must
+                // refuse rather than collide with a real slot.
+                Some(Ok(Value::Int64(value))) => match u64::try_from(value) {
+                    Ok(value) if value < 0xF_FFFF => value + 1,
+                    _ => {
+                        return Err(ExecError::InvalidBatch(
+                            "date-part group key does not fit its 20-bit lane",
+                        ));
+                    }
+                },
                 Some(Ok(Value::Null)) => 0,
                 Some(Err(error)) => return Err(error),
                 _ => {
@@ -1623,7 +1636,15 @@ fn two_pass_dense_date_parts_batch(
         let mut key_bits = 0_u64;
         for (part, column) in parts.iter().flatten() {
             let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
-                Some(Ok(Value::Int64(value))) => u64::try_from(value).unwrap_or(0) + 1,
+                // Same 20-bit lane contract as the sparse encoder above.
+                Some(Ok(Value::Int64(value))) => match u64::try_from(value) {
+                    Ok(value) if value < 0xF_FFFF => value + 1,
+                    _ => {
+                        return Err(DenseFold::Exec(ExecError::InvalidBatch(
+                            "date-part group key does not fit its 20-bit lane",
+                        )));
+                    }
+                },
                 Some(Ok(Value::Null)) => 0,
                 Some(Err(error)) => return Err(DenseFold::Exec(error)),
                 _ => {

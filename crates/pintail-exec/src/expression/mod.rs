@@ -1494,7 +1494,11 @@ pub(crate) fn evaluate_units_date_part(
         | DatePart::IsoWeek
         | DatePart::WeekMode(_) => return None,
     };
-    Some(Ok(Value::Int64(i64::try_from(value).unwrap_or(i64::MAX))))
+    Some(
+        i64::try_from(value)
+            .map(Value::Int64)
+            .map_err(|_| ExecError::NumericOverflow),
+    )
 }
 
 fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Value, ExecError>> {
@@ -1550,9 +1554,11 @@ fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Val
             }
         }
     };
-    Some(Ok(Value::Int64(
-        i64::try_from(date_value).unwrap_or(i64::MAX),
-    )))
+    Some(
+        i64::try_from(date_value)
+            .map(Value::Int64)
+            .map_err(|_| ExecError::NumericOverflow),
+    )
 }
 
 fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
@@ -2458,7 +2464,7 @@ fn evaluate_eager_scalar_typed(
         ScalarFunction::DatePart(part) => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
             Ok(Value::Int64(
-                i64::try_from(date_part(value, part)).unwrap_or(i64::MAX),
+                i64::try_from(date_part(value, part)).map_err(|_| ExecError::NumericOverflow)?,
             ))
         }
         ScalarFunction::DateFormat => {
