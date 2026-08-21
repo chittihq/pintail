@@ -527,10 +527,18 @@ pub(super) fn build_streaming_two_pass_aggregate(
                     // sorts by MySQL's rule; anything undeclared stays a plain
                     // string.
                     let ordinal = if let Some(labels) = labels {
-                        labels
-                            .iter()
-                            .position(|declared| declared == &text)
-                            .and_then(|position| u64::try_from(position + 1).ok())
+                        // Empty text never matches a slot: a label table
+                        // reconstructed from Value::Enum indices keeps its
+                        // unseen slots as empty strings, and the empty SET
+                        // ("", mask 0) must not inherit a gap's ordinal.
+                        (!text.is_empty())
+                            .then(|| {
+                                labels
+                                    .iter()
+                                    .position(|declared| declared == &text)
+                                    .and_then(|position| u64::try_from(position + 1).ok())
+                            })
+                            .flatten()
                     } else if let Some(members) = members {
                         let mut mask = Some(0_u64);
                         for member in text.split(',').filter(|member| !member.is_empty()) {
@@ -883,7 +891,7 @@ fn two_pass_scatter_date_parts(
         let mut key_bits = 0_u64;
         for (part, column) in parts.iter().flatten() {
             let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
-                Some(Ok(Value::UInt64(value))) => value + 1,
+                Some(Ok(Value::Int64(value))) => u64::try_from(value).unwrap_or(0) + 1,
                 Some(Ok(Value::Null)) => 0,
                 Some(Err(error)) => return Err(error),
                 _ => {
@@ -1609,7 +1617,7 @@ fn two_pass_dense_date_parts_batch(
         let mut key_bits = 0_u64;
         for (part, column) in parts.iter().flatten() {
             let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
-                Some(Ok(Value::UInt64(value))) => value + 1,
+                Some(Ok(Value::Int64(value))) => u64::try_from(value).unwrap_or(0) + 1,
                 Some(Ok(Value::Null)) => 0,
                 Some(Err(error)) => return Err(DenseFold::Exec(error)),
                 _ => {

@@ -374,6 +374,13 @@ impl StrColumn {
     /// inventing one would order it confidently and wrongly.
     #[must_use]
     pub(crate) fn enum_index_of(&self, label: &str) -> Option<u64> {
+        // Empty text never matches: reconstructed label tables (built from
+        // Value::Enum indices when a batch repacks) keep unseen slots as
+        // empty strings, and the empty SET ("", mask 0) must not inherit a
+        // gap's ordinal.
+        if label.is_empty() {
+            return None;
+        }
         self.enum_labels.as_ref().and_then(|labels| {
             labels
                 .iter()

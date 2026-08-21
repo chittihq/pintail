@@ -2366,7 +2366,9 @@ fn evaluate_eager_scalar_typed(
         )),
         ScalarFunction::DatePart(part) => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            Ok(Value::UInt64(date_part(value, part)))
+            Ok(Value::Int64(
+                i64::try_from(date_part(value, part)).unwrap_or(i64::MAX),
+            ))
         }
         ScalarFunction::DateFormat => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;

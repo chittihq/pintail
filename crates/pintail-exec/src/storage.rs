@@ -1547,10 +1547,15 @@ fn ordinal_value(
         return value;
     };
     let ordinal = if let Some(labels) = enum_labels {
-        labels
-            .iter()
-            .position(|declared| declared == text)
-            .and_then(|position| u64::try_from(position + 1).ok())
+        // Empty text never matches a label slot; see StrColumn::enum_index_of.
+        (!text.is_empty())
+            .then(|| {
+                labels
+                    .iter()
+                    .position(|declared| declared == text)
+                    .and_then(|position| u64::try_from(position + 1).ok())
+            })
+            .flatten()
     } else if let Some(members) = set_members {
         // A SET value is a comma-joined subset; its ordinal is the member
         // bitmask. Undeclared members refuse, like undeclared ENUM labels.

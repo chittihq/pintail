@@ -967,7 +967,7 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'json: merge_patch overlays and reads back',
     sql:
       'SELECT id, JSON_TYPE(JSON_MERGE_PATCH(meta, \'{"seen":true}\')) AS t, ' +
-      'JSON_MERGE_PATCH(meta, \'{"seen":true}\') ->> \'$.seen\' AS seen ' +
+      "JSON_UNQUOTE(JSON_EXTRACT(JSON_MERGE_PATCH(meta, '{\"seen\":true}'), '$.seen')) AS seen " +
       'FROM customers WHERE meta IS NOT NULL ORDER BY id',
     tables: ['customers'],
   },
