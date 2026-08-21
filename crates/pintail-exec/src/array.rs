@@ -301,6 +301,13 @@ pub struct StrColumn {
     /// orders and compares by. Sorting the label instead - which is what
     /// happens without this - is alphabetical and silently wrong.
     enum_labels: Option<std::sync::Arc<Vec<String>>>,
+    /// Whether `enum_labels` is the COMPLETE declaration. Declared tables
+    /// from the catalog are; a table reconstructed from observed
+    /// `Value::Enum` indices during a batch repack may have gaps, and a
+    /// gap is stored as an empty string - indistinguishable from a
+    /// declared `''` member (`ENUM('', ...)` is legal `MySQL`), so empty
+    /// labels only resolve an ordinal against a complete table.
+    enum_labels_exhaustive: bool,
 }
 
 /// Materialized per-row views and their heap.
@@ -318,10 +325,27 @@ pub struct StrDictionary {
 }
 
 impl StrColumn {
-    /// Attaches source ENUM labels in declaration order.
+    /// Attaches source ENUM labels in declaration order — the complete
+    /// declaration, as the catalog carries it.
     #[must_use]
     pub fn with_enum_labels(mut self, labels: Option<std::sync::Arc<Vec<String>>>) -> Self {
         self.enum_labels = labels;
+        self.enum_labels_exhaustive = true;
+        self
+    }
+
+    /// Attaches a label table reconstructed from observed `Value::Enum`
+    /// indices. `exhaustive` says every slot was observed; a gappy table
+    /// keeps empty strings in its unseen slots and must not resolve an
+    /// empty label against them.
+    #[must_use]
+    pub fn with_reconstructed_enum_labels(
+        mut self,
+        labels: Option<std::sync::Arc<Vec<String>>>,
+        exhaustive: bool,
+    ) -> Self {
+        self.enum_labels = labels;
+        self.enum_labels_exhaustive = exhaustive;
         self
     }
 
@@ -360,6 +384,12 @@ impl StrColumn {
         self.enum_labels.as_ref()
     }
 
+    /// Whether the attached label table is the complete declaration (see
+    /// the field doc); decides whether an empty label may resolve.
+    pub(crate) const fn enum_labels_exhaustive(&self) -> bool {
+        self.enum_labels_exhaustive
+    }
+
     /// The declared SET members this column carries, if any.
     #[must_use]
     pub(crate) fn declared_set_members(&self) -> Option<&std::sync::Arc<Vec<String>>> {
@@ -374,11 +404,12 @@ impl StrColumn {
     /// inventing one would order it confidently and wrongly.
     #[must_use]
     pub(crate) fn enum_index_of(&self, label: &str) -> Option<u64> {
-        // Empty text never matches: reconstructed label tables (built from
-        // Value::Enum indices when a batch repacks) keep unseen slots as
-        // empty strings, and the empty SET ("", mask 0) must not inherit a
-        // gap's ordinal.
-        if label.is_empty() {
+        // An empty label resolves only against a complete declaration:
+        // `ENUM('', ...)` is legal MySQL and `''` there is a real member,
+        // but a gappy reconstructed table keeps unseen slots as empty
+        // strings, and neither the empty SET ("", mask 0) nor a genuine
+        // `''` member may inherit a gap's ordinal.
+        if label.is_empty() && !self.enum_labels_exhaustive {
             return None;
         }
         self.enum_labels.as_ref().and_then(|labels| {
@@ -460,6 +491,7 @@ impl StrColumn {
             }),
             lazy: Some(Box::new(std::sync::OnceLock::new())),
             enum_labels: None,
+            enum_labels_exhaustive: false,
             set_members: None,
         }
     }

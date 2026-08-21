@@ -314,7 +314,7 @@ pub(super) fn build_streaming_two_pass_aggregate(
     // without this the finalize below rebuilds every group key as a plain
     // string and the declaration index - which is what MySQL orders an
     // ENUM by - is erased exactly here (#251).
-    let mut key_enum_labels: [Option<std::sync::Arc<Vec<String>>>; 2] = [None, None];
+    let mut key_enum_labels: [Option<(std::sync::Arc<Vec<String>>, bool)>; 2] = [None, None];
     let mut key_set_members: [Option<std::sync::Arc<Vec<String>>>; 2] = [None, None];
     let key_columns: [Option<usize>; 2] = match keys {
         TwoPassKeySource::Text { column } => [Some(column), None],
@@ -333,7 +333,10 @@ pub(super) fn build_streaming_two_pass_aggregate(
                 && let Some(vector) = current.column(*column)
                 && let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed()
             {
-                key_enum_labels[slot] = strings.declared_enum_labels().cloned();
+                key_enum_labels[slot] = strings
+                    .declared_enum_labels()
+                    .cloned()
+                    .map(|labels| (labels, strings.enum_labels_exhaustive()));
                 key_set_members[slot] = strings.declared_set_members().cloned();
             }
         }
@@ -515,7 +518,7 @@ pub(super) fn build_streaming_two_pass_aggregate(
         .map(|map| -> Result<(Vec<Vec<Value>>, usize), ExecError> {
             let interned =
                 |id: u64,
-                 labels: Option<&std::sync::Arc<Vec<String>>>,
+                 labels: Option<&(std::sync::Arc<Vec<String>>, bool)>,
                  members: Option<&std::sync::Arc<Vec<String>>>| {
                     let text = intern
                         .as_ref()
@@ -526,12 +529,13 @@ pub(super) fn build_streaming_two_pass_aggregate(
                     // a SET key with its member bitmask, so the ORDER BY above
                     // sorts by MySQL's rule; anything undeclared stays a plain
                     // string.
-                    let ordinal = if let Some(labels) = labels {
-                        // Empty text never matches a slot: a label table
-                        // reconstructed from Value::Enum indices keeps its
-                        // unseen slots as empty strings, and the empty SET
-                        // ("", mask 0) must not inherit a gap's ordinal.
-                        (!text.is_empty())
+                    let ordinal = if let Some((labels, exhaustive)) = labels {
+                        // An empty label resolves only against a complete
+                        // table: a gappy reconstruction keeps unseen slots
+                        // as empty strings, and neither the empty SET
+                        // ("", mask 0) nor a declared '' member may take a
+                        // gap's ordinal (see StrColumn::enum_index_of).
+                        (!text.is_empty() || *exhaustive)
                             .then(|| {
                                 labels
                                     .iter()

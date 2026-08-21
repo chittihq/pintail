@@ -397,8 +397,10 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
     // repacked batch (projection, aggregate output, memtable rows) has no
     // schema to hand, but every Value::Enum carries its own one-based
     // index, so the label list rebuilds sparsely from what flows through.
-    // Unseen slots stay empty strings, which no real label equals.
-    let mut enum_slots: Option<Vec<String>> = None;
+    // The parallel mask records which slots were actually observed:
+    // unseen slots stay empty strings, and a declared `''` member is a
+    // legal label those gaps must not be confused with.
+    let mut enum_slots: Option<(Vec<String>, Vec<bool>)> = None;
     let decimal_scale = match data_type {
         DataType::Decimal { scale, .. } => Some(scale),
         _ => None,
@@ -476,12 +478,18 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                     && let Ok(position) = usize::try_from(*index - 1)
                     && position < 256
                 {
-                    let slots = enum_slots.get_or_insert_with(Vec::new);
+                    let (slots, observed) =
+                        enum_slots.get_or_insert_with(|| (Vec::new(), Vec::new()));
                     if slots.len() <= position {
                         slots.resize(position + 1, String::new());
+                        observed.resize(position + 1, false);
                     }
-                    if slots[position].is_empty() {
+                    // An observed slot may legitimately hold "" — a
+                    // declared empty member — so the mask, not the text,
+                    // says whether the slot is filled.
+                    if !observed[position] {
                         slots[position].clone_from(label);
+                        observed[position] = true;
                     }
                 }
                 if let (Some(packed), Some(scale)) = (decimal.as_mut(), decimal_scale) {
@@ -538,7 +546,14 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
         Some(TypedValues::Float64(packed))
     } else {
         utf8.map(|column| {
-            TypedValues::Utf8(column.with_enum_labels(enum_slots.map(std::sync::Arc::new)))
+            let (labels, exhaustive) = match enum_slots {
+                Some((slots, observed)) => {
+                    let exhaustive = observed.iter().all(|seen| *seen);
+                    (Some(std::sync::Arc::new(slots)), exhaustive)
+                }
+                None => (None, false),
+            };
+            TypedValues::Utf8(column.with_reconstructed_enum_labels(labels, exhaustive))
         })
     };
     typed.map(|packed| (packed, ValidityMask::from_bools(&validity)))

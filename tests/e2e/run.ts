@@ -747,6 +747,16 @@ async function phaseSeed() {
     u64 BIGINT UNSIGNED NOT NULL,
     s64 BIGINT NOT NULL
   )`)
+  // An empty ENUM member is legal and a REAL member (ordinal 1 here),
+  // distinct from the error value (ordinal 0). Declaration order ('',
+  // zz, aa) disagrees with alphabetical order (aa before zz), so a path
+  // that demotes the empty member to plain text cannot pass by luck.
+  await sql(`CREATE TABLE badges (
+    id INT UNSIGNED PRIMARY KEY,
+    v ENUM('','zz','aa') NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`INSERT INTO badges VALUES
+    (1,'zz'), (2,''), (3,'aa'), (4,'zz'), (5,''), (6,'aa'), (7,'')`)
 
   const random = mulberry32(0x5eed)
   const tiers = ['free', 'pro', 'enterprise']

@@ -798,6 +798,24 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['shipments'],
   },
   {
+    // ENUM('') has a REAL empty member at ordinal 1: it sorts and groups
+    // FIRST by declaration index, and 'zz' (2) stays ahead of 'aa' (3) —
+    // a path that demotes '' to plain text goes alphabetical instead.
+    name: 'enum: the empty member groups by its ordinal',
+    sql: 'SELECT v, COUNT(*) AS n FROM badges GROUP BY v ORDER BY v',
+    tables: ['badges'],
+  },
+  {
+    name: 'enum: the empty member sorts by its ordinal',
+    sql: 'SELECT id FROM badges ORDER BY v, id',
+    tables: ['badges'],
+  },
+  {
+    name: 'enum: the empty member is selectable by text',
+    sql: "SELECT COUNT(*) AS n FROM badges WHERE v = ''",
+    tables: ['badges'],
+  },
+  {
     // GEOMETRY reads back byte-identical to MySQL: internal SRID + WKB.
     name: 'geometry: hex round-trips the internal format',
     sql: 'SELECT id, HEX(route) FROM shipments ORDER BY id',
