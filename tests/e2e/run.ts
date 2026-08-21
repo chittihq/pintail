@@ -490,6 +490,10 @@ async function verifyConvergence(phase: string) {
   const metadataDeadline = Date.now() + CONVERGE_TIMEOUT_MS
   let metadata = await metadataDiff()
   while (metadata !== undefined && Date.now() < metadataDeadline) {
+    // A documented metadata gap never converges by design; its signature
+    // is the final answer, and polling it to the timeout added three
+    // minutes to the phase that carries it (same rule as the table loop).
+    if (documentedMetadataGaps.some((signature) => signature.test(metadata))) break
     await Bun.sleep(CONVERGE_POLL_MS)
     metadata = await metadataDiff()
   }
