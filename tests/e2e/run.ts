@@ -31,6 +31,10 @@ const nonce = Date.now().toString(36)
 /// PINTAIL_E2E_KEEP_MYSQL=1 reuses one long-lived source container across
 /// runs (database dropped and binlogs reset per run), trading a fresh boot
 /// and timezone-table load for a stable name the harness never removes.
+/// Source image for the gate. mysql:8.4 is the primary leg;
+/// PINTAIL_E2E_MYSQL_IMAGE=mysql:8.0 runs the older-major leg (the reuse
+/// path recreates a keep-container whose image differs).
+const MYSQL_IMAGE = process.env.PINTAIL_E2E_MYSQL_IMAGE ?? 'mysql:8.4'
 const KEEP_MYSQL = process.env.PINTAIL_E2E_KEEP_MYSQL === '1'
 /// Base binlog row metadata for the whole gate. MySQL's own default is
 /// MINIMAL, so that is the production shape the gate runs by default;
@@ -2772,13 +2776,19 @@ async function main() {
   const host = await dockerHost()
   let reused = false
   if (KEEP_MYSQL) {
-    const state = await docker('inspect', '--format', '{{.State.Running}}', mysqlName)
+    const state = await docker(
+      'inspect',
+      '--format',
+      '{{.State.Running}} {{.Config.Image}}',
+      mysqlName,
+    )
       .then((result) => result.stdout.trim())
       .catch(() => 'absent')
-    if (state === 'true') {
+    if (state === `true ${MYSQL_IMAGE}`) {
       log(`reusing MySQL source ${mysqlName}`)
       reused = true
     } else if (state !== 'absent') {
+      // Stopped, or running the wrong image for this leg - recreate.
       await docker('rm', '-f', mysqlName)
     }
   }
@@ -2796,7 +2806,7 @@ async function main() {
     'MYSQL_ROOT_PASSWORD=pintail-root',
     '--env',
     `MYSQL_DATABASE=${DATABASE}`,
-    'mysql:8.4',
+    MYSQL_IMAGE,
     '--server-id=942',
     '--log-bin=mysql-bin',
     '--binlog-format=ROW',
@@ -2822,7 +2832,14 @@ async function main() {
     // container gives, minus its boot and timezone load.
     await sql(`DROP DATABASE IF EXISTS ${DATABASE}`)
     await sql(`CREATE DATABASE ${DATABASE}`)
-    await sql('RESET BINARY LOGS AND GTIDS')
+    // 8.4 renamed RESET MASTER; each major only accepts its own spelling.
+    const [versionRow] = (await mysqlConnection!.query('SELECT VERSION() AS v')) as unknown as [
+      Array<{ v: string }>,
+    ]
+    const resetStatement = versionRow[0]!.v.startsWith('8.0')
+      ? 'RESET MASTER'
+      : 'RESET BINARY LOGS AND GTIDS'
+    await sql(resetStatement)
   }
   await sql(`USE ${DATABASE}`)
   // The variable is dynamic, so a reused keep-container created under the
