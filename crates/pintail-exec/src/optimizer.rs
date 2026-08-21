@@ -371,7 +371,18 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
             let predicate = fold_expr(predicate);
             match literal_truth(&predicate) {
                 Some(true) => input,
-                Some(false) => LogicalPlan::Empty,
+                // A constant-false filter must keep its input's SHAPE: the
+                // bare Empty node carries no columns, so a projection above
+                // it died with "physical input is missing <column>" (found
+                // by the grammar fuzzer - WHERE 'zz' IS NULL folds false).
+                // LIMIT 0 answers the empty set while the schema survives.
+                Some(false) => LogicalPlan::Limit {
+                    input: Box::new(input),
+                    limit: pintail_sql::BoundLimit {
+                        offset: 0,
+                        count: 0,
+                    },
+                },
                 None => LogicalPlan::Filter {
                     input: Box::new(input),
                     predicate,
@@ -514,6 +525,52 @@ fn statement_time_literal(function: ScalarFunction, now: StatementNow) -> Option
     }
 }
 
+/// `MySQL` prunes constant disjuncts BEFORE row evaluation: `x OR TRUE` is
+/// TRUE even where x would error row-wise (an unsigned subtraction
+/// underflow, say), and `x AND FALSE` is FALSE the same way. Found by the
+/// grammar fuzzer: Pintail evaluated the doomed side and errored where
+/// `MySQL` answers.
+fn fold_binary(
+    op: BinaryOp,
+    left: BoundExpr,
+    right: BoundExpr,
+    data_type: Option<DataType>,
+    nullable: bool,
+) -> BoundExpr {
+    if matches!(op, BinaryOp::Or | BinaryOp::And) {
+        let absorbing = matches!(op, BinaryOp::Or);
+        for side in [&left, &right] {
+            if literal_truth_of(side) == Some(absorbing) {
+                return BoundExpr {
+                    kind: BoundExprKind::Literal(Value::Boolean(absorbing)),
+                    data_type: Some(DataType::Boolean),
+                    nullable: false,
+                };
+            }
+        }
+        // The neutral element drops away: `x OR FALSE` is x, `x AND TRUE`
+        // is x - but only when the kept side is already Boolean-shaped,
+        // so typing is preserved.
+        if literal_truth_of(&right) == Some(!absorbing) && left.data_type == Some(DataType::Boolean)
+        {
+            return left;
+        }
+        if literal_truth_of(&left) == Some(!absorbing) && right.data_type == Some(DataType::Boolean)
+        {
+            return right;
+        }
+    }
+    BoundExpr {
+        kind: BoundExprKind::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        data_type,
+        nullable,
+    }
+}
+
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
     // Keep exact-decimal arithmetic as a tree. The executor evaluates a
     // chain as one reduced rational so enclosing operations see MySQL's
@@ -560,15 +617,13 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             data_type: expr.data_type,
             nullable: expr.nullable,
         },
-        BoundExprKind::Binary { op, left, right } => BoundExpr {
-            kind: BoundExprKind::Binary {
-                op,
-                left: Box::new(fold_expr(*left)),
-                right: Box::new(fold_expr(*right)),
-            },
-            data_type: expr.data_type,
-            nullable: expr.nullable,
-        },
+        BoundExprKind::Binary { op, left, right } => fold_binary(
+            op,
+            fold_expr(*left),
+            fold_expr(*right),
+            expr.data_type,
+            expr.nullable,
+        ),
         BoundExprKind::IsNull {
             expr: child,
             negated,
@@ -662,6 +717,17 @@ fn literal_expr(value: Value) -> BoundExpr {
         data_type: value.data_type(),
         nullable: matches!(value, Value::Null),
         kind: BoundExprKind::Literal(value),
+    }
+}
+
+/// Definite truth of a folded literal, `None` for anything else INCLUDING
+/// the NULL literal: `NULL OR x` is x-or-NULL under three-valued logic and
+/// must not be pruned.
+fn literal_truth_of(expr: &BoundExpr) -> Option<bool> {
+    match &expr.kind {
+        BoundExprKind::Literal(Value::Null) => None,
+        BoundExprKind::Literal(value) => mysql_truth(value).ok().flatten(),
+        _ => None,
     }
 }
 
@@ -1690,9 +1756,17 @@ mod tests {
 
     #[test]
     fn folds_constant_filters_to_empty_or_removes_them() {
+        // A false filter becomes LIMIT 0 over the input, never a bare
+        // Empty: the input's column shape must survive for projections.
         assert_eq!(
             project_input(optimized("SELECT 1 WHERE 2 + 2 = 5")),
-            LogicalPlan::Empty
+            LogicalPlan::Limit {
+                input: Box::new(LogicalPlan::OneRow),
+                limit: pintail_sql::BoundLimit {
+                    offset: 0,
+                    count: 0
+                },
+            }
         );
         assert_eq!(
             project_input(optimized("SELECT 1 WHERE 2 + 2 = 4")),
