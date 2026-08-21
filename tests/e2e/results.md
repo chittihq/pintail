@@ -1,8 +1,8 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T06:42:00.802Z.
+Measured 2026-08-21T07:26:08.782Z.
 
-**2097 passed, 0 failed, 5 documented-gap warnings.**
+**2095 passed, 1 failed, 6 documented-gap warnings.**
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -1338,7 +1338,7 @@ Measured 2026-08-21T06:42:00.802Z.
 | control-plane | api:api key disable blocks the wire, enable restores it | PASS |  |
 | control-plane | api:sse event stream connects | PASS |  |
 | control-plane | api:mode switches to polling and back with exact counts | PASS |  |
-| control-plane | api:wire column types: temporal expressions advertise what MySQL advertises | PASS |  |
+| control-plane | api:wire column types: temporal expressions advertise what MySQL advertises | FAIL | Error: wire types diverge: date_format_fn: mysql type 253/cs 224, pintail 253/cs 255 (date_format_fn); json_unquote_fn: mysql type 251/cs 224, pintail 251/cs 46 (json_unquote_fn) |
 | control-plane | api:the audit trail records the network peer of every action | PASS |  |
 | control-plane | api:resync and reconcile are accepted | PASS |  |
 | control-plane | api:resync recopies only the table it names | PASS |  |
@@ -2025,7 +2025,7 @@ Measured 2026-08-21T06:42:00.802Z.
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
-| ddl-documented-gaps | converge:order_items | PASS |  |
+| ddl-documented-gaps | converge:order_items | WARN | row 0: |
 | ddl-documented-gaps | converge:orders | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
@@ -2130,23 +2130,23 @@ Measured 2026-08-21T06:42:00.802Z.
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.9 | 0.7 |
-| orm-compat | 19.5 | 0.3 | 0.6 |
-| crud | 0.2 | 1.1 | 0.4 |
-| type-edges | 0.2 | 2.6 | 0.7 |
-| ddl | 0.7 | 29.9 | 0.4 |
-| schema-drift-minimal | 0.1 | 5.1 | 0.6 |
-| schema-drift-unseen | 1.0 | 14.7 | 1.2 |
-| churn | 31.0 | 1.5 | 0.9 |
-| execution-budget | 0.0 | 0.6 | 1.8 |
-| spill | 2.8 | 0.7 | 1.2 |
-| pooling | 0.3 | 0.7 | 0.7 |
-| restart | 0.7 | 2.8 | 0.6 |
-| control-plane | 97.6 | 1.6 | 0.8 |
-| snapshot-ddl-window | 12.8 | 1.4 | 0.5 |
-| drop-table-cdc | 15.3 | 1.1 | 0.6 |
-| drop-table-recreate | 140.4 | 2.9 | 1.3 |
-| drop-table-polling | 34.1 | 1.2 | 0.7 |
-| drop-database | 15.3 | 1.3 | 0.5 |
-| ddl-documented-gaps | 0.1 | 360.5 | 0.6 |
-| total | 372.0 | 431.1 | 14.8 |
+| snapshot | 0.0 | 1.2 | 0.7 |
+| orm-compat | 7.1 | 0.3 | 0.4 |
+| crud | 0.4 | 2.6 | 0.7 |
+| type-edges | 0.0 | 2.2 | 0.7 |
+| ddl | 0.8 | 43.8 | 0.6 |
+| schema-drift-minimal | 0.3 | 3.1 | 0.4 |
+| schema-drift-unseen | 1.1 | 9.3 | 0.8 |
+| churn | 30.9 | 1.0 | 2.3 |
+| execution-budget | 0.0 | 0.7 | 0.8 |
+| spill | 2.9 | 0.6 | 0.5 |
+| pooling | 0.1 | 2.5 | 0.5 |
+| restart | 0.6 | 2.5 | 0.5 |
+| control-plane | 57.8 | 1.1 | 0.5 |
+| snapshot-ddl-window | 6.9 | 1.7 | 0.8 |
+| drop-table-cdc | 17.7 | 1.6 | 0.7 |
+| drop-table-recreate | 134.0 | 1.8 | 0.6 |
+| drop-table-polling | 26.6 | 1.3 | 0.7 |
+| drop-database | 25.2 | 1.1 | 0.4 |
+| ddl-documented-gaps | 0.3 | 181.3 | 0.7 |
+| total | 312.7 | 259.8 | 13.2 |

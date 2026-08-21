@@ -2309,16 +2309,10 @@ fn evaluate_eager_scalar_typed(
                 let factor = 10_f64.powi(-decimals);
                 (value / factor).round_ties_even() * factor
             };
-            if !rounded.is_finite() {
-                return Err(ExecError::NumericOverflow);
-            }
-            // An exact integer input keeps its integer type (the binder
-            // declared it): ROUND(149, -2) is the LONGLONG 100, as MySQL
-            // answers it.
-            match data_type.map(DataType::storage_type) {
-                Some(DataType::Int64) => Ok(Value::Int64(rounded as i64)),
-                Some(DataType::UInt64) if rounded >= 0.0 => Ok(Value::UInt64(rounded as u64)),
-                _ => Ok(Value::float64(rounded)),
+            if rounded.is_finite() {
+                Ok(Value::float64(rounded))
+            } else {
+                Err(ExecError::NumericOverflow)
             }
         }
         ScalarFunction::Ceil { decimal } => {

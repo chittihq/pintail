@@ -6662,7 +6662,8 @@
   {
     "phase": "control-plane",
     "check": "api:wire column types: temporal expressions advertise what MySQL advertises",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "Error: wire types diverge: date_format_fn: mysql type 253/cs 224, pintail 253/cs 255 (date_format_fn); json_unquote_fn: mysql type 251/cs 224, pintail 251/cs 46 (json_unquote_fn)"
   },
   {
     "phase": "control-plane",
@@ -10101,7 +10102,8 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:order_items",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "row 0:\n  mysql   1.0000 | 1.0000 | sku-8 | 7.0000 | 17.8100\n  pintail 1.0000 | 1.0000 | sku-8 | 6.0000 | 17.8100"
   },
   {
     "phase": "ddl-documented-gaps",
