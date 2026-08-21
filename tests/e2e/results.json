@@ -851,6 +851,11 @@
     "status": "SKIP"
   },
   {
+    "phase": "snapshot",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "orm-compat",
     "check": "sequelize:metadata:result",
     "status": "PASS"
@@ -1822,6 +1827,11 @@
     "status": "SKIP"
   },
   {
+    "phase": "orm-compat",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "crud",
     "check": "converge:Dim",
     "status": "PASS"
@@ -2673,6 +2683,11 @@
     "status": "SKIP"
   },
   {
+    "phase": "crud",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "type-edges",
     "check": "converge:Dim",
     "status": "PASS"
@@ -3522,6 +3537,11 @@
     "phase": "type-edges",
     "check": "query:shipments: carrier value through the items bridge",
     "status": "SKIP"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -4381,6 +4401,11 @@
     "status": "PASS"
   },
   {
+    "phase": "ddl",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "schema-drift-minimal",
     "check": "converge:Dim",
     "status": "PASS"
@@ -5238,6 +5263,11 @@
     "status": "PASS"
   },
   {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "schema-drift-unseen",
     "check": "converge:Dim",
     "status": "PASS"
@@ -6092,6 +6122,11 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
   {
@@ -6982,6 +7017,11 @@
     "status": "PASS"
   },
   {
+    "phase": "churn",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "contention",
     "check": "converge:Dim",
     "status": "PASS"
@@ -7836,6 +7876,11 @@
   {
     "phase": "contention",
     "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
   {
@@ -8721,6 +8766,11 @@
     "status": "PASS"
   },
   {
+    "phase": "execution-budget",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "spill",
     "check": "forced-spill:sort",
     "status": "PASS"
@@ -9598,6 +9648,11 @@
     "status": "PASS"
   },
   {
+    "phase": "spill",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "pooling",
     "check": "pool:concurrent-borrows(40 over 4)",
     "status": "PASS"
@@ -10470,6 +10525,11 @@
     "status": "PASS"
   },
   {
+    "phase": "pooling",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "restart",
     "check": "converge:Dim",
     "status": "PASS"
@@ -11324,6 +11384,11 @@
   {
     "phase": "restart",
     "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
   {
@@ -12289,6 +12354,11 @@
     "status": "PASS"
   },
   {
+    "phase": "control-plane",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "snapshot-ddl-window",
     "check": "a table created just before a forced snapshot is still adopted",
     "status": "PASS"
@@ -13153,6 +13223,11 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
   {
@@ -14044,6 +14119,11 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-table-cdc",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "drop-table-recreate",
     "check": "recreate:first generation replicates",
     "status": "PASS"
@@ -14922,6 +15002,11 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-table-recreate",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "drop-table-polling",
     "check": "polling:fixtures replicate before the mode switch",
     "status": "PASS"
@@ -14939,8 +15024,7 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_d25a4406608c25015e5b3cabbc9b5cd2\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-21T16:29:42.841631+00:00\",\"updated_at\":\"2026-08-21T16:37:10.448514+00:00\"},\"tables\":17,\"rows\":1075}"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -15807,6 +15891,11 @@
   {
     "phase": "drop-table-polling",
     "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
   {
@@ -16713,6 +16802,11 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-database",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "ddl-documented-gaps",
     "check": "converge:Dim",
     "status": "PASS"
@@ -17576,5 +17670,10 @@
     "phase": "ddl-documented-gaps",
     "check": "query:shipments: carrier value through the items bridge",
     "status": "SKIP"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
   }
 ]
