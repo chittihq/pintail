@@ -4,7 +4,18 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.4-rc11] - 2026-08-21
+
+The test-diversity release: a differential grammar fuzzer and a
+dockerless metamorphic pack join the oracle gate, the e2e corpus grows
+from 95 to 159 unique queries (BI-tool shapes, star-schema joins, SET
+and geometry byte contracts, an errno/SQLSTATE rejection matrix, a
+verified contention storm), the gate runs under MySQL's default
+binlog_row_metadata=MINIMAL, and a second-major mysql:8.0 leg becomes a
+release stage with its own environment-stamped ledger. The widened net
+caught and fixed six engine bugs on first contact, including a
+MINIMAL-metadata replication freeze that production sources at default
+settings could hit.
 
 ### Added
 
