@@ -81,7 +81,7 @@ SELECT DATE_SUB(o.created_at, INTERVAL '3 4:00:00' DAY_SECOND) AS backdated FROM
 -- reassembles the value from a CAST'd substring, which is why MD5 and CAST
 -- appear together in nearly every Looker-generated measure.
 -- ---------------------------------------------------------------------------
-SELECT COALESCE(CAST((SUM(DISTINCT CAST(CONV(SUBSTR(MD5(o.id), 1, 15), 16, 10) AS DECIMAL(38,0)) * 1000000000
+SELECT COALESCE(CAST(SUM(DISTINCT CAST(CONV(SUBSTR(MD5(o.id), 1, 15), 16, 10) AS DECIMAL(38,0)) * 1000000000
                       + CAST(o.total * 100 AS DECIMAL(38,0)))
                      - SUM(DISTINCT CAST(CONV(SUBSTR(MD5(o.id), 1, 15), 16, 10) AS DECIMAL(38,0)) * 1000000000)
                      AS DECIMAL(38,0)) / 100, 0) AS total_revenue

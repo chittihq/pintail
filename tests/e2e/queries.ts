@@ -1037,4 +1037,176 @@ export const differentialQueries: DifferentialQuery[] = [
       'GROUP BY status ORDER BY s, n',
     tables: ['orders'],
   },
+
+  // -------------------------------------------------------------------------
+  // BI-tool shapes (tests/corpus/bi-shapes.sql), previously an optional
+  // side harness, now gate queries. Each is the documented compilation
+  // pattern of Metabase, Superset, Looker or Tableau, adapted to the gate
+  // schema with deterministic anchors: fixed dates replace CURDATE(),
+  // ties order through id, and ANY_VALUE reads a group-constant column.
+
+  {
+    name: 'bi metabase: month grain through convert_tz',
+    sql:
+      "SELECT DATE_FORMAT(CONVERT_TZ(updated_at, '+00:00', '-05:00'), '%Y-%m-01') AS grain, " +
+      'COUNT(*) AS n, ROUND(SUM(total), 2) AS revenue FROM orders ' +
+      'WHERE updated_at IS NOT NULL GROUP BY grain ORDER BY grain',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi metabase: iso week bucketing',
+    sql:
+      "SELECT DATE_FORMAT(placed_on, '%x-%v') AS iso_week, COUNT(*) AS n FROM orders " +
+      'GROUP BY iso_week ORDER BY iso_week',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi metabase: display formats for weekday, pretty date and clock',
+    sql:
+      "SELECT id, DATE_FORMAT(placed_on, '%W') AS weekday_name, " +
+      "DATE_FORMAT(placed_on, '%b %e, %Y') AS pretty, DATE_FORMAT(updated_at, '%r') AS clock " +
+      'FROM orders ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi metabase: previous-period revenue window',
+    sql:
+      'SELECT ROUND(COALESCE(SUM(total), 0), 2) AS revenue FROM orders ' +
+      "WHERE placed_on >= DATE_ADD('2024-07-01', INTERVAL -1 MONTH) AND placed_on < '2024-07-01'",
+    tables: ['orders'],
+  },
+  {
+    name: 'bi superset: week-start grain with a rolling average',
+    sql:
+      'SELECT DATE_ADD(placed_on, INTERVAL -WEEKDAY(placed_on) DAY) AS week_start, ' +
+      'ROUND(SUM(total), 2) AS revenue, ' +
+      'ROUND(AVG(SUM(total)) OVER (ORDER BY DATE_ADD(placed_on, INTERVAL -WEEKDAY(placed_on) DAY) ' +
+      'ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 2) AS rolling_7 ' +
+      'FROM orders GROUP BY week_start ORDER BY week_start',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi superset: running total over grouped revenue',
+    sql:
+      'SELECT customer_id, ROUND(SUM(total), 2) AS revenue, ' +
+      'ROUND(SUM(SUM(total)) OVER (ORDER BY customer_id ' +
+      'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 2) AS running ' +
+      'FROM orders GROUP BY customer_id ORDER BY customer_id',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi superset: lag and lead against a named window',
+    sql:
+      'SELECT id, total, LAG(total, 1, 0) OVER w AS prev_total, LEAD(total) OVER w AS next_total ' +
+      'FROM orders WINDOW w AS (PARTITION BY customer_id ORDER BY placed_on, id) ' +
+      'ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi superset: quartile counts from ntile',
+    sql:
+      'SELECT quartile, COUNT(*) AS n FROM ' +
+      '(SELECT NTILE(4) OVER (ORDER BY total, id) AS quartile FROM orders) q ' +
+      'GROUP BY quartile ORDER BY quartile',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi superset: first and last value over an unbounded frame',
+    sql:
+      'SELECT id, FIRST_VALUE(status) OVER w AS first_status, LAST_VALUE(status) OVER w AS last_status ' +
+      'FROM orders WINDOW w AS (PARTITION BY customer_id ORDER BY placed_on, id ' +
+      'ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi superset: compound interval grains',
+    sql:
+      "SELECT id, DATE_ADD(updated_at, INTERVAL '1-2' YEAR_MONTH) AS shifted, " +
+      "DATE_SUB(updated_at, INTERVAL '3 4:00:00' DAY_SECOND) AS backdated " +
+      'FROM orders WHERE updated_at IS NOT NULL ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    // Looker's symmetric aggregate: MD5 the key, CONV a 15-hex-digit
+    // prefix to decimal, scale, and reassemble a fan-out-safe SUM.
+    name: 'bi looker: symmetric aggregate across a fanned-out join',
+    sql:
+      'SELECT COALESCE(CAST(SUM(DISTINCT CAST(CONV(SUBSTR(MD5(o.id), 1, 15), 16, 10) AS DECIMAL(38,0)) * 1000000000 ' +
+      '+ CAST(o.total * 100 AS DECIMAL(38,0))) ' +
+      '- SUM(DISTINCT CAST(CONV(SUBSTR(MD5(o.id), 1, 15), 16, 10) AS DECIMAL(38,0)) * 1000000000) ' +
+      'AS DECIMAL(38,0)) / 100, 0) AS total_revenue ' +
+      'FROM orders o LEFT JOIN order_items i ON i.order_id = o.id',
+    tables: ['orders', 'order_items'],
+  },
+  {
+    // ANY_VALUE over a group-constant column so both engines must agree.
+    name: 'bi looker: any_value reads a functionally dependent column',
+    sql:
+      'SELECT id, ANY_VALUE(status) AS a_status, COUNT(*) AS n FROM orders ' +
+      'GROUP BY id ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi tableau: explicit cast ladder',
+    sql:
+      'SELECT id, CAST(total AS DECIMAL(18,4)) AS amt, CAST(updated_at AS DATE) AS d, ' +
+      'CAST(customer_id AS CHAR(32)) AS t, CONVERT(status, CHAR) AS s ' +
+      'FROM orders ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi tableau: the stddev and variance family',
+    sql:
+      'SELECT ROUND(STDDEV(total), 2) AS sd, ROUND(STDDEV_POP(total), 2) AS sdp, ' +
+      'ROUND(STDDEV_SAMP(total), 2) AS sds, ROUND(VARIANCE(total), 2) AS v, ' +
+      'ROUND(VAR_POP(total), 2) AS vp, ROUND(VAR_SAMP(total), 2) AS vs FROM orders',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi tableau: bit aggregates over an unsigned flag column',
+    sql: 'SELECT BIT_OR(u8) AS any_flag, BIT_AND(u8) AS all_flags, BIT_XOR(u8) AS parity FROM counters',
+    tables: ['counters'],
+  },
+  {
+    name: 'bi shared: substring_index dimension cleanup',
+    sql:
+      "SELECT id, SUBSTRING_INDEX(email, '@', -1) AS domain, " +
+      "SUBSTRING_INDEX(SUBSTRING_INDEX(email, '@', 1), '.', 1) AS localpart " +
+      'FROM customers ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'bi shared: json validity and typed path filter',
+    sql:
+      'SELECT id FROM customers WHERE JSON_VALID(meta) ' +
+      "AND JSON_CONTAINS(meta, '\"en\"', '$.lang') " +
+      "AND JSON_TYPE(JSON_EXTRACT(meta, '$.score')) = 'INTEGER' ORDER BY id",
+    tables: ['customers'],
+  },
+  {
+    name: 'bi shared: contains_path over several paths at once',
+    sql:
+      "SELECT id, JSON_CONTAINS_PATH(meta, 'all', '$.lang', '$.score') AS has_both " +
+      'FROM customers ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'bi shared: maketime from extracted parts',
+    sql:
+      'SELECT id, MAKETIME(HOUR(updated_at), MINUTE(updated_at), 0) AS t FROM orders ' +
+      'WHERE updated_at IS NOT NULL ORDER BY id LIMIT 30',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi shared: extract year_month grouping',
+    sql:
+      'SELECT EXTRACT(YEAR_MONTH FROM placed_on) AS ym, COUNT(*) AS n FROM orders ' +
+      'GROUP BY ym ORDER BY ym',
+    tables: ['orders'],
+  },
+  {
+    name: 'bi shared: keyset-free pagination with limit offset',
+    sql: 'SELECT id, total FROM orders ORDER BY total DESC, id LIMIT 10 OFFSET 10',
+    tables: ['orders'],
+  },
 ]
