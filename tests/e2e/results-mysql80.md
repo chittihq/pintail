@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T16:46:09.890Z.
+Measured 2026-08-21T19:04:11.573Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**3428 passed, 0 failed, 42 documented-gap warnings, 37 skipped.**
+**3448 passed, 0 failed, 42 documented-gap warnings, 37 skipped.**
 
-159 unique corpus queries produced 3180 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+160 unique corpus queries produced 3200 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -180,6 +180,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:event: daily grain per dimension code | PASS |  |
 | snapshot | query:order_items: product rollup without the orders table | PASS |  |
 | snapshot | query:shipments: carrier value through the items bridge | SKIP |  |
+| snapshot | query:json: distinct case variants survive a derived table | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -374,6 +375,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:event: daily grain per dimension code | PASS |  |
 | orm-compat | query:order_items: product rollup without the orders table | PASS |  |
 | orm-compat | query:shipments: carrier value through the items bridge | SKIP |  |
+| orm-compat | query:json: distinct case variants survive a derived table | PASS |  |
 | crud | converge:Dim | PASS |  |
 | crud | converge:Event | PASS |  |
 | crud | converge:Fact | PASS |  |
@@ -544,6 +546,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:event: daily grain per dimension code | PASS |  |
 | crud | query:order_items: product rollup without the orders table | PASS |  |
 | crud | query:shipments: carrier value through the items bridge | SKIP |  |
+| crud | query:json: distinct case variants survive a derived table | PASS |  |
 | type-edges | converge:Dim | PASS |  |
 | type-edges | converge:Event | PASS |  |
 | type-edges | converge:Fact | PASS |  |
@@ -714,6 +717,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:event: daily grain per dimension code | PASS |  |
 | type-edges | query:order_items: product rollup without the orders table | PASS |  |
 | type-edges | query:shipments: carrier value through the items bridge | SKIP |  |
+| type-edges | query:json: distinct case variants survive a derived table | PASS |  |
 | ddl | converge:Dim | PASS |  |
 | ddl | converge:Event | PASS |  |
 | ddl | converge:Fact | PASS |  |
@@ -885,6 +889,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:event: daily grain per dimension code | PASS |  |
 | ddl | query:order_items: product rollup without the orders table | PASS |  |
 | ddl | query:shipments: carrier value through the items bridge | PASS |  |
+| ddl | query:json: distinct case variants survive a derived table | PASS |  |
 | schema-drift-minimal | converge:Dim | PASS |  |
 | schema-drift-minimal | converge:Event | PASS |  |
 | schema-drift-minimal | converge:Fact | PASS |  |
@@ -1056,6 +1061,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:event: daily grain per dimension code | PASS |  |
 | schema-drift-minimal | query:order_items: product rollup without the orders table | PASS |  |
 | schema-drift-minimal | query:shipments: carrier value through the items bridge | PASS |  |
+| schema-drift-minimal | query:json: distinct case variants survive a derived table | PASS |  |
 | schema-drift-unseen | converge:Dim | PASS |  |
 | schema-drift-unseen | converge:Event | PASS |  |
 | schema-drift-unseen | converge:Fact | PASS |  |
@@ -1227,6 +1233,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:event: daily grain per dimension code | PASS |  |
 | schema-drift-unseen | query:order_items: product rollup without the orders table | PASS |  |
 | schema-drift-unseen | query:shipments: carrier value through the items bridge | PASS |  |
+| schema-drift-unseen | query:json: distinct case variants survive a derived table | PASS |  |
 | churn-live | live:conformance: triple-alias person join with a dangling FK | PASS |  |
 | churn-live | live:conformance: mixed-collation double grouping | PASS |  |
 | churn-live | live:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1404,6 +1411,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:event: daily grain per dimension code | PASS |  |
 | churn | query:order_items: product rollup without the orders table | PASS |  |
 | churn | query:shipments: carrier value through the items bridge | PASS |  |
+| churn | query:json: distinct case variants survive a derived table | PASS |  |
 | contention | converge:Dim | PASS |  |
 | contention | converge:Event | PASS |  |
 | contention | converge:Fact | PASS |  |
@@ -1575,6 +1583,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:event: daily grain per dimension code | PASS |  |
 | contention | query:order_items: product rollup without the orders table | PASS |  |
 | contention | query:shipments: carrier value through the items bridge | PASS |  |
+| contention | query:json: distinct case variants survive a derived table | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
@@ -1751,6 +1760,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:event: daily grain per dimension code | PASS |  |
 | execution-budget | query:order_items: product rollup without the orders table | PASS |  |
 | execution-budget | query:shipments: carrier value through the items bridge | PASS |  |
+| execution-budget | query:json: distinct case variants survive a derived table | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -1926,6 +1936,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:event: daily grain per dimension code | PASS |  |
 | spill | query:order_items: product rollup without the orders table | PASS |  |
 | spill | query:shipments: carrier value through the items bridge | PASS |  |
+| spill | query:json: distinct case variants survive a derived table | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -2100,6 +2111,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:event: daily grain per dimension code | PASS |  |
 | pooling | query:order_items: product rollup without the orders table | PASS |  |
 | pooling | query:shipments: carrier value through the items bridge | PASS |  |
+| pooling | query:json: distinct case variants survive a derived table | PASS |  |
 | restart | converge:Dim | PASS |  |
 | restart | converge:Event | PASS |  |
 | restart | converge:Fact | PASS |  |
@@ -2271,6 +2283,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:event: daily grain per dimension code | PASS |  |
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
+| restart | query:json: distinct case variants survive a derived table | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -2463,6 +2476,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:event: daily grain per dimension code | PASS |  |
 | control-plane | query:order_items: product rollup without the orders table | PASS |  |
 | control-plane | query:shipments: carrier value through the items bridge | PASS |  |
+| control-plane | query:json: distinct case variants survive a derived table | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
 | snapshot-ddl-window | converge:Dim | PASS |  |
 | snapshot-ddl-window | converge:Event | PASS |  |
@@ -2636,6 +2650,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:event: daily grain per dimension code | PASS |  |
 | snapshot-ddl-window | query:order_items: product rollup without the orders table | PASS |  |
 | snapshot-ddl-window | query:shipments: carrier value through the items bridge | PASS |  |
+| snapshot-ddl-window | query:json: distinct case variants survive a derived table | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -2813,6 +2828,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:event: daily grain per dimension code | PASS |  |
 | drop-table-cdc | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-cdc | query:shipments: carrier value through the items bridge | PASS |  |
+| drop-table-cdc | query:json: distinct case variants survive a derived table | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
@@ -2988,6 +3004,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:event: daily grain per dimension code | PASS |  |
 | drop-table-recreate | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-recreate | query:shipments: carrier value through the items bridge | PASS |  |
+| drop-table-recreate | query:json: distinct case variants survive a derived table | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
@@ -3165,6 +3182,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:event: daily grain per dimension code | PASS |  |
 | drop-table-polling | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-polling | query:shipments: carrier value through the items bridge | PASS |  |
+| drop-table-polling | query:json: distinct case variants survive a derived table | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -3345,6 +3363,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:event: daily grain per dimension code | PASS |  |
 | drop-database | query:order_items: product rollup without the orders table | PASS |  |
 | drop-database | query:shipments: carrier value through the items bridge | PASS |  |
+| drop-database | query:json: distinct case variants survive a derived table | PASS |  |
 | ddl-documented-gaps | converge:Dim | PASS |  |
 | ddl-documented-gaps | converge:Event | PASS |  |
 | ddl-documented-gaps | converge:Fact | PASS |  |
@@ -3517,29 +3536,30 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:event: daily grain per dimension code | PASS |  |
 | ddl-documented-gaps | query:order_items: product rollup without the orders table | SKIP |  |
 | ddl-documented-gaps | query:shipments: carrier value through the items bridge | SKIP |  |
+| ddl-documented-gaps | query:json: distinct case variants survive a derived table | PASS |  |
 
 ## Timing
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 1.3 | 2.1 |
-| orm-compat | 9.4 | 0.6 | 0.8 |
-| crud | 0.3 | 3.0 | 0.6 |
-| type-edges | 0.0 | 2.4 | 0.6 |
-| ddl | 0.6 | 22.2 | 0.8 |
-| schema-drift-minimal | 0.3 | 4.2 | 0.5 |
-| schema-drift-unseen | 1.2 | 5.1 | 0.8 |
-| churn | 16.1 | 1.5 | 0.7 |
-| contention | 15.0 | 0.6 | 0.9 |
-| execution-budget | 0.0 | 0.4 | 0.8 |
-| spill | 3.0 | 0.5 | 0.6 |
-| pooling | 0.2 | 2.1 | 0.5 |
-| restart | 0.5 | 3.7 | 1.0 |
-| control-plane | 79.5 | 1.6 | 0.7 |
-| snapshot-ddl-window | 7.1 | 1.4 | 0.7 |
-| drop-table-cdc | 16.3 | 1.0 | 0.9 |
-| drop-table-recreate | 163.4 | 2.4 | 1.4 |
-| drop-table-polling | 47.5 | 3.5 | 1.3 |
-| drop-database | 22.0 | 1.7 | 1.2 |
-| ddl-documented-gaps | 0.1 | 2.0 | 1.1 |
-| total | 382.5 | 61.1 | 18.0 |
+| snapshot | 0.0 | 1.3 | 1.1 |
+| orm-compat | 7.2 | 0.5 | 1.0 |
+| crud | 0.4 | 0.7 | 1.0 |
+| type-edges | 0.1 | 1.3 | 0.9 |
+| ddl | 0.8 | 22.0 | 1.0 |
+| schema-drift-minimal | 0.2 | 4.9 | 1.1 |
+| schema-drift-unseen | 1.3 | 5.1 | 1.0 |
+| churn | 15.0 | 1.8 | 1.0 |
+| contention | 14.2 | 0.6 | 1.1 |
+| execution-budget | 0.0 | 0.5 | 1.0 |
+| spill | 2.9 | 0.6 | 0.9 |
+| pooling | 0.2 | 0.8 | 1.1 |
+| restart | 0.8 | 2.5 | 1.0 |
+| control-plane | 67.3 | 1.3 | 1.1 |
+| snapshot-ddl-window | 7.4 | 1.3 | 1.1 |
+| drop-table-cdc | 21.8 | 2.2 | 1.1 |
+| drop-table-recreate | 142.7 | 1.9 | 1.2 |
+| drop-table-polling | 34.7 | 1.9 | 1.2 |
+| drop-database | 21.4 | 1.8 | 1.3 |
+| ddl-documented-gaps | 0.2 | 1.7 | 1.2 |
+| total | 338.6 | 54.6 | 21.3 |
