@@ -1160,8 +1160,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'bi tableau: the stddev and variance family',
     sql:
       'SELECT ROUND(STDDEV(total), 2) AS sd, ROUND(STDDEV_POP(total), 2) AS sdp, ' +
-      'ROUND(STDDEV_SAMP(total), 2) AS sds, ROUND(VARIANCE(total), 2) AS v, ' +
-      'ROUND(VAR_POP(total), 2) AS vp, ROUND(VAR_SAMP(total), 2) AS vs FROM orders',
+      'ROUND(STDDEV_SAMP(total), 2) AS sds, ROUND(VARIANCE(total) * 1E-12, 6) AS v, ' +
+      'ROUND(VAR_POP(total) * 1E-12, 6) AS vp, ROUND(VAR_SAMP(total) * 1E-12, 6) AS vs FROM orders',
     tables: ['orders'],
   },
   {
