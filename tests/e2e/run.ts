@@ -1015,6 +1015,81 @@ async function liveQueryConverges(
   return last
 }
 
+/// ~12 seconds of source DML racing a six-connection read storm on the
+/// wire. The replica is allowed exactly two answers under contention:
+/// a correct result set or admission backpressure (1040) - never an
+/// internal error, a protocol desync, or a dropped connection. The
+/// differential verdict on the data itself comes from the converge +
+/// corpus sweep that follows every phase.
+async function phaseContention() {
+  const reads = [
+    'SELECT COUNT(*), COALESCE(ROUND(SUM(total), 2), 0) FROM orders',
+    'SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY status',
+    'SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id ' +
+      'ORDER BY o.id DESC LIMIT 20',
+    'SELECT i.order_id, SUM(i.qty * i.price) FROM order_items i ' +
+      'GROUP BY i.order_id ORDER BY i.order_id LIMIT 25',
+    "SELECT id, tags FROM customers WHERE FIND_IN_SET('vip', tags) > 0 ORDER BY id",
+  ]
+  const deadline = Date.now() + 12_000
+  let dmlOps = 0
+  const dml = (async () => {
+    let n = 0
+    while (Date.now() < deadline) {
+      n += 1
+      await sql(
+        `INSERT INTO orders (customer_id, status, total, placed_on) VALUES ` +
+          `(${1 + (n % 40)}, 'pending', ${(n % 500)}.25, '2025-08-0${1 + (n % 9)}')`,
+      )
+      if (n % 3 === 0) await sql(`UPDATE orders SET total = total + 1 WHERE id % 17 = ${n % 17}`)
+      if (n % 7 === 0) {
+        await sql(`DELETE FROM orders WHERE status = 'cancelled' AND id % 23 = ${n % 23}`)
+      }
+      dmlOps = n
+    }
+  })()
+  let completed = 0
+  let backpressured = 0
+  const workers = Array.from({ length: 6 }, async (_, worker) => {
+    const connection = await mysql.createConnection({
+      host: '127.0.0.1',
+      port: pintailWirePort,
+      user: DATABASE,
+      password: wireSecret,
+      database: DATABASE,
+    })
+    try {
+      for (let turn = worker; Date.now() < deadline; turn += 1) {
+        const query = reads[turn % reads.length]!
+        try {
+          await connection.query(query)
+          completed += 1
+        } catch (error) {
+          const raised = error as { errno?: number }
+          if (raised.errno === 1040) {
+            backpressured += 1
+            await Bun.sleep(50)
+            continue
+          }
+          throw new Error(`contention read failed beyond backpressure: ${error} (${query})`)
+        }
+      }
+    } finally {
+      await connection.end().catch(() => {})
+    }
+  })
+  await Promise.all([dml, ...workers])
+  // Floors, not exact counts: the point is that both sides genuinely ran
+  // concurrently, not that a particular interleaving happened.
+  if (completed < 100) {
+    throw new Error(`contention storm completed only ${completed} reads (floor 100)`)
+  }
+  if (dmlOps < 30) throw new Error(`contention storm ran only ${dmlOps} DML ops (floor 30)`)
+  log(
+    `contention: ${completed} reads (${backpressured} backpressured) raced ${dmlOps} DML ops`,
+  )
+}
+
 async function phaseChurn() {
   const random = mulberry32(0xc0ffee)
   const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
@@ -2813,6 +2888,7 @@ async function main() {
     ['schema-drift-minimal', phaseSchemaDriftMinimal],
     ['schema-drift-unseen', phaseSchemaDriftUnseen],
     ['churn', phaseChurn],
+    ['contention', phaseContention],
     ['execution-budget', phaseExecutionBudget],
     ['spill', phaseSpill],
     ['pooling', phasePooling],
