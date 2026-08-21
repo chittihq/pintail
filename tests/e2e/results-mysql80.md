@@ -1,10 +1,10 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T15:53:40.911Z.
+Measured 2026-08-21T16:00:34.216Z.
 
-Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-container.
+Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**3427 passed, 0 failed, 43 documented-gap warnings, 37 skipped.**
+**3416 passed, 12 failed, 42 documented-gap warnings, 37 skipped.**
 
 159 unique corpus queries produced 3180 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
@@ -1555,7 +1555,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | contention | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | contention | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | contention | query:bi tableau: explicit cast ladder | PASS |  |
-| contention | query:bi tableau: the stddev and variance family | PASS |  |
+| contention | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | contention | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | contention | query:bi shared: substring_index dimension cleanup | PASS |  |
 | contention | query:bi shared: json validity and typed path filter | PASS |  |
@@ -1731,7 +1731,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | execution-budget | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | execution-budget | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | execution-budget | query:bi tableau: explicit cast ladder | PASS |  |
-| execution-budget | query:bi tableau: the stddev and variance family | PASS |  |
+| execution-budget | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | execution-budget | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | execution-budget | query:bi shared: substring_index dimension cleanup | PASS |  |
 | execution-budget | query:bi shared: json validity and typed path filter | PASS |  |
@@ -1906,7 +1906,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | spill | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | spill | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | spill | query:bi tableau: explicit cast ladder | PASS |  |
-| spill | query:bi tableau: the stddev and variance family | PASS |  |
+| spill | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | spill | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | spill | query:bi shared: substring_index dimension cleanup | PASS |  |
 | spill | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2080,7 +2080,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | pooling | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | pooling | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | pooling | query:bi tableau: explicit cast ladder | PASS |  |
-| pooling | query:bi tableau: the stddev and variance family | PASS |  |
+| pooling | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | pooling | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | pooling | query:bi shared: substring_index dimension cleanup | PASS |  |
 | pooling | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2251,7 +2251,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | restart | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | restart | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | restart | query:bi tableau: explicit cast ladder | PASS |  |
-| restart | query:bi tableau: the stddev and variance family | PASS |  |
+| restart | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | restart | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | restart | query:bi shared: substring_index dimension cleanup | PASS |  |
 | restart | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2443,7 +2443,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | control-plane | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | control-plane | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | control-plane | query:bi tableau: explicit cast ladder | PASS |  |
-| control-plane | query:bi tableau: the stddev and variance family | PASS |  |
+| control-plane | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | control-plane | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | control-plane | query:bi shared: substring_index dimension cleanup | PASS |  |
 | control-plane | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2616,7 +2616,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | snapshot-ddl-window | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | snapshot-ddl-window | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | snapshot-ddl-window | query:bi tableau: explicit cast ladder | PASS |  |
-| snapshot-ddl-window | query:bi tableau: the stddev and variance family | PASS |  |
+| snapshot-ddl-window | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | snapshot-ddl-window | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | snapshot-ddl-window | query:bi shared: substring_index dimension cleanup | PASS |  |
 | snapshot-ddl-window | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2793,7 +2793,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-cdc | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-table-cdc | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-table-cdc | query:bi tableau: explicit cast ladder | PASS |  |
-| drop-table-cdc | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-table-cdc | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | drop-table-cdc | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | drop-table-cdc | query:bi shared: substring_index dimension cleanup | PASS |  |
 | drop-table-cdc | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2968,7 +2968,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-recreate | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-table-recreate | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-table-recreate | query:bi tableau: explicit cast ladder | PASS |  |
-| drop-table-recreate | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-table-recreate | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | drop-table-recreate | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | drop-table-recreate | query:bi shared: substring_index dimension cleanup | PASS |  |
 | drop-table-recreate | query:bi shared: json validity and typed path filter | PASS |  |
@@ -2991,7 +2991,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_2f849ca45020a26007aaf0636d889fd1","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-21T15:45:42.561490+00:00","updated_at":"2026-08-21T15:53:06.239867+00:00"},"tables":17,"rows":1060} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -3145,7 +3145,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-polling | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-table-polling | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-table-polling | query:bi tableau: explicit cast ladder | PASS |  |
-| drop-table-polling | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-table-polling | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | drop-table-polling | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | drop-table-polling | query:bi shared: substring_index dimension cleanup | PASS |  |
 | drop-table-polling | query:bi shared: json validity and typed path filter | PASS |  |
@@ -3325,7 +3325,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-database | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-database | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-database | query:bi tableau: explicit cast ladder | PASS |  |
-| drop-database | query:bi tableau: the stddev and variance family | PASS |  |
+| drop-database | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | drop-database | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | drop-database | query:bi shared: substring_index dimension cleanup | PASS |  |
 | drop-database | query:bi shared: json validity and typed path filter | PASS |  |
@@ -3497,7 +3497,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | ddl-documented-gaps | query:bi looker: symmetric aggregate across a fanned-out join | SKIP |  |
 | ddl-documented-gaps | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | ddl-documented-gaps | query:bi tableau: explicit cast ladder | PASS |  |
-| ddl-documented-gaps | query:bi tableau: the stddev and variance family | PASS |  |
+| ddl-documented-gaps | query:bi tableau: the stddev and variance family | FAIL | row 0: |
 | ddl-documented-gaps | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
 | ddl-documented-gaps | query:bi shared: substring_index dimension cleanup | PASS |  |
 | ddl-documented-gaps | query:bi shared: json validity and typed path filter | PASS |  |
@@ -3522,24 +3522,24 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.8 | 1.9 |
-| orm-compat | 8.3 | 0.5 | 0.7 |
-| crud | 0.3 | 2.6 | 0.7 |
-| type-edges | 0.1 | 1.4 | 0.6 |
-| ddl | 0.5 | 18.8 | 0.7 |
-| schema-drift-minimal | 0.1 | 3.4 | 0.7 |
-| schema-drift-unseen | 1.1 | 7.4 | 1.1 |
-| churn | 13.5 | 2.2 | 1.1 |
-| contention | 14.3 | 0.4 | 0.8 |
+| snapshot | 0.0 | 1.0 | 0.7 |
+| orm-compat | 8.4 | 0.4 | 1.1 |
+| crud | 0.5 | 0.9 | 0.9 |
+| type-edges | 0.1 | 1.9 | 0.7 |
+| ddl | 0.9 | 21.6 | 0.7 |
+| schema-drift-minimal | 0.1 | 2.0 | 0.9 |
+| schema-drift-unseen | 1.1 | 5.5 | 0.9 |
+| churn | 15.5 | 2.7 | 1.0 |
+| contention | 13.8 | 0.3 | 0.9 |
 | execution-budget | 0.0 | 0.4 | 0.8 |
-| spill | 3.0 | 1.3 | 2.4 |
-| pooling | 0.3 | 0.7 | 0.9 |
-| restart | 0.6 | 2.4 | 0.7 |
-| control-plane | 61.5 | 1.2 | 1.0 |
-| snapshot-ddl-window | 6.9 | 1.5 | 0.8 |
-| drop-table-cdc | 17.0 | 1.1 | 0.9 |
-| drop-table-recreate | 139.5 | 2.5 | 0.7 |
-| drop-table-polling | 120.8 | 1.3 | 1.2 |
-| drop-database | 13.2 | 1.5 | 0.8 |
-| ddl-documented-gaps | 0.0 | 1.9 | 0.9 |
-| total | 401.1 | 53.1 | 19.4 |
+| spill | 3.0 | 0.6 | 1.3 |
+| pooling | 0.1 | 0.5 | 0.6 |
+| restart | 0.6 | 2.3 | 0.9 |
+| control-plane | 57.4 | 1.0 | 1.3 |
+| snapshot-ddl-window | 7.8 | 1.4 | 0.9 |
+| drop-table-cdc | 20.1 | 2.0 | 1.0 |
+| drop-table-recreate | 133.7 | 1.1 | 1.0 |
+| drop-table-polling | 26.5 | 1.9 | 0.9 |
+| drop-database | 21.3 | 1.3 | 0.8 |
+| ddl-documented-gaps | 0.1 | 1.3 | 1.2 |
+| total | 311.0 | 49.9 | 18.5 |

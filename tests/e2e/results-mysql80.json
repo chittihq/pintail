@@ -7741,7 +7741,8 @@
   {
     "phase": "contention",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663550 | 182814733747663550 | 183150173626099650\n  pintail 427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663580 | 182814733747663580 | 183150173626099650"
   },
   {
     "phase": "contention",
@@ -8623,7 +8624,8 @@
   {
     "phase": "execution-budget",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663550 | 182814733747663550 | 183150173626099650\n  pintail 427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663580 | 182814733747663580 | 183150173626099650"
   },
   {
     "phase": "execution-budget",
@@ -9500,7 +9502,8 @@
   {
     "phase": "spill",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663550 | 182814733747663550 | 183150173626099650\n  pintail 427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663580 | 182814733747663580 | 183150173626099650"
   },
   {
     "phase": "spill",
@@ -10372,7 +10375,8 @@
   {
     "phase": "pooling",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663550 | 182814733747663550 | 183150173626099650\n  pintail 427568396.5700 | 427568396.5700 | 427960481.3800 | 182814733747663580 | 182814733747663580 | 183150173626099650"
   },
   {
     "phase": "pooling",
@@ -11229,7 +11233,8 @@
   {
     "phase": "restart",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   427178103.9200 | 427178103.9200 | 427569113.7100 | 182481132467808540 | 182481132467808540 | 182815346996137860\n  pintail 427178103.9200 | 427178103.9200 | 427569113.7100 | 182481132467808540 | 182481132467808540 | 182815346996137900"
   },
   {
     "phase": "restart",
@@ -12191,7 +12196,8 @@
   {
     "phase": "control-plane",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   426400714.3100 | 426400714.3100 | 426789588.7300 | 181817569162685060 | 181817569162685060 | 182149353048018430\n  pintail 426400714.3100 | 426400714.3100 | 426789588.7300 | 181817569162685100 | 181817569162685100 | 182149353048018460"
   },
   {
     "phase": "control-plane",
@@ -13058,7 +13064,8 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   426400714.3100 | 426400714.3100 | 426789588.7300 | 181817569162685060 | 181817569162685060 | 182149353048018430\n  pintail 426400714.3100 | 426400714.3100 | 426789588.7300 | 181817569162685100 | 181817569162685100 | 182149353048018460"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -13946,7 +13953,8 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   426013607.6800 | 426013607.6800 | 426401421.6900 | 181487593927729280 | 181487593927729280 | 181818172423043900\n  pintail 426013607.6800 | 426013607.6800 | 426401421.6900 | 181487593927729300 | 181487593927729300 | 181818172423043940"
   },
   {
     "phase": "drop-table-cdc",
@@ -14824,7 +14832,8 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   425627553.4400 | 425627553.4400 | 426014311.8600 | 181158814243279070 | 181158814243279070 | 181488193905539600\n  pintail 425627553.4400 | 425627553.4400 | 426014311.8600 | 181158814243279100 | 181158814243279100 | 181488193905539620"
   },
   {
     "phase": "drop-table-recreate",
@@ -14939,8 +14948,7 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_2f849ca45020a26007aaf0636d889fd1\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-21T15:45:42.561490+00:00\",\"updated_at\":\"2026-08-21T15:53:06.239867+00:00\"},\"tables\":17,\"rows\":1060}"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -15712,7 +15720,8 @@
   {
     "phase": "drop-table-polling",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   424475657.5700 | 424475657.5700 | 424859277.7600 | 180179583869465150 | 180179583869465150 | 180505405901778850\n  pintail 424475657.5700 | 424475657.5700 | 424859277.7600 | 180179583869465180 | 180179583869465180 | 180505405901778850"
   },
   {
     "phase": "drop-table-polling",
@@ -16615,7 +16624,8 @@
   {
     "phase": "drop-database",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   424475657.5700 | 424475657.5700 | 424859277.7600 | 180179583869465150 | 180179583869465150 | 180505405901778850\n  pintail 424475657.5700 | 424475657.5700 | 424859277.7600 | 180179583869465180 | 180179583869465180 | 180505405901778850"
   },
   {
     "phase": "drop-database",
@@ -17480,7 +17490,8 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:bi tableau: the stddev and variance family",
-    "status": "PASS"
+    "status": "FAIL",
+    "detail": "row 0:\n  mysql   424475657.5700 | 424475657.5700 | 424859277.7600 | 180179583869465150 | 180179583869465150 | 180505405901778850\n  pintail 424475657.5700 | 424475657.5700 | 424859277.7600 | 180179583869465180 | 180179583869465180 | 180505405901778850"
   },
   {
     "phase": "ddl-documented-gaps",
