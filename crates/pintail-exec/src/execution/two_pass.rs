@@ -602,7 +602,9 @@ pub(super) fn build_streaming_two_pass_aggregate(
                             row.push(if id == 0 {
                                 Value::Null
                             } else {
-                                Value::UInt64(id - 1)
+                                // Date parts are signed (Int64), like the
+                                // scalar and units paths that feed them.
+                                Value::Int64(i64::try_from(id - 1).unwrap_or(i64::MAX))
                             });
                         }
                     }
