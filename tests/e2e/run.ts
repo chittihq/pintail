@@ -1087,7 +1087,10 @@ async function phaseContention() {
       verify: (rows) => {
         const [n, nid, lo, hi] = rows[0]!.map(asNumber)
         if (n !== nid) return `COUNT(*) ${n} != COUNT(id) ${nid}`
-        if (n > 0 && (lo === undefined || hi === undefined || lo > hi)) {
+        // An empty table answers NULL for MIN/MAX, which asNumber turns
+        // into NaN, never undefined — so the emptiness check must be
+        // NaN-aware or it checks nothing.
+        if (n > 0 && (!Number.isFinite(lo!) || !Number.isFinite(hi!) || lo! > hi!)) {
           return `MIN ${lo} exceeds MAX ${hi}`
         }
         return null
