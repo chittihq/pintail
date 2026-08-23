@@ -75,7 +75,8 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            (9,9,25.25,'2025-02-01 12:00:00','pending','{\"tags\":[\"orphan\"],\"score\":0.5,\"items\":[9]}'),\
            (10,1,0.00,'2025-02-28 23:59:59','cancelled',NULL),\
            (11,6,33.33,'2025-03-01 08:00:00','shipped','{\"tags\":[\"a\"],\"score\":4.25,\"items\":[1,2,3]}'),\
-           (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}');";
+           (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}'),\
+           (13,8,949.86,'2025-05-01 12:00:00','processing','{\"tags\":[\"rounding\"],\"score\":9.5,\"items\":[5]}');";
 
 struct OracleCase {
     family: &'static str,
@@ -3189,7 +3190,7 @@ fn catalog(
         ORDERS_ID,
         "orders",
         orders_schema,
-        TableStatistics::with_row_count(12),
+        TableStatistics::with_row_count(13),
     )
     .map_err(|error| error.to_string())?
     .with_key_columns([1])
@@ -3333,6 +3334,14 @@ fn order_rows() -> Vec<StoredRow> {
             "2025-04-01 16:45:00",
             "delivered",
             Some(r#"{"tags":["premium"],"score":8,"items":[2,4,6,8]}"#),
+        ),
+        order_row(
+            13,
+            8,
+            "949.86",
+            "2025-05-01 12:00:00",
+            "processing",
+            Some(r#"{"tags":["rounding"],"score":9.5,"items":[5]}"#),
         ),
     ]
     .into()
