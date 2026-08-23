@@ -119,7 +119,7 @@ DML, a SIGKILL restart with writes while the process is down, a
 control-plane pass over the operator API routes, table/database drop
 lifecycles, and documented-gap DDL). After every phase it re-verifies each
 base table over the wire protocol plus the differential corpus in
-`queries.ts` — 147 unique query shapes covering joins up to five tables,
+`queries.ts` — 164 unique query shapes covering joins up to five tables,
 windows, aggregates, subqueries, CTEs, set operations, JSON, temporal
 grains, regex, SET/geometry contracts, and 21 BI-tool compilation shapes —
 and an errno/SQLSTATE rejection matrix. A pinned Sequelize, Prisma, and

@@ -537,6 +537,16 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['orders'],
   },
   {
+    // The high-volume generated oracle found that SQL's unary-minus AST
+    // around `-2` sent an exact computed DECIMAL through approximate
+    // nearest-even rounding: the seeded 50.00 row returned 0, not 100.
+    name: 'computed decimal rounds negative digits half away from zero',
+    sql:
+      'SELECT id, total, ROUND(total + 0.00, -2) AS rounded, ' +
+      'TRUNCATE(total + 0.00, -2) AS truncated FROM orders ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
     name: 'json extract filter on customer meta',
     sql:
       "SELECT id, meta ->> '$.tier' AS tier_path, JSON_TYPE(meta) AS meta_type " +
