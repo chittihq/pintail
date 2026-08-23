@@ -15450,7 +15450,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_b4c19b2552eb0b7e477e3aa15f06f328\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-23T20:02:40.655616+00:00\",\"updated_at\":\"2026-08-23T20:09:21.641349+00:00\"},\"tables\":18,\"rows\":1173}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_26973294a86b54ad3ae451336adc72df\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-23T20:27:49.801957+00:00\",\"updated_at\":\"2026-08-23T20:34:57.730666+00:00\"},\"tables\":18,\"rows\":1223}"
   },
   {
     "phase": "drop-table-polling",

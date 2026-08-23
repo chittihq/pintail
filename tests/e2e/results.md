@@ -1,6 +1,6 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-23T20:09:53.669Z.
+Measured 2026-08-23T20:35:32.642Z.
 
 Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.
 
@@ -3093,7 +3093,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_b4c19b2552eb0b7e477e3aa15f06f328","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-23T20:02:40.655616+00:00","updated_at":"2026-08-23T20:09:21.641349+00:00"},"tables":18,"rows":1173} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_26973294a86b54ad3ae451336adc72df","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-23T20:27:49.801957+00:00","updated_at":"2026-08-23T20:34:57.730666+00:00"},"tables":18,"rows":1223} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -3642,24 +3642,24 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 1.1 | 0.7 |
-| orm-compat | 7.8 | 0.1 | 0.6 |
-| crud | 0.3 | 2.1 | 0.5 |
-| type-edges | 0.0 | 1.6 | 0.5 |
-| ddl | 0.9 | 17.1 | 0.5 |
-| schema-drift-minimal | 0.2 | 2.5 | 0.8 |
-| schema-drift-unseen | 0.9 | 4.8 | 0.7 |
-| churn | 11.3 | 3.7 | 0.7 |
-| contention | 13.4 | 0.4 | 0.8 |
-| execution-budget | 0.0 | 0.4 | 0.6 |
-| spill | 3.1 | 0.3 | 0.9 |
-| pooling | 0.1 | 1.2 | 0.6 |
-| restart | 0.5 | 2.4 | 0.6 |
-| control-plane | 53.0 | 1.4 | 0.8 |
-| snapshot-ddl-window | 7.1 | 1.2 | 0.7 |
-| drop-table-cdc | 13.8 | 0.9 | 0.9 |
-| drop-table-recreate | 131.4 | 1.5 | 0.7 |
-| drop-table-polling | 111.4 | 0.8 | 0.9 |
-| drop-database | 14.2 | 0.7 | 0.6 |
-| ddl-documented-gaps | 0.1 | 1.4 | 0.9 |
-| total | 369.3 | 45.6 | 14.0 |
+| snapshot | 0.0 | 1.1 | 1.7 |
+| orm-compat | 6.9 | 0.3 | 0.6 |
+| crud | 0.3 | 1.0 | 0.5 |
+| type-edges | 0.0 | 2.0 | 0.3 |
+| ddl | 0.7 | 18.4 | 0.7 |
+| schema-drift-minimal | 0.3 | 3.5 | 0.8 |
+| schema-drift-unseen | 1.2 | 5.0 | 0.5 |
+| churn | 10.6 | 0.5 | 0.6 |
+| contention | 14.5 | 0.5 | 0.5 |
+| execution-budget | 0.0 | 0.2 | 0.8 |
+| spill | 3.0 | 0.6 | 0.7 |
+| pooling | 0.1 | 1.2 | 0.9 |
+| restart | 0.6 | 2.2 | 0.7 |
+| control-plane | 61.8 | 0.9 | 0.8 |
+| snapshot-ddl-window | 7.9 | 1.0 | 0.9 |
+| drop-table-cdc | 18.9 | 1.1 | 0.7 |
+| drop-table-recreate | 130.0 | 1.2 | 0.5 |
+| drop-table-polling | 117.9 | 0.8 | 0.4 |
+| drop-database | 18.8 | 1.0 | 0.7 |
+| ddl-documented-gaps | 0.2 | 1.1 | 0.7 |
+| total | 393.8 | 43.6 | 14.1 |
