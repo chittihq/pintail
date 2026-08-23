@@ -2217,7 +2217,10 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         unordered(
             "set operations",
-            "SELECT note FROM events INTERSECT SELECT note FROM events WHERE active = 1",
+            // The representative spelling of a case-insensitive set member
+            // differs between MySQL 8.0 and 8.4 and is undefined in both.
+            // Fold the projection so this asserts membership, not scan order.
+            "SELECT UPPER(note) FROM events INTERSECT SELECT UPPER(note) FROM events WHERE active = 1",
         ),
         unordered(
             "set operations",
