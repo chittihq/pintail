@@ -21,6 +21,10 @@ const EVENTS_ID: TableId = TableId::new(1);
 const USERS_ID: TableId = TableId::new(2);
 const ORDERS_ID: TableId = TableId::new(3);
 const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
+/// Keep each mysql-client stdin/stdout exchange below pipe backpressure.
+/// The database instance remains shared; only the lightweight client process
+/// is restarted between chunks.
+const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
 const EXPECTED_CASES: usize = 1081;
@@ -3510,11 +3514,16 @@ fn run_fuzz() -> Result<(), String> {
     // The grammar claims to emit valid supported SQL. A MySQL rejection is
     // therefore a generator defect and fails the sweep; it is never counted
     // as a skipped compatibility case.
-    let expected = execute_mysql_cases(&mysql, &oracle_cases).map_err(|error| {
-        format!(
-            "generated corpus contains SQL MySQL rejected; seeds={seeds:?}, cases/seed={cases_per_seed}: {error}"
-        )
-    })?;
+    let mut expected = Vec::with_capacity(oracle_cases.len());
+    for (chunk, cases) in oracle_cases.chunks(FUZZ_MYSQL_BATCH_CASES).enumerate() {
+        expected.extend(execute_mysql_cases(&mysql, cases).map_err(|error| {
+            let first = chunk * FUZZ_MYSQL_BATCH_CASES;
+            format!(
+                "generated corpus contains SQL MySQL rejected in cases {first}..{}; seeds={seeds:?}, cases/seed={cases_per_seed}: {error}",
+                first + cases.len(),
+            )
+        })?);
+    }
     let mut failures = Vec::new();
     for (case, expected) in generated.iter().zip(&expected) {
         match execute_pintail(&case.sql, &catalog, &provider) {
