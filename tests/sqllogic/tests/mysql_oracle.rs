@@ -4103,7 +4103,7 @@ impl QueryParts {
 
 #[allow(clippy::too_many_lines)]
 fn generate_parts(rng: &mut Xorshift) -> QueryParts {
-    match rng.below(5) {
+    match rng.below(10) {
         // Scalar-only: expressions with no FROM.
         0 => {
             let picks = 1 + rng.below(3);
@@ -4205,7 +4205,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
             }
         }
         // Three-table chain across all fixtures.
-        _ => {
+        4 => {
             let expr_e = num_expr(rng, 'e', 1);
             let expr_o = num_expr(rng, 'o', 1);
             QueryParts {
@@ -4221,6 +4221,141 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                 group_by: None,
                 having: None,
                 order_columns: 3,
+                limit: Some(50),
+            }
+        }
+        // Exact DECIMAL operations with positive, zero and negative digit
+        // counts. These are column-native rather than scalar constants so
+        // every statement exercises typed vectors.
+        5 => {
+            let digits = *rng.pick(&[-2_i32, -1, 0, 1, 2, 3, 4]);
+            let threshold = *rng.pick(&["0.00", "7.00", "10.50", "100.00"]);
+            let offset = *rng.pick(&["-10.25", "-1.00", "0.00", "1.00", "10.25"]);
+            let factor = 1 + rng.below(5);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "decimal",
+                select: vec![
+                    "o.id".to_owned(),
+                    format!("ROUND(o.total + {offset}, {digits})"),
+                    format!("TRUNCATE(o.total * {factor}, {digits})"),
+                    "CEIL(o.total)".to_owned(),
+                    "FLOOR(o.total)".to_owned(),
+                ],
+                from: Some("orders o".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("o.total >= {threshold} AND o.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 5,
+                limit: Some(50),
+            }
+        }
+        // Calendar and clock extraction over a native DATETIME column.
+        6 => {
+            let format = *rng.pick(&["%Y-%m-%d", "%x-%v", "%W %H:%i:%s", "%b %e, %Y"]);
+            let floor = *rng.pick(&[
+                "'2024-01-01 00:00:00'",
+                "'2024-02-29 00:00:00'",
+                "'2025-01-01 00:00:00'",
+            ]);
+            let unit = *rng.pick(&["DAY", "HOUR", "MONTH", "YEAR"]);
+            let shift = rng.below(31);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "temporal",
+                select: vec![
+                    "o.id".to_owned(),
+                    "YEAR(o.placed_at)".to_owned(),
+                    "MONTH(o.placed_at)".to_owned(),
+                    "DAY(o.placed_at)".to_owned(),
+                    "HOUR(o.placed_at)".to_owned(),
+                    format!("DATE_FORMAT(o.placed_at, '{format}')"),
+                    format!("TIMESTAMPDIFF({unit}, '2024-01-01', o.placed_at)"),
+                    format!("DATE_ADD(o.placed_at, INTERVAL {shift} DAY)"),
+                ],
+                from: Some("orders o".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("o.placed_at >= {floor} AND o.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 8,
+                limit: Some(50),
+            }
+        }
+        // JSON value, text and type carriers in one row. Ordering by the
+        // unique id avoids assuming an ordering for JSON containers.
+        7 => {
+            let path = *rng.pick(&["$.score", "$.tags", "$.items", "$.missing"]);
+            let second_path = *rng.pick(&["$.score", "$.tags[0]", "$.items[1]", "$.missing"]);
+            let mode = *rng.pick(&["one", "all"]);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "json",
+                select: vec![
+                    "o.id".to_owned(),
+                    format!("JSON_EXTRACT(o.meta, '{path}')"),
+                    format!("JSON_UNQUOTE(JSON_EXTRACT(o.meta, '{path}'))"),
+                    format!("JSON_TYPE(JSON_EXTRACT(o.meta, '{path}'))"),
+                    format!("JSON_LENGTH(o.meta, '{second_path}')"),
+                    format!("JSON_CONTAINS_PATH(o.meta, '{mode}', '{path}', '{second_path}')"),
+                ],
+                from: Some("orders o".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("o.meta IS NOT NULL AND o.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(50),
+            }
+        }
+        // ENUM equality/range and ordinal ordering in one statement.
+        8 => {
+            let label = *rng.pick(&ENUM_LABELS);
+            let filter = *rng.pick(&ENUM_LABELS);
+            let comparator = *rng.pick(&["<", "<=", ">", ">="]);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "enum",
+                select: vec![
+                    "o.status".to_owned(),
+                    "o.id".to_owned(),
+                    format!("o.status = '{label}'"),
+                    format!("o.status {comparator} '{label}'"),
+                ],
+                from: Some("orders o".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("o.status <> '{filter}' AND o.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 4,
+                limit: Some(50),
+            }
+        }
+        // Windows over exact DECIMAL and ENUM inputs. The explicit frame
+        // makes cumulative semantics independent of the default frame.
+        _ => {
+            let partition = *rng.pick(&["o.status", "o.user_id"]);
+            let order = *rng.pick(&["o.id", "o.total, o.id", "o.placed_at, o.id"]);
+            let ranking = *rng.pick(&["ROW_NUMBER", "RANK", "DENSE_RANK"]);
+            let frame = *rng.pick(&["UNBOUNDED PRECEDING", "2 PRECEDING"]);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "window",
+                select: vec![
+                    "o.id".to_owned(),
+                    "o.status".to_owned(),
+                    format!("{ranking}() OVER (PARTITION BY {partition} ORDER BY {order})"),
+                    format!(
+                        "SUM(o.total) OVER (PARTITION BY {partition} ORDER BY {order} ROWS BETWEEN {frame} AND CURRENT ROW)"
+                    ),
+                ],
+                from: Some("orders o".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("o.id > 0 AND o.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 4,
                 limit: Some(50),
             }
         }
@@ -4247,15 +4382,20 @@ fn generated_corpus_reaches_every_query_family() {
     assert_eq!(
         families,
         BTreeSet::from([
+            "decimal",
+            "enum",
             "grouped",
+            "json",
             "scalar",
             "single-table",
+            "temporal",
             "three-table-join",
             "two-table-join",
+            "window",
         ])
     );
     assert!(
-        unique.len() >= 900,
+        unique.len() >= 850,
         "only {} unique SQL strings",
         unique.len()
     );
