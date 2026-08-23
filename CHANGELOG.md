@@ -4,6 +4,16 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Negative `ROUND`/`TRUNCATE` digit counts over exact computed decimals
+  remain on the exact-decimal path. SQL parses `-2` as unary minus over an
+  integer literal; treating that expression as a dynamic digit count sent
+  `ROUND(50.00 + 0.00, -2)` through nearest-even floating-point rounding
+  and returned `0` instead of MySQL's half-away-from-zero `100`.
+
 ## [0.0.4] - 2026-08-21
 
 First stable cut of the 0.0.4 line, gated by the full release chain:

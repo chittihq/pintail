@@ -14,8 +14,27 @@ use super::{
 };
 use crate::bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundExpr, BoundExprKind, BoundTable, BoundWindow,
-    BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, WindowFunction,
+    BoundWindowOrderKey, DatePart, IntervalUnit, ScalarFunction, UnaryOp, WindowFunction,
 };
+
+/// A signed integer constant as represented by the bound tree. SQL parses
+/// `-2` as unary minus over the literal `2`, so matching `Literal(Int64)`
+/// alone silently classifies negative ROUND/TRUNCATE digit counts as dynamic.
+fn signed_integer_constant(expression: &BoundExpr) -> Option<i64> {
+    match &expression.kind {
+        BoundExprKind::Literal(Value::Int64(value)) => Some(*value),
+        BoundExprKind::Literal(Value::UInt64(value)) => i64::try_from(*value).ok(),
+        BoundExprKind::Unary {
+            op: UnaryOp::Plus,
+            expr,
+        } => signed_integer_constant(expr),
+        BoundExprKind::Unary {
+            op: UnaryOp::Minus,
+            expr,
+        } => signed_integer_constant(expr)?.checked_neg(),
+        _ => None,
+    }
+}
 
 /// A top-level `function(...) OVER (...)` projection item.
 #[allow(clippy::too_many_lines)]
@@ -347,9 +366,9 @@ pub(super) fn bind_scalar_function(
         "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round {
             // Exact only when the digit count is knowable at bind time.
             decimal: matches!(args[0].data_type, Some(DataType::Decimal { .. }))
-                && args.get(1).is_none_or(|digits| {
-                    matches!(digits.kind, BoundExprKind::Literal(Value::Int64(_)))
-                }),
+                && args
+                    .get(1)
+                    .is_none_or(|digits| signed_integer_constant(digits).is_some()),
         },
         "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil { decimal: false },
         "FLOOR" if args.len() == 1 => ScalarFunction::Floor { decimal: false },
@@ -1087,10 +1106,9 @@ pub(super) fn bind_scalar(
         },
         ScalarFunction::Truncate { .. } => ScalarFunction::Truncate {
             decimal: arg0_decimal
-                && matches!(
-                    args.get(1).map(|digits| &digits.kind),
-                    Some(BoundExprKind::Literal(Value::Int64(_)))
-                ),
+                && args
+                    .get(1)
+                    .is_some_and(|digits| signed_integer_constant(digits).is_some()),
         },
         other => other,
     };
@@ -1186,11 +1204,10 @@ pub(super) fn bind_scalar(
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("ROUND".to_owned()));
             };
-            let digits = match args.get(1).map(|argument| &argument.kind) {
-                Some(BoundExprKind::Literal(Value::Int64(digits))) => *digits,
-                None => 0,
-                _ => return Err(BindError::UnsupportedExpression("ROUND".to_owned())),
-            };
+            let digits = args
+                .get(1)
+                .and_then(signed_integer_constant)
+                .unwrap_or_default();
             // MySQL keeps min(input scale, digit count) fraction digits and
             // one extra integer digit for the carry.
             let result_scale = u8::try_from(digits.clamp(0, i64::from(scale))).unwrap_or(scale);
@@ -1216,10 +1233,10 @@ pub(super) fn bind_scalar(
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned()));
             };
-            let digits = match args.get(1).map(|argument| &argument.kind) {
-                Some(BoundExprKind::Literal(Value::Int64(digits))) => *digits,
-                _ => return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned())),
-            };
+            let digits = args
+                .get(1)
+                .and_then(signed_integer_constant)
+                .ok_or_else(|| BindError::UnsupportedExpression("TRUNCATE".to_owned()))?;
             let result_scale = u8::try_from(digits.clamp(0, i64::from(scale))).unwrap_or(scale);
             (
                 Some(DataType::Decimal {

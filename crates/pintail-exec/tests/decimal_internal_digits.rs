@@ -172,3 +172,22 @@ fn floor_and_ceiling_read_internal_digits() {
     assert_eq!(one("SELECT FLOOR(39999.6/10000) FROM t"), ["3"]);
     assert_eq!(one("SELECT CEILING(40000.4/10000) FROM t"), ["5"]);
 }
+
+#[test]
+fn negative_digits_round_exact_half_ties_away_from_zero() {
+    // MySQL exact DECIMAL rounding is half-away-from-zero even left of the
+    // decimal point. The generated MySQL corpus found the computed-expression
+    // shape: ROUND(50.00 + 0.00, -2) is 100, never nearest-even 0.
+    assert_eq!(
+        one("SELECT ROUND(CAST(50.00 AS DECIMAL(4,2)) + 0.00, -2) FROM t"),
+        ["100"]
+    );
+    assert_eq!(
+        one("SELECT ROUND(CAST(-50.00 AS DECIMAL(4,2)) + 0.00, -2) FROM t"),
+        ["-100"]
+    );
+    assert_eq!(
+        one("SELECT TRUNCATE(CAST(50.00 AS DECIMAL(4,2)) + 0.00, -2) FROM t"),
+        ["0"]
+    );
+}
