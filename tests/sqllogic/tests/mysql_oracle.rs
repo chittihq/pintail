@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     io::Write as _,
     process::{Command, Output, Stdio},
@@ -3403,8 +3404,10 @@ fn user_row(id: u64) -> StoredRow {
 // approximate (floats, temporal rendering, mixed collations), and orders
 // every projection totally so byte comparison is meaningful. The seed is
 // fixed by default - every gate run fuzzes the same cases, reproducibly -
-// and PINTAIL_FUZZ_SEED / PINTAIL_FUZZ_CASES widen the sweep for longer
-// runs.
+// and PINTAIL_FUZZ_SEEDS / PINTAIL_FUZZ_CASES widen the sweep for longer
+// runs. Generated statements are submitted to one MySQL client batch: a
+// large corpus must spend its time executing SQL, not launching `docker exec`
+// once per statement.
 
 #[test]
 #[ignore = "requires Docker and the mysql:8.4 image; run explicitly as documented"]
@@ -3414,14 +3417,38 @@ fn fuzzes_against_mysql_8_4() {
 
 #[allow(clippy::too_many_lines)]
 fn run_fuzz() -> Result<(), String> {
-    let cases: usize = std::env::var("PINTAIL_FUZZ_CASES")
+    let cases_per_seed: usize = std::env::var("PINTAIL_FUZZ_CASES")
         .ok()
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(400);
-    let seed: u64 = std::env::var("PINTAIL_FUZZ_SEED")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(0xDEAD_BEEF);
+    if cases_per_seed == 0 {
+        return Err("PINTAIL_FUZZ_CASES must be positive".to_owned());
+    }
+    let seeds = fuzz_seeds()?;
+
+    let mut generated = Vec::with_capacity(cases_per_seed * seeds.len());
+    for seed in &seeds {
+        let mut rng = Xorshift(*seed | 1);
+        for index in 0..cases_per_seed {
+            let parts = generate_parts(&mut rng);
+            generated.push(FuzzCase {
+                seed: *seed,
+                index,
+                family: parts.family,
+                sql: parts.render(),
+            });
+        }
+    }
+    export_fuzz_corpus(&generated)?;
+    let unique = generated
+        .iter()
+        .map(|case| case.sql.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let mut families = BTreeMap::new();
+    for case in &generated {
+        *families.entry(case.family).or_insert(0_usize) += 1;
+    }
 
     let mysql = MysqlContainer::start()?;
     mysql.query_batch(FIXTURE_SQL)?;
@@ -3472,36 +3499,37 @@ fn run_fuzz() -> Result<(), String> {
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
-    let mut rng = Xorshift(seed | 1);
-    let mut skipped = 0_usize;
-    let mut compared = 0_usize;
+    let oracle_cases = generated
+        .iter()
+        .map(|case| OracleCase {
+            family: case.family,
+            sql: case.sql.clone(),
+            ordered: true,
+        })
+        .collect::<Vec<_>>();
+    // The grammar claims to emit valid supported SQL. A MySQL rejection is
+    // therefore a generator defect and fails the sweep; it is never counted
+    // as a skipped compatibility case.
+    let expected = execute_mysql_cases(&mysql, &oracle_cases).map_err(|error| {
+        format!(
+            "generated corpus contains SQL MySQL rejected; seeds={seeds:?}, cases/seed={cases_per_seed}: {error}"
+        )
+    })?;
     let mut failures = Vec::new();
-    for index in 0..cases {
-        let sql = generate_query(&mut rng);
-        // MySQL is the arbiter of validity as well as of answers: a query
-        // it rejects (an overflow the grammar could not see, a warning
-        // upgraded to an error) is skipped, not failed - but a high skip
-        // rate means the grammar has drifted and the sweep is thinner than
-        // it claims, so it is bounded below.
-        let Ok(output) = mysql.query_batch(&sql) else {
-            skipped += 1;
-            continue;
-        };
-        let expected = parse_mysql_rows(&output);
-        compared += 1;
-        match execute_pintail(&sql, &catalog, &provider) {
+    for (case, expected) in generated.iter().zip(&expected) {
+        match execute_pintail(&case.sql, &catalog, &provider) {
             Ok(actual) => {
-                if !oracle_rows_equal(&actual, &expected, true) {
+                if !oracle_rows_equal(&actual, expected, true) {
                     failures.push(format!(
-                        "fuzz case {index} (seed {seed})\nSQL: {sql}\nMySQL: {expected:?}\nPintail: {actual:?}"
+                        "fuzz case {} ({}, seed {})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
+                        case.index, case.family, case.seed, case.sql
                     ));
                 }
             }
             Err(error) => {
-                // The grammar stays inside the supported surface, so a
-                // rejection here is a real divergence: MySQL answered it.
                 failures.push(format!(
-                    "fuzz case {index} (seed {seed})\nSQL: {sql}\nMySQL answered; Pintail: {error}"
+                    "fuzz case {} ({}, seed {})\nSQL: {}\nMySQL answered; Pintail: {error}",
+                    case.index, case.family, case.seed, case.sql
                 ));
             }
         }
@@ -3516,22 +3544,65 @@ fn run_fuzz() -> Result<(), String> {
             failures.join("\n\n")
         ));
     }
-    if compared > 0 && skipped * 100 / (compared + skipped) > 40 {
-        return Err(format!(
-            "fuzz grammar drift: {skipped} of {} generated queries were rejected by MySQL",
-            compared + skipped
-        ));
-    }
     println!(
-        "fuzz: {compared} generated queries matched MySQL 8.4 byte-for-byte ({skipped} skipped as MySQL-rejected)"
+        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched MySQL 8.4 byte-for-byte; 0 skipped; families={families:?}",
+        generated.len(),
+        unique,
+        seeds.len(),
     );
     Ok(())
 }
 
-/// The mysql client's --batch --raw lines, one string per row - the same
-/// shape `execute_mysql_cases` hands to the comparator.
-fn parse_mysql_rows(output: &str) -> Vec<String> {
-    output.lines().map(str::to_owned).collect()
+struct FuzzCase {
+    seed: u64,
+    index: usize,
+    family: &'static str,
+    sql: String,
+}
+
+fn parse_seed(raw: &str) -> Result<u64, String> {
+    let trimmed = raw.trim();
+    let parsed = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .map_or_else(
+            || trimmed.parse::<u64>(),
+            |hex| u64::from_str_radix(hex, 16),
+        );
+    parsed.map_err(|error| format!("invalid fuzz seed `{trimmed}`: {error}"))
+}
+
+fn fuzz_seeds() -> Result<Vec<u64>, String> {
+    let raw = std::env::var("PINTAIL_FUZZ_SEEDS")
+        .or_else(|_| std::env::var("PINTAIL_FUZZ_SEED"))
+        .unwrap_or_else(|_| "0xDEADBEEF".to_owned());
+    let seeds = raw
+        .split(',')
+        .map(parse_seed)
+        .collect::<Result<Vec<_>, _>>()?;
+    if seeds.is_empty() {
+        return Err("PINTAIL_FUZZ_SEEDS must contain at least one seed".to_owned());
+    }
+    if seeds.iter().copied().collect::<BTreeSet<_>>().len() != seeds.len() {
+        return Err("PINTAIL_FUZZ_SEEDS contains duplicate seeds".to_owned());
+    }
+    Ok(seeds)
+}
+
+fn export_fuzz_corpus(cases: &[FuzzCase]) -> Result<(), String> {
+    let Ok(path) = std::env::var("PINTAIL_FUZZ_CORPUS_PATH") else {
+        return Ok(());
+    };
+    let mut corpus = String::new();
+    for case in cases {
+        writeln!(
+            corpus,
+            "-- seed={} case={} family={}\n{};",
+            case.seed, case.index, case.family, case.sql
+        )
+        .expect("writing to an owned string cannot fail");
+    }
+    std::fs::write(&path, corpus).map_err(|error| format!("write fuzz corpus {path}: {error}"))
 }
 
 struct Xorshift(u64);
@@ -3557,8 +3628,12 @@ impl Xorshift {
 
 /// Column pools, grouped so generated comparisons never mix collations
 /// (Pintail refuses what `MySQL` coerces there, by documented design).
-const NUM_COLS_E: [&str; 2] = ["e.id", "e.score"];
-const NUM_COLS_O: [&str; 3] = ["o.id", "o.user_id", "o.total"];
+// Cast unsigned identifiers before generated arithmetic. MySQL raises 1690
+// when an unsigned subtraction goes negative; that is useful rejection
+// coverage elsewhere, but here it would make a supposedly valid generated
+// query disappear from the differential corpus.
+const NUM_COLS_E: [&str; 2] = ["CAST(e.id AS SIGNED)", "e.score"];
+const NUM_COLS_O: [&str; 3] = ["CAST(o.id AS SIGNED)", "o.user_id", "o.total"];
 const AI_CI_TEXT_E: [&str; 2] = ["e.name", "e.note"];
 const STR_LITERALS: [&str; 6] = ["'Alpha'", "'beta'", "'event-05'", "''", "'zz'", "'user-03'"];
 
@@ -3575,7 +3650,7 @@ fn num_literal(rng: &mut Xorshift) -> String {
 fn int_expr(rng: &mut Xorshift, table: char) -> String {
     match table {
         'e' => (*rng.pick(&NUM_COLS_E)).to_owned(),
-        'o' => (*rng.pick(&["o.id", "o.user_id"])).to_owned(),
+        'o' => (*rng.pick(&["CAST(o.id AS SIGNED)", "o.user_id"])).to_owned(),
         _ => "u.id".to_owned(),
     }
 }
@@ -3939,6 +4014,7 @@ fn order_all(columns: usize) -> String {
 /// individual clauses into provably-equivalent forms and re-render. The
 /// fuzzer renders the same parts straight to SQL - one grammar, two packs.
 struct QueryParts {
+    family: &'static str,
     select: Vec<String>,
     /// None for scalar-only queries (no FROM at all).
     from: Option<String>,
@@ -3999,6 +4075,7 @@ impl QueryParts {
     /// table or a UNION ALL arm where the outer query owns the ordering.
     fn render_inner(&self, where_clause: Option<&str>) -> String {
         let ordered = QueryParts {
+            family: self.family,
             select: self.select.clone(),
             from: self.from.clone(),
             from_commuted: None,
@@ -4024,10 +4101,6 @@ impl QueryParts {
     }
 }
 
-fn generate_query(rng: &mut Xorshift) -> String {
-    generate_parts(rng).render()
-}
-
 #[allow(clippy::too_many_lines)]
 fn generate_parts(rng: &mut Xorshift) -> QueryParts {
     match rng.below(5) {
@@ -4040,6 +4113,8 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                         num_expr(rng, 'e', 2)
                             .replace("e.id", "5")
                             .replace("e.score", "30")
+                            .replace("e.name", "'event-03'")
+                            .replace("e.note", "NULL")
                     } else {
                         str_expr(rng, 'e', 2)
                             .replace("e.name", "'event-03'")
@@ -4048,6 +4123,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                 })
                 .collect::<Vec<_>>();
             QueryParts {
+                family: "scalar",
                 select: exprs,
                 from: None,
                 from_commuted: None,
@@ -4073,6 +4149,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                 .collect::<Vec<_>>();
             let order_columns = exprs.len();
             QueryParts {
+                family: "single-table",
                 select: exprs,
                 from: Some(format!("{table} {alias}")),
                 from_commuted: None,
@@ -4093,6 +4170,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
             let agg = *rng.pick(&["COUNT(*)", "SUM(1)", "MIN(2)", "COUNT(2)"]);
             let numeric = num_expr(rng, alias, 1);
             QueryParts {
+                family: "grouped",
                 select: vec![group.to_owned(), agg.to_owned(), format!("SUM({numeric})")],
                 from: Some(format!("{table} {alias}")),
                 from_commuted: None,
@@ -4115,6 +4193,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
             let from_commuted =
                 (join == "JOIN").then(|| "users u JOIN orders o ON o.user_id = u.id".to_owned());
             QueryParts {
+                family: "two-table-join",
                 select: exprs,
                 from: Some(format!("orders o {join} users u ON o.user_id = u.id")),
                 from_commuted,
@@ -4130,6 +4209,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
             let expr_e = num_expr(rng, 'e', 1);
             let expr_o = num_expr(rng, 'o', 1);
             QueryParts {
+                family: "three-table-join",
                 select: vec!["e.id".to_owned(), expr_e, expr_o],
                 from: Some(
                     "events e JOIN orders o ON o.id = e.id \
@@ -4145,4 +4225,38 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
             }
         }
     }
+}
+
+#[test]
+fn fuzz_seed_parser_accepts_decimal_and_hex() {
+    assert_eq!(parse_seed("42").expect("decimal seed"), 42);
+    assert_eq!(parse_seed("0xDEADBEEF").expect("hex seed"), 0xDEAD_BEEF);
+    assert!(parse_seed("not-a-seed").is_err());
+}
+
+#[test]
+fn generated_corpus_reaches_every_query_family() {
+    let mut rng = Xorshift(0xA11C_E55E);
+    let mut families = BTreeSet::new();
+    let mut unique = BTreeSet::new();
+    for _ in 0..1_000 {
+        let parts = generate_parts(&mut rng);
+        families.insert(parts.family);
+        unique.insert(parts.render());
+    }
+    assert_eq!(
+        families,
+        BTreeSet::from([
+            "grouped",
+            "scalar",
+            "single-table",
+            "three-table-join",
+            "two-table-join",
+        ])
+    );
+    assert!(
+        unique.len() >= 900,
+        "only {} unique SQL strings",
+        unique.len()
+    );
 }
