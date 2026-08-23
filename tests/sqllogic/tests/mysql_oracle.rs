@@ -4112,7 +4112,7 @@ impl QueryParts {
 
 #[allow(clippy::too_many_lines)]
 fn generate_parts(rng: &mut Xorshift) -> QueryParts {
-    match rng.below(10) {
+    match rng.below(16) {
         // Scalar-only: expressions with no FROM.
         0 => {
             let picks = 1 + rng.below(3);
@@ -4343,7 +4343,7 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
         }
         // Windows over exact DECIMAL and ENUM inputs. The explicit frame
         // makes cumulative semantics independent of the default frame.
-        _ => {
+        9 => {
             let partition = *rng.pick(&["o.status", "o.user_id"]);
             let order = *rng.pick(&["o.id", "o.total, o.id", "o.placed_at, o.id"]);
             let ranking = *rng.pick(&["ROW_NUMBER", "RANK", "DENSE_RANK"]);
@@ -4365,6 +4365,156 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                 group_by: None,
                 having: None,
                 order_columns: 4,
+                limit: Some(50),
+            }
+        }
+        // Conditional and NULL propagation over nullable source text and
+        // signed numeric values.
+        10 => {
+            let threshold = 10 + rng.below(91);
+            let fallback = *rng.pick(&["'missing'", "'fallback'", "''"]);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "conditional-null",
+                select: vec![
+                    "e.id".to_owned(),
+                    format!("IF(e.score >= {threshold}, e.score, -e.score)"),
+                    format!("COALESCE(e.note, e.name, {fallback})"),
+                    "NULLIF(e.note, e.name)".to_owned(),
+                    format!(
+                        "CASE WHEN e.note IS NULL THEN {fallback} WHEN e.active THEN UPPER(e.note) ELSE LOWER(e.note) END"
+                    ),
+                ],
+                from: Some("events e".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("e.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(50),
+            }
+        }
+        // MySQL string length, slicing and search semantics over nullable
+        // and non-null source columns.
+        11 => {
+            let start = 1 + rng.below(4);
+            let width = 1 + rng.below(6);
+            let modulus = 2 + rng.below(7);
+            let needle = *rng.pick(&["'a'", "'A'", "'-'", "'event'"]);
+            QueryParts {
+                family: "string",
+                select: vec![
+                    "e.id".to_owned(),
+                    "CONCAT(e.name, ':', IFNULL(e.note, 'NULL'))".to_owned(),
+                    format!("SUBSTRING(e.name, {start}, {width})"),
+                    format!("LOCATE({needle}, e.name)"),
+                    "REPLACE(LOWER(e.name), 'event', 'row')".to_owned(),
+                    "LENGTH(e.note)".to_owned(),
+                    "CHAR_LENGTH(e.note)".to_owned(),
+                ],
+                from: Some("events e".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("e.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(50),
+            }
+        }
+        // Correlated scalar, EXISTS and IN subqueries in one projection.
+        12 => {
+            let floor = rng.below(8);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "correlated-subquery",
+                select: vec![
+                    "e.id".to_owned(),
+                    "(SELECT MAX(u.id) FROM users u WHERE u.id <= e.id)".to_owned(),
+                    format!(
+                        "EXISTS(SELECT 1 FROM orders o WHERE o.id = e.id AND o.user_id >= {floor})"
+                    ),
+                    format!("e.id IN (SELECT o.id FROM orders o WHERE o.user_id >= {floor})"),
+                ],
+                from: Some("events e".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("e.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(50),
+            }
+        }
+        // A derived UNION ALL mixes two physical sources while the outer
+        // filter and order remain deterministic.
+        13 => {
+            let event_floor = 1 + rng.below(8);
+            let user_floor = 1 + rng.below(7);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "derived-set",
+                select: vec!["x.id".to_owned(), "x.label".to_owned()],
+                from: Some(format!(
+                    "(SELECT e.id, e.name AS label FROM events e WHERE e.id >= {event_floor} UNION ALL SELECT u.id + 100, u.name FROM users u WHERE u.id >= {user_floor}) x"
+                )),
+                from_commuted: None,
+                where_clause: Some(format!("x.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 2,
+                limit: Some(50),
+            }
+        }
+        // Exact integer math plus domain-safe approximate functions. Float
+        // results use the oracle comparator's explicit tolerance.
+        14 => {
+            let adjustment = rng.below(21);
+            let divisor = 1 + rng.below(9);
+            let exponent = 2 + rng.below(3);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "numeric-functions",
+                select: vec![
+                    "e.id".to_owned(),
+                    format!("ABS(e.score - {adjustment})"),
+                    format!("SIGN(e.score - {adjustment})"),
+                    format!("MOD(e.score, {divisor})"),
+                    format!("GREATEST(e.score, {adjustment})"),
+                    format!("LEAST(e.score, {adjustment})"),
+                    format!("POWER(e.id, {exponent})"),
+                    "ROUND(SQRT(e.score), 6)".to_owned(),
+                ],
+                from: Some("events e".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("e.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(50),
+            }
+        }
+        // Deterministic hashes and encodings used by BI symmetric-aggregate
+        // SQL and application-generated identifiers.
+        _ => {
+            let sha_bits = *rng.pick(&[224, 256, 384, 512]);
+            let modulus = 2 + rng.below(7);
+            QueryParts {
+                family: "hash-encoding",
+                select: vec![
+                    "e.id".to_owned(),
+                    "MD5(e.name)".to_owned(),
+                    "SHA1(e.name)".to_owned(),
+                    format!("SHA2(e.name, {sha_bits})"),
+                    "CRC32(e.name)".to_owned(),
+                    "HEX(e.name)".to_owned(),
+                    "BIN(e.id)".to_owned(),
+                    "OCT(e.id)".to_owned(),
+                ],
+                from: Some("events e".to_owned()),
+                from_commuted: None,
+                where_clause: Some(format!("e.id % {modulus} <> 0")),
+                group_by: None,
+                having: None,
+                order_columns: 1,
                 limit: Some(50),
             }
         }
@@ -4392,11 +4542,17 @@ fn generated_corpus_reaches_every_query_family() {
         families,
         BTreeSet::from([
             "decimal",
+            "conditional-null",
+            "correlated-subquery",
+            "derived-set",
             "enum",
             "grouped",
+            "hash-encoding",
             "json",
+            "numeric-functions",
             "scalar",
             "single-table",
+            "string",
             "temporal",
             "three-table-join",
             "two-table-join",
