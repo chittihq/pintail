@@ -190,4 +190,14 @@ fn negative_digits_round_exact_half_ties_away_from_zero() {
         one("SELECT TRUNCATE(CAST(50.00 AS DECIMAL(4,2)) + 0.00, -2) FROM t"),
         ["0"]
     );
+    // Never round to the decimal point first: 949.86 -> 950 -> 1000 is a
+    // double-rounding bug. MySQL rounds the original exact value once.
+    assert_eq!(
+        one("SELECT ROUND(CAST(949.86 AS DECIMAL(5,2)) + 0.00, -2) FROM t"),
+        ["900"]
+    );
+    assert_eq!(
+        one("SELECT ROUND(CAST(-949.86 AS DECIMAL(5,2)) + 0.00, -2) FROM t"),
+        ["-900"]
+    );
 }

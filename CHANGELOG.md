@@ -12,7 +12,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   remain on the exact-decimal path. SQL parses `-2` as unary minus over an
   integer literal; treating that expression as a dynamic digit count sent
   `ROUND(50.00 + 0.00, -2)` through nearest-even floating-point rounding
-  and returned `0` instead of MySQL's half-away-from-zero `100`.
+  and returned `0` instead of MySQL's half-away-from-zero `100`. Negative
+  digits now round the original scaled units once, so `ROUND(949.86, -2)`
+  returns `900` rather than double-rounding through `950` to `1000`.
 
 ## [0.0.4] - 2026-08-21
 

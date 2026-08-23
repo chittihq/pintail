@@ -2381,15 +2381,19 @@ fn evaluate_eager_scalar_typed(
                 let declared_cap = declared_render_cap(argument_types, input_scale);
                 let render_scale = u8::try_from(digits.clamp(0, declared_cap))
                     .map_err(|_| ExecError::NumericOverflow)?;
-                let units = pintail_types::parse_decimal_rounded(text, render_scale)
-                    .ok_or(ExecError::NumericOverflow)?;
                 let units = if digits < 0 {
                     let zeroed = u32::try_from((-digits).min(38)).unwrap_or(38);
-                    let factor = 10_i128
-                        .checked_pow(zeroed)
+                    let input_scale =
+                        u8::try_from(input_scale).map_err(|_| ExecError::NumericOverflow)?;
+                    let raw_units = pintail_types::parse_decimal_rounded(text, input_scale)
                         .ok_or(ExecError::NumericOverflow)?;
+                    let Some(factor) = 10_i128.checked_pow(zeroed + u32::from(input_scale)) else {
+                        // The rounding quantum is larger than any DECIMAL(38)
+                        // magnitude, so the exact result is necessarily zero.
+                        return Ok(Value::Utf8("0".to_owned()));
+                    };
                     let half = factor / 2;
-                    let magnitude = units
+                    let magnitude = raw_units
                         .unsigned_abs()
                         .checked_add(half.unsigned_abs())
                         .ok_or(ExecError::NumericOverflow)?
@@ -2397,9 +2401,14 @@ fn evaluate_eager_scalar_typed(
                         * factor.unsigned_abs();
                     let magnitude =
                         i128::try_from(magnitude).map_err(|_| ExecError::NumericOverflow)?;
-                    if units < 0 { -magnitude } else { magnitude }
+                    let scale_factor = 10_i128
+                        .checked_pow(u32::from(input_scale))
+                        .ok_or(ExecError::NumericOverflow)?;
+                    let magnitude = magnitude / scale_factor;
+                    if raw_units < 0 { -magnitude } else { magnitude }
                 } else {
-                    units
+                    pintail_types::parse_decimal_rounded(text, render_scale)
+                        .ok_or(ExecError::NumericOverflow)?
                 };
                 return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
                     units,
