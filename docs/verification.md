@@ -54,9 +54,10 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL 8.4 container and compares 874
-generated and hand-written queries over equivalent MySQL and Pintail data.
-The corpus has three layers:
+The oracle starts a uniquely named MySQL container and compares 1,081 generated
+and hand-written queries over equivalent MySQL and Pintail data. MySQL 8.4 is
+the default; `PINTAIL_ORACLE_MYSQL_IMAGE=mysql:8.0` runs the same corpus against
+the older supported major. The fixed corpus has four layers:
 
 1. **Parametric loops** (~557 cases) — small AST templates with a varying
    scalar; good regression bulk, low template entropy.
@@ -68,6 +69,30 @@ The corpus has three layers:
 4. **Collation differential matrix** (12 cases) — Unicode equality, ordering,
    grouping, DISTINCT, joins, `IN`, extrema, and character-counted `LIKE`
    behavior under the advertised `utf8mb4_0900_ai_ci` profile.
+
+The ignored differential fuzzer is a fifth, generated layer. One grammar emits
+sixteen balanced families—scalar, filters, grouping, two/three-table joins,
+DECIMAL, temporal, JSON, ENUM, windows, conditionals/NULLs, strings, correlated
+subqueries, derived set operations, numeric functions, and hashes/encodings.
+It batches bounded groups through one real MySQL instance, treats every MySQL
+rejection as a generator failure (never a skipped compatibility case), and
+compares every ordered answer byte-for-byte. Multiple comma-separated seeds
+and optional SQL export support large reproducible sweeps:
+
+```sh
+PINTAIL_ORACLE_MYSQL_IMAGE=mysql:8.4 \
+PINTAIL_FUZZ_CASES=5000 \
+PINTAIL_FUZZ_SEEDS=0xDEADBEEF,0xC0FFEE,0xA11CE,0x5EED,0xBAD5EED,0x123456789,0xFACEFEED,0x31415926,0x27182818,0xFEEDBEEF \
+PINTAIL_FUZZ_CORPUS_PATH=/tmp/pintail-fuzz.sql \
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test \
+  -p pintail-sqllogic --test mysql_oracle \
+  fuzzes_against_configured_mysql -- --ignored --nocapture
+```
+
+The dockerless metamorphic pack reuses the same grammar for tautology,
+double-negation, HAVING, join-commutation, derived-table, empty-UNION, and
+zero-offset LIMIT equivalences. The latest high-volume evidence is recorded in
+[`tests/sqllogic/fuzz-results.md`](../tests/sqllogic/fuzz-results.md).
 
 A separate non-Docker unit test (`documented_rejects_stay_explicit`) pins
 twelve limitation shapes so they fail closed with an explicit error rather

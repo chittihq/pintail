@@ -217,7 +217,7 @@ impl Drop for MysqlContainer {
 
 #[test]
 #[ignore = "requires Docker and the mysql:8.4 image; run explicitly as documented"]
-fn matches_mysql_8_4_for_six_hundred_queries() {
+fn matches_configured_mysql_for_fixed_corpus() {
     run_oracle().unwrap_or_else(|error| panic!("{error}"));
 }
 
@@ -3427,7 +3427,7 @@ fn user_row(id: u64) -> StoredRow {
 
 #[test]
 #[ignore = "requires Docker and the mysql:8.4 image; run explicitly as documented"]
-fn fuzzes_against_mysql_8_4() {
+fn fuzzes_against_configured_mysql() {
     run_fuzz().unwrap_or_else(|error| panic!("{error}"));
 }
 
