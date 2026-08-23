@@ -91,10 +91,13 @@ enum OracleValue {
 
 struct MysqlContainer {
     name: String,
+    image: String,
 }
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
+        let image =
+            std::env::var("PINTAIL_ORACLE_MYSQL_IMAGE").unwrap_or_else(|_| "mysql:8.4".to_owned());
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -112,14 +115,14 @@ impl MysqlContainer {
                 "MYSQL_ALLOW_EMPTY_PASSWORD=yes",
                 "--env",
                 "MYSQL_DATABASE=app",
-                "mysql:8.4",
+                &image,
                 "--skip-log-bin",
                 "--default-time-zone=+00:00",
             ]),
-            "start MySQL 8.4 oracle",
+            &format!("start {image} oracle"),
         )?;
 
-        let container = Self { name };
+        let container = Self { name, image };
         let mut consecutive_connections = 0;
         for _ in 0..120 {
             let connected = Command::new("docker")
@@ -160,7 +163,10 @@ impl MysqlContainer {
             thread::sleep(Duration::from_millis(500));
         }
 
-        Err("MySQL 8.4 did not become ready within 60 seconds".to_owned())
+        Err(format!(
+            "{} did not become ready within 60 seconds",
+            container.image
+        ))
     }
 
     fn query_batch(&self, sql: &str) -> Result<String, String> {
@@ -310,7 +316,10 @@ fn run_oracle() -> Result<(), String> {
         }
     }
     if failures.is_empty() {
-        println!("all {EXPECTED_CASES} generated and hand-written queries matched MySQL 8.4");
+        println!(
+            "all {EXPECTED_CASES} generated and hand-written queries matched {}",
+            mysql.image
+        );
         Ok(())
     } else {
         Err(format!(
@@ -3554,10 +3563,11 @@ fn run_fuzz() -> Result<(), String> {
         ));
     }
     println!(
-        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched MySQL 8.4 byte-for-byte; 0 skipped; families={families:?}",
+        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched {} byte-for-byte; 0 skipped; families={families:?}",
         generated.len(),
         unique,
         seeds.len(),
+        mysql.image,
     );
     Ok(())
 }
