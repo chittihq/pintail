@@ -26,6 +26,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -351,6 +356,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -523,6 +533,21 @@
     "phase": "snapshot",
     "check": "query:set: grouping orders groups by bitmask",
     "status": "SKIP"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
   },
   {
     "phase": "snapshot",
@@ -1002,6 +1027,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -1327,6 +1357,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -1499,6 +1534,21 @@
     "phase": "orm-compat",
     "check": "query:set: grouping orders groups by bitmask",
     "status": "SKIP"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
   },
   {
     "phase": "orm-compat",
@@ -1858,6 +1908,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -2183,6 +2238,11 @@
   },
   {
     "phase": "crud",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -2355,6 +2415,21 @@
     "phase": "crud",
     "check": "query:set: grouping orders groups by bitmask",
     "status": "SKIP"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
   },
   {
     "phase": "crud",
@@ -2714,6 +2789,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -3039,6 +3119,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -3211,6 +3296,21 @@
     "phase": "type-edges",
     "check": "query:set: grouping orders groups by bitmask",
     "status": "SKIP"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
   },
   {
     "phase": "type-edges",
@@ -3566,6 +3666,11 @@
   {
     "phase": "ddl",
     "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:badges",
     "status": "PASS"
   },
   {
@@ -3900,6 +4005,11 @@
   },
   {
     "phase": "ddl",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -4071,6 +4181,21 @@
   {
     "phase": "ddl",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -4432,6 +4557,11 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -4762,6 +4892,11 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -4933,6 +5068,21 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -5294,6 +5444,11 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -5624,6 +5779,11 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -5795,6 +5955,21 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -6186,6 +6361,11 @@
   },
   {
     "phase": "churn",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -6516,6 +6696,11 @@
   },
   {
     "phase": "churn",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -6687,6 +6872,21 @@
   {
     "phase": "churn",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -7048,6 +7248,11 @@
   },
   {
     "phase": "contention",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -7378,6 +7583,11 @@
   },
   {
     "phase": "contention",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -7549,6 +7759,21 @@
   {
     "phase": "contention",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -7935,6 +8160,11 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -8265,6 +8495,11 @@
   },
   {
     "phase": "execution-budget",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -8436,6 +8671,21 @@
   {
     "phase": "execution-budget",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -8817,6 +9067,11 @@
   },
   {
     "phase": "spill",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -9147,6 +9402,11 @@
   },
   {
     "phase": "spill",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -9318,6 +9578,21 @@
   {
     "phase": "spill",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -9694,6 +9969,11 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -10024,6 +10304,11 @@
   },
   {
     "phase": "pooling",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -10195,6 +10480,21 @@
   {
     "phase": "pooling",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -10556,6 +10856,11 @@
   },
   {
     "phase": "restart",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -10886,6 +11191,11 @@
   },
   {
     "phase": "restart",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -11057,6 +11367,21 @@
   {
     "phase": "restart",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -11518,6 +11843,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -11853,6 +12183,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -12024,6 +12359,21 @@
   {
     "phase": "control-plane",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -12390,6 +12740,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -12725,6 +13080,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -12896,6 +13256,21 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -13283,6 +13658,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -13618,6 +13998,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -13789,6 +14174,21 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -14166,6 +14566,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -14501,6 +14906,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -14672,6 +15082,21 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -15024,7 +15449,8 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_b4c19b2552eb0b7e477e3aa15f06f328\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-08-23T20:02:40.655616+00:00\",\"updated_at\":\"2026-08-23T20:09:21.641349+00:00\"},\"tables\":18,\"rows\":1173}"
   },
   {
     "phase": "drop-table-polling",
@@ -15054,6 +15480,11 @@
   {
     "phase": "drop-table-polling",
     "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:badges",
     "status": "PASS"
   },
   {
@@ -15393,6 +15824,11 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -15564,6 +16000,21 @@
   {
     "phase": "drop-table-polling",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -15966,6 +16417,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -16301,6 +16757,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -16472,6 +16933,21 @@
   {
     "phase": "drop-database",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {
@@ -16834,6 +17310,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -17171,6 +17652,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "query:json extract filter on customer meta",
     "status": "PASS"
   },
@@ -17342,6 +17828,21 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:enum: the empty member is selectable by text",
     "status": "PASS"
   },
   {

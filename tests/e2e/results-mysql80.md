@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-21T19:04:11.573Z.
+Measured 2026-08-23T20:25:52.494Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**3448 passed, 0 failed, 42 documented-gap warnings, 37 skipped.**
+**3547 passed, 0 failed, 43 documented-gap warnings, 37 skipped.**
 
-160 unique corpus queries produced 3200 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+164 unique corpus queries produced 3280 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -15,6 +15,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | converge:Fact | PASS |  |
 | snapshot | converge:Person | PASS |  |
 | snapshot | converge:audit_log | PASS |  |
+| snapshot | converge:badges | PASS |  |
 | snapshot | converge:counters | PASS |  |
 | snapshot | converge:customers | PASS |  |
 | snapshot | converge:order_items | PASS |  |
@@ -80,6 +81,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:window share of total over grouped output | PASS |  |
 | snapshot | query:window running total | PASS |  |
 | snapshot | query:decimal column average beyond simple sum | PASS |  |
+| snapshot | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | snapshot | query:json extract filter on customer meta | PASS |  |
 | snapshot | query:fan-out join group concat line products | PASS |  |
 | snapshot | query:outer join customers without recent orders | PASS |  |
@@ -115,6 +117,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | snapshot | query:set: order by walks the member bitmask | SKIP |  |
 | snapshot | query:set: grouping orders groups by bitmask | SKIP |  |
+| snapshot | query:enum: the empty member groups by its ordinal | PASS |  |
+| snapshot | query:enum: the empty member sorts by its ordinal | PASS |  |
+| snapshot | query:enum: the empty member is selectable by text | PASS |  |
 | snapshot | query:geometry: hex round-trips the internal format | SKIP |  |
 | snapshot | query:geometry: byte length includes the srid prefix | SKIP |  |
 | snapshot | query:geometry: null routes filter and count | SKIP |  |
@@ -210,6 +215,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | converge:Fact | PASS |  |
 | orm-compat | converge:Person | PASS |  |
 | orm-compat | converge:audit_log | PASS |  |
+| orm-compat | converge:badges | PASS |  |
 | orm-compat | converge:counters | PASS |  |
 | orm-compat | converge:customers | PASS |  |
 | orm-compat | converge:order_items | PASS |  |
@@ -275,6 +281,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:window share of total over grouped output | PASS |  |
 | orm-compat | query:window running total | PASS |  |
 | orm-compat | query:decimal column average beyond simple sum | PASS |  |
+| orm-compat | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | orm-compat | query:json extract filter on customer meta | PASS |  |
 | orm-compat | query:fan-out join group concat line products | PASS |  |
 | orm-compat | query:outer join customers without recent orders | PASS |  |
@@ -310,6 +317,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | orm-compat | query:set: order by walks the member bitmask | SKIP |  |
 | orm-compat | query:set: grouping orders groups by bitmask | SKIP |  |
+| orm-compat | query:enum: the empty member groups by its ordinal | PASS |  |
+| orm-compat | query:enum: the empty member sorts by its ordinal | PASS |  |
+| orm-compat | query:enum: the empty member is selectable by text | PASS |  |
 | orm-compat | query:geometry: hex round-trips the internal format | SKIP |  |
 | orm-compat | query:geometry: byte length includes the srid prefix | SKIP |  |
 | orm-compat | query:geometry: null routes filter and count | SKIP |  |
@@ -381,6 +391,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | converge:Fact | PASS |  |
 | crud | converge:Person | PASS |  |
 | crud | converge:audit_log | PASS |  |
+| crud | converge:badges | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
 | crud | converge:order_items | PASS |  |
@@ -446,6 +457,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:window share of total over grouped output | PASS |  |
 | crud | query:window running total | PASS |  |
 | crud | query:decimal column average beyond simple sum | PASS |  |
+| crud | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | crud | query:json extract filter on customer meta | PASS |  |
 | crud | query:fan-out join group concat line products | PASS |  |
 | crud | query:outer join customers without recent orders | PASS |  |
@@ -481,6 +493,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | crud | query:set: order by walks the member bitmask | SKIP |  |
 | crud | query:set: grouping orders groups by bitmask | SKIP |  |
+| crud | query:enum: the empty member groups by its ordinal | PASS |  |
+| crud | query:enum: the empty member sorts by its ordinal | PASS |  |
+| crud | query:enum: the empty member is selectable by text | PASS |  |
 | crud | query:geometry: hex round-trips the internal format | SKIP |  |
 | crud | query:geometry: byte length includes the srid prefix | SKIP |  |
 | crud | query:geometry: null routes filter and count | SKIP |  |
@@ -552,6 +567,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | converge:Fact | PASS |  |
 | type-edges | converge:Person | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
+| type-edges | converge:badges | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
 | type-edges | converge:order_items | PASS |  |
@@ -617,6 +633,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:window share of total over grouped output | PASS |  |
 | type-edges | query:window running total | PASS |  |
 | type-edges | query:decimal column average beyond simple sum | PASS |  |
+| type-edges | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | type-edges | query:json extract filter on customer meta | PASS |  |
 | type-edges | query:fan-out join group concat line products | PASS |  |
 | type-edges | query:outer join customers without recent orders | PASS |  |
@@ -652,6 +669,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | type-edges | query:set: order by walks the member bitmask | SKIP |  |
 | type-edges | query:set: grouping orders groups by bitmask | SKIP |  |
+| type-edges | query:enum: the empty member groups by its ordinal | PASS |  |
+| type-edges | query:enum: the empty member sorts by its ordinal | PASS |  |
+| type-edges | query:enum: the empty member is selectable by text | PASS |  |
 | type-edges | query:geometry: hex round-trips the internal format | SKIP |  |
 | type-edges | query:geometry: byte length includes the srid prefix | SKIP |  |
 | type-edges | query:geometry: null routes filter and count | SKIP |  |
@@ -723,6 +743,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | converge:Fact | PASS |  |
 | ddl | converge:Person | PASS |  |
 | ddl | converge:audit_log | PASS |  |
+| ddl | converge:badges | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
 | ddl | converge:order_items | PASS |  |
@@ -789,6 +810,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:window share of total over grouped output | PASS |  |
 | ddl | query:window running total | PASS |  |
 | ddl | query:decimal column average beyond simple sum | PASS |  |
+| ddl | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | ddl | query:json extract filter on customer meta | PASS |  |
 | ddl | query:fan-out join group concat line products | PASS |  |
 | ddl | query:outer join customers without recent orders | PASS |  |
@@ -824,6 +846,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | ddl | query:set: order by walks the member bitmask | PASS |  |
 | ddl | query:set: grouping orders groups by bitmask | PASS |  |
+| ddl | query:enum: the empty member groups by its ordinal | PASS |  |
+| ddl | query:enum: the empty member sorts by its ordinal | PASS |  |
+| ddl | query:enum: the empty member is selectable by text | PASS |  |
 | ddl | query:geometry: hex round-trips the internal format | PASS |  |
 | ddl | query:geometry: byte length includes the srid prefix | PASS |  |
 | ddl | query:geometry: null routes filter and count | PASS |  |
@@ -895,6 +920,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | converge:Fact | PASS |  |
 | schema-drift-minimal | converge:Person | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
+| schema-drift-minimal | converge:badges | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
 | schema-drift-minimal | converge:order_items | PASS |  |
@@ -961,6 +987,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:window share of total over grouped output | PASS |  |
 | schema-drift-minimal | query:window running total | PASS |  |
 | schema-drift-minimal | query:decimal column average beyond simple sum | PASS |  |
+| schema-drift-minimal | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | schema-drift-minimal | query:json extract filter on customer meta | PASS |  |
 | schema-drift-minimal | query:fan-out join group concat line products | PASS |  |
 | schema-drift-minimal | query:outer join customers without recent orders | PASS |  |
@@ -996,6 +1023,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | schema-drift-minimal | query:set: order by walks the member bitmask | PASS |  |
 | schema-drift-minimal | query:set: grouping orders groups by bitmask | PASS |  |
+| schema-drift-minimal | query:enum: the empty member groups by its ordinal | PASS |  |
+| schema-drift-minimal | query:enum: the empty member sorts by its ordinal | PASS |  |
+| schema-drift-minimal | query:enum: the empty member is selectable by text | PASS |  |
 | schema-drift-minimal | query:geometry: hex round-trips the internal format | PASS |  |
 | schema-drift-minimal | query:geometry: byte length includes the srid prefix | PASS |  |
 | schema-drift-minimal | query:geometry: null routes filter and count | PASS |  |
@@ -1067,6 +1097,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | converge:Fact | PASS |  |
 | schema-drift-unseen | converge:Person | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
+| schema-drift-unseen | converge:badges | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
 | schema-drift-unseen | converge:order_items | PASS |  |
@@ -1133,6 +1164,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:window share of total over grouped output | PASS |  |
 | schema-drift-unseen | query:window running total | PASS |  |
 | schema-drift-unseen | query:decimal column average beyond simple sum | PASS |  |
+| schema-drift-unseen | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | schema-drift-unseen | query:json extract filter on customer meta | PASS |  |
 | schema-drift-unseen | query:fan-out join group concat line products | PASS |  |
 | schema-drift-unseen | query:outer join customers without recent orders | PASS |  |
@@ -1168,6 +1200,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | schema-drift-unseen | query:set: order by walks the member bitmask | PASS |  |
 | schema-drift-unseen | query:set: grouping orders groups by bitmask | PASS |  |
+| schema-drift-unseen | query:enum: the empty member groups by its ordinal | PASS |  |
+| schema-drift-unseen | query:enum: the empty member sorts by its ordinal | PASS |  |
+| schema-drift-unseen | query:enum: the empty member is selectable by text | PASS |  |
 | schema-drift-unseen | query:geometry: hex round-trips the internal format | PASS |  |
 | schema-drift-unseen | query:geometry: byte length includes the srid prefix | PASS |  |
 | schema-drift-unseen | query:geometry: null routes filter and count | PASS |  |
@@ -1245,6 +1280,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | converge:Fact | PASS |  |
 | churn | converge:Person | PASS |  |
 | churn | converge:audit_log | PASS |  |
+| churn | converge:badges | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
 | churn | converge:order_items | PASS |  |
@@ -1311,6 +1347,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:window share of total over grouped output | PASS |  |
 | churn | query:window running total | PASS |  |
 | churn | query:decimal column average beyond simple sum | PASS |  |
+| churn | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | churn | query:json extract filter on customer meta | PASS |  |
 | churn | query:fan-out join group concat line products | PASS |  |
 | churn | query:outer join customers without recent orders | PASS |  |
@@ -1346,6 +1383,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | churn | query:set: order by walks the member bitmask | PASS |  |
 | churn | query:set: grouping orders groups by bitmask | PASS |  |
+| churn | query:enum: the empty member groups by its ordinal | PASS |  |
+| churn | query:enum: the empty member sorts by its ordinal | PASS |  |
+| churn | query:enum: the empty member is selectable by text | PASS |  |
 | churn | query:geometry: hex round-trips the internal format | PASS |  |
 | churn | query:geometry: byte length includes the srid prefix | PASS |  |
 | churn | query:geometry: null routes filter and count | PASS |  |
@@ -1417,6 +1457,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | converge:Fact | PASS |  |
 | contention | converge:Person | PASS |  |
 | contention | converge:audit_log | PASS |  |
+| contention | converge:badges | PASS |  |
 | contention | converge:counters | PASS |  |
 | contention | converge:customers | PASS |  |
 | contention | converge:order_items | PASS |  |
@@ -1483,6 +1524,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:window share of total over grouped output | PASS |  |
 | contention | query:window running total | PASS |  |
 | contention | query:decimal column average beyond simple sum | PASS |  |
+| contention | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | contention | query:json extract filter on customer meta | PASS |  |
 | contention | query:fan-out join group concat line products | PASS |  |
 | contention | query:outer join customers without recent orders | PASS |  |
@@ -1518,6 +1560,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | contention | query:set: order by walks the member bitmask | PASS |  |
 | contention | query:set: grouping orders groups by bitmask | PASS |  |
+| contention | query:enum: the empty member groups by its ordinal | PASS |  |
+| contention | query:enum: the empty member sorts by its ordinal | PASS |  |
+| contention | query:enum: the empty member is selectable by text | PASS |  |
 | contention | query:geometry: hex round-trips the internal format | PASS |  |
 | contention | query:geometry: byte length includes the srid prefix | PASS |  |
 | contention | query:geometry: null routes filter and count | PASS |  |
@@ -1594,6 +1639,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | converge:Fact | PASS |  |
 | execution-budget | converge:Person | PASS |  |
 | execution-budget | converge:audit_log | PASS |  |
+| execution-budget | converge:badges | PASS |  |
 | execution-budget | converge:counters | PASS |  |
 | execution-budget | converge:customers | PASS |  |
 | execution-budget | converge:order_items | PASS |  |
@@ -1660,6 +1706,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:window share of total over grouped output | PASS |  |
 | execution-budget | query:window running total | PASS |  |
 | execution-budget | query:decimal column average beyond simple sum | PASS |  |
+| execution-budget | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | execution-budget | query:json extract filter on customer meta | PASS |  |
 | execution-budget | query:fan-out join group concat line products | PASS |  |
 | execution-budget | query:outer join customers without recent orders | PASS |  |
@@ -1695,6 +1742,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | execution-budget | query:set: order by walks the member bitmask | PASS |  |
 | execution-budget | query:set: grouping orders groups by bitmask | PASS |  |
+| execution-budget | query:enum: the empty member groups by its ordinal | PASS |  |
+| execution-budget | query:enum: the empty member sorts by its ordinal | PASS |  |
+| execution-budget | query:enum: the empty member is selectable by text | PASS |  |
 | execution-budget | query:geometry: hex round-trips the internal format | PASS |  |
 | execution-budget | query:geometry: byte length includes the srid prefix | PASS |  |
 | execution-budget | query:geometry: null routes filter and count | PASS |  |
@@ -1770,6 +1820,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | converge:Fact | PASS |  |
 | spill | converge:Person | PASS |  |
 | spill | converge:audit_log | PASS |  |
+| spill | converge:badges | PASS |  |
 | spill | converge:counters | PASS |  |
 | spill | converge:customers | PASS |  |
 | spill | converge:order_items | PASS |  |
@@ -1836,6 +1887,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:window share of total over grouped output | PASS |  |
 | spill | query:window running total | PASS |  |
 | spill | query:decimal column average beyond simple sum | PASS |  |
+| spill | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | spill | query:json extract filter on customer meta | PASS |  |
 | spill | query:fan-out join group concat line products | PASS |  |
 | spill | query:outer join customers without recent orders | PASS |  |
@@ -1871,6 +1923,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | spill | query:set: order by walks the member bitmask | PASS |  |
 | spill | query:set: grouping orders groups by bitmask | PASS |  |
+| spill | query:enum: the empty member groups by its ordinal | PASS |  |
+| spill | query:enum: the empty member sorts by its ordinal | PASS |  |
+| spill | query:enum: the empty member is selectable by text | PASS |  |
 | spill | query:geometry: hex round-trips the internal format | PASS |  |
 | spill | query:geometry: byte length includes the srid prefix | PASS |  |
 | spill | query:geometry: null routes filter and count | PASS |  |
@@ -1945,6 +2000,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | converge:Fact | PASS |  |
 | pooling | converge:Person | PASS |  |
 | pooling | converge:audit_log | PASS |  |
+| pooling | converge:badges | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
 | pooling | converge:order_items | PASS |  |
@@ -2011,6 +2067,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:window share of total over grouped output | PASS |  |
 | pooling | query:window running total | PASS |  |
 | pooling | query:decimal column average beyond simple sum | PASS |  |
+| pooling | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | pooling | query:json extract filter on customer meta | PASS |  |
 | pooling | query:fan-out join group concat line products | PASS |  |
 | pooling | query:outer join customers without recent orders | PASS |  |
@@ -2046,6 +2103,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | pooling | query:set: order by walks the member bitmask | PASS |  |
 | pooling | query:set: grouping orders groups by bitmask | PASS |  |
+| pooling | query:enum: the empty member groups by its ordinal | PASS |  |
+| pooling | query:enum: the empty member sorts by its ordinal | PASS |  |
+| pooling | query:enum: the empty member is selectable by text | PASS |  |
 | pooling | query:geometry: hex round-trips the internal format | PASS |  |
 | pooling | query:geometry: byte length includes the srid prefix | PASS |  |
 | pooling | query:geometry: null routes filter and count | PASS |  |
@@ -2117,6 +2177,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | converge:Fact | PASS |  |
 | restart | converge:Person | PASS |  |
 | restart | converge:audit_log | PASS |  |
+| restart | converge:badges | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
 | restart | converge:order_items | PASS |  |
@@ -2183,6 +2244,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:window share of total over grouped output | PASS |  |
 | restart | query:window running total | PASS |  |
 | restart | query:decimal column average beyond simple sum | PASS |  |
+| restart | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | restart | query:json extract filter on customer meta | PASS |  |
 | restart | query:fan-out join group concat line products | PASS |  |
 | restart | query:outer join customers without recent orders | PASS |  |
@@ -2218,6 +2280,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | restart | query:set: order by walks the member bitmask | PASS |  |
 | restart | query:set: grouping orders groups by bitmask | PASS |  |
+| restart | query:enum: the empty member groups by its ordinal | PASS |  |
+| restart | query:enum: the empty member sorts by its ordinal | PASS |  |
+| restart | query:enum: the empty member is selectable by text | PASS |  |
 | restart | query:geometry: hex round-trips the internal format | PASS |  |
 | restart | query:geometry: byte length includes the srid prefix | PASS |  |
 | restart | query:geometry: null routes filter and count | PASS |  |
@@ -2309,6 +2374,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | converge:Fact | PASS |  |
 | control-plane | converge:Person | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
+| control-plane | converge:badges | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
 | control-plane | converge:keyless_log | PASS |  |
@@ -2376,6 +2442,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:window share of total over grouped output | PASS |  |
 | control-plane | query:window running total | PASS |  |
 | control-plane | query:decimal column average beyond simple sum | PASS |  |
+| control-plane | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | control-plane | query:json extract filter on customer meta | PASS |  |
 | control-plane | query:fan-out join group concat line products | PASS |  |
 | control-plane | query:outer join customers without recent orders | PASS |  |
@@ -2411,6 +2478,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | control-plane | query:set: order by walks the member bitmask | PASS |  |
 | control-plane | query:set: grouping orders groups by bitmask | PASS |  |
+| control-plane | query:enum: the empty member groups by its ordinal | PASS |  |
+| control-plane | query:enum: the empty member sorts by its ordinal | PASS |  |
+| control-plane | query:enum: the empty member is selectable by text | PASS |  |
 | control-plane | query:geometry: hex round-trips the internal format | PASS |  |
 | control-plane | query:geometry: byte length includes the srid prefix | PASS |  |
 | control-plane | query:geometry: null routes filter and count | PASS |  |
@@ -2483,6 +2553,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | converge:Fact | PASS |  |
 | snapshot-ddl-window | converge:Person | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
+| snapshot-ddl-window | converge:badges | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
 | snapshot-ddl-window | converge:customers | PASS |  |
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
@@ -2550,6 +2621,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:window share of total over grouped output | PASS |  |
 | snapshot-ddl-window | query:window running total | PASS |  |
 | snapshot-ddl-window | query:decimal column average beyond simple sum | PASS |  |
+| snapshot-ddl-window | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | snapshot-ddl-window | query:json extract filter on customer meta | PASS |  |
 | snapshot-ddl-window | query:fan-out join group concat line products | PASS |  |
 | snapshot-ddl-window | query:outer join customers without recent orders | PASS |  |
@@ -2585,6 +2657,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | snapshot-ddl-window | query:set: order by walks the member bitmask | PASS |  |
 | snapshot-ddl-window | query:set: grouping orders groups by bitmask | PASS |  |
+| snapshot-ddl-window | query:enum: the empty member groups by its ordinal | PASS |  |
+| snapshot-ddl-window | query:enum: the empty member sorts by its ordinal | PASS |  |
+| snapshot-ddl-window | query:enum: the empty member is selectable by text | PASS |  |
 | snapshot-ddl-window | query:geometry: hex round-trips the internal format | PASS |  |
 | snapshot-ddl-window | query:geometry: byte length includes the srid prefix | PASS |  |
 | snapshot-ddl-window | query:geometry: null routes filter and count | PASS |  |
@@ -2661,6 +2736,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | converge:Fact | PASS |  |
 | drop-table-cdc | converge:Person | PASS |  |
 | drop-table-cdc | converge:audit_log | PASS |  |
+| drop-table-cdc | converge:badges | PASS |  |
 | drop-table-cdc | converge:counters | PASS |  |
 | drop-table-cdc | converge:customers | PASS |  |
 | drop-table-cdc | converge:keyless_log | PASS |  |
@@ -2728,6 +2804,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:window share of total over grouped output | PASS |  |
 | drop-table-cdc | query:window running total | PASS |  |
 | drop-table-cdc | query:decimal column average beyond simple sum | PASS |  |
+| drop-table-cdc | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | drop-table-cdc | query:json extract filter on customer meta | PASS |  |
 | drop-table-cdc | query:fan-out join group concat line products | PASS |  |
 | drop-table-cdc | query:outer join customers without recent orders | PASS |  |
@@ -2763,6 +2840,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-cdc | query:set: order by walks the member bitmask | PASS |  |
 | drop-table-cdc | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-table-cdc | query:enum: the empty member groups by its ordinal | PASS |  |
+| drop-table-cdc | query:enum: the empty member sorts by its ordinal | PASS |  |
+| drop-table-cdc | query:enum: the empty member is selectable by text | PASS |  |
 | drop-table-cdc | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-table-cdc | query:geometry: byte length includes the srid prefix | PASS |  |
 | drop-table-cdc | query:geometry: null routes filter and count | PASS |  |
@@ -2837,6 +2917,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | converge:Fact | PASS |  |
 | drop-table-recreate | converge:Person | PASS |  |
 | drop-table-recreate | converge:audit_log | PASS |  |
+| drop-table-recreate | converge:badges | PASS |  |
 | drop-table-recreate | converge:counters | PASS |  |
 | drop-table-recreate | converge:customers | PASS |  |
 | drop-table-recreate | converge:keyless_log | PASS |  |
@@ -2904,6 +2985,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:window share of total over grouped output | PASS |  |
 | drop-table-recreate | query:window running total | PASS |  |
 | drop-table-recreate | query:decimal column average beyond simple sum | PASS |  |
+| drop-table-recreate | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | drop-table-recreate | query:json extract filter on customer meta | PASS |  |
 | drop-table-recreate | query:fan-out join group concat line products | PASS |  |
 | drop-table-recreate | query:outer join customers without recent orders | PASS |  |
@@ -2939,6 +3021,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-recreate | query:set: order by walks the member bitmask | PASS |  |
 | drop-table-recreate | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-table-recreate | query:enum: the empty member groups by its ordinal | PASS |  |
+| drop-table-recreate | query:enum: the empty member sorts by its ordinal | PASS |  |
+| drop-table-recreate | query:enum: the empty member is selectable by text | PASS |  |
 | drop-table-recreate | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-table-recreate | query:geometry: byte length includes the srid prefix | PASS |  |
 | drop-table-recreate | query:geometry: null routes filter and count | PASS |  |
@@ -3008,13 +3093,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_27209f82dff8b4f982826a09e49cfbc5","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-23T20:18:00.625097+00:00","updated_at":"2026-08-23T20:25:17.732991+00:00"},"tables":18,"rows":1130} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
 | drop-table-polling | converge:Fact | PASS |  |
 | drop-table-polling | converge:Person | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
+| drop-table-polling | converge:badges | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
 | drop-table-polling | converge:customers | PASS |  |
 | drop-table-polling | converge:keyless_log | PASS |  |
@@ -3082,6 +3168,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:window share of total over grouped output | PASS |  |
 | drop-table-polling | query:window running total | PASS |  |
 | drop-table-polling | query:decimal column average beyond simple sum | PASS |  |
+| drop-table-polling | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | drop-table-polling | query:json extract filter on customer meta | PASS |  |
 | drop-table-polling | query:fan-out join group concat line products | PASS |  |
 | drop-table-polling | query:outer join customers without recent orders | PASS |  |
@@ -3117,6 +3204,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-table-polling | query:set: order by walks the member bitmask | PASS |  |
 | drop-table-polling | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-table-polling | query:enum: the empty member groups by its ordinal | PASS |  |
+| drop-table-polling | query:enum: the empty member sorts by its ordinal | PASS |  |
+| drop-table-polling | query:enum: the empty member is selectable by text | PASS |  |
 | drop-table-polling | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-table-polling | query:geometry: byte length includes the srid prefix | PASS |  |
 | drop-table-polling | query:geometry: null routes filter and count | PASS |  |
@@ -3196,6 +3286,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | converge:Fact | PASS |  |
 | drop-database | converge:Person | PASS |  |
 | drop-database | converge:audit_log | PASS |  |
+| drop-database | converge:badges | PASS |  |
 | drop-database | converge:counters | PASS |  |
 | drop-database | converge:customers | PASS |  |
 | drop-database | converge:keyless_log | PASS |  |
@@ -3263,6 +3354,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:window share of total over grouped output | PASS |  |
 | drop-database | query:window running total | PASS |  |
 | drop-database | query:decimal column average beyond simple sum | PASS |  |
+| drop-database | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | drop-database | query:json extract filter on customer meta | PASS |  |
 | drop-database | query:fan-out join group concat line products | PASS |  |
 | drop-database | query:outer join customers without recent orders | PASS |  |
@@ -3298,6 +3390,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | drop-database | query:set: order by walks the member bitmask | PASS |  |
 | drop-database | query:set: grouping orders groups by bitmask | PASS |  |
+| drop-database | query:enum: the empty member groups by its ordinal | PASS |  |
+| drop-database | query:enum: the empty member sorts by its ordinal | PASS |  |
+| drop-database | query:enum: the empty member is selectable by text | PASS |  |
 | drop-database | query:geometry: hex round-trips the internal format | PASS |  |
 | drop-database | query:geometry: byte length includes the srid prefix | PASS |  |
 | drop-database | query:geometry: null routes filter and count | PASS |  |
@@ -3369,6 +3464,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:Fact | PASS |  |
 | ddl-documented-gaps | converge:Person | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
+| ddl-documented-gaps | converge:badges | PASS |  |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
@@ -3436,6 +3532,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:window share of total over grouped output | PASS |  |
 | ddl-documented-gaps | query:window running total | PASS |  |
 | ddl-documented-gaps | query:decimal column average beyond simple sum | PASS |  |
+| ddl-documented-gaps | query:computed decimal rounds negative digits half away from zero | PASS |  |
 | ddl-documented-gaps | query:json extract filter on customer meta | PASS |  |
 | ddl-documented-gaps | query:fan-out join group concat line products | SKIP |  |
 | ddl-documented-gaps | query:outer join customers without recent orders | PASS |  |
@@ -3471,6 +3568,9 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:collation: regrouping a mixed grouping stays exact | PASS |  |
 | ddl-documented-gaps | query:set: order by walks the member bitmask | PASS |  |
 | ddl-documented-gaps | query:set: grouping orders groups by bitmask | PASS |  |
+| ddl-documented-gaps | query:enum: the empty member groups by its ordinal | PASS |  |
+| ddl-documented-gaps | query:enum: the empty member sorts by its ordinal | PASS |  |
+| ddl-documented-gaps | query:enum: the empty member is selectable by text | PASS |  |
 | ddl-documented-gaps | query:geometry: hex round-trips the internal format | PASS |  |
 | ddl-documented-gaps | query:geometry: byte length includes the srid prefix | PASS |  |
 | ddl-documented-gaps | query:geometry: null routes filter and count | PASS |  |
@@ -3542,24 +3642,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 1.3 | 1.1 |
-| orm-compat | 7.2 | 0.5 | 1.0 |
-| crud | 0.4 | 0.7 | 1.0 |
-| type-edges | 0.1 | 1.3 | 0.9 |
-| ddl | 0.8 | 22.0 | 1.0 |
-| schema-drift-minimal | 0.2 | 4.9 | 1.1 |
-| schema-drift-unseen | 1.3 | 5.1 | 1.0 |
-| churn | 15.0 | 1.8 | 1.0 |
-| contention | 14.2 | 0.6 | 1.1 |
-| execution-budget | 0.0 | 0.5 | 1.0 |
-| spill | 2.9 | 0.6 | 0.9 |
-| pooling | 0.2 | 0.8 | 1.1 |
-| restart | 0.8 | 2.5 | 1.0 |
-| control-plane | 67.3 | 1.3 | 1.1 |
-| snapshot-ddl-window | 7.4 | 1.3 | 1.1 |
-| drop-table-cdc | 21.8 | 2.2 | 1.1 |
-| drop-table-recreate | 142.7 | 1.9 | 1.2 |
-| drop-table-polling | 34.7 | 1.9 | 1.2 |
-| drop-database | 21.4 | 1.8 | 1.3 |
-| ddl-documented-gaps | 0.2 | 1.7 | 1.2 |
-| total | 338.6 | 54.6 | 21.3 |
+| snapshot | 0.0 | 1.1 | 0.8 |
+| orm-compat | 8.9 | 0.7 | 0.7 |
+| crud | 0.4 | 2.1 | 0.6 |
+| type-edges | 0.0 | 1.8 | 0.8 |
+| ddl | 0.9 | 18.8 | 0.9 |
+| schema-drift-minimal | 0.3 | 1.5 | 0.6 |
+| schema-drift-unseen | 0.7 | 12.0 | 0.7 |
+| churn | 14.3 | 0.9 | 0.9 |
+| contention | 12.8 | 0.3 | 0.7 |
+| execution-budget | 0.0 | 0.2 | 0.5 |
+| spill | 3.0 | 0.3 | 0.8 |
+| pooling | 0.1 | 1.3 | 0.7 |
+| restart | 0.6 | 7.1 | 0.5 |
+| control-plane | 56.7 | 1.8 | 0.6 |
+| snapshot-ddl-window | 7.1 | 1.1 | 1.0 |
+| drop-table-cdc | 16.8 | 1.2 | 0.9 |
+| drop-table-recreate | 138.7 | 0.8 | 0.9 |
+| drop-table-polling | 117.1 | 1.2 | 0.8 |
+| drop-database | 17.1 | 1.4 | 1.0 |
+| ddl-documented-gaps | 0.1 | 0.9 | 0.5 |
+| total | 395.6 | 56.4 | 14.9 |
