@@ -3,10 +3,14 @@
 What Pintail implements against MySQL 8.4. Gaps live in `docs/limitations.md`;
 the two are disjoint on purpose.
 
-The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains 874
-cases, all passing byte-exactly against MySQL 8.4 in the current repository
-gate, including the focused JSON, temporal-parsing, DECIMAL-chain,
-dependent-correlation, bushy-join, and set-scoping cases.
+The differential oracle (`tests/sqllogic/tests/mysql_oracle.rs`) contains
+1,081 cases, all passing byte-exactly against MySQL 8.4 and 8.0 in the
+current repository gate, including the focused JSON, temporal-parsing,
+DECIMAL-chain, dependent-correlation, bushy-join, and set-scoping cases.
+The same harness carries a seeded generator over 16 typed query families;
+its high-volume sweeps (102,500 generated statements, zero skips) are
+banked in `tests/sqllogic/fuzz-results.md` with the reproduction recipe in
+`docs/verification.md`.
 
 ## Surface
 
@@ -31,8 +35,8 @@ dependent-correlation, bushy-join, and set-scoping cases.
 | Behaviour | Parity |
 |---|---|
 | Numeric literals | A dotted literal is `DECIMAL` (exact); an exponent literal is `DOUBLE` (approximate), as MySQL types them |
-| `ROUND` | Half away from zero for exact operands, nearest-even for approximate ones — the mode follows the operand's type |
-| `DECIMAL` arithmetic | Exact on scaled `i128` units, including comparison, hashing, grouping, DISTINCT, joins, IN, MIN/MAX and values beyond f64 precision. `/` and `AVG` widen by 4 fraction digits; chained arithmetic retains MySQL's base-1e9 internal division digits; overflow errors |
+| `ROUND` | Half away from zero for exact operands — including negative digit counts, rounded once at the target position — and nearest-even for approximate ones; the mode follows the operand's type. `ROUND`/`TRUNCATE`/`CEILING`/`FLOOR` over a computed decimal read the operand's internal digits, not its display value (`ROUND(28100/508, 2)` is `55.31` from `55.314960629`), and `ROUND`/`TRUNCATE` cap their result scale at the operand's declared scale |
+| `DECIMAL` arithmetic | Exact on scaled `i128` units, including comparison, hashing, grouping, DISTINCT, joins, IN, MIN/MAX and values beyond f64 precision. `/` and `AVG` widen by 4 fraction digits; chained arithmetic and the rounding family retain MySQL's base-1e9 internal division digits; overflow errors |
 | `BIGINT UNSIGNED` | Native `UInt64` across the full `0..=2^64-1` range |
 | Statement time | `NOW`/`CURDATE`/`CURTIME`/`UNIX_TIMESTAMP()` pinned to one timestamp per statement |
 | Session time zone | `SET time_zone` per connection on the MySQL wire endpoint |
@@ -41,6 +45,7 @@ dependent-correlation, bushy-join, and set-scoping cases.
 | `EXTRACT` | `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER`, `WEEK` |
 | Temporal types | `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` distinctions survive binding and wire metadata |
 | Text collation | `utf8mb4_0900_ai_ci` compatibility profile uses one primary-strength Unicode collation key for comparison, grouping, hashing, DISTINCT, joins, IN, MIN/MAX, and ordering; explicit `COLLATE utf8mb4_0900_ai_ci` and its NO PAD trailing-space behavior are supported; LIKE/locate apply case/accent folding while binary values remain bytewise; unsupported or mixed source collations reject on collation-sensitive operations |
+| `ENUM` / `SET` ordering | Sorting, grouping and DISTINCT follow the declaration index for `ENUM` and the member bitmask for `SET`, while comparison and MIN/MAX treat the value as its label string — MySQL's split exactly (`crates/pintail-exec/tests/enum_ordinal.rs`, `set_ordinal.rs`). A declared empty member (`ENUM('', …)`) keeps its real ordinal; a value outside the declaration stays plain text rather than taking an invented index |
 | Generated columns | Stored columns included; virtual skipped |
 | Type fidelity | Exact decimal text, normalized-zero and negative temporals, JSON, Unicode, binary, `BIT`, Boolean, narrow integers — across snapshot, CDC, HTTP and wire |
 | Rejection | Always an explicit error, never a different answer |
