@@ -88,3 +88,10 @@ lz4_flex = "0.11"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Dependencies carry no debug info: only our own crates get it, which is what
+# backtraces actually read. Unlike the root workspace this manifest sets no
+# [profile.dev] debug level, so the experiment crates themselves keep Cargo's
+# default while their dependencies stop carrying what no backtrace reads.
+[profile.dev.package."*"]
+debug = false

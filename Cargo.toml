@@ -106,9 +106,8 @@ unsafe_code = "forbid"
 all = "warn"
 pedantic = "warn"
 
-# Dev builds skip full debug info: the target directory lives on a slow
-# external volume (see ~/.local/bin/cargo), and line tables keep backtraces
-# usable at roughly half the artifact size and link time.
+# Dev builds skip full debug info: line tables keep backtraces and panic
+# locations usable at roughly half the artifact size and link time.
 [profile.dev]
 debug = "line-tables-only"
 lto = "off"
@@ -116,3 +115,12 @@ lto = "off"
 [profile.test]
 debug = "line-tables-only"
 lto = "off"
+
+# Dependencies carry no debug info: only our own crates get it, which is what
+# backtraces actually read. The line-tables-only setting above already took
+# most of this win - an A/B on a sample dependency under these settings left
+# roughly 8% - and the stray .o files macOS retains under the default
+# unpacked split-debuginfo are our own crates and test binaries, which this
+# override deliberately does not touch.
+[profile.dev.package."*"]
+debug = false
