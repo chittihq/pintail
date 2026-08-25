@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Local (Pintail-owned, writable) databases, phase 2 of issue #7: a
+  database kind that has no source, accepts `CREATE TABLE` and `INSERT`
+  with primary-key enforcement, and is refused by every replication path
+  (probe, snapshot, resnapshot, reconciliation, dead-letter retry, and
+  supervisor scheduling). Replicated databases keep the read-only
+  rejection for every mutating statement. A locally declared column is
+  typed through the probe's own mapping, so a local table answers queries
+  under the same rules as a mirrored one. Not yet reachable over the wire
+  or HTTP: the engine and its control plane are in place, the client
+  surfaces follow.
+
 ### Fixed
 
 - Negative `ROUND`/`TRUNCATE` digit counts over exact computed decimals
