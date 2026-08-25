@@ -1,6 +1,6 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-25T07:51:48.184Z.
+Measured 2026-08-25T08:24:25.376Z.
 
 Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-container.
 
@@ -3832,25 +3832,25 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 1.3 | 1.1 |
-| orm-compat | 8.6 | 0.6 | 1.0 |
-| crud | 0.2 | 2.4 | 1.1 |
-| type-edges | 0.1 | 1.3 | 0.7 |
-| ddl | 0.8 | 19.9 | 0.8 |
-| schema-drift-minimal | 0.1 | 1.3 | 0.7 |
-| schema-drift-unseen | 0.7 | 4.7 | 0.6 |
-| churn | 12.4 | 2.5 | 1.1 |
-| contention | 14.0 | 0.3 | 0.9 |
-| execution-budget | 0.0 | 0.5 | 0.9 |
-| spill | 3.0 | 0.5 | 0.9 |
-| pooling | 0.1 | 2.1 | 0.9 |
-| local-database | 0.0 | 0.3 | 0.7 |
-| restart | 0.6 | 1.2 | 0.7 |
-| control-plane | 52.9 | 1.1 | 1.0 |
-| snapshot-ddl-window | 5.5 | 4.0 | 1.2 |
-| drop-table-cdc | 20.5 | 1.4 | 0.7 |
-| drop-table-recreate | 132.1 | 1.5 | 1.2 |
-| drop-table-polling | 28.3 | 1.2 | 1.0 |
-| drop-database | 14.3 | 1.6 | 1.2 |
-| ddl-documented-gaps | 0.2 | 1.3 | 0.8 |
-| total | 294.4 | 51.1 | 19.1 |
+| snapshot | 0.0 | 1.2 | 8.4 |
+| orm-compat | 8.4 | 0.3 | 0.8 |
+| crud | 0.4 | 3.3 | 0.8 |
+| type-edges | 0.2 | 0.9 | 0.8 |
+| ddl | 0.7 | 19.8 | 1.0 |
+| schema-drift-minimal | 0.3 | 2.1 | 0.7 |
+| schema-drift-unseen | 1.0 | 12.0 | 2.3 |
+| churn | 19.1 | 3.2 | 2.9 |
+| contention | 15.4 | 0.5 | 1.3 |
+| execution-budget | 0.0 | 0.7 | 1.7 |
+| spill | 3.3 | 0.8 | 1.5 |
+| pooling | 0.2 | 2.8 | 1.1 |
+| local-database | 0.2 | 0.6 | 1.2 |
+| restart | 0.6 | 2.5 | 1.6 |
+| control-plane | 68.9 | 1.4 | 0.8 |
+| snapshot-ddl-window | 10.1 | 1.2 | 1.3 |
+| drop-table-cdc | 13.3 | 0.9 | 0.9 |
+| drop-table-recreate | 131.0 | 0.9 | 0.6 |
+| drop-table-polling | 26.3 | 1.0 | 0.9 |
+| drop-database | 21.3 | 1.8 | 0.9 |
+| ddl-documented-gaps | 0.2 | 1.4 | 0.8 |
+| total | 320.7 | 59.3 | 32.4 |
