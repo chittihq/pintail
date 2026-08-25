@@ -120,9 +120,10 @@ impl LocalDatabase {
                 .remove_local_table(&self.database_id, table)
                 .map_err(internal)?;
         }
-        if !incomplete.is_empty() {
-            self.publish_catalog(&metadata)?;
-        }
+        // Published unconditionally: this is the one entry point that makes
+        // the catalog match reality, so it also initializes a brand-new
+        // database's empty catalog and repairs one a crash left behind.
+        self.publish_catalog(&metadata)?;
         Ok(incomplete)
     }
 

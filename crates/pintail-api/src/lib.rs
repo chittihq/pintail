@@ -62,9 +62,9 @@ use crate::backup::{
 };
 use crate::controls::{reconcile, resync};
 use crate::databases::{
-    create as create_database, delete as delete_database, get as get_database,
-    list as list_databases, probe_database, set_mode, status as database_status, test_connection,
-    update as update_database,
+    create as create_database, create_local as create_local_database, delete as delete_database,
+    get as get_database, list as list_databases, probe_database, set_mode,
+    status as database_status, test_connection, update as update_database,
 };
 use crate::events::{sse, websocket};
 use crate::invites::{
@@ -165,6 +165,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         )
         .route("/settings/oauth/google/link", post(google_link_start))
         .route("/databases", get(list_databases).post(create_database))
+        .route("/databases/local", post(create_local_database))
         .route(
             "/databases/{id}",
             get(get_database)

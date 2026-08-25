@@ -1349,6 +1349,19 @@ fn query_output_to_response(
         Ok(output) => output,
         Err(error) => return Response::Error(error_kind(&error), error.to_string()),
     };
+    // A write answers with an OK packet carrying its affected-row count,
+    // not an empty result set: clients read affected_rows from the OK
+    // packet, and a zero-column result set would report "0 rows" for an
+    // INSERT that changed three.
+    if let Some(affected) = output.affected {
+        return Response::Ok(
+            OkPacket {
+                affected_rows: affected,
+                ..OkPacket::default()
+            },
+            String::new(),
+        );
+    }
     let columns = output
         .fields
         .iter()
@@ -1837,6 +1850,9 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::UngroupedColumn => ErrorKind::ErWrongFieldWithGroup,
             SqlRejection::GroupFunctionMisplaced => ErrorKind::ErInvalidGroupFuncUse,
             SqlRejection::OutOfRange => ErrorKind::ErDataOutOfRange,
+            SqlRejection::TableExists => ErrorKind::ErTableExistsError,
+            SqlRejection::DuplicateKey => ErrorKind::ErDupEntry,
+            SqlRejection::NotNull => ErrorKind::ErBadNullError,
         },
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
         QueryError::Overloaded => ErrorKind::ErConCountError,
@@ -1914,6 +1930,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
             ..QueryStats::default()
         },
         truncated: false,
+        affected: None,
     })
 }
 
@@ -1965,6 +1982,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
             ..QueryStats::default()
         },
         truncated: false,
+        affected: None,
     }
 }
 

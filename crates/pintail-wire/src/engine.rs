@@ -88,6 +88,11 @@ pub struct QueryOutput {
     pub rows: Vec<Vec<Value>>,
     pub stats: QueryStats,
     pub truncated: bool,
+    /// Rows a WRITE changed, when the statement changed rows instead of
+    /// returning them. `None` is a result set - every read answers `None`,
+    /// so a query can never be mistaken for a write - and `Some` makes the
+    /// server answer with an OK packet carrying this count.
+    pub affected: Option<u64>,
 }
 
 /// Failure from loading or querying one mirrored database.
@@ -136,6 +141,12 @@ pub enum SqlRejection {
     GroupFunctionMisplaced,
     /// 1690: numeric evaluation left the result type's range.
     OutOfRange,
+    /// 1050: `CREATE TABLE` named an existing table.
+    TableExists,
+    /// 1062: a write repeated a unique key.
+    DuplicateKey,
+    /// 1048: a `NOT NULL` column received no value.
+    NotNull,
 }
 
 /// Opens reader-pinned table snapshots and runs Pintail's native SQL engine.
@@ -339,12 +350,18 @@ impl ReplicaEngine {
         // an early return or panic. Taken before any replica or catalog
         // work so a saturated server refuses cheaply.
         let _permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
+        let statement =
+            parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
+        // Writes are routed before any replica is loaded: a write needs no
+        // catalog snapshot, and a local database that has not created its
+        // first table has none to load.
+        if matches!(statement, Statement::CreateTable(_) | Statement::Insert(_)) {
+            return self.execute_write(database_id, &statement, started);
+        }
         let replica = self.load_replica_cached(database_id)?;
         let catalog = build_catalog(&replica)?;
         let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();
-        let statement =
-            parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
         // `/*+ MAX_EXECUTION_TIME(ms) */` is scoped to the statement and
         // tightens whatever the session already allows - never loosens it, so
         // a hint cannot be used to escape an administrator's ceiling. A hint
@@ -388,6 +405,61 @@ impl ReplicaEngine {
                 "Pintail's query surfaces are read-only".to_owned(),
             )),
         }
+    }
+
+    /// Executes one mutating statement against a LOCAL database.
+    ///
+    /// Replicated databases keep the read-only rejection: a row written
+    /// into a mirrored table would be destroyed by the next resnapshot and
+    /// has no binlog version it could legitimately claim
+    /// (`docs/design/writable-mode.md`).
+    fn execute_write(
+        &self,
+        database_id: &str,
+        statement: &Statement,
+        started: Instant,
+    ) -> Result<QueryOutput, QueryError> {
+        let metadata = MetaStore::open(&self.metadata_path)
+            .map_err(|error| QueryError::Internal(error.to_string()))?;
+        if !metadata
+            .is_local_database(database_id)
+            .map_err(|error| QueryError::Internal(error.to_string()))?
+        {
+            // Also the answer for a database that does not exist: a write
+            // must never be the thing that reports a missing database as
+            // writable.
+            return Err(QueryError::Invalid(
+                "Pintail's query surfaces are read-only".to_owned(),
+            ));
+        }
+        drop(metadata);
+
+        let outcome =
+            pintail_write::LocalDatabase::new(&self.data_dir, &self.metadata_path, database_id)
+                .execute(statement)
+                .map_err(|error| write_error(&error))?;
+        // The catalog and the stored rows both changed; the next read must
+        // not answer from a replica loaded before this statement.
+        self.cache
+            .lock()
+            .expect("replica cache lock")
+            .remove(database_id);
+
+        let affected = match outcome {
+            pintail_write::WriteOutcome::TableCreated { .. } => 0,
+            pintail_write::WriteOutcome::RowsInserted { rows, .. } => rows,
+        };
+        let stats = QueryStats {
+            duration_ms: elapsed_ms(started),
+            ..QueryStats::default()
+        };
+        Ok(QueryOutput {
+            fields: Vec::new(),
+            rows: Vec::new(),
+            stats,
+            truncated: false,
+            affected: Some(affected),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -490,6 +562,7 @@ impl ReplicaEngine {
             rows,
             stats,
             truncated,
+            affected: None,
         })
     }
 
@@ -532,6 +605,7 @@ impl ReplicaEngine {
             rows: vec![vec![Value::Utf8(plan)]],
             stats,
             truncated: false,
+            affected: None,
         })
     }
 
@@ -690,6 +764,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
         },
         rows: result.rows,
         truncated: false,
+        affected: None,
     }
 }
 
@@ -979,4 +1054,21 @@ pub fn table_directory(root: &Path, table: &str) -> PathBuf {
 
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Maps a write rejection onto the wire's rejection, preserving the `MySQL`
+/// error number and SQLSTATE the client branches on.
+fn write_error(error: &pintail_write::WriteError) -> QueryError {
+    let message = error.to_string();
+    let rejection = match error.mysql_code() {
+        1050 => SqlRejection::TableExists,
+        1062 => SqlRejection::DuplicateKey,
+        1048 => SqlRejection::NotNull,
+        1146 => SqlRejection::UnknownTable,
+        1054 => SqlRejection::UnknownColumn,
+        // Everything else is a statement Pintail understood and refused,
+        // which is 1064 on the wire like any other unsupported statement.
+        _ => return QueryError::Invalid(message),
+    };
+    QueryError::Rejected { rejection, message }
 }

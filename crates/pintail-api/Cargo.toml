@@ -22,6 +22,7 @@ pintail-backup.workspace = true
 pintail-catalog.workspace = true
 pintail-cdc.workspace = true
 pintail-exec.workspace = true
+pintail-write.workspace = true
 pintail-meta.workspace = true
 pintail-poll.workspace = true
 pintail-probe.workspace = true

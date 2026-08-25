@@ -197,6 +197,65 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(DatabaseResponse::from(record))))
 }
 
+/// Request body for creating a local (writable) database.
+#[derive(serde::Deserialize)]
+pub(crate) struct CreateLocalDatabaseRequest {
+    /// Display name, unique across databases.
+    pub name: String,
+}
+
+/// Creates a LOCAL database: Pintail-owned and writable, with no source.
+///
+/// The control-plane path lands before any `CREATE DATABASE` on the wire
+/// because authentication and storage-root placement already live here
+/// (`docs/design/writable-mode.md`).
+pub(crate) async fn create_local(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Json(request): Json<CreateLocalDatabaseRequest>,
+) -> Result<(StatusCode, Json<DatabaseResponse>), ApiError> {
+    principal.require_operator()?;
+    let workspace_id = principal.require_workspace()?;
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::bad_request("a database needs a name"));
+    }
+    let id = random_identifier("db_", 16);
+    let now = Utc::now().to_rfc3339();
+    let data_dir = state.data_dir()?;
+    std::fs::create_dir_all(data_dir.join("databases").join(&id).join("tables"))
+        .map_err(ApiError::internal)?;
+
+    let metadata = state.metadata()?;
+    metadata
+        .create_local_database(&id, name, &now)
+        .map_err(|error| ApiError::bad_request(format!("could not create {name}: {error}")))?;
+    metadata
+        .set_database_workspace(&id, workspace_id)
+        .map_err(ApiError::internal)?;
+    drop(metadata);
+
+    // Publishes the empty catalog, so the read path can answer about a
+    // database that has not created its first table yet.
+    pintail_write::LocalDatabase::new(data_dir, state.metadata_path()?, &id)
+        .recover()
+        .map_err(ApiError::internal)?;
+
+    let record = state
+        .metadata()?
+        .database(&id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::internal("created database disappeared"))?;
+    audit::record(
+        &state,
+        &principal,
+        "database.create_local",
+        Some(("database", &id)),
+        Some(serde_json::json!({"name": record.name, "kind": "local"})),
+    );
+    Ok((StatusCode::CREATED, Json(DatabaseResponse::from(record))))
+}
+
 pub(crate) async fn get(
     Extension(principal): Extension<AuthPrincipal>,
     State(state): State<ApiState>,

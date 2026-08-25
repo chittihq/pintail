@@ -252,6 +252,12 @@ pub enum ErrorKind {
     ErDataOutOfRange = 1690,
     /// 1111: a group function was used where no aggregation scope exists.
     ErInvalidGroupFuncUse = 1111,
+    /// 1050: `CREATE TABLE` named a table that already exists.
+    ErTableExistsError = 1050,
+    /// 1062: a write repeated a key an index requires to be unique.
+    ErDupEntry = 1062,
+    /// 1048: a `NOT NULL` column received no value.
+    ErBadNullError = 1048,
 }
 
 impl ErrorKind {
@@ -273,8 +279,10 @@ impl ErrorKind {
             | Self::ErOptionPreventsStatement
             | Self::ErWrongFieldWithGroup => b"42000",
             Self::ErNoSuchTable => b"42S02",
+            Self::ErTableExistsError => b"42S01",
             Self::ErBadFieldError => b"42S22",
-            Self::ErNonUniqError => b"23000",
+            // MySQL reports integrity violations in class 23.
+            Self::ErNonUniqError | Self::ErDupEntry | Self::ErBadNullError => b"23000",
             Self::ErDataOutOfRange => b"22003",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErConCountError => b"08004",
