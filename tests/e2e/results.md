@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-08-23T20:35:32.642Z.
+Measured 2026-08-25T07:51:48.184Z.
 
-Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.
+Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-container.
 
-**3547 passed, 0 failed, 43 documented-gap warnings, 37 skipped.**
+**3736 passed, 0 failed, 44 documented-gap warnings, 37 skipped.**
 
-164 unique corpus queries produced 3280 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+164 unique corpus queries produced 3444 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -2172,6 +2172,196 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:order_items: product rollup without the orders table | PASS |  |
 | pooling | query:shipments: carrier value through the items bridge | PASS |  |
 | pooling | query:json: distinct case variants survive a derived table | PASS |  |
+| local-database | create table returns an OK packet | PASS |  |
+| local-database | insert reports its affected rows | PASS |  |
+| local-database | the rows read back through the same connection | PASS |  |
+| local-database | aggregates and predicates work on a local table | PASS |  |
+| local-database | duplicate key is 1062 | PASS |  |
+| local-database | existing table is 1050 | PASS |  |
+| local-database | not-null violation is 1048 | PASS |  |
+| local-database | unknown table is 1146 | PASS |  |
+| local-database | unknown column is 1054 | PASS |  |
+| local-database | a refused write leaves the table unchanged | PASS |  |
+| local-database | the replicated database still refuses writes | PASS |  |
+| local-database | a local database is not scheduled for replication | PASS |  |
+| local-database | converge:Dim | PASS |  |
+| local-database | converge:Event | PASS |  |
+| local-database | converge:Fact | PASS |  |
+| local-database | converge:Person | PASS |  |
+| local-database | converge:audit_log | PASS |  |
+| local-database | converge:badges | PASS |  |
+| local-database | converge:counters | PASS |  |
+| local-database | converge:customers | PASS |  |
+| local-database | converge:order_items | PASS |  |
+| local-database | converge:orders | PASS |  |
+| local-database | converge:shipments | PASS |  |
+| local-database | converge:staff | PASS |  |
+| local-database | converge:information_schema.columns | PASS |  |
+| local-database | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| local-database | query:conformance: mixed-collation double grouping | PASS |  |
+| local-database | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| local-database | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| local-database | query:conformance: case-variant code grouping | PASS |  |
+| local-database | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| local-database | query:conformance: nullable join key NULL-extends | PASS |  |
+| local-database | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| local-database | query:conformance: date bucketing over the fact table | PASS |  |
+| local-database | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| local-database | query:point lookup by key | PASS |  |
+| local-database | query:range scan with compound predicate | PASS |  |
+| local-database | query:inner join with aggregation | PASS |  |
+| local-database | query:join with a residual comparison between both inputs | PASS |  |
+| local-database | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| local-database | query:residual comparison through coalesce on a nullable column | PASS |  |
+| local-database | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| local-database | query:alias pair with the join order reversed | PASS |  |
+| local-database | query:four aliases of one table joined in a chain | PASS |  |
+| local-database | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| local-database | query:self-join manager chain preserves the roots | PASS |  |
+| local-database | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| local-database | query:aliases stay distinct when the empty side joins first | PASS |  |
+| local-database | query:left join preserves unmatched rows | PASS |  |
+| local-database | query:right join preserves unmatched rows | PASS |  |
+| local-database | query:three-way join through items | PASS |  |
+| local-database | query:union all across sources | PASS |  |
+| local-database | query:intersect customer identifiers | PASS |  |
+| local-database | query:except customer identifiers | PASS |  |
+| local-database | query:order by an expression over an aggregate | PASS |  |
+| local-database | query:order by a tree over several aggregates | PASS |  |
+| local-database | query:order by an aggregate absent from the select list | PASS |  |
+| local-database | query:group by with having | PASS |  |
+| local-database | query:conditional decimal sum keeps the fraction | PASS |  |
+| local-database | query:distinct count and min max | PASS |  |
+| local-database | query:uncorrelated in-subquery | PASS |  |
+| local-database | query:correlated exists with inner predicate | PASS |  |
+| local-database | query:correlated scalar aggregate | PASS |  |
+| local-database | query:correlated scalar unique lookup | PASS |  |
+| local-database | query:scalar subquery threshold | PASS |  |
+| local-database | query:non-recursive cte | PASS |  |
+| local-database | query:bounded recursive cte | PASS |  |
+| local-database | query:date bucketing | PASS |  |
+| local-database | query:string functions and like | PASS |  |
+| local-database | query:looker symmetric key helpers | PASS |  |
+| local-database | query:json constructor preserves json versus text | PASS |  |
+| local-database | query:json aggregate embeds documents | PASS |  |
+| local-database | query:regular expression read transforms | PASS |  |
+| local-database | query:case expression buckets | PASS |  |
+| local-database | query:null handling | PASS |  |
+| local-database | query:coalesce and ifnull | PASS |  |
+| local-database | query:enum and set filters | PASS |  |
+| local-database | query:unsigned boundary readback | PASS |  |
+| local-database | query:derived table | PASS |  |
+| local-database | query:group_concat single expression | PASS |  |
+| local-database | query:window ranking per group | PASS |  |
+| local-database | query:window share of total over grouped output | PASS |  |
+| local-database | query:window running total | PASS |  |
+| local-database | query:decimal column average beyond simple sum | PASS |  |
+| local-database | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| local-database | query:json extract filter on customer meta | PASS |  |
+| local-database | query:fan-out join group concat line products | PASS |  |
+| local-database | query:outer join customers without recent orders | PASS |  |
+| local-database | query:set op union distinct tiers and statuses | PASS |  |
+| local-database | query:temporal convert and date_format grain | PASS |  |
+| local-database | query:correlated not exists open orders | PASS |  |
+| local-database | query:window lag payment-shaped totals | PASS |  |
+| local-database | query:multi-key join items to orders | PASS |  |
+| local-database | query:between and null-safe coalesce on balance | PASS |  |
+| local-database | query:intersect all-style customer buyers | PASS |  |
+| local-database | query:derived table status revenue share | PASS |  |
+| local-database | query:general_ci: equality folds ASCII case | PASS |  |
+| local-database | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| local-database | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| local-database | query:general_ci: every supplementary character compares equal | PASS |  |
+| local-database | query:general_ci: grouping partitions by collated equality | PASS |  |
+| local-database | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| local-database | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| local-database | query:general_ci: joining on a collated column | PASS |  |
+| local-database | query:general_ci: representative spelling of a collated group | PASS |  |
+| local-database | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| local-database | query:enum: order by ascends by declared ordinal | PASS |  |
+| local-database | query:enum: order by descends by declared ordinal | PASS |  |
+| local-database | query:enum: min and max compare as strings | PASS |  |
+| local-database | query:enum: a greater-than range compares as strings | PASS |  |
+| local-database | query:enum: a less-than range compares as strings | PASS |  |
+| local-database | query:enum: between compares as strings | PASS |  |
+| local-database | query:enum: distinct orders by ordinal | PASS |  |
+| local-database | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| local-database | query:enum: a window order walks the ordinal | PASS |  |
+| local-database | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| local-database | query:collation: distinct counts fold per column collation | PASS |  |
+| local-database | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| local-database | query:set: order by walks the member bitmask | PASS |  |
+| local-database | query:set: grouping orders groups by bitmask | PASS |  |
+| local-database | query:enum: the empty member groups by its ordinal | PASS |  |
+| local-database | query:enum: the empty member sorts by its ordinal | PASS |  |
+| local-database | query:enum: the empty member is selectable by text | PASS |  |
+| local-database | query:geometry: hex round-trips the internal format | PASS |  |
+| local-database | query:geometry: byte length includes the srid prefix | PASS |  |
+| local-database | query:geometry: null routes filter and count | PASS |  |
+| local-database | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| local-database | query:set: find_in_set filters by membership | PASS |  |
+| local-database | query:set: equality is literal, not member-normalized | PASS |  |
+| local-database | query:set: distinct values walk the bitmask including empty | PASS |  |
+| local-database | query:set: grouped counts order by bitmask not text | PASS |  |
+| local-database | query:set: a range predicate compares the bitmask | PASS |  |
+| local-database | query:star: fact with dimension and two audit persons | PASS |  |
+| local-database | query:star: five-alias chain fans out through events | PASS |  |
+| local-database | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| local-database | query:star: five tables bridge the shop and the star | PASS |  |
+| local-database | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| local-database | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| local-database | query:json: length and keys survive null documents | PASS |  |
+| local-database | query:json: contains_path filters the documented rows | PASS |  |
+| local-database | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| local-database | query:json: object construction embeds an extracted scalar | PASS |  |
+| local-database | query:json: search locates a literal value | PASS |  |
+| local-database | query:json: grouping by an extracted scalar | PASS |  |
+| local-database | query:json: merge_patch overlays and reads back | PASS |  |
+| local-database | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| local-database | query:temporal: month-end bucketing via last_day | PASS |  |
+| local-database | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| local-database | query:temporal: datetime range keeps the year window | PASS |  |
+| local-database | query:temporal: date_sub bound in the predicate | PASS |  |
+| local-database | query:temporal: year-month split grouping | PASS |  |
+| local-database | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| local-database | query:regex: substr extracts the mail domain | PASS |  |
+| local-database | query:regex: the REGEXP operator anchors a class | PASS |  |
+| local-database | query:regex: replace folds suffix classes before grouping | PASS |  |
+| local-database | query:bi metabase: month grain through convert_tz | PASS |  |
+| local-database | query:bi metabase: iso week bucketing | PASS |  |
+| local-database | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| local-database | query:bi metabase: previous-period revenue window | PASS |  |
+| local-database | query:bi superset: week-start grain with a rolling average | PASS |  |
+| local-database | query:bi superset: running total over grouped revenue | PASS |  |
+| local-database | query:bi superset: lag and lead against a named window | PASS |  |
+| local-database | query:bi superset: quartile counts from ntile | PASS |  |
+| local-database | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| local-database | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| local-database | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| local-database | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| local-database | query:bi tableau: explicit cast ladder | PASS |  |
+| local-database | query:bi tableau: the stddev and variance family | PASS |  |
+| local-database | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| local-database | query:bi shared: substring_index dimension cleanup | PASS |  |
+| local-database | query:bi shared: json validity and typed path filter | PASS |  |
+| local-database | query:bi shared: contains_path over several paths at once | PASS |  |
+| local-database | query:bi shared: maketime from extracted parts | PASS |  |
+| local-database | query:bi shared: extract year_month grouping | PASS |  |
+| local-database | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| local-database | query:staff: three-level management chain with an inactive tail | PASS |  |
+| local-database | query:staff: active split with id extremes | PASS |  |
+| local-database | query:counters: full unsigned ladder readback | PASS |  |
+| local-database | query:counters: greatest and least across widths | PASS |  |
+| local-database | query:dim: enum status split | PASS |  |
+| local-database | query:dim: pattern filter across collated columns | PASS |  |
+| local-database | query:person: anti-join finds owners without facts | PASS |  |
+| local-database | query:person: created-fact counts through a scalar subquery | PASS |  |
+| local-database | query:event: lag over per-dimension timelines | PASS |  |
+| local-database | query:event: daily grain per dimension code | PASS |  |
+| local-database | query:order_items: product rollup without the orders table | PASS |  |
+| local-database | query:shipments: carrier value through the items bridge | PASS |  |
+| local-database | query:json: distinct case variants survive a derived table | PASS |  |
+| restart | local:rows survive a SIGKILL | PASS |  |
 | restart | converge:Dim | PASS |  |
 | restart | converge:Event | PASS |  |
 | restart | converge:Fact | PASS |  |
@@ -3093,7 +3283,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_26973294a86b54ad3ae451336adc72df","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-08-23T20:27:49.801957+00:00","updated_at":"2026-08-23T20:34:57.730666+00:00"},"tables":18,"rows":1223} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -3642,24 +3832,25 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 1.1 | 1.7 |
-| orm-compat | 6.9 | 0.3 | 0.6 |
-| crud | 0.3 | 1.0 | 0.5 |
-| type-edges | 0.0 | 2.0 | 0.3 |
-| ddl | 0.7 | 18.4 | 0.7 |
-| schema-drift-minimal | 0.3 | 3.5 | 0.8 |
-| schema-drift-unseen | 1.2 | 5.0 | 0.5 |
-| churn | 10.6 | 0.5 | 0.6 |
-| contention | 14.5 | 0.5 | 0.5 |
-| execution-budget | 0.0 | 0.2 | 0.8 |
-| spill | 3.0 | 0.6 | 0.7 |
-| pooling | 0.1 | 1.2 | 0.9 |
-| restart | 0.6 | 2.2 | 0.7 |
-| control-plane | 61.8 | 0.9 | 0.8 |
-| snapshot-ddl-window | 7.9 | 1.0 | 0.9 |
-| drop-table-cdc | 18.9 | 1.1 | 0.7 |
-| drop-table-recreate | 130.0 | 1.2 | 0.5 |
-| drop-table-polling | 117.9 | 0.8 | 0.4 |
-| drop-database | 18.8 | 1.0 | 0.7 |
-| ddl-documented-gaps | 0.2 | 1.1 | 0.7 |
-| total | 393.8 | 43.6 | 14.1 |
+| snapshot | 0.0 | 1.3 | 1.1 |
+| orm-compat | 8.6 | 0.6 | 1.0 |
+| crud | 0.2 | 2.4 | 1.1 |
+| type-edges | 0.1 | 1.3 | 0.7 |
+| ddl | 0.8 | 19.9 | 0.8 |
+| schema-drift-minimal | 0.1 | 1.3 | 0.7 |
+| schema-drift-unseen | 0.7 | 4.7 | 0.6 |
+| churn | 12.4 | 2.5 | 1.1 |
+| contention | 14.0 | 0.3 | 0.9 |
+| execution-budget | 0.0 | 0.5 | 0.9 |
+| spill | 3.0 | 0.5 | 0.9 |
+| pooling | 0.1 | 2.1 | 0.9 |
+| local-database | 0.0 | 0.3 | 0.7 |
+| restart | 0.6 | 1.2 | 0.7 |
+| control-plane | 52.9 | 1.1 | 1.0 |
+| snapshot-ddl-window | 5.5 | 4.0 | 1.2 |
+| drop-table-cdc | 20.5 | 1.4 | 0.7 |
+| drop-table-recreate | 132.1 | 1.5 | 1.2 |
+| drop-table-polling | 28.3 | 1.2 | 1.0 |
+| drop-database | 14.3 | 1.6 | 1.2 |
+| ddl-documented-gaps | 0.2 | 1.3 | 0.8 |
+| total | 294.4 | 51.1 | 19.1 |
