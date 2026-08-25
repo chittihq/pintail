@@ -2423,6 +2423,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pintail-write"
+version = "0.1.0"
+dependencies = [
+ "pintail-probe",
+ "pintail-sql",
+ "pintail-types",
+ "sqlparser",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "pkcs1"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -17,6 +17,7 @@ members = [
     "crates/pintail-telemetry",
     "crates/pintail-types",
     "crates/pintail-wire",
+    "crates/pintail-write",
     "tests/sqllogic",
 ]
 resolver = "3"
@@ -75,6 +76,7 @@ pintail-probe = { path = "crates/pintail-probe" }
 pintail-protocol = { path = "crates/pintail-protocol" }
 pintail-snapshot = { path = "crates/pintail-snapshot" }
 pintail-store = { path = "crates/pintail-store" }
+pintail-write = { path = "crates/pintail-write" }
 pintail-telemetry = { path = "crates/pintail-telemetry" }
 pintail-sql = { path = "crates/pintail-sql" }
 pintail-types = { path = "crates/pintail-types" }

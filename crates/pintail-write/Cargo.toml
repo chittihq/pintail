@@ -1,0 +1,18 @@
+[package]
+name = "pintail-write"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pintail-probe.workspace = true
+pintail-sql.workspace = true
+pintail-types.workspace = true
+sqlparser.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+pintail-sql.workspace = true
+tempfile.workspace = true
