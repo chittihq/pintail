@@ -21,7 +21,7 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 17;
+const CURRENT_SCHEMA_VERSION: u32 = 18;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -305,6 +305,144 @@ impl MetaStore {
                 (id, name, encrypted_dsn, now),
             )
             .with_context(|| format!("failed to register source database {id}"))?;
+        Ok(())
+    }
+
+    /// Creates a Pintail-owned LOCAL database: no source, no DSN, no probe,
+    /// and no supervisor cycle (`docs/design/writable-mode.md`).
+    ///
+    /// `kind = 'local'` is the discriminator every replication path checks.
+    /// The row is additionally written with `mode = 'paused'` as a backstop:
+    /// supervisor eligibility already refuses a paused database, so a local
+    /// database stays out of replication even if a future caller forgets the
+    /// kind check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database row cannot be written — including
+    /// a name collision, which is a `UNIQUE` violation on `databases.name`.
+    pub fn create_local_database(&self, id: &str, name: &str, now: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO databases (\
+                   id, name, mysql_dsn_encrypted, mode, effective_mode, state, \
+                   kind, created_at, updated_at\
+                 ) VALUES (?1, ?2, X'', 'paused', NULL, 'local', 'local', ?3, ?3)",
+                (id, name, now),
+            )
+            .with_context(|| format!("failed to create local database {id}"))?;
+        Ok(())
+    }
+
+    /// Whether `database_id` names a local (writable) database. A missing
+    /// database answers `false`: callers turn that into their own not-found
+    /// error, and no write path may treat an absent row as writable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be read.
+    pub fn is_local_database(&self, database_id: &str) -> Result<bool> {
+        let kind: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT kind FROM databases WHERE id = ?1",
+                [database_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .with_context(|| format!("failed to read the kind of database {database_id}"))?;
+        Ok(kind.as_deref() == Some("local"))
+    }
+
+    /// Registers a local table as `creating`, before its store directory and
+    /// empty manifest exist.
+    ///
+    /// The catalog row lands first and flips to `ready` last, so a crash
+    /// anywhere in between leaves a row recovery can identify and remove
+    /// (see [`MetaStore::incomplete_local_tables`]). A table that already
+    /// exists is an error rather than an upsert: `CREATE TABLE` on an
+    /// existing name is `MySQL` error 1050, not a silent redefinition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the parent database is absent, the table
+    /// already exists, or the row cannot be written.
+    pub fn begin_local_table(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        pk_json: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO tables (db_id, name, state, pk_json, schema_version) \
+                 VALUES (?1, ?2, 'creating', ?3, 1)",
+                (database_id, table_name, pk_json),
+            )
+            .with_context(|| {
+                format!("failed to register local table {database_id}.{table_name}")
+            })?;
+        Ok(())
+    }
+
+    /// Publishes a local table: `creating` becomes `ready` once its store
+    /// directory and empty manifest are durable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be updated or was not in
+    /// `creating` — a table published twice, or published without being
+    /// registered, is a bug rather than a retry.
+    pub fn finish_local_table(&self, database_id: &str, table_name: &str) -> Result<()> {
+        let updated = self
+            .connection
+            .execute(
+                "UPDATE tables SET state = 'ready' \
+                 WHERE db_id = ?1 AND name = ?2 AND state = 'creating'",
+                (database_id, table_name),
+            )
+            .with_context(|| format!("failed to publish local table {database_id}.{table_name}"))?;
+        if updated != 1 {
+            bail!("local table {database_id}.{table_name} was not awaiting publication");
+        }
+        Ok(())
+    }
+
+    /// Local tables left mid-creation by a crash, oldest name first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be read.
+    pub fn incomplete_local_tables(&self, database_id: &str) -> Result<Vec<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT name FROM tables \
+                 WHERE db_id = ?1 AND state = 'creating' ORDER BY name",
+            )
+            .context("failed to prepare the incomplete local table query")?;
+        let names = statement
+            .query_map([database_id], |row| row.get(0))
+            .context("failed to query incomplete local tables")?
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .context("failed to decode incomplete local tables")?;
+        Ok(names)
+    }
+
+    /// Removes a local table row. Recovery calls this after deleting the
+    /// half-built store directory, in that order: a directory with no row is
+    /// invisible, while a row with no directory fails every read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be deleted.
+    pub fn remove_local_table(&self, database_id: &str, table_name: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM tables WHERE db_id = ?1 AND name = ?2",
+                (database_id, table_name),
+            )
+            .with_context(|| format!("failed to remove local table {database_id}.{table_name}"))?;
         Ok(())
     }
 
@@ -1525,6 +1663,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 17 {
         migration_v17(connection.transaction()?)?;
     }
+    if found < 18 {
+        migration_v18(connection)?;
+    }
     Ok(())
 }
 
@@ -1690,6 +1831,39 @@ fn migration_v16(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 16")
+}
+
+/// Widens `tables.state` for the two states only a local table has.
+/// A CHECK constraint cannot be altered in place, so this rebuilds the
+/// table exactly as migration 8 did — foreign keys off for the rename,
+/// then a verifying `foreign_key_check` before the version advances.
+fn migration_v18(connection: &mut Connection) -> Result<()> {
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .context("failed to disable foreign keys for metadata migration 18")?;
+    let migration = (|| {
+        let transaction = connection.transaction()?;
+        transaction
+            .execute_batch(include_str!("../migrations/018_local_tables.sql"))
+            .context("failed to apply metadata migration 18")?;
+        transaction
+            .commit()
+            .context("failed to commit metadata migration 18")
+    })();
+    let reenabled = connection
+        .pragma_update(None, "foreign_keys", true)
+        .context("failed to re-enable foreign keys after metadata migration 18");
+    migration?;
+    reenabled?;
+    let violations: u64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .context("failed to verify metadata foreign keys after migration 18")?;
+    if violations > 0 {
+        bail!("metadata migration 18 left {violations} foreign-key violation(s)");
+    }
+    Ok(())
 }
 
 fn migration_v17(transaction: Transaction<'_>) -> Result<()> {

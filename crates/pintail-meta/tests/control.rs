@@ -1019,3 +1019,108 @@ fn clearing_one_tables_dead_letters_leaves_the_neighbors() {
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].table_name.as_deref(), Some("items"));
 }
+
+#[test]
+fn a_local_database_is_created_outside_replication() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata = MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata");
+
+    metadata
+        .create_local_database("db-local", "scratch", "2026-08-24T00:00:00Z")
+        .unwrap();
+    let database = metadata
+        .database("db-local")
+        .unwrap()
+        .expect("the local database exists");
+
+    assert_eq!(database.kind, "local");
+    // No source: an empty DSN, no probe, and the paused-mode backstop that
+    // keeps it out of supervisor eligibility even without a kind check.
+    assert!(database.encrypted_dsn.is_empty());
+    assert!(database.probe_json.is_none());
+    assert_eq!(database.mode, "paused");
+    assert!(metadata.is_local_database("db-local").unwrap());
+}
+
+#[test]
+fn a_replicated_database_is_never_reported_as_local() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata = MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata");
+
+    metadata
+        .upsert_database("db-1", "shop", b"secret", "2026-08-24T00:00:00Z")
+        .unwrap();
+
+    assert_eq!(
+        metadata.database("db-1").unwrap().unwrap().kind,
+        "replicated"
+    );
+    assert!(!metadata.is_local_database("db-1").unwrap());
+    // A database that does not exist is not writable either: callers turn
+    // this into their own not-found error rather than a write.
+    assert!(!metadata.is_local_database("db-missing").unwrap());
+}
+
+#[test]
+fn a_local_table_is_invisible_until_it_is_published() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata = MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata");
+    metadata
+        .create_local_database("db-local", "scratch", "2026-08-24T00:00:00Z")
+        .unwrap();
+
+    metadata
+        .begin_local_table("db-local", "notes", r#"["id"]"#)
+        .unwrap();
+    let creating = metadata.tables("db-local").unwrap();
+    assert_eq!(creating.len(), 1);
+    assert_eq!(creating[0].state, "creating");
+    assert_eq!(
+        metadata.incomplete_local_tables("db-local").unwrap(),
+        ["notes"]
+    );
+
+    metadata.finish_local_table("db-local", "notes").unwrap();
+    assert_eq!(metadata.tables("db-local").unwrap()[0].state, "ready");
+    assert!(
+        metadata
+            .incomplete_local_tables("db-local")
+            .unwrap()
+            .is_empty(),
+        "a published table is no longer mid-creation"
+    );
+
+    // Publishing twice is a bug, not a retry: the second call has no
+    // 'creating' row to flip.
+    assert!(metadata.finish_local_table("db-local", "notes").is_err());
+    // CREATE TABLE on an existing name must not silently redefine it.
+    assert!(
+        metadata
+            .begin_local_table("db-local", "notes", r#"["id"]"#)
+            .is_err()
+    );
+}
+
+#[test]
+fn recovery_removes_a_table_left_mid_creation() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata = MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata");
+    metadata
+        .create_local_database("db-local", "scratch", "2026-08-24T00:00:00Z")
+        .unwrap();
+    metadata
+        .begin_local_table("db-local", "half", r#"["id"]"#)
+        .unwrap();
+    metadata
+        .begin_local_table("db-local", "whole", r#"["id"]"#)
+        .unwrap();
+    metadata.finish_local_table("db-local", "whole").unwrap();
+
+    for name in metadata.incomplete_local_tables("db-local").unwrap() {
+        metadata.remove_local_table("db-local", &name).unwrap();
+    }
+
+    let remaining = metadata.tables("db-local").unwrap();
+    assert_eq!(remaining.len(), 1, "only the published table survives");
+    assert_eq!(remaining[0].name, "whole");
+}
