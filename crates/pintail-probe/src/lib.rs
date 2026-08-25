@@ -1049,6 +1049,80 @@ struct TypeMapping {
     warning: Option<String>,
 }
 
+/// One column of a locally declared `CREATE TABLE`, in the same terms
+/// `INFORMATION_SCHEMA.COLUMNS` reports for a replicated table.
+///
+/// Local (writable) databases have no source to probe, but their columns
+/// must land on exactly the logical types a probe would have produced for
+/// the same declaration - otherwise a locally created table would answer
+/// queries under different rules than a mirrored one, and the differential
+/// gates would cover only half the engine.
+#[derive(Clone, Debug)]
+pub struct DeclaredColumn<'a> {
+    /// One-based position, used as the stable column ID.
+    pub ordinal: u32,
+    /// Column name as declared.
+    pub name: &'a str,
+    /// Bare type keyword, as `INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` reports
+    /// it: `bigint`, `varchar`, `enum`.
+    pub data_type: &'a str,
+    /// Full declared type, as `COLUMN_TYPE` reports it - including
+    /// `unsigned`, display widths, and ENUM/SET member lists.
+    pub column_type: &'a str,
+    /// Declared numeric precision, required for `DECIMAL`.
+    pub numeric_precision: Option<u8>,
+    /// Declared numeric scale, required for `DECIMAL`.
+    pub numeric_scale: Option<u8>,
+    /// Declared fractional-second precision for temporal types.
+    pub datetime_precision: Option<u8>,
+    /// Whether the column permits `NULL`.
+    pub nullable: bool,
+    /// Declared collation, when textual.
+    pub collation: Option<&'a str>,
+}
+
+/// Maps one locally declared column onto the same [`SourceColumn`] a probe
+/// of an identical `MySQL` column would produce.
+///
+/// # Errors
+///
+/// Returns an error when the declared type cannot be mapped - a `DECIMAL`
+/// without precision, for instance.
+pub fn declared_column(column: &DeclaredColumn<'_>) -> Result<SourceColumn, ProbeError> {
+    let raw = RawColumn {
+        ordinal: column.ordinal,
+        name: column.name.to_owned(),
+        nullable: column.nullable,
+        data_type: column.data_type.to_ascii_lowercase(),
+        column_type: column.column_type.to_ascii_lowercase(),
+        numeric_precision: column.numeric_precision,
+        numeric_scale: column.numeric_scale,
+        datetime_precision: column.datetime_precision,
+        character_set: column.collation.map(|_| "utf8mb4".to_owned()),
+        collation: column.collation.map(ToOwned::to_owned),
+        extra: String::new(),
+        generation_expression: String::new(),
+        default_value: None,
+    };
+    let mapping = map_mysql_type(&raw)?;
+    Ok(SourceColumn {
+        id: raw.ordinal,
+        name: raw.name,
+        mysql_data_type: raw.data_type,
+        mysql_column_type: raw.column_type,
+        pintail_type: mapping.data_type,
+        nullable: raw.nullable,
+        character_set: raw.character_set,
+        collation: raw.collation,
+        generated_stored: false,
+        generation_expression: String::new(),
+        extra: String::new(),
+        auto_increment: false,
+        default_value: None,
+        default_generated: false,
+    })
+}
+
 #[allow(clippy::too_many_lines)]
 fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
     let data_type = column.data_type.to_ascii_lowercase();
@@ -1528,6 +1602,77 @@ mod tests {
         assert!(
             COUNT_TOTAL_BUDGET > COUNT_BUDGET,
             "the total budget must allow at least one table to be counted"
+        );
+    }
+}
+
+#[cfg(test)]
+mod declared_column_tests {
+    use super::{DeclaredColumn, declared_column};
+    use pintail_types::DataType;
+
+    fn declare(name: &str, data_type: &str, column_type: &str) -> DeclaredColumn<'static> {
+        // Leaked so the test table below can hold borrowed strs cheaply; a
+        // test binary's lifetime is the leak's lifetime.
+        DeclaredColumn {
+            ordinal: 1,
+            name: Box::leak(name.to_owned().into_boxed_str()),
+            data_type: Box::leak(data_type.to_owned().into_boxed_str()),
+            column_type: Box::leak(column_type.to_owned().into_boxed_str()),
+            numeric_precision: None,
+            numeric_scale: None,
+            datetime_precision: None,
+            nullable: true,
+            collation: None,
+        }
+    }
+
+    #[test]
+    fn declared_types_match_what_a_probe_would_report() {
+        // Each pair is a declaration a local CREATE TABLE can carry and the
+        // logical type a probe of the identical MySQL column produces.
+        for (data_type, column_type, expected) in [
+            ("bigint", "bigint", DataType::Int64),
+            ("bigint", "bigint unsigned", DataType::UInt64),
+            ("int", "int", DataType::Int32),
+            ("tinyint", "tinyint(1)", DataType::Boolean),
+            ("tinyint", "tinyint", DataType::Int8),
+            ("varchar", "varchar(64)", DataType::Utf8),
+            ("text", "text", DataType::Utf8),
+            ("date", "date", DataType::Date32),
+            ("json", "json", DataType::Json),
+            ("double", "double", DataType::Float64),
+        ] {
+            let column = declared_column(&declare("c", data_type, column_type))
+                .unwrap_or_else(|error| panic!("{column_type} must map: {error}"));
+            assert_eq!(column.pintail_type, expected, "for {column_type}");
+        }
+    }
+
+    #[test]
+    fn an_unsigned_declaration_is_read_from_the_full_column_type() {
+        // The bare data_type says 'bigint' either way; only column_type
+        // carries the unsignedness, exactly as INFORMATION_SCHEMA does.
+        let signed = declared_column(&declare("c", "bigint", "bigint")).unwrap();
+        let unsigned = declared_column(&declare("c", "bigint", "bigint unsigned")).unwrap();
+        assert_eq!(signed.pintail_type, DataType::Int64);
+        assert_eq!(unsigned.pintail_type, DataType::UInt64);
+    }
+
+    #[test]
+    fn a_decimal_without_precision_is_refused_rather_than_guessed() {
+        let mut column = declare("amount", "decimal", "decimal(12,2)");
+        column.numeric_precision = None;
+        assert!(declared_column(&column).is_err());
+
+        column.numeric_precision = Some(12);
+        column.numeric_scale = Some(2);
+        assert_eq!(
+            declared_column(&column).unwrap().pintail_type,
+            DataType::Decimal {
+                precision: 12,
+                scale: 2
+            }
         );
     }
 }
