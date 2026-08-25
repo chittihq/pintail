@@ -48,6 +48,7 @@ banked in `tests/sqllogic/fuzz-results.md` with the reproduction recipe in
 | `ENUM` / `SET` ordering | Sorting, grouping and DISTINCT follow the declaration index for `ENUM` and the member bitmask for `SET`, while comparison and MIN/MAX treat the value as its label string — MySQL's split exactly (`crates/pintail-exec/tests/enum_ordinal.rs`, `set_ordinal.rs`). A declared empty member (`ENUM('', …)`) keeps its real ordinal; a value outside the declaration stays plain text rather than taking an invented index |
 | Generated columns | Stored columns included; virtual skipped |
 | Type fidelity | Exact decimal text, normalized-zero and negative temporals, JSON, Unicode, binary, `BIT`, Boolean, narrow integers — across snapshot, CDC, HTTP and wire |
+| Local writable databases | A Pintail-owned database kind accepting `CREATE TABLE` and `INSERT` over the wire and HTTP, with primary-key enforcement and MySQL's own rejection codes (1050, 1062, 1048, 1146, 1054). Replicated databases stay read-only. `UPDATE`/`DELETE`, explicit transactions, UNIQUE beyond the primary key, foreign keys and secondary indexes are not implemented (issue #7) |
 | Rejection | Always an explicit error, never a different answer |
 
 ## Execution

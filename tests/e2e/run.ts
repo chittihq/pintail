@@ -47,6 +47,8 @@ const mysqlName = KEEP_MYSQL
   ? 'pintail-e2e-keep-mysql'
   : `pintail-e2e-mysql-${process.pid}-${nonce}`
 const DATABASE = 'e2e_db'
+/// The writable, Pintail-owned database the local-database phase creates.
+const LOCAL_DATABASE = 'e2e_local'
 const CONVERGE_TIMEOUT_MS = 180_000
 /// One cadence for every poll loop. 250ms recovers the rounding waste the
 /// old 2s granularity added to each of the ~20 convergence checks without
@@ -94,6 +96,11 @@ let pintailWirePort = 0
 let pintailUrl = ''
 let token = ''
 let databaseId = ''
+/// The LOCAL (Pintail-owned, writable) database the local-database phase
+/// creates. It has no MySQL counterpart, so it is never part of
+/// convergence or corpus verification.
+let localDatabaseId = ''
+let localWire: mysql.Connection | undefined
 let mysqlStarted = false
 let mysqlEndpoint: MysqlEndpoint | undefined
 
@@ -1397,6 +1404,174 @@ async function phaseOrmCompatibility() {
   }
 }
 
+/// A LOCAL database: created through the control plane, written through the
+/// MySQL wire, and read back through it. There is no MySQL counterpart to
+/// diff against - a local database is its own source - so every assertion
+/// here is against MySQL's DOCUMENTED behaviour rather than a live server:
+/// affected-row counts, the codes a client branches on, and rows surviving
+/// a restart (checked in the restart phase, which runs after this one).
+async function phaseLocalDatabase() {
+  const phase = 'local-database'
+  const check = async (name: string, run: () => Promise<void>) => {
+    try {
+      await run()
+      results.push({ phase, check: name, status: 'PASS' })
+    } catch (error) {
+      results.push({ phase, check: name, status: 'FAIL', detail: String(error) })
+      log(`FAIL ${name} — ${error}`)
+    }
+  }
+
+  const created = await api<{ id: string }>('/api/databases/local', {
+    method: 'POST',
+    body: { name: LOCAL_DATABASE },
+  })
+  localDatabaseId = created.id
+  const key = await api<{ secret: string }>(`/api/databases/${localDatabaseId}/api-keys`, {
+    method: 'POST',
+    body: { name: 'e2e-local', scopes: ['query', 'read'] },
+  })
+  localWire = await mysql.createConnection({
+    host: '127.0.0.1',
+    port: pintailWirePort,
+    user: LOCAL_DATABASE,
+    password: key.secret,
+    database: LOCAL_DATABASE,
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    dateStrings: true,
+  })
+
+  await check('create table returns an OK packet', async () => {
+    const [result] = await localWire!.query(
+      'CREATE TABLE notes (id BIGINT UNSIGNED NOT NULL, body VARCHAR(64) NOT NULL, ' +
+        'tag VARCHAR(16), PRIMARY KEY (id))',
+    )
+    const affected = (result as mysql.ResultSetHeader).affectedRows
+    if (affected !== 0) throw new Error(`DDL reported ${affected} affected rows`)
+  })
+
+  await check('insert reports its affected rows', async () => {
+    const [result] = await localWire!.query(
+      "INSERT INTO notes (id, body, tag) VALUES (1, 'alpha', 'x'), (2, 'beta', NULL)",
+    )
+    const affected = (result as mysql.ResultSetHeader).affectedRows
+    if (affected !== 2) throw new Error(`expected 2 affected rows, got ${affected}`)
+  })
+
+  await check('the rows read back through the same connection', async () => {
+    const [rows] = await localWire!.query('SELECT id, body, tag FROM notes ORDER BY id')
+    const actual = JSON.stringify(rows)
+    const expected = JSON.stringify([
+      { id: '1', body: 'alpha', tag: 'x' },
+      { id: '2', body: 'beta', tag: null },
+    ])
+    if (actual !== expected) throw new Error(`read back ${actual}`)
+  })
+
+  await check('aggregates and predicates work on a local table', async () => {
+    const [rows] = await localWire!.query(
+      "SELECT COUNT(*) AS n, MIN(body) AS lo FROM notes WHERE tag IS NULL OR tag = 'x'",
+    )
+    const actual = JSON.stringify(rows)
+    if (actual !== JSON.stringify([{ n: '2', lo: 'alpha' }])) {
+      throw new Error(`aggregate answered ${actual}`)
+    }
+  })
+
+  // Each rejection is a code a client branches on, not a generic failure.
+  for (const [name, sql, code] of [
+    ['duplicate key is 1062', "INSERT INTO notes (id, body) VALUES (1, 'again')", 1062],
+    ['existing table is 1050', 'CREATE TABLE notes (id BIGINT PRIMARY KEY)', 1050],
+    ['not-null violation is 1048', 'INSERT INTO notes (id, body) VALUES (3, NULL)', 1048],
+    ['unknown table is 1146', "INSERT INTO absent (id) VALUES (1)", 1146],
+    ['unknown column is 1054', "INSERT INTO notes (id, nope) VALUES (3, 'x')", 1054],
+  ] as Array<[string, string, number]>) {
+    await check(name, async () => {
+      try {
+        await localWire!.query(sql)
+      } catch (error) {
+        const actual = (error as { errno?: number }).errno
+        if (actual !== code) throw new Error(`expected errno ${code}, got ${actual}`)
+        return
+      }
+      throw new Error('the statement was accepted')
+    })
+  }
+
+  await check('a refused write leaves the table unchanged', async () => {
+    const [rows] = await localWire!.query('SELECT COUNT(*) AS n FROM notes')
+    const n = (rows as Array<{ n: string }>)[0].n
+    if (n !== '2') throw new Error(`expected 2 rows after the refusals, got ${n}`)
+  })
+
+  await check('the replicated database still refuses writes', async () => {
+    try {
+      await pintailQuery("INSERT INTO orders (customer_id, status, total, placed_on) " +
+        "VALUES (1, 'pending', 1.00, '2025-01-01')")
+    } catch (error) {
+      const message = String(error)
+      if (!message.includes('read-only')) throw new Error(`refused with ${message}`)
+      return
+    }
+    throw new Error('a replicated database accepted a write')
+  })
+
+  await check('a local database is not scheduled for replication', async () => {
+    const status = await api<{ state: string }>(`/api/databases/${localDatabaseId}/status`)
+    if (status.state === 'streaming' || status.state === 'polling') {
+      throw new Error(`a local database reported replication state ${status.state}`)
+    }
+    // Every source operation must refuse it rather than attempt a probe
+    // against a DSN that is empty by construction.
+    const response = await fetch(`${pintailUrl}/api/databases/${localDatabaseId}/probe`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (response.ok) throw new Error('probing a local database succeeded')
+  })
+}
+
+/// Re-checks the local database after the restart phase's SIGKILL: a
+/// committed row that does not survive a kill was never committed.
+async function verifyLocalDurability() {
+  if (!localDatabaseId) return
+  try {
+    // The old connection died with the process.
+    localWire = undefined
+    const key = await api<{ secret: string }>(`/api/databases/${localDatabaseId}/api-keys`, {
+      method: 'POST',
+      body: { name: `e2e-local-${Date.now()}`, scopes: ['query', 'read'] },
+    })
+    const connection = await mysql.createConnection({
+      host: '127.0.0.1',
+      port: pintailWirePort,
+      user: LOCAL_DATABASE,
+      password: key.secret,
+      database: LOCAL_DATABASE,
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+      dateStrings: true,
+    })
+    const [rows] = await connection.query('SELECT id, body FROM notes ORDER BY id')
+    await connection.end()
+    const actual = JSON.stringify(rows)
+    const expected = JSON.stringify([
+      { id: '1', body: 'alpha' },
+      { id: '2', body: 'beta' },
+    ])
+    if (actual !== expected) throw new Error(`after restart the local table read ${actual}`)
+    results.push({ phase: 'restart', check: 'local:rows survive a SIGKILL', status: 'PASS' })
+  } catch (error) {
+    results.push({
+      phase: 'restart',
+      check: 'local:rows survive a SIGKILL',
+      status: 'FAIL',
+      detail: String(error),
+    })
+    log(`FAIL local:rows survive a SIGKILL — ${error}`)
+  }
+}
+
 async function phaseRestart() {
   log('SIGKILLing pintail mid-stream')
   pintailProcess!.kill(9)
@@ -1406,6 +1581,7 @@ async function phaseRestart() {
   await sql(`UPDATE customers SET tier = 'enterprise' WHERE id = 9`)
   await sql(`DELETE FROM orders WHERE id = (SELECT id FROM (SELECT MAX(id) AS id FROM orders) pick)`)
   await startPintail()
+  await verifyLocalDurability()
   await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (10, 'shipped', 67.89, '2025-08-02')`)
 }
 
@@ -3046,6 +3222,7 @@ async function main() {
     ['execution-budget', phaseExecutionBudget],
     ['spill', phaseSpill],
     ['pooling', phasePooling],
+    ['local-database', phaseLocalDatabase],
     ['restart', phaseRestart],
     ['control-plane', phaseControlPlane],
     ['snapshot-ddl-window', phaseSnapshotDdlWindow],

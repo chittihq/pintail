@@ -483,3 +483,23 @@ but may be wrong.
   are unsupported; MySQL compares JSON semantically (1.0 equals 1),
   which the text carrier does not implement. JSON extracted to text via
   ->> or JSON_UNQUOTE compares fully.
+
+## Local writable databases
+
+- `UPDATE` and `DELETE` are not implemented on a local database. Rows can
+  be created and inserted, and a row that is wrong can only be corrected by
+  recreating the table (issue #7, phase 3).
+- There are no explicit transactions: `BEGIN`/`COMMIT`/`ROLLBACK` remain
+  compatibility no-ops, so every statement is its own autocommit
+  transaction (phase 4).
+- A local table must declare a `PRIMARY KEY`. A keyless local table is
+  refused at `CREATE TABLE` rather than accepted as append-only, because
+  without row identity a duplicate cannot be detected.
+- `UNIQUE` beyond the primary key, foreign keys, `CHECK`, secondary
+  indexes, `AUTO_INCREMENT`, and column `DEFAULT`s are refused by name at
+  `CREATE TABLE`.
+- `INSERT` takes literal values only; an expression such as `1 + 1` is
+  refused rather than evaluated.
+- A local table cannot be joined against a replicated one. A query reaches
+  exactly one database, and the two kinds are separate databases
+  (deferred, not foreclosed - see `docs/decisions.md`).

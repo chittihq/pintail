@@ -15,9 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   supervisor scheduling). Replicated databases keep the read-only
   rejection for every mutating statement. A locally declared column is
   typed through the probe's own mapping, so a local table answers queries
-  under the same rules as a mirrored one. Not yet reachable over the wire
-  or HTTP: the engine and its control plane are in place, the client
-  surfaces follow.
+  under the same rules as a mirrored one. Writes arrive over the MySQL
+  wire and answer with an OK packet carrying their affected-row count,
+  rejections carry MySQL's own codes (1050, 1062, 1048, 1146, 1054), and
+  `POST /api/databases/local` creates one. `UPDATE`, `DELETE` and explicit
+  transactions are not implemented (issue #7, phases 3-4).
 
 ### Fixed
 
