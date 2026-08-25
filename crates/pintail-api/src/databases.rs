@@ -363,6 +363,13 @@ pub(crate) async fn probe_database(
     principal.require_operator()?;
     principal.authorize_database(&id)?;
     let record = load_database(&state, &principal, &id)?;
+    // A local database's catalog is what CREATE TABLE wrote; there is no
+    // source to inspect and its DSN is deliberately empty.
+    if record.kind == "local" {
+        return Err(ApiError::conflict(
+            "a probe needs a replicated source; this is a local database".to_owned(),
+        ));
+    }
     let dsn = state.decrypt_dsn(&record.encrypted_dsn)?;
     let opts = crate::dsn::source_opts(&dsn)
         .map_err(|error| ApiError::bad_request(format!("invalid MySQL DSN: {error}")))?;

@@ -136,6 +136,7 @@ pub(crate) async fn retry_dead_letter(
     })?;
     let table = table.to_owned();
     drop(metadata);
+    state.require_replicated(&record.database_id, "a dead-letter retry")?;
     state.acquire_job_as(&record.database_id, "a dead-letter retry")?;
     let result = run_reconcile_job(&state, &record.database_id, &table).await;
     state.release_job(&record.database_id);

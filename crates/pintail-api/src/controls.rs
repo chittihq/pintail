@@ -47,6 +47,7 @@ pub(crate) async fn resync(
     principal.authorize_database(&database_id)?;
     crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
+    state.require_replicated(&database_id, "a table resnapshot")?;
     state.acquire_job_as(&database_id, "a table resnapshot")?;
 
     let run_id = crate::state::random_identifier("run_", 16);
@@ -516,6 +517,7 @@ pub(crate) async fn reconcile(
     principal.authorize_database(&database_id)?;
     crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
+    state.require_replicated(&database_id, "a table reconciliation")?;
     state.acquire_job_as(&database_id, "a table reconciliation")?;
 
     let run_id = crate::state::random_identifier("run_", 16);

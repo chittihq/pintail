@@ -347,6 +347,37 @@ impl ApiState {
     /// moment" and "a snapshot has been copying for four minutes" demand
     /// different operator responses, and the bare message distinguished
     /// neither.
+    /// Refuses a source operation against a LOCAL database.
+    ///
+    /// Local databases have no DSN, no probe and no source to talk to, so
+    /// probing, snapshotting, resnapshotting, reconciling and dead-letter
+    /// retries are meaningless against them rather than merely unsupported
+    /// (`docs/design/writable-mode.md`). Backups are deliberately NOT
+    /// guarded: they read the manifest objects a local database has like any
+    /// other, which is why this is a per-entry-point check and not one
+    /// inside `acquire_job_as`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict for a local database, and an internal error when
+    /// the control plane cannot be read.
+    pub(crate) fn require_replicated(
+        &self,
+        database_id: &str,
+        operation: &str,
+    ) -> Result<(), ApiError> {
+        if self
+            .metadata()?
+            .is_local_database(database_id)
+            .map_err(ApiError::internal)?
+        {
+            return Err(ApiError::conflict(format!(
+                "{operation} needs a replicated source; this is a local database"
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) fn acquire_job_as(&self, database_id: &str, claim: &str) -> Result<(), ApiError> {
         let inner = self
             .inner

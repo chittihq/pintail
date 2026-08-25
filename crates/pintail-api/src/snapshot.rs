@@ -102,6 +102,7 @@ pub(crate) async fn reset(
     crate::databases::load_database(&state, &principal, &database_id)?;
     // Hold the job slot through the wipe so no replication cycle is mid-write
     // while the state underneath it disappears.
+    state.require_replicated(&database_id, "a factory reset")?;
     state.acquire_job_as(&database_id, "a factory reset")?;
     let wiped = (|| -> Result<(), ApiError> {
         let mut metadata = state.metadata()?;
@@ -159,6 +160,7 @@ pub(crate) fn begin_snapshot_job(
     database_id: &str,
     force: bool,
 ) -> Result<String, ApiError> {
+    state.require_replicated(database_id, "a snapshot")?;
     state.acquire_job_as(database_id, "a full snapshot")?;
     let run_id = crate::state::random_identifier("run_", 16);
     let metadata = match state.metadata() {

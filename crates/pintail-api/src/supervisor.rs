@@ -212,7 +212,14 @@ fn eligible(database: &DatabaseRecord) -> bool {
     // live state here was the other half of the resume-to-auto trap.
     let state_live = matches!(database.state.as_str(), "streaming" | "polling" | "error")
         || (database.state == "paused" && database.mode != "paused");
-    database.mode != "paused" && database.probe_json.is_some() && mode_known && state_live
+    // A local database has no source to replicate from. It is refused on
+    // kind FIRST, before any mode/state reasoning: a synthesized catalog
+    // gives it a probe_json, so every other condition here could pass.
+    database.kind != "local"
+        && database.mode != "paused"
+        && database.probe_json.is_some()
+        && mode_known
+        && state_live
 }
 
 async fn supervise_database(state: ApiState, database: DatabaseRecord) {
@@ -615,4 +622,50 @@ fn elapsed_ms(started: std::time::Instant) -> u64 {
 
 fn display(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eligible;
+    use pintail_meta::DatabaseRecord;
+
+    /// A database that IS eligible, so each test below changes exactly one
+    /// thing and the assertion names the cause.
+    fn streaming_replica() -> DatabaseRecord {
+        DatabaseRecord {
+            id: "db-1".to_owned(),
+            name: "shop".to_owned(),
+            encrypted_dsn: vec![1, 2, 3],
+            mode: "auto".to_owned(),
+            effective_mode: Some("cdc".to_owned()),
+            state: "streaming".to_owned(),
+            probe_json: Some("{}".to_owned()),
+            include_tables: None,
+            exclude_tables: None,
+            poll_interval_seconds: 10,
+            reconcile_interval_seconds: 600,
+            created_at: "2026-08-24T00:00:00Z".to_owned(),
+            updated_at: "2026-08-24T00:00:00Z".to_owned(),
+            keyless_policy: "quarantine".to_owned(),
+            kind: "replicated".to_owned(),
+            workspace_id: Some("ws-1".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_replicated_database_is_eligible_for_a_cycle() {
+        assert!(eligible(&streaming_replica()));
+    }
+
+    #[test]
+    fn a_local_database_never_runs_a_replication_cycle() {
+        // The dangerous case: a local database carries a synthesized catalog,
+        // so probe_json is present and every OTHER condition here passes.
+        // Only the kind check keeps the supervisor off it.
+        let local = DatabaseRecord {
+            kind: "local".to_owned(),
+            ..streaming_replica()
+        };
+        assert!(!eligible(&local));
+    }
 }
