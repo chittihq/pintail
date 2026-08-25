@@ -923,3 +923,47 @@ have explicitly chosen manual remediation; and a table's dead-letter rows
 are purged only after the recopy's state transition succeeds, because a
 failed transition means the problem still stands and the DLQ contract is
 that nothing drops silently.
+
+### Writes land in Pintail-owned local databases, never in a replica
+
+Pintail gains a second database kind - `local`, owned by Pintail itself and
+accepting DDL and DML over the same wire and HTTP surfaces
+(`docs/design/writable-mode.md`, issue #7). Replicated databases keep the
+read-only rejection for every mutating statement. This narrows GOAL.md's
+original decision 6, which promised a read-only wire outright.
+
+The boundary is load-bearing rather than stylistic, because two existing
+mechanisms would destroy a row written into a replicated table without
+leaving a trace. `reset_for_resnapshot` empties the WAL and installs a fresh
+manifest, and the supervisor's auto-resync now calls it unattended whenever
+MINIMAL-metadata drift quarantines a keyed table, so a locally written row
+would vanish at the next drift repair with no dead letter and no operator
+action. Merge-on-read then resolves by highest version, and a local write has
+no legitimate binlog version to claim: a low one is invisible, a high one
+loses to the next genuine CDC update. Beyond the mechanics, the differential
+contract - the oracle, the e2e gate, byte-exactness against MySQL - rests on
+Pintail's answer for replicated data being MySQL's answer, and rows MySQL has
+never seen make that unfalsifiable.
+
+Adopting an existing analytical engine for the writable side was weighed and
+refused on semantics, not on the from-scratch rule. ClickHouse's PRIMARY KEY
+is a sparse index rather than a constraint, its deduplication collapses rows
+asynchronously at merge time (which is why the benchmark harness reads it
+through `FINAL` to get merge-on-read correctness), and its UPDATE/DELETE are
+part-rewriting mutations - the opposite of the synchronous 1062, the
+new-version replacement row, and the immediate tombstone this design
+specifies. A second engine would also mean two dialects answering the same
+SQL differently, with no test in either gate covering the seam. The expensive
+half of a writable engine is already built here: WAL commit records and
+recovery, versioned rows with tombstones, merge-on-read by version, and
+pinned reader snapshots. What remains is binder and mutation work over a
+MySQL parser the project already owns.
+
+Delivery stops after phase 2 (`CREATE TABLE`, `INSERT`, primary-key
+uniqueness) until someone asks for more: UPDATE, DELETE, and explicit
+transactions stay specified but unbuilt, so every future SQL change carries
+the smallest write surface that satisfies the ask. Cross-database joins - a
+local table joined against a replicated one - are DEFERRED rather than
+refused. The wire builds a single-database catalog per query today, so they
+do not work; nothing in this design forecloses them, and a later phase may
+add them if local databases turn out to be worth joining.
