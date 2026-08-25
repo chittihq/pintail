@@ -14,6 +14,10 @@
 //! MySQL column uses. A local table is therefore typed exactly as a
 //! mirrored one, and the differential gates cover both.
 
+mod engine;
+
+pub use engine::{LocalDatabase, WriteOutcome};
+
 use pintail_probe::{DeclaredColumn, SourceColumn, SourceKey, SourceTable, declared_column};
 use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
 use sqlparser::ast::{

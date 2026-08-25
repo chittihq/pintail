@@ -17,5 +17,7 @@ sqlparser.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+pintail-meta.workspace = true
 pintail-sql.workspace = true
+pintail-store.workspace = true
 tempfile.workspace = true
