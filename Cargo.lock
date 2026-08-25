@@ -2426,9 +2426,12 @@ dependencies = [
 name = "pintail-write"
 version = "0.1.0"
 dependencies = [
+ "pintail-meta",
  "pintail-probe",
  "pintail-sql",
+ "pintail-store",
  "pintail-types",
+ "serde_json",
  "sqlparser",
  "tempfile",
  "thiserror",

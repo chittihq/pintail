@@ -27,3 +27,32 @@ pub use store::{
     ScanStats, StorageMetrics, StoreOptions, TableSnapshot, TableStore, WalSync,
     projected_scan_width,
 };
+
+/// The stable on-disk directory for one table inside a database's `tables`
+/// root.
+///
+/// The name is derived, not stored: a readable prefix for humans plus a
+/// hash of the lowercased table name for uniqueness and case-insensitive
+/// identity. Every caller MUST agree byte-for-byte, because a different
+/// answer silently addresses a different (empty) table rather than
+/// failing - which is why this lives here, below every reader and writer,
+/// instead of being copied into each.
+#[must_use]
+pub fn table_directory(root: &std::path::Path, table: &str) -> std::path::PathBuf {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let safe = table
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(48)
+        .collect::<String>();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    table.to_ascii_lowercase().hash(&mut hasher);
+    root.join(format!("table-{safe}-{:016x}", hasher.finish()))
+}

@@ -1,6 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher},
-    hash::{Hash as _, Hasher as _},
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -970,22 +969,12 @@ fn table_id(index: usize) -> Result<TableId, QueryError> {
 }
 
 /// Returns the stable on-disk directory for one source table.
+///
+/// Delegates to the single definition in `pintail_store`: readers and
+/// writers that disagree here address different directories silently.
 #[must_use]
 pub fn table_directory(root: &Path, table: &str) -> PathBuf {
-    let safe = table
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .take(48)
-        .collect::<String>();
-    let mut hasher = DefaultHasher::new();
-    table.to_ascii_lowercase().hash(&mut hasher);
-    root.join(format!("table-{safe}-{:016x}", hasher.finish()))
+    pintail_store::table_directory(root, table)
 }
 
 fn elapsed_ms(started: Instant) -> u64 {

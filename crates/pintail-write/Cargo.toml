@@ -7,9 +7,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+pintail-meta.workspace = true
 pintail-probe.workspace = true
 pintail-sql.workspace = true
+pintail-store.workspace = true
 pintail-types.workspace = true
+serde_json.workspace = true
 sqlparser.workspace = true
 thiserror.workspace = true
 

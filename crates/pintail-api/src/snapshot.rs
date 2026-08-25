@@ -1,6 +1,5 @@
 use std::{
-    collections::{BTreeSet, hash_map::DefaultHasher},
-    hash::{Hash as _, Hasher as _},
+    collections::BTreeSet,
     path::{Path as FsPath, PathBuf},
     sync::{
         Arc,
@@ -755,20 +754,7 @@ fn columns_equivalent(
 }
 
 pub(crate) fn table_directory(root: &FsPath, table: &str) -> PathBuf {
-    let safe = table
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .take(48)
-        .collect::<String>();
-    let mut hasher = DefaultHasher::new();
-    table.to_ascii_lowercase().hash(&mut hasher);
-    root.join(format!("table-{safe}-{:016x}", hasher.finish()))
+    pintail_store::table_directory(root, table)
 }
 
 fn duration_ms(started: Instant) -> u64 {
