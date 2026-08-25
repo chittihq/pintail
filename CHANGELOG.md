@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5-rc1] - 2026-08-25
+
+First release candidate of the 0.0.5 line. Adds writable local databases
+(issue #7 phase 2) alongside the read-only replica, and closes a decimal
+rounding boundary the new high-volume MySQL corpus found.
+
 ### Added
 
 - Local (Pintail-owned, writable) databases, phase 2 of issue #7: a
@@ -30,6 +36,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and returned `0` instead of MySQL's half-away-from-zero `100`. Negative
   digits now round the original scaled units once, so `ROUND(949.86, -2)`
   returns `900` rather than double-rounding through `950` to `1000`.
+
+### Changed
+
+- The differential oracle grew from 731 to 1,081 fixed cases and now gates
+  on MySQL 8.0 as well as 8.4, and its generated corpus covers 16 typed
+  query families. High-volume sweeps totalling 102,500 generated
+  statements ran with zero invalid or skipped SQL; both rounding defects
+  above were found by that corpus rather than by hand
+  (`tests/sqllogic/fuzz-results.md`).
 
 ## [0.0.4] - 2026-08-21
 
