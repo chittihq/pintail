@@ -116,6 +116,7 @@ async fn access_log(request: axum::extract::Request, next: middleware::Next) -> 
     let response = next.run(request).await;
     let millis = started.elapsed().as_millis();
     let status = response.status().as_u16();
+
     // A failing request is logged even at `error` level: it is the line an
     // operator needs most, and suppressing it would leave a 500 invisible.
     let level = if status >= 500 {
@@ -123,10 +124,107 @@ async fn access_log(request: axum::extract::Request, next: middleware::Next) -> 
     } else {
         pintail_log::INFO
     };
-    if pintail_log::enabled(level) {
-        pintail_log::emit(&format!("{method} {path} {status} {millis}ms"));
+    // Two timings, because they answer different questions and this
+    // investigation turned on the gap between them: `handled` is how long
+    // the handler took to PRODUCE the response, `sent` is how long until
+    // its last byte reached the client. A 3ms handler whose body takes 40
+    // seconds to deliver looks perfectly healthy in a handler-only log,
+    // which is exactly how a real slowdown stayed invisible here.
+    let line = format!("{method} {path} {status} handled={millis}ms");
+    if !pintail_log::enabled(level) {
+        return response;
     }
-    response
+    let (parts, body) = response.into_parts();
+    let expected = http_body::Body::size_hint(&body).exact();
+    Response::from_parts(
+        parts,
+        Body::new(TimedBody {
+            inner: body,
+            started,
+            line,
+            expected,
+            delivered: 0,
+            reported: false,
+        }),
+    )
+}
+
+/// A response body that reports total delivery time when its last frame is
+/// read, or when it is dropped early because the client went away.
+struct TimedBody {
+    inner: Body,
+    started: std::time::Instant,
+    line: String,
+    /// Body length when it is known up front, to tell a completed transfer
+    /// from one the client gave up on.
+    expected: Option<u64>,
+    delivered: u64,
+    reported: bool,
+}
+
+impl TimedBody {
+    fn report(&mut self) {
+        if self.reported {
+            return;
+        }
+        self.reported = true;
+        // Hyper does not always poll a fixed-length body to its end - it can
+        // take the whole thing at once - so completion is decided by bytes
+        // delivered against bytes promised, not by reaching the final frame.
+        let outcome = match self.expected {
+            Some(expected) if self.delivered < expected => "aborted",
+            _ => "complete",
+        };
+        pintail_log::emit(&format!(
+            "{} sent={}ms {}B {outcome}",
+            self.line,
+            self.started.elapsed().as_millis(),
+            self.delivered
+        ));
+    }
+}
+
+impl http_body::Body for TimedBody {
+    type Data = bytes::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let this = self.as_mut().get_mut();
+        let polled = std::pin::Pin::new(&mut this.inner).poll_frame(context);
+        match &polled {
+            std::task::Poll::Ready(Some(Ok(frame))) => {
+                if let Some(data) = frame.data_ref() {
+                    this.delivered = this.delivered.saturating_add(data.len() as u64);
+                }
+            }
+            std::task::Poll::Ready(None) => this.report(),
+            _ => {}
+        }
+        polled
+    }
+
+    // Delegated so the response keeps its Content-Length: a body of unknown
+    // length would switch to chunked encoding, which is a behaviour change
+    // this measurement has no business making.
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for TimedBody {
+    fn drop(&mut self) {
+        // Also the normal path for a body hyper consumed without polling
+        // to its final frame; `report` decides which it was from the byte
+        // count rather than assuming.
+        self.report();
+    }
 }
 
 /// The hostnames the wire certificate should cover.
@@ -237,8 +335,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/auth/google/exchange", post(google_exchange))
         .route("/auth/google/status", get(google_status))
         .route("/invites/status", get(invite_status))
-        .merge(protected)
-        .layer(middleware::from_fn(access_log));
+        .merge(protected);
 
     Router::new()
         .route("/health", get(health))
@@ -247,6 +344,12 @@ pub fn router_with_state(state: ApiState) -> Router {
         .nest("/api", api)
         .route("/", get(dashboard))
         .route("/{*path}", get(dashboard_asset))
+        // Every request, not just the API's. The dashboard makes ~90 asset
+        // requests per load and they were entirely invisible here, which is
+        // precisely where an unexplained delay hides: the API log can say
+        // 3ms while a client waits 40 seconds, and without the asset lines
+        // there is no way to tell which side is lying.
+        .layer(middleware::from_fn(access_log))
         // The dashboard is JavaScript, CSS and JSON - all text, all several
         // times smaller compressed. Uncompressed they were shipped in full
         // to every visitor on every visit, which is minutes of transfer on

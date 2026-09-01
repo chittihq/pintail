@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Every HTTP request is logged with two timings, and static assets are
+  logged at all. The access log covered only `/api`, so the ~90 asset
+  requests a dashboard load makes were invisible, and it stopped the clock
+  when the handler returned rather than when the client had the bytes. A
+  request the handler answered in 3ms could take 40 seconds to arrive and
+  the log would show 3ms - which is exactly how a real slowdown stayed
+  hidden. Each line now carries `handled=` (time to produce), `sent=`
+  (time until the last byte was delivered), the byte count, and whether
+  the client took the whole response or gave up.
+
 ## [0.0.5-rc2] - 2026-09-02
 
 Fixes a dashboard that became unusable on a long-running deployment.
