@@ -21,7 +21,7 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 18;
+const CURRENT_SCHEMA_VERSION: u32 = 19;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1666,6 +1666,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 18 {
         migration_v18(connection)?;
     }
+    if found < 19 {
+        migration_v19(connection.transaction()?)?;
+    }
     Ok(())
 }
 
@@ -1831,6 +1834,17 @@ fn migration_v16(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 16")
+}
+
+/// Indexes the two tables that grow for the life of a deployment and are
+/// read newest-first, so a dashboard load stops scanning them whole.
+fn migration_v19(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/019_activity_indexes.sql"))
+        .context("failed to apply metadata migration 19")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 19")
 }
 
 /// Widens `tables.state` for the two states only a local table has.

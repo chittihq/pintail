@@ -1581,12 +1581,28 @@ impl MetaStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT r.id, r.db_id, r.table_name, r.kind, r.status, r.rows, r.bytes, \
-                        r.duration_ms, r.error, r.started_at \
-                 FROM sync_runs r \
-                 JOIN databases d ON d.id = r.db_id \
-                 WHERE d.workspace_id = ?1 AND (?2 IS NULL OR r.db_id = ?2) \
-                 ORDER BY r.started_at DESC, r.id LIMIT ?3",
+                // Two statements rather than one with `?2 IS NULL OR`: that
+                // form leaves the planner unable to commit to a strategy, so
+                // it seeks by db_id and then sorts every matching row - the
+                // whole table, for a workspace with one database. Scoped to a
+                // database, the composite index is already in the right order;
+                // unscoped, walking the time index newest-first and testing
+                // membership per row stops at the LIMIT.
+                if database_id.is_some() {
+                    "SELECT id, db_id, table_name, kind, status, rows, bytes, \
+                            duration_ms, error, started_at \
+                     FROM sync_runs \
+                     WHERE db_id = ?2 \
+                       AND db_id IN (SELECT id FROM databases WHERE workspace_id = ?1) \
+                     ORDER BY started_at DESC, id LIMIT ?3"
+                } else {
+                    "SELECT id, db_id, table_name, kind, status, rows, bytes, \
+                            duration_ms, error, started_at \
+                     FROM sync_runs INDEXED BY idx_sync_runs_started \
+                     WHERE db_id IN (SELECT id FROM databases WHERE workspace_id = ?1) \
+                       AND (?2 IS NULL OR db_id = ?2) \
+                     ORDER BY started_at DESC, id LIMIT ?3"
+                },
             )
             .context("failed to prepare sync-run query")?;
         statement
@@ -1634,11 +1650,21 @@ impl MetaStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT q.id, q.db_id, q.table_name, q.event_json, q.error, q.created_at \
-                 FROM dlq q \
-                 JOIN databases d ON d.id = q.db_id \
-                 WHERE d.workspace_id = ?1 AND (?2 IS NULL OR q.db_id = ?2) \
-                 ORDER BY q.created_at DESC, q.id LIMIT ?3",
+                // Same two shapes as the sync-run feed above, for the same
+                // reason.
+                if database_id.is_some() {
+                    "SELECT id, db_id, table_name, event_json, error, created_at \
+                     FROM dlq \
+                     WHERE db_id = ?2 \
+                       AND db_id IN (SELECT id FROM databases WHERE workspace_id = ?1) \
+                     ORDER BY created_at DESC, id LIMIT ?3"
+                } else {
+                    "SELECT id, db_id, table_name, event_json, error, created_at \
+                     FROM dlq INDEXED BY idx_dlq_created \
+                     WHERE db_id IN (SELECT id FROM databases WHERE workspace_id = ?1) \
+                       AND (?2 IS NULL OR db_id = ?2) \
+                     ORDER BY created_at DESC, id LIMIT ?3"
+                },
             )
             .context("failed to prepare DLQ query")?;
         statement

@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The dashboard no longer slows down as a deployment ages. A replication
+  cycle writes one `sync_runs` row every supervisor cadence - 17,280 a day
+  at the 5-second default - and nothing prunes it, but the activity and
+  dead-letter feeds read those tables newest-first with no index on the
+  sort column. Every dashboard load therefore scanned and sorted the whole
+  history: measured at 145ms over 300,000 rows (about seventeen days of
+  uptime) and growing linearly from there, which is why a long-running
+  instance answered slowly while replication itself stayed healthy.
+  Migration 19 indexes both tables, and the workspace-scoped feeds are
+  split into one statement per shape so the planner walks the index in
+  order instead of sorting every matching row. The same reads now answer
+  in under 1.5ms over the same 300,000 rows.
+
 ## [0.0.5-rc1] - 2026-08-25
 
 First release candidate of the 0.0.5 line. Adds writable local databases
