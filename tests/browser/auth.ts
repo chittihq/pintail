@@ -530,8 +530,14 @@ async function main() {
       // deletion itself; the removal this check measures happens on confirm.
       await page!.getByRole('dialog').getByRole('button', { name: 'Remove member' }).click()
 
-      // Their next call must be refused, without waiting for expiry.
-      await waitForServerLog(/GET \/session 401|GET \/databases 401|GET \/activity 401/, 30_000)
+      // Their next call must be refused, without waiting for expiry. The
+      // logged path carries the /api prefix: the access log wraps the whole
+      // router now, so it records the path the client actually requested
+      // rather than the one left after the /api nest strips its prefix.
+      await waitForServerLog(
+        /GET \/api\/session 401|GET \/api\/databases 401|GET \/api\/activity 401/,
+        30_000,
+      )
     } finally {
       await context.close()
     }
