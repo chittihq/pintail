@@ -62,3 +62,68 @@ async fn the_page_shell_is_always_revalidated() {
     assert_eq!(cache_control, "no-cache");
     assert!(header_value("/", header::ETAG).await.is_some());
 }
+
+#[tokio::test]
+async fn assets_are_compressed_when_the_client_asks() {
+    // Nuxt bundles are text and compress several-fold. Uncompressed, the
+    // whole dashboard was shipped in full to every visitor on every visit,
+    // which dominates the load time on a high-latency link.
+    use http_body_util::BodyExt as _;
+
+    let assets = pintail_api::dashboard_asset_paths();
+    let script = assets
+        .iter()
+        .find(|path| {
+            std::path::Path::new(path.as_str())
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("js"))
+        })
+        .expect("the dashboard ships javascript");
+
+    let compressed = pintail_api::router()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{script}"))
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(compressed.status(), StatusCode::OK);
+    assert_eq!(
+        compressed
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .map(|value| value.to_str().expect("ascii")),
+        Some("gzip"),
+        "an asset must compress when the client advertises it"
+    );
+
+    let encoded = compressed
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes()
+        .len();
+    let raw = pintail_api::router()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{script}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes()
+        .len();
+    assert!(
+        encoded < raw,
+        "compressed {encoded} bytes is not smaller than raw {raw}"
+    );
+}

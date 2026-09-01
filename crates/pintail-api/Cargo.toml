@@ -12,6 +12,7 @@ pintail-log.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 axum.workspace = true
+tower-http.workspace = true
 chacha20poly1305.workspace = true
 chrono.workspace = true
 futures-util.workspace = true

@@ -50,6 +50,7 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde::Serialize;
+use tower_http::compression::CompressionLayer;
 
 pub use state::ApiState;
 pub use supervisor::spawn as spawn_supervisor;
@@ -246,6 +247,13 @@ pub fn router_with_state(state: ApiState) -> Router {
         .nest("/api", api)
         .route("/", get(dashboard))
         .route("/{*path}", get(dashboard_asset))
+        // The dashboard is JavaScript, CSS and JSON - all text, all several
+        // times smaller compressed. Uncompressed they were shipped in full
+        // to every visitor on every visit, which is minutes of transfer on
+        // a high-latency link and the difference between a usable dashboard
+        // and an unusable one. Applied last so it wraps every route,
+        // including the embedded assets and the API's JSON.
+        .layer(CompressionLayer::new())
         .with_state(state)
 }
 

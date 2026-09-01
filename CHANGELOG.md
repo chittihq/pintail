@@ -15,6 +15,10 @@ replication itself stayed healthy.
 
 ### Fixed
 
+- The dashboard's responses are compressed. Nothing was compressed at
+  all - a 21KB HTML shell and every JavaScript bundle went out raw, even
+  when the client advertised gzip - which on a high-latency link is most
+  of the page load. Assets and API JSON now compress.
 - The dashboard's embedded assets are cacheable. Every response carried
   only `content-type` and `content-length`, so a browser refetched all of
   Nuxt's content-hashed chunks on every visit - a captured trace of one
