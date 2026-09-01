@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5-rc3] - 2026-09-02
+
+Corrects a caching defect introduced in 0.0.5-rc2 that pinned browsers to
+a stale build, and makes every request measurable end to end.
+
 ### Fixed
 
 - `_nuxt/builds/latest.json` is no longer served as immutable. It keeps a
