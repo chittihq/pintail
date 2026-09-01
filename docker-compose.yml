@@ -14,7 +14,7 @@
 
 services:
   pintail:
-    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.0.5-rc1}
+    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.0.5-rc2}
     ports:
       # The dashboard and HTTP query API. Put a TLS terminator in front of
       # this: the dashboard is a control plane, not a security boundary.
@@ -25,7 +25,7 @@ services:
     environment:
       # Surfaces the deployed release through SELECT VERSION() and the
       # health endpoint, so a deployment identifies its build on the wire.
-      PINTAIL_BUILD_VERSION: ${PINTAIL_VERSION:-0.0.5-rc1}
+      PINTAIL_BUILD_VERSION: ${PINTAIL_VERSION:-0.0.5-rc2}
       PINTAIL_DATA_DIR: /var/lib/pintail
       # Spill defaults under the data directory, so it shares that mount
       # unless PINTAIL_SPILL_DATA below points it elsewhere.

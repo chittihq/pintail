@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5-rc2] - 2026-09-02
+
+Fixes a dashboard that became unusable on a long-running deployment.
+Diagnosed on a live instance carrying 632,000 replication-cycle rows,
+where the activity feed took over two minutes to answer while
+replication itself stayed healthy.
+
 ### Fixed
 
 - The dashboard's embedded assets are cacheable. Every response carried
