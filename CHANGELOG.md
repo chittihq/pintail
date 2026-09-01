@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The dashboard's embedded assets are cacheable. Every response carried
+  only `content-type` and `content-length`, so a browser refetched all of
+  Nuxt's content-hashed chunks on every visit - a captured trace of one
+  page load showed 72 `_nuxt/*` requests, none of them cacheable, none
+  compressed. Hashed bundles now answer
+  `cache-control: public, max-age=31536000, immutable` (a new build is a
+  new URL, so the old one can be held forever) and the HTML shells answer
+  `no-cache` so a deploy is never served from a stale cache. Every asset
+  also carries an `ETag`, which lets a CDN in front hold the immutable
+  ones instead of returning to the origin at all.
 - The dashboard no longer slows down as a deployment ages. A replication
   cycle writes one `sync_runs` row every supervisor cadence - 17,280 a day
   at the 5-second default - and nothing prunes it, but the activity and

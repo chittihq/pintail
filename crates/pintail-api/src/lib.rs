@@ -138,6 +138,13 @@ pub fn wire_tls_hostnames(metadata: &pintail_meta::MetaStore) -> Vec<String> {
     crate::wire_certificate::configured_hostnames(metadata)
 }
 
+/// Every embedded dashboard asset path, for tests that need to name a real
+/// one: the bundles are content-hashed, so their names change per build.
+#[must_use]
+pub fn dashboard_asset_paths() -> Vec<String> {
+    Dashboard::iter().map(|path| path.to_string()).collect()
+}
+
 pub fn router() -> Router {
     router_with_state(ApiState::unconfigured())
 }
@@ -328,9 +335,41 @@ fn embedded_asset(path: &str) -> Response {
             .to_string()
     };
 
+    // Nuxt content-hashes every build artefact under `_nuxt/`, so a given
+    // URL's bytes never change: it can be cached forever, and a new build
+    // is a new URL. Everything else - the HTML shells above all - must be
+    // revalidated, or a deploy would serve last release's page shell out of
+    // a browser cache indefinitely.
+    //
+    // Without this the dashboard refetched all of its chunks on EVERY load:
+    // a captured trace of one page view showed 72 `_nuxt/*` requests, none
+    // cacheable, against an origin that was taking tens of seconds per
+    // asset. The bytes were never the problem - the round trips were.
+    let cache_control = if path.starts_with("_nuxt/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    // A strong validator lets a cache revalidate the non-immutable shells
+    // with a 304 instead of resending them, and lets any CDN in front hold
+    // the immutable ones.
+    let etag = format!("\"{}\"", hex_digest(&asset.metadata.sha256_hash()));
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, cache_control)
+        .header(header::ETAG, etag)
         .body(Body::from(asset.data.into_owned()))
         .expect("static response is valid")
+}
+
+/// Renders an embedded asset's content hash as hex, for the `ETag`.
+fn hex_digest(digest: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+
+    digest.iter().fold(String::new(), |mut rendered, byte| {
+        let _ = write!(rendered, "{byte:02x}");
+        rendered
+    })
 }
