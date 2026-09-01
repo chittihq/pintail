@@ -127,3 +127,67 @@ async fn assets_are_compressed_when_the_client_asks() {
         "compressed {encoded} bytes is not smaller than raw {raw}"
     );
 }
+
+#[tokio::test]
+async fn the_build_manifest_is_never_immutable() {
+    // `_nuxt/builds/latest.json` keeps a STABLE name inside an otherwise
+    // content-hashed tree, and Nuxt reads it to notice a new deployment.
+    // Marking it immutable pins a browser to the build it first saw.
+    let manifest = "_nuxt/builds/latest.json";
+    if pintail_api::dashboard_asset_paths()
+        .iter()
+        .all(|path| path != manifest)
+    {
+        return; // not present in this build
+    }
+    let cache_control = header_value(&format!("/{manifest}"), header::CACHE_CONTROL)
+        .await
+        .unwrap_or_default();
+    assert_eq!(
+        cache_control, "no-cache",
+        "a stable filename must never be immutable"
+    );
+}
+
+#[tokio::test]
+async fn a_matching_etag_answers_304_without_the_body() {
+    // An ETag nothing revalidates against is decoration: the shell is
+    // no-cache, so every load re-requests it and would resend the whole
+    // body without this.
+    let first = pintail_api::router()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .expect("response");
+    let etag = first
+        .headers()
+        .get(header::ETAG)
+        .expect("shell carries an etag")
+        .to_str()
+        .expect("ascii")
+        .to_owned();
+
+    let second = pintail_api::router()
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header(header::IF_NONE_MATCH, &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("response");
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+
+    // A stale validator still gets the full response.
+    let changed = pintail_api::router()
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header(header::IF_NONE_MATCH, "\"something-else\"")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("response");
+    assert_eq!(changed.status(), StatusCode::OK);
+}

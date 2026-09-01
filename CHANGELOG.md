@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `_nuxt/builds/latest.json` is no longer served as immutable. It keeps a
+  stable filename inside an otherwise content-hashed tree, and Nuxt reads
+  it to notice a new deployment, so caching it for a year pinned every
+  browser to the build it first saw. Introduced in 0.0.5-rc2 by the asset
+  caching itself and caught by an independent review before it reached a
+  stable release.
+- The `ETag` on embedded assets is now honoured: a request carrying a
+  matching `If-None-Match` gets a `304` instead of the whole body again.
+  It was previously emitted but never evaluated, so revalidating clients -
+  which is every client for the non-immutable HTML shells - re-downloaded
+  everything.
+
 ### Changed
 
 - Every HTTP request is logged with two timings, and static assets are

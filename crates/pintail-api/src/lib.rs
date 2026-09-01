@@ -349,7 +349,6 @@ pub fn router_with_state(state: ApiState) -> Router {
         // precisely where an unexplained delay hides: the API log can say
         // 3ms while a client waits 40 seconds, and without the asset lines
         // there is no way to tell which side is lying.
-        .layer(middleware::from_fn(access_log))
         // The dashboard is JavaScript, CSS and JSON - all text, all several
         // times smaller compressed. Uncompressed they were shipped in full
         // to every visitor on every visit, which is minutes of transfer on
@@ -357,6 +356,11 @@ pub fn router_with_state(state: ApiState) -> Router {
         // and an unusable one. Applied last so it wraps every route,
         // including the embedded assets and the API's JSON.
         .layer(CompressionLayer::new())
+        // OUTSIDE compression deliberately. Inside it, the body timer stops
+        // when the compressor consumes the raw body, which is not when the
+        // client has anything; outside, `sent=` covers the compressed bytes
+        // actually handed to the socket.
+        .layer(middleware::from_fn(access_log))
         .with_state(state)
 }
 
@@ -406,11 +410,11 @@ async fn status(State(state): State<ApiState>) -> Json<NodeStatusResponse> {
     })
 }
 
-async fn dashboard() -> Response {
-    embedded_asset("index.html")
+async fn dashboard(headers: header::HeaderMap) -> Response {
+    embedded_asset_for("index.html", Some(&headers))
 }
 
-async fn dashboard_asset(Path(path): Path<String>) -> Response {
+async fn dashboard_asset(Path(path): Path<String>, headers: header::HeaderMap) -> Response {
     // Real asset files (hashed JS/CSS, favicon, fonts) live at their exact
     // embedded path and 404 if truly missing. Route-like paths with no
     // extension are Nuxt pages: nuxt generate prerenders known routes as
@@ -418,16 +422,20 @@ async fn dashboard_asset(Path(path): Path<String>) -> Response {
     // no prerendered file, so it falls through to the SPA shell (Nitro's
     // own `200.html`) and Vue Router resolves it client-side.
     if std::path::Path::new(&path).extension().is_some() {
-        return embedded_asset(&path);
+        return embedded_asset_for(&path, Some(&headers));
     }
     let nested_index = format!("{path}/index.html");
     if Dashboard::get(&nested_index).is_some() {
-        return embedded_asset(&nested_index);
+        return embedded_asset_for(&nested_index, Some(&headers));
     }
-    embedded_asset("200.html")
+    embedded_asset_for("200.html", Some(&headers))
 }
 
-fn embedded_asset(path: &str) -> Response {
+/// Serves one embedded asset, answering `304` when the client already holds
+/// it. Without this the `ETag` was decorative: a revalidating client - which
+/// is every client for the non-immutable HTML shells - was sent the whole
+/// body again regardless.
+fn embedded_asset_for(path: &str, request_headers: Option<&header::HeaderMap>) -> Response {
     let Some(asset) = Dashboard::get(path) else {
         return Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -456,7 +464,12 @@ fn embedded_asset(path: &str) -> Response {
     // a captured trace of one page view showed 72 `_nuxt/*` requests, none
     // cacheable, against an origin that was taking tens of seconds per
     // asset. The bytes were never the problem - the round trips were.
-    let cache_control = if path.starts_with("_nuxt/") {
+    // `_nuxt/builds/` is the exception inside an otherwise content-hashed
+    // tree: `builds/latest.json` keeps a STABLE name and is how Nuxt notices
+    // a new deployment. Marking it immutable pinned every browser to the
+    // build it first saw, for a year - a far worse bug than the slow load
+    // this caching was added to fix.
+    let cache_control = if path.starts_with("_nuxt/") && !path.starts_with("_nuxt/builds/") {
         "public, max-age=31536000, immutable"
     } else {
         "no-cache"
@@ -465,6 +478,19 @@ fn embedded_asset(path: &str) -> Response {
     // with a 304 instead of resending them, and lets any CDN in front hold
     // the immutable ones.
     let etag = format!("\"{}\"", hex_digest(&asset.metadata.sha256_hash()));
+
+    let unchanged = request_headers
+        .and_then(|headers| headers.get(header::IF_NONE_MATCH))
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').any(|candidate| candidate.trim() == etag));
+    if unchanged {
+        return Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::CACHE_CONTROL, cache_control)
+            .header(header::ETAG, etag)
+            .body(Body::empty())
+            .expect("static response is valid");
+    }
 
     Response::builder()
         .status(StatusCode::OK)
