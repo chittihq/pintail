@@ -134,6 +134,12 @@ stays readable as a list of things to fix.
   is refused rather than accepted and ignored, so a client cannot believe it
   has asked for the invalid ones back.
 
+- A grouped aggregation under a ceiling only a few times its input batch
+  spills its group map every few batches, and each spill run keeps a file
+  open until the final merge: at a 16 MiB ceiling over a 30,000-group
+  corpus the run files exceeded macOS's default descriptor limit and the
+  query failed with "Too many open files". Ceilings that tight are a test
+  setting; the runs are not yet merged in passes.
 - `TIME` values are stored and compared as their canonical text. Ordering
   and comparison are exact for non-negative times under 100 hours; negative
   times and hours of three digits order as text, not as durations. A

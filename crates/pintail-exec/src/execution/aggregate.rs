@@ -2315,31 +2315,60 @@ fn build_buffered_hash_aggregate(
             memory,
         )?;
         let mut used_before_merge = memory.used();
-        let partials = batches
-            .par_iter()
-            .map(|batch| {
-                direct_columns.map_or_else(
-                    || {
-                        build_local_expression_groups(
-                            batch,
-                            group_by,
-                            aggregates,
-                            memory,
-                            key_collations,
-                        )
-                    },
-                    |columns| {
-                        build_local_direct_groups(
-                            batch,
-                            columns,
-                            aggregates,
-                            memory,
-                            key_collations,
-                        )
-                    },
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        // The batch and its upper bound were reserved through the spill-on-
+        // failure path, but building the partial groups reserves again, in
+        // small pieces, and can land on a budget already filled to within a
+        // hundred bytes: a 136-byte key with nothing left fails the query
+        // where it should have spilled. So spill BEFORE the build when the
+        // ceiling is close, and if the build still runs out while the map
+        // holds groups, spill, hand back what the failed build took, and
+        // build once more.
+        if memory.used() > memory.limit().saturating_mul(3) / 4 && !groups.is_empty() {
+            spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+            memory.release(groups_reserved);
+            groups_reserved = 0;
+            used_before_merge = memory.used();
+        }
+        let build_partials = || {
+            batches
+                .par_iter()
+                .map(|batch| {
+                    direct_columns.map_or_else(
+                        || {
+                            build_local_expression_groups(
+                                batch,
+                                group_by,
+                                aggregates,
+                                memory,
+                                key_collations,
+                            )
+                        },
+                        |columns| {
+                            build_local_direct_groups(
+                                batch,
+                                columns,
+                                aggregates,
+                                memory,
+                                key_collations,
+                            )
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let partials = match build_partials() {
+            Ok(partials) => partials,
+            Err(ExecError::MemoryLimitExceeded { .. }) if !groups.is_empty() => {
+                // The failed build's partial reservations are dropped with it.
+                memory.release(memory.used().saturating_sub(used_before_merge));
+                spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+                memory.release(groups_reserved);
+                groups_reserved = 0;
+                used_before_merge = memory.used();
+                build_partials()?
+            }
+            Err(error) => return Err(error),
+        };
         for partial in partials {
             for entry in partial {
                 let mut pending = Some(entry);

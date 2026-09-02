@@ -120,3 +120,31 @@ fn spilled_aggregation_matches_the_in_memory_groups_exactly() {
     let spilled = run_aggregated(24 * 1024 * 1024).expect("spilled aggregation");
     assert_eq!(spilled, reference);
 }
+
+/// Every ceiling between "spills" and "fits" must produce the same groups.
+/// The gate once caught a 5 MiB ceiling refusing a 136-byte reservation the
+/// partial-group build made on a budget the batch had already filled; a
+/// sweep in unit time is what keeps that class of knife-edge from reaching
+/// the gate again. This corpus's single scan batch is 13 MiB, so below that
+/// the query is right to refuse; and at 16 MiB the map spills so often that
+/// its run files exceed macOS's default descriptor limit (recorded in
+/// docs/limitations.md), so the sweep runs the ceilings above both.
+#[test]
+fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
+    let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
+    let mut failures = Vec::new();
+    let mut limit = 20 * 1024 * 1024;
+    while limit <= 32 * 1024 * 1024 {
+        match run_aggregated(limit) {
+            Ok(rows) if rows == reference => {}
+            Ok(_) => failures.push(format!("{limit}: wrong groups")),
+            Err(error) => failures.push(format!("{limit}: {error}")),
+        }
+        limit += 6 * 1024 * 1024;
+    }
+    assert!(
+        failures.is_empty(),
+        "ceilings that did not aggregate exactly:\n  {}",
+        failures.join("\n  ")
+    );
+}
