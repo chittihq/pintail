@@ -16,6 +16,7 @@ GOAL.md
 /tests/e2e/orm-compat/generated/
 /node_modules/
 /tests/load/node_modules/
+/tests/memsoak/node_modules/
 /benchmark/workloads/commerce-production-v1/results/diffs/
 /tests/e2e/results-partial.json
 /tests/e2e/results-partial.md

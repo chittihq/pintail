@@ -174,6 +174,18 @@ const STAGES: Stage[] = [
     cwd: join(repository, 'tests', 'browser'),
   },
   {
+    // The release image on the docker host with hundreds of tables and a fast
+    // supervisor: resident memory must settle after warm-up. The only
+    // memory measurement that runs on Linux, which is where the allocator
+    // that hoarded seven gigabytes on staging lives.
+    name: 'memsoak',
+    remote: true,
+    timeoutMinutes: 45,
+    stallMinutes: 20,
+    command: ['bun', 'run', 'run.ts'],
+    cwd: join(repository, 'tests', 'memsoak'),
+  },
+  {
     name: 'browser',
     remote: true,
     timeoutMinutes: 30,
