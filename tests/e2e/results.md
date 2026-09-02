@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-01T20:31:48.462Z.
+Measured 2026-09-02T04:10:14.275Z.
 
 Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-container.
 
-**3736 passed, 0 failed, 44 documented-gap warnings, 37 skipped.**
+**4275 passed, 0 failed, 51 documented-gap warnings, 37 skipped.**
 
-164 unique corpus queries produced 3444 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+164 unique corpus queries produced 3936 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -2539,6 +2539,370 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150033 sync_runs rows for db_5959ec50efe2224843a0316429afcddc |
+| activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 37ms p99 58ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 24ms |
+| activity-history | converge:Dim | PASS |  |
+| activity-history | converge:Event | PASS |  |
+| activity-history | converge:Fact | PASS |  |
+| activity-history | converge:Person | PASS |  |
+| activity-history | converge:audit_log | PASS |  |
+| activity-history | converge:badges | PASS |  |
+| activity-history | converge:counters | PASS |  |
+| activity-history | converge:customers | PASS |  |
+| activity-history | converge:order_items | PASS |  |
+| activity-history | converge:orders | PASS |  |
+| activity-history | converge:shipments | PASS |  |
+| activity-history | converge:staff | PASS |  |
+| activity-history | converge:information_schema.columns | PASS |  |
+| activity-history | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| activity-history | query:conformance: mixed-collation double grouping | PASS |  |
+| activity-history | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| activity-history | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| activity-history | query:conformance: case-variant code grouping | PASS |  |
+| activity-history | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| activity-history | query:conformance: nullable join key NULL-extends | PASS |  |
+| activity-history | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| activity-history | query:conformance: date bucketing over the fact table | PASS |  |
+| activity-history | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| activity-history | query:point lookup by key | PASS |  |
+| activity-history | query:range scan with compound predicate | PASS |  |
+| activity-history | query:inner join with aggregation | PASS |  |
+| activity-history | query:join with a residual comparison between both inputs | PASS |  |
+| activity-history | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| activity-history | query:residual comparison through coalesce on a nullable column | PASS |  |
+| activity-history | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| activity-history | query:alias pair with the join order reversed | PASS |  |
+| activity-history | query:four aliases of one table joined in a chain | PASS |  |
+| activity-history | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| activity-history | query:self-join manager chain preserves the roots | PASS |  |
+| activity-history | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| activity-history | query:aliases stay distinct when the empty side joins first | PASS |  |
+| activity-history | query:left join preserves unmatched rows | PASS |  |
+| activity-history | query:right join preserves unmatched rows | PASS |  |
+| activity-history | query:three-way join through items | PASS |  |
+| activity-history | query:union all across sources | PASS |  |
+| activity-history | query:intersect customer identifiers | PASS |  |
+| activity-history | query:except customer identifiers | PASS |  |
+| activity-history | query:order by an expression over an aggregate | PASS |  |
+| activity-history | query:order by a tree over several aggregates | PASS |  |
+| activity-history | query:order by an aggregate absent from the select list | PASS |  |
+| activity-history | query:group by with having | PASS |  |
+| activity-history | query:conditional decimal sum keeps the fraction | PASS |  |
+| activity-history | query:distinct count and min max | PASS |  |
+| activity-history | query:uncorrelated in-subquery | PASS |  |
+| activity-history | query:correlated exists with inner predicate | PASS |  |
+| activity-history | query:correlated scalar aggregate | PASS |  |
+| activity-history | query:correlated scalar unique lookup | PASS |  |
+| activity-history | query:scalar subquery threshold | PASS |  |
+| activity-history | query:non-recursive cte | PASS |  |
+| activity-history | query:bounded recursive cte | PASS |  |
+| activity-history | query:date bucketing | PASS |  |
+| activity-history | query:string functions and like | PASS |  |
+| activity-history | query:looker symmetric key helpers | PASS |  |
+| activity-history | query:json constructor preserves json versus text | PASS |  |
+| activity-history | query:json aggregate embeds documents | PASS |  |
+| activity-history | query:regular expression read transforms | PASS |  |
+| activity-history | query:case expression buckets | PASS |  |
+| activity-history | query:null handling | PASS |  |
+| activity-history | query:coalesce and ifnull | PASS |  |
+| activity-history | query:enum and set filters | PASS |  |
+| activity-history | query:unsigned boundary readback | PASS |  |
+| activity-history | query:derived table | PASS |  |
+| activity-history | query:group_concat single expression | PASS |  |
+| activity-history | query:window ranking per group | PASS |  |
+| activity-history | query:window share of total over grouped output | PASS |  |
+| activity-history | query:window running total | PASS |  |
+| activity-history | query:decimal column average beyond simple sum | PASS |  |
+| activity-history | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| activity-history | query:json extract filter on customer meta | PASS |  |
+| activity-history | query:fan-out join group concat line products | PASS |  |
+| activity-history | query:outer join customers without recent orders | PASS |  |
+| activity-history | query:set op union distinct tiers and statuses | PASS |  |
+| activity-history | query:temporal convert and date_format grain | PASS |  |
+| activity-history | query:correlated not exists open orders | PASS |  |
+| activity-history | query:window lag payment-shaped totals | PASS |  |
+| activity-history | query:multi-key join items to orders | PASS |  |
+| activity-history | query:between and null-safe coalesce on balance | PASS |  |
+| activity-history | query:intersect all-style customer buyers | PASS |  |
+| activity-history | query:derived table status revenue share | PASS |  |
+| activity-history | query:general_ci: equality folds ASCII case | PASS |  |
+| activity-history | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| activity-history | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| activity-history | query:general_ci: every supplementary character compares equal | PASS |  |
+| activity-history | query:general_ci: grouping partitions by collated equality | PASS |  |
+| activity-history | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| activity-history | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| activity-history | query:general_ci: joining on a collated column | PASS |  |
+| activity-history | query:general_ci: representative spelling of a collated group | PASS |  |
+| activity-history | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| activity-history | query:enum: order by ascends by declared ordinal | PASS |  |
+| activity-history | query:enum: order by descends by declared ordinal | PASS |  |
+| activity-history | query:enum: min and max compare as strings | PASS |  |
+| activity-history | query:enum: a greater-than range compares as strings | PASS |  |
+| activity-history | query:enum: a less-than range compares as strings | PASS |  |
+| activity-history | query:enum: between compares as strings | PASS |  |
+| activity-history | query:enum: distinct orders by ordinal | PASS |  |
+| activity-history | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| activity-history | query:enum: a window order walks the ordinal | PASS |  |
+| activity-history | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| activity-history | query:collation: distinct counts fold per column collation | PASS |  |
+| activity-history | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| activity-history | query:set: order by walks the member bitmask | PASS |  |
+| activity-history | query:set: grouping orders groups by bitmask | PASS |  |
+| activity-history | query:enum: the empty member groups by its ordinal | PASS |  |
+| activity-history | query:enum: the empty member sorts by its ordinal | PASS |  |
+| activity-history | query:enum: the empty member is selectable by text | PASS |  |
+| activity-history | query:geometry: hex round-trips the internal format | PASS |  |
+| activity-history | query:geometry: byte length includes the srid prefix | PASS |  |
+| activity-history | query:geometry: null routes filter and count | PASS |  |
+| activity-history | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| activity-history | query:set: find_in_set filters by membership | PASS |  |
+| activity-history | query:set: equality is literal, not member-normalized | PASS |  |
+| activity-history | query:set: distinct values walk the bitmask including empty | PASS |  |
+| activity-history | query:set: grouped counts order by bitmask not text | PASS |  |
+| activity-history | query:set: a range predicate compares the bitmask | PASS |  |
+| activity-history | query:star: fact with dimension and two audit persons | PASS |  |
+| activity-history | query:star: five-alias chain fans out through events | PASS |  |
+| activity-history | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| activity-history | query:star: five tables bridge the shop and the star | PASS |  |
+| activity-history | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| activity-history | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| activity-history | query:json: length and keys survive null documents | PASS |  |
+| activity-history | query:json: contains_path filters the documented rows | PASS |  |
+| activity-history | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| activity-history | query:json: object construction embeds an extracted scalar | PASS |  |
+| activity-history | query:json: search locates a literal value | PASS |  |
+| activity-history | query:json: grouping by an extracted scalar | PASS |  |
+| activity-history | query:json: merge_patch overlays and reads back | PASS |  |
+| activity-history | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| activity-history | query:temporal: month-end bucketing via last_day | PASS |  |
+| activity-history | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| activity-history | query:temporal: datetime range keeps the year window | PASS |  |
+| activity-history | query:temporal: date_sub bound in the predicate | PASS |  |
+| activity-history | query:temporal: year-month split grouping | PASS |  |
+| activity-history | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| activity-history | query:regex: substr extracts the mail domain | PASS |  |
+| activity-history | query:regex: the REGEXP operator anchors a class | PASS |  |
+| activity-history | query:regex: replace folds suffix classes before grouping | PASS |  |
+| activity-history | query:bi metabase: month grain through convert_tz | PASS |  |
+| activity-history | query:bi metabase: iso week bucketing | PASS |  |
+| activity-history | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| activity-history | query:bi metabase: previous-period revenue window | PASS |  |
+| activity-history | query:bi superset: week-start grain with a rolling average | PASS |  |
+| activity-history | query:bi superset: running total over grouped revenue | PASS |  |
+| activity-history | query:bi superset: lag and lead against a named window | PASS |  |
+| activity-history | query:bi superset: quartile counts from ntile | PASS |  |
+| activity-history | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| activity-history | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| activity-history | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| activity-history | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| activity-history | query:bi tableau: explicit cast ladder | PASS |  |
+| activity-history | query:bi tableau: the stddev and variance family | PASS |  |
+| activity-history | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| activity-history | query:bi shared: substring_index dimension cleanup | PASS |  |
+| activity-history | query:bi shared: json validity and typed path filter | PASS |  |
+| activity-history | query:bi shared: contains_path over several paths at once | PASS |  |
+| activity-history | query:bi shared: maketime from extracted parts | PASS |  |
+| activity-history | query:bi shared: extract year_month grouping | PASS |  |
+| activity-history | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| activity-history | query:staff: three-level management chain with an inactive tail | PASS |  |
+| activity-history | query:staff: active split with id extremes | PASS |  |
+| activity-history | query:counters: full unsigned ladder readback | PASS |  |
+| activity-history | query:counters: greatest and least across widths | PASS |  |
+| activity-history | query:dim: enum status split | PASS |  |
+| activity-history | query:dim: pattern filter across collated columns | PASS |  |
+| activity-history | query:person: anti-join finds owners without facts | PASS |  |
+| activity-history | query:person: created-fact counts through a scalar subquery | PASS |  |
+| activity-history | query:event: lag over per-dimension timelines | PASS |  |
+| activity-history | query:event: daily grain per dimension code | PASS |  |
+| activity-history | query:order_items: product rollup without the orders table | PASS |  |
+| activity-history | query:shipments: carrier value through the items bridge | PASS |  |
+| activity-history | query:json: distinct case variants survive a derived table | PASS |  |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4811 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4811 requests: p50 2ms p99 22ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 5ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 819 vs source 819 |
+| poll-storm | converge:Dim | PASS |  |
+| poll-storm | converge:Event | PASS |  |
+| poll-storm | converge:Fact | PASS |  |
+| poll-storm | converge:Person | PASS |  |
+| poll-storm | converge:audit_log | PASS |  |
+| poll-storm | converge:badges | PASS |  |
+| poll-storm | converge:counters | PASS |  |
+| poll-storm | converge:customers | PASS |  |
+| poll-storm | converge:order_items | PASS |  |
+| poll-storm | converge:orders | PASS |  |
+| poll-storm | converge:shipments | PASS |  |
+| poll-storm | converge:staff | PASS |  |
+| poll-storm | converge:information_schema.columns | PASS |  |
+| poll-storm | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| poll-storm | query:conformance: mixed-collation double grouping | PASS |  |
+| poll-storm | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| poll-storm | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| poll-storm | query:conformance: case-variant code grouping | PASS |  |
+| poll-storm | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| poll-storm | query:conformance: nullable join key NULL-extends | PASS |  |
+| poll-storm | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| poll-storm | query:conformance: date bucketing over the fact table | PASS |  |
+| poll-storm | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| poll-storm | query:point lookup by key | PASS |  |
+| poll-storm | query:range scan with compound predicate | PASS |  |
+| poll-storm | query:inner join with aggregation | PASS |  |
+| poll-storm | query:join with a residual comparison between both inputs | PASS |  |
+| poll-storm | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| poll-storm | query:residual comparison through coalesce on a nullable column | PASS |  |
+| poll-storm | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| poll-storm | query:alias pair with the join order reversed | PASS |  |
+| poll-storm | query:four aliases of one table joined in a chain | PASS |  |
+| poll-storm | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| poll-storm | query:self-join manager chain preserves the roots | PASS |  |
+| poll-storm | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| poll-storm | query:aliases stay distinct when the empty side joins first | PASS |  |
+| poll-storm | query:left join preserves unmatched rows | PASS |  |
+| poll-storm | query:right join preserves unmatched rows | PASS |  |
+| poll-storm | query:three-way join through items | PASS |  |
+| poll-storm | query:union all across sources | PASS |  |
+| poll-storm | query:intersect customer identifiers | PASS |  |
+| poll-storm | query:except customer identifiers | PASS |  |
+| poll-storm | query:order by an expression over an aggregate | PASS |  |
+| poll-storm | query:order by a tree over several aggregates | PASS |  |
+| poll-storm | query:order by an aggregate absent from the select list | PASS |  |
+| poll-storm | query:group by with having | PASS |  |
+| poll-storm | query:conditional decimal sum keeps the fraction | PASS |  |
+| poll-storm | query:distinct count and min max | PASS |  |
+| poll-storm | query:uncorrelated in-subquery | PASS |  |
+| poll-storm | query:correlated exists with inner predicate | PASS |  |
+| poll-storm | query:correlated scalar aggregate | PASS |  |
+| poll-storm | query:correlated scalar unique lookup | PASS |  |
+| poll-storm | query:scalar subquery threshold | PASS |  |
+| poll-storm | query:non-recursive cte | PASS |  |
+| poll-storm | query:bounded recursive cte | PASS |  |
+| poll-storm | query:date bucketing | PASS |  |
+| poll-storm | query:string functions and like | PASS |  |
+| poll-storm | query:looker symmetric key helpers | PASS |  |
+| poll-storm | query:json constructor preserves json versus text | PASS |  |
+| poll-storm | query:json aggregate embeds documents | PASS |  |
+| poll-storm | query:regular expression read transforms | PASS |  |
+| poll-storm | query:case expression buckets | PASS |  |
+| poll-storm | query:null handling | PASS |  |
+| poll-storm | query:coalesce and ifnull | PASS |  |
+| poll-storm | query:enum and set filters | PASS |  |
+| poll-storm | query:unsigned boundary readback | PASS |  |
+| poll-storm | query:derived table | PASS |  |
+| poll-storm | query:group_concat single expression | PASS |  |
+| poll-storm | query:window ranking per group | PASS |  |
+| poll-storm | query:window share of total over grouped output | PASS |  |
+| poll-storm | query:window running total | PASS |  |
+| poll-storm | query:decimal column average beyond simple sum | PASS |  |
+| poll-storm | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| poll-storm | query:json extract filter on customer meta | PASS |  |
+| poll-storm | query:fan-out join group concat line products | PASS |  |
+| poll-storm | query:outer join customers without recent orders | PASS |  |
+| poll-storm | query:set op union distinct tiers and statuses | PASS |  |
+| poll-storm | query:temporal convert and date_format grain | PASS |  |
+| poll-storm | query:correlated not exists open orders | PASS |  |
+| poll-storm | query:window lag payment-shaped totals | PASS |  |
+| poll-storm | query:multi-key join items to orders | PASS |  |
+| poll-storm | query:between and null-safe coalesce on balance | PASS |  |
+| poll-storm | query:intersect all-style customer buyers | PASS |  |
+| poll-storm | query:derived table status revenue share | PASS |  |
+| poll-storm | query:general_ci: equality folds ASCII case | PASS |  |
+| poll-storm | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| poll-storm | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| poll-storm | query:general_ci: every supplementary character compares equal | PASS |  |
+| poll-storm | query:general_ci: grouping partitions by collated equality | PASS |  |
+| poll-storm | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| poll-storm | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| poll-storm | query:general_ci: joining on a collated column | PASS |  |
+| poll-storm | query:general_ci: representative spelling of a collated group | PASS |  |
+| poll-storm | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| poll-storm | query:enum: order by ascends by declared ordinal | PASS |  |
+| poll-storm | query:enum: order by descends by declared ordinal | PASS |  |
+| poll-storm | query:enum: min and max compare as strings | PASS |  |
+| poll-storm | query:enum: a greater-than range compares as strings | PASS |  |
+| poll-storm | query:enum: a less-than range compares as strings | PASS |  |
+| poll-storm | query:enum: between compares as strings | PASS |  |
+| poll-storm | query:enum: distinct orders by ordinal | PASS |  |
+| poll-storm | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| poll-storm | query:enum: a window order walks the ordinal | PASS |  |
+| poll-storm | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| poll-storm | query:collation: distinct counts fold per column collation | PASS |  |
+| poll-storm | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| poll-storm | query:set: order by walks the member bitmask | PASS |  |
+| poll-storm | query:set: grouping orders groups by bitmask | PASS |  |
+| poll-storm | query:enum: the empty member groups by its ordinal | PASS |  |
+| poll-storm | query:enum: the empty member sorts by its ordinal | PASS |  |
+| poll-storm | query:enum: the empty member is selectable by text | PASS |  |
+| poll-storm | query:geometry: hex round-trips the internal format | PASS |  |
+| poll-storm | query:geometry: byte length includes the srid prefix | PASS |  |
+| poll-storm | query:geometry: null routes filter and count | PASS |  |
+| poll-storm | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| poll-storm | query:set: find_in_set filters by membership | PASS |  |
+| poll-storm | query:set: equality is literal, not member-normalized | PASS |  |
+| poll-storm | query:set: distinct values walk the bitmask including empty | PASS |  |
+| poll-storm | query:set: grouped counts order by bitmask not text | PASS |  |
+| poll-storm | query:set: a range predicate compares the bitmask | PASS |  |
+| poll-storm | query:star: fact with dimension and two audit persons | PASS |  |
+| poll-storm | query:star: five-alias chain fans out through events | PASS |  |
+| poll-storm | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| poll-storm | query:star: five tables bridge the shop and the star | PASS |  |
+| poll-storm | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| poll-storm | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| poll-storm | query:json: length and keys survive null documents | PASS |  |
+| poll-storm | query:json: contains_path filters the documented rows | PASS |  |
+| poll-storm | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| poll-storm | query:json: object construction embeds an extracted scalar | PASS |  |
+| poll-storm | query:json: search locates a literal value | PASS |  |
+| poll-storm | query:json: grouping by an extracted scalar | PASS |  |
+| poll-storm | query:json: merge_patch overlays and reads back | PASS |  |
+| poll-storm | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| poll-storm | query:temporal: month-end bucketing via last_day | PASS |  |
+| poll-storm | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| poll-storm | query:temporal: datetime range keeps the year window | PASS |  |
+| poll-storm | query:temporal: date_sub bound in the predicate | PASS |  |
+| poll-storm | query:temporal: year-month split grouping | PASS |  |
+| poll-storm | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| poll-storm | query:regex: substr extracts the mail domain | PASS |  |
+| poll-storm | query:regex: the REGEXP operator anchors a class | PASS |  |
+| poll-storm | query:regex: replace folds suffix classes before grouping | PASS |  |
+| poll-storm | query:bi metabase: month grain through convert_tz | PASS |  |
+| poll-storm | query:bi metabase: iso week bucketing | PASS |  |
+| poll-storm | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| poll-storm | query:bi metabase: previous-period revenue window | PASS |  |
+| poll-storm | query:bi superset: week-start grain with a rolling average | PASS |  |
+| poll-storm | query:bi superset: running total over grouped revenue | PASS |  |
+| poll-storm | query:bi superset: lag and lead against a named window | PASS |  |
+| poll-storm | query:bi superset: quartile counts from ntile | PASS |  |
+| poll-storm | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| poll-storm | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| poll-storm | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| poll-storm | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| poll-storm | query:bi tableau: explicit cast ladder | PASS |  |
+| poll-storm | query:bi tableau: the stddev and variance family | PASS |  |
+| poll-storm | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| poll-storm | query:bi shared: substring_index dimension cleanup | PASS |  |
+| poll-storm | query:bi shared: json validity and typed path filter | PASS |  |
+| poll-storm | query:bi shared: contains_path over several paths at once | PASS |  |
+| poll-storm | query:bi shared: maketime from extracted parts | PASS |  |
+| poll-storm | query:bi shared: extract year_month grouping | PASS |  |
+| poll-storm | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| poll-storm | query:staff: three-level management chain with an inactive tail | PASS |  |
+| poll-storm | query:staff: active split with id extremes | PASS |  |
+| poll-storm | query:counters: full unsigned ladder readback | PASS |  |
+| poll-storm | query:counters: greatest and least across widths | PASS |  |
+| poll-storm | query:dim: enum status split | PASS |  |
+| poll-storm | query:dim: pattern filter across collated columns | PASS |  |
+| poll-storm | query:person: anti-join finds owners without facts | PASS |  |
+| poll-storm | query:person: created-fact counts through a scalar subquery | PASS |  |
+| poll-storm | query:event: lag over per-dimension timelines | PASS |  |
+| poll-storm | query:event: daily grain per dimension code | PASS |  |
+| poll-storm | query:order_items: product rollup without the orders table | PASS |  |
+| poll-storm | query:shipments: carrier value through the items bridge | PASS |  |
+| poll-storm | query:json: distinct case variants survive a derived table | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -3283,7 +3647,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_5959ec50efe2224843a0316429afcddc","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-02T04:00:56.702931+00:00","updated_at":"2026-09-02T04:09:21.190863+00:00"},"tables":18,"rows":1326} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -3463,6 +3827,188 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-polling | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-polling | query:shipments: carrier value through the items bridge | PASS |  |
 | drop-table-polling | query:json: distinct case variants survive a derived table | PASS |  |
+| restart-during-snapshot | restart-during-snapshot:interrupts a copy in flight | PASS |  |
+| restart-during-snapshot | restart-during-snapshot:the database resumes replicating on its own | PASS |  |
+| restart-during-snapshot | restart-during-snapshot:every row arrives after the resume | PASS | big: 300000 of 300000 |
+| restart-during-snapshot | restart-during-snapshot:no table is left quarantined | PASS |  |
+| restart-during-snapshot | converge:Dim | PASS |  |
+| restart-during-snapshot | converge:Event | PASS |  |
+| restart-during-snapshot | converge:Fact | PASS |  |
+| restart-during-snapshot | converge:Person | PASS |  |
+| restart-during-snapshot | converge:audit_log | PASS |  |
+| restart-during-snapshot | converge:badges | PASS |  |
+| restart-during-snapshot | converge:counters | PASS |  |
+| restart-during-snapshot | converge:customers | PASS |  |
+| restart-during-snapshot | converge:keyless_log | PASS |  |
+| restart-during-snapshot | converge:order_items | PASS |  |
+| restart-during-snapshot | converge:orders | PASS |  |
+| restart-during-snapshot | converge:shipments | PASS |  |
+| restart-during-snapshot | converge:staff | PASS |  |
+| restart-during-snapshot | converge:information_schema.columns | PASS |  |
+| restart-during-snapshot | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| restart-during-snapshot | query:conformance: mixed-collation double grouping | PASS |  |
+| restart-during-snapshot | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| restart-during-snapshot | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| restart-during-snapshot | query:conformance: case-variant code grouping | PASS |  |
+| restart-during-snapshot | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| restart-during-snapshot | query:conformance: nullable join key NULL-extends | PASS |  |
+| restart-during-snapshot | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| restart-during-snapshot | query:conformance: date bucketing over the fact table | PASS |  |
+| restart-during-snapshot | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| restart-during-snapshot | query:point lookup by key | PASS |  |
+| restart-during-snapshot | query:range scan with compound predicate | PASS |  |
+| restart-during-snapshot | query:inner join with aggregation | PASS |  |
+| restart-during-snapshot | query:join with a residual comparison between both inputs | PASS |  |
+| restart-during-snapshot | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| restart-during-snapshot | query:residual comparison through coalesce on a nullable column | PASS |  |
+| restart-during-snapshot | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| restart-during-snapshot | query:alias pair with the join order reversed | PASS |  |
+| restart-during-snapshot | query:four aliases of one table joined in a chain | PASS |  |
+| restart-during-snapshot | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| restart-during-snapshot | query:self-join manager chain preserves the roots | PASS |  |
+| restart-during-snapshot | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| restart-during-snapshot | query:aliases stay distinct when the empty side joins first | PASS |  |
+| restart-during-snapshot | query:left join preserves unmatched rows | PASS |  |
+| restart-during-snapshot | query:right join preserves unmatched rows | PASS |  |
+| restart-during-snapshot | query:three-way join through items | PASS |  |
+| restart-during-snapshot | query:union all across sources | PASS |  |
+| restart-during-snapshot | query:intersect customer identifiers | PASS |  |
+| restart-during-snapshot | query:except customer identifiers | PASS |  |
+| restart-during-snapshot | query:order by an expression over an aggregate | PASS |  |
+| restart-during-snapshot | query:order by a tree over several aggregates | PASS |  |
+| restart-during-snapshot | query:order by an aggregate absent from the select list | PASS |  |
+| restart-during-snapshot | query:group by with having | PASS |  |
+| restart-during-snapshot | query:conditional decimal sum keeps the fraction | PASS |  |
+| restart-during-snapshot | query:distinct count and min max | PASS |  |
+| restart-during-snapshot | query:uncorrelated in-subquery | PASS |  |
+| restart-during-snapshot | query:correlated exists with inner predicate | PASS |  |
+| restart-during-snapshot | query:correlated scalar aggregate | PASS |  |
+| restart-during-snapshot | query:correlated scalar unique lookup | PASS |  |
+| restart-during-snapshot | query:scalar subquery threshold | PASS |  |
+| restart-during-snapshot | query:non-recursive cte | PASS |  |
+| restart-during-snapshot | query:bounded recursive cte | PASS |  |
+| restart-during-snapshot | query:date bucketing | PASS |  |
+| restart-during-snapshot | query:string functions and like | PASS |  |
+| restart-during-snapshot | query:looker symmetric key helpers | PASS |  |
+| restart-during-snapshot | query:json constructor preserves json versus text | PASS |  |
+| restart-during-snapshot | query:json aggregate embeds documents | PASS |  |
+| restart-during-snapshot | query:regular expression read transforms | PASS |  |
+| restart-during-snapshot | query:case expression buckets | PASS |  |
+| restart-during-snapshot | query:null handling | PASS |  |
+| restart-during-snapshot | query:coalesce and ifnull | PASS |  |
+| restart-during-snapshot | query:enum and set filters | PASS |  |
+| restart-during-snapshot | query:unsigned boundary readback | PASS |  |
+| restart-during-snapshot | query:derived table | PASS |  |
+| restart-during-snapshot | query:group_concat single expression | PASS |  |
+| restart-during-snapshot | query:window ranking per group | PASS |  |
+| restart-during-snapshot | query:window share of total over grouped output | PASS |  |
+| restart-during-snapshot | query:window running total | PASS |  |
+| restart-during-snapshot | query:decimal column average beyond simple sum | PASS |  |
+| restart-during-snapshot | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| restart-during-snapshot | query:json extract filter on customer meta | PASS |  |
+| restart-during-snapshot | query:fan-out join group concat line products | PASS |  |
+| restart-during-snapshot | query:outer join customers without recent orders | PASS |  |
+| restart-during-snapshot | query:set op union distinct tiers and statuses | PASS |  |
+| restart-during-snapshot | query:temporal convert and date_format grain | PASS |  |
+| restart-during-snapshot | query:correlated not exists open orders | PASS |  |
+| restart-during-snapshot | query:window lag payment-shaped totals | PASS |  |
+| restart-during-snapshot | query:multi-key join items to orders | PASS |  |
+| restart-during-snapshot | query:between and null-safe coalesce on balance | PASS |  |
+| restart-during-snapshot | query:intersect all-style customer buyers | PASS |  |
+| restart-during-snapshot | query:derived table status revenue share | PASS |  |
+| restart-during-snapshot | query:general_ci: equality folds ASCII case | PASS |  |
+| restart-during-snapshot | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| restart-during-snapshot | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| restart-during-snapshot | query:general_ci: every supplementary character compares equal | PASS |  |
+| restart-during-snapshot | query:general_ci: grouping partitions by collated equality | PASS |  |
+| restart-during-snapshot | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| restart-during-snapshot | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| restart-during-snapshot | query:general_ci: joining on a collated column | PASS |  |
+| restart-during-snapshot | query:general_ci: representative spelling of a collated group | PASS |  |
+| restart-during-snapshot | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| restart-during-snapshot | query:enum: order by ascends by declared ordinal | PASS |  |
+| restart-during-snapshot | query:enum: order by descends by declared ordinal | PASS |  |
+| restart-during-snapshot | query:enum: min and max compare as strings | PASS |  |
+| restart-during-snapshot | query:enum: a greater-than range compares as strings | PASS |  |
+| restart-during-snapshot | query:enum: a less-than range compares as strings | PASS |  |
+| restart-during-snapshot | query:enum: between compares as strings | PASS |  |
+| restart-during-snapshot | query:enum: distinct orders by ordinal | PASS |  |
+| restart-during-snapshot | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| restart-during-snapshot | query:enum: a window order walks the ordinal | PASS |  |
+| restart-during-snapshot | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| restart-during-snapshot | query:collation: distinct counts fold per column collation | PASS |  |
+| restart-during-snapshot | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| restart-during-snapshot | query:set: order by walks the member bitmask | PASS |  |
+| restart-during-snapshot | query:set: grouping orders groups by bitmask | PASS |  |
+| restart-during-snapshot | query:enum: the empty member groups by its ordinal | PASS |  |
+| restart-during-snapshot | query:enum: the empty member sorts by its ordinal | PASS |  |
+| restart-during-snapshot | query:enum: the empty member is selectable by text | PASS |  |
+| restart-during-snapshot | query:geometry: hex round-trips the internal format | PASS |  |
+| restart-during-snapshot | query:geometry: byte length includes the srid prefix | PASS |  |
+| restart-during-snapshot | query:geometry: null routes filter and count | PASS |  |
+| restart-during-snapshot | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| restart-during-snapshot | query:set: find_in_set filters by membership | PASS |  |
+| restart-during-snapshot | query:set: equality is literal, not member-normalized | PASS |  |
+| restart-during-snapshot | query:set: distinct values walk the bitmask including empty | PASS |  |
+| restart-during-snapshot | query:set: grouped counts order by bitmask not text | PASS |  |
+| restart-during-snapshot | query:set: a range predicate compares the bitmask | PASS |  |
+| restart-during-snapshot | query:star: fact with dimension and two audit persons | PASS |  |
+| restart-during-snapshot | query:star: five-alias chain fans out through events | PASS |  |
+| restart-during-snapshot | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| restart-during-snapshot | query:star: five tables bridge the shop and the star | PASS |  |
+| restart-during-snapshot | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| restart-during-snapshot | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| restart-during-snapshot | query:json: length and keys survive null documents | PASS |  |
+| restart-during-snapshot | query:json: contains_path filters the documented rows | PASS |  |
+| restart-during-snapshot | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| restart-during-snapshot | query:json: object construction embeds an extracted scalar | PASS |  |
+| restart-during-snapshot | query:json: search locates a literal value | PASS |  |
+| restart-during-snapshot | query:json: grouping by an extracted scalar | PASS |  |
+| restart-during-snapshot | query:json: merge_patch overlays and reads back | PASS |  |
+| restart-during-snapshot | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| restart-during-snapshot | query:temporal: month-end bucketing via last_day | PASS |  |
+| restart-during-snapshot | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| restart-during-snapshot | query:temporal: datetime range keeps the year window | PASS |  |
+| restart-during-snapshot | query:temporal: date_sub bound in the predicate | PASS |  |
+| restart-during-snapshot | query:temporal: year-month split grouping | PASS |  |
+| restart-during-snapshot | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| restart-during-snapshot | query:regex: substr extracts the mail domain | PASS |  |
+| restart-during-snapshot | query:regex: the REGEXP operator anchors a class | PASS |  |
+| restart-during-snapshot | query:regex: replace folds suffix classes before grouping | PASS |  |
+| restart-during-snapshot | query:bi metabase: month grain through convert_tz | PASS |  |
+| restart-during-snapshot | query:bi metabase: iso week bucketing | PASS |  |
+| restart-during-snapshot | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| restart-during-snapshot | query:bi metabase: previous-period revenue window | PASS |  |
+| restart-during-snapshot | query:bi superset: week-start grain with a rolling average | PASS |  |
+| restart-during-snapshot | query:bi superset: running total over grouped revenue | PASS |  |
+| restart-during-snapshot | query:bi superset: lag and lead against a named window | PASS |  |
+| restart-during-snapshot | query:bi superset: quartile counts from ntile | PASS |  |
+| restart-during-snapshot | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| restart-during-snapshot | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| restart-during-snapshot | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| restart-during-snapshot | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| restart-during-snapshot | query:bi tableau: explicit cast ladder | PASS |  |
+| restart-during-snapshot | query:bi tableau: the stddev and variance family | PASS |  |
+| restart-during-snapshot | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| restart-during-snapshot | query:bi shared: substring_index dimension cleanup | PASS |  |
+| restart-during-snapshot | query:bi shared: json validity and typed path filter | PASS |  |
+| restart-during-snapshot | query:bi shared: contains_path over several paths at once | PASS |  |
+| restart-during-snapshot | query:bi shared: maketime from extracted parts | PASS |  |
+| restart-during-snapshot | query:bi shared: extract year_month grouping | PASS |  |
+| restart-during-snapshot | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| restart-during-snapshot | query:staff: three-level management chain with an inactive tail | PASS |  |
+| restart-during-snapshot | query:staff: active split with id extremes | PASS |  |
+| restart-during-snapshot | query:counters: full unsigned ladder readback | PASS |  |
+| restart-during-snapshot | query:counters: greatest and least across widths | PASS |  |
+| restart-during-snapshot | query:dim: enum status split | PASS |  |
+| restart-during-snapshot | query:dim: pattern filter across collated columns | PASS |  |
+| restart-during-snapshot | query:person: anti-join finds owners without facts | PASS |  |
+| restart-during-snapshot | query:person: created-fact counts through a scalar subquery | PASS |  |
+| restart-during-snapshot | query:event: lag over per-dimension timelines | PASS |  |
+| restart-during-snapshot | query:event: daily grain per dimension code | PASS |  |
+| restart-during-snapshot | query:order_items: product rollup without the orders table | PASS |  |
+| restart-during-snapshot | query:shipments: carrier value through the items bridge | PASS |  |
+| restart-during-snapshot | query:json: distinct case variants survive a derived table | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -3832,25 +4378,28 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 2.4 | 1.8 |
-| orm-compat | 15.4 | 1.1 | 2.7 |
-| crud | 1.5 | 2.1 | 1.6 |
-| type-edges | 0.1 | 0.8 | 1.7 |
-| ddl | 1.4 | 49.4 | 1.7 |
-| schema-drift-minimal | 0.5 | 11.5 | 1.8 |
-| schema-drift-unseen | 1.6 | 8.9 | 1.5 |
-| churn | 31.9 | 1.2 | 3.2 |
-| contention | 13.9 | 1.2 | 3.7 |
-| execution-budget | 0.0 | 1.2 | 5.8 |
-| spill | 2.9 | 1.4 | 2.3 |
-| pooling | 0.3 | 1.2 | 1.6 |
-| local-database | 0.1 | 0.8 | 1.8 |
-| restart | 0.8 | 9.7 | 2.1 |
-| control-plane | 120.8 | 11.1 | 2.3 |
-| snapshot-ddl-window | 31.9 | 2.9 | 2.2 |
-| drop-table-cdc | 51.1 | 2.4 | 1.9 |
-| drop-table-recreate | 152.0 | 5.5 | 4.2 |
-| drop-table-polling | 132.7 | 5.6 | 8.1 |
-| drop-database | 56.7 | 6.5 | 4.5 |
-| ddl-documented-gaps | 0.7 | 8.4 | 5.5 |
-| total | 616.2 | 135.3 | 62.2 |
+| snapshot | 0.0 | 1.2 | 1.0 |
+| orm-compat | 9.1 | 0.4 | 0.7 |
+| crud | 0.2 | 1.6 | 0.6 |
+| type-edges | 0.0 | 1.7 | 0.5 |
+| ddl | 0.3 | 23.9 | 0.9 |
+| schema-drift-minimal | 0.2 | 9.7 | 0.8 |
+| schema-drift-unseen | 1.0 | 6.2 | 0.7 |
+| churn | 11.7 | 1.2 | 0.6 |
+| contention | 14.2 | 0.9 | 0.7 |
+| execution-budget | 0.0 | 0.4 | 1.0 |
+| spill | 3.3 | 0.2 | 1.2 |
+| pooling | 0.1 | 1.1 | 1.0 |
+| local-database | 0.0 | 0.4 | 0.9 |
+| restart | 0.6 | 3.2 | 1.0 |
+| activity-history | 1.2 | 0.4 | 1.0 |
+| poll-storm | 39.9 | 1.5 | 0.9 |
+| control-plane | 72.0 | 1.4 | 1.2 |
+| snapshot-ddl-window | 7.3 | 1.0 | 0.8 |
+| drop-table-cdc | 20.5 | 1.0 | 0.9 |
+| drop-table-recreate | 139.0 | 1.4 | 0.8 |
+| drop-table-polling | 116.6 | 1.2 | 0.8 |
+| restart-during-snapshot | 8.0 | 1.6 | 1.0 |
+| drop-database | 24.3 | 1.2 | 0.9 |
+| ddl-documented-gaps | 0.0 | 0.9 | 0.6 |
+| total | 469.8 | 63.9 | 20.5 |

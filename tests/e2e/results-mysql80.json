@@ -12669,6 +12669,1840 @@
     "status": "PASS"
   },
   {
+    "phase": "activity-history",
+    "check": "activity-history:the history is in the control plane pintail reads",
+    "status": "PASS",
+    "detail": "150034 sync_runs rows for db_0645bee9f5d57e83d32d70108b1dfe8a"
+  },
+  {
+    "phase": "activity-history",
+    "check": "activity-history:the feed pages the full history",
+    "status": "PASS",
+    "detail": "limit=200 returned 200"
+  },
+  {
+    "phase": "activity-history",
+    "check": "activity-history:scoped feed stays fast over a large history",
+    "status": "PASS",
+    "detail": "p50 1ms p95 2ms over 150000 rows"
+  },
+  {
+    "phase": "activity-history",
+    "check": "activity-history:workspace feed stays fast over a large history",
+    "status": "PASS",
+    "detail": "p50 1ms p95 11ms"
+  },
+  {
+    "phase": "activity-history",
+    "check": "activity-history:25 concurrent feed reads do not pile up",
+    "status": "PASS",
+    "detail": "p50 25ms p99 42ms"
+  },
+  {
+    "phase": "activity-history",
+    "check": "activity-history:health answers while the feed is hammered",
+    "status": "PASS",
+    "detail": "health p95 35ms"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "poll-storm:no request fails under 25 open dashboards",
+    "status": "PASS",
+    "detail": "0 failed of 4795"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "poll-storm:latency stays bounded",
+    "status": "PASS",
+    "detail": "4795 requests: p50 2ms p99 24ms"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "poll-storm:health never stalls",
+    "status": "PASS",
+    "detail": "health p99 11ms"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "poll-storm:replication keeps pace under the storm",
+    "status": "PASS",
+    "detail": "orders replica 780 vs source 780"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "control-plane",
     "check": "api:auth login issues a fresh token",
     "status": "PASS"
@@ -16401,7 +18235,8 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_0645bee9f5d57e83d32d70108b1dfe8a\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-02T04:10:58.395747+00:00\",\"updated_at\":\"2026-09-02T04:19:07.020920+00:00\"},\"tables\":18,\"rows\":1286}"
   },
   {
     "phase": "drop-table-polling",
@@ -17297,6 +19132,919 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "restart-during-snapshot:interrupts a copy in flight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "restart-during-snapshot:the database resumes replicating on its own",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "restart-during-snapshot:every row arrives after the resume",
+    "status": "PASS",
+    "detail": "big: 300000 of 300000"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "restart-during-snapshot:no table is left quarantined",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
